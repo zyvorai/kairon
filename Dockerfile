@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1.7
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
 FROM golang:1.23-bookworm AS build
 WORKDIR /src
 COPY go.mod ./

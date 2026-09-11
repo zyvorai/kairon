@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
 # Collect a supportability bundle for Kairon (must-gather style).
 set -euo pipefail
 OUT="${1:-kairon-must-gather-$(date +%Y%m%d%H%M%S)}"

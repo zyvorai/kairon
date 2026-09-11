@@ -1,3 +1,6 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
 [Unit]
 Description=kairon-migration-adapter-stub - TEST DOUBLE for the Kairon migration adapter contract (simulates transfers, does not move real VM memory)
 Documentation=https://github.com/zyvorai/kairon

@@ -1,3 +1,6 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
 [Unit]
 Description=kairon-node - kairon per-node VM reconciliation agent
 Documentation=https://github.com/zyvorai/kairon

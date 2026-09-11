@@ -1,3 +1,6 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
 SHELL := /bin/sh
 GO ?= go
 IMAGE ?= ghcr.io/zyvorai/kairon
