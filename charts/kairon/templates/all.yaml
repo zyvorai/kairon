@@ -15,13 +15,13 @@ kind: ClusterRole
 metadata: {name: kairon-controller}
 rules:
   - apiGroups: [""]
-    resources: ["nodes"]
+    resources: ["nodes", "persistentvolumes", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status"]
+    resources: ["machines", "machines/status", "machineimages", "machineimages/status", "virtualdisks", "virtualdisks/status", "machinesnapshots", "machinesnapshots/status"]
     verbs: ["get", "list", "watch", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -39,7 +39,7 @@ rules:
     resources: ["events"]
     verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status"]
+    resources: ["machines", "machines/status", "machineimages", "machineimages/status", "virtualdisks", "virtualdisks/status", "machinesnapshots", "machinesnapshots/status"]
     verbs: ["get", "list", "watch", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

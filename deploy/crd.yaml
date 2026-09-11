@@ -48,10 +48,11 @@ spec:
                   type: string
                 image:
                   type: object
-                  required: [path]
                   properties:
-                    path: {type: string, minLength: 1}
+                    path: {type: string}
                     digest: {type: string}
+                    machineImageName: {type: string}
+                    virtualDiskName: {type: string}
                 resources:
                   type: object
                   required: [cpu, memory]
@@ -78,13 +79,6 @@ spec:
                     bridge: {type: string}
                     parent: {type: string}
                     mac: {type: string}
-                cloudInit:
-                  type: object
-                  properties:
-                    userData: {type: string}
-                    sshPublicKeys:
-                      type: array
-                      items: {type: string}
                 powerState:
                   type: string
                   enum: [Running, Stopped]
@@ -131,6 +125,44 @@ spec:
                                             values:
                                               type: array
                                               items: {type: string}
+                diskSizeGiB: {type: integer, format: int64, minimum: 0}
+                storage:
+                  type: string
+                  enum: [default, lvm-thin, nbd, ceph-rbd]
+                  default: default
+                sharedFolders:
+                  type: array
+                  items:
+                    type: object
+                    required: [hostPath, guestPath]
+                    properties:
+                      hostPath: {type: string}
+                      guestPath: {type: string}
+                      readOnly: {type: boolean}
+                cloudInit:
+                  type: object
+                  properties:
+                    hostname: {type: string}
+                    user: {type: string}
+                    userData: {type: string}
+                    sshPublicKeys:
+                      type: array
+                      items: {type: string}
+                    packages:
+                      type: array
+                      items: {type: string}
+                    runcmd:
+                      type: array
+                      items: {type: string}
+                    writeFiles:
+                      type: array
+                      items:
+                        type: object
+                        required: [path, content]
+                        properties:
+                          path: {type: string}
+                          content: {type: string}
+                          permissions: {type: string}
                 security:
                   type: object
                   properties:
@@ -156,3 +188,141 @@ spec:
                       reason: {type: string}
                       message: {type: string}
                       lastTransitionTime: {type: string, format: date-time}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineimages.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machineimages
+    singular: machineimage
+    kind: MachineImage
+    shortNames: [mi, kmimage]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Phase, type: string, jsonPath: .status.phase}
+        - {name: Path, type: string, jsonPath: .status.resolvedPath}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [source]
+              properties:
+                source:
+                  type: object
+                  properties:
+                    path: {type: string}
+                    oci: {type: string}
+                digest: {type: string}
+            status:
+              type: object
+              properties:
+                phase: {type: string}
+                resolvedPath: {type: string}
+                message: {type: string}
+                observedGeneration: {type: integer, format: int64}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: virtualdisks.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: virtualdisks
+    singular: virtualdisk
+    kind: VirtualDisk
+    shortNames: [vd, kvdisk]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Phase, type: string, jsonPath: .status.phase}
+        - {name: Path, type: string, jsonPath: .status.path}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [source]
+              properties:
+                size: {type: string}
+                storage:
+                  type: string
+                  enum: [default, lvm-thin, nbd, ceph-rbd]
+                accessMode: {type: string}
+                cloneFromDisk: {type: string}
+                cloneFromSnapshot: {type: string}
+                source:
+                  type: object
+                  properties:
+                    hostPath: {type: string}
+                    persistentVolumeClaim:
+                      type: object
+                      properties:
+                        claimName: {type: string}
+            status:
+              type: object
+              properties:
+                phase: {type: string}
+                path: {type: string}
+                volumeName: {type: string}
+                message: {type: string}
+                observedGeneration: {type: integer, format: int64}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinesnapshots.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinesnapshots
+    singular: machinesnapshot
+    kind: MachineSnapshot
+    shortNames: [msnap]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Phase, type: string, jsonPath: .status.phase}
+        - {name: Tag, type: string, jsonPath: .status.tag}
+        - {name: Machine, type: string, jsonPath: .spec.machineName}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [machineName]
+              properties:
+                machineName: {type: string, minLength: 1}
+                tag: {type: string}
+            status:
+              type: object
+              properties:
+                phase: {type: string}
+                tag: {type: string}
+                nodeName: {type: string}
+                runtimeID: {type: string}
+                message: {type: string}
+                observedGeneration: {type: integer, format: int64}

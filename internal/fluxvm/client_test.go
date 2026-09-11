@@ -41,8 +41,11 @@ func TestCreateMapping(t *testing.T) {
 	if got.Network["mode"] != "tap" || got.Network["netns"] != true {
 		t.Fatalf("network=%v", got.Network)
 	}
-	if got.UserData == "" || len(got.SSHPublicKeys) != 1 || !got.SecureBoot {
+	if got.CloudInit == nil || len(got.CloudInit.SSHAuthorizedKeys) != 1 || !got.SecureBoot {
 		t.Fatalf("cloud-init/security not forwarded: %+v", got)
+	}
+	if got.Storage != "default" {
+		t.Fatalf("storage=%q", got.Storage)
 	}
 }
 

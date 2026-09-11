@@ -28,7 +28,7 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 |---|---|
 | Declare VM + start/stop | v0.1 |
 | Status / Events / cloud-init / placement polish | v0.1.1 |
-| Disks / images / snapshot-clone | v0.2 |
+| Disks / images / snapshot-clone | v0.2 (hostPath/PVC bind + snapshot; OCI pull & CSI mount pending) |
 | Multus / DRA / GPU | v0.3 |
 | Live migrate / fencing / MDB | v0.4 |
 | Admission / image policy / confidential | v0.5 |
@@ -36,11 +36,13 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 
 ## v0.2 — storage and images
 
-- MachineImage and VirtualDisk CRDs
-- CSI PVC -> block/file-backed FluxVM disks
-- snapshot/clone controller
-- OCI-distributed VM images with signatures and digests
-- GuestKit preparation hooks
+- MachineImage and VirtualDisk CRDs with status binding
+- CSI PVC / hostPath / local PV → FluxVM boot disk path (CSI mount publish still pending)
+- MachineSnapshot → FluxVM `POST /v1/vms/{id}/snapshot`
+- VirtualDisk clone-from-disk path reference (bit-copy / GuestKit pending)
+- OCI MachineImage source declared with digest (pull/stage pending GuestKit)
+- Machine `diskSizeGiB`, `storage` (`default|lvm-thin|nbd|ceph-rbd`), `sharedFolders`
+- FluxVM-aligned nested `cloud_init` payload
 
 ## v0.3 — networking and devices
 

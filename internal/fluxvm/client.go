@@ -35,21 +35,44 @@ func (r Record) ID() string {
 	return r.UUID
 }
 
+type CloudInitPayload struct {
+	Hostname          string             `json:"hostname,omitempty"`
+	User              string             `json:"user,omitempty"`
+	SSHAuthorizedKeys []string           `json:"ssh_authorized_keys,omitempty"`
+	Packages          []string           `json:"packages,omitempty"`
+	RunCmd            []string           `json:"runcmd,omitempty"`
+	WriteFiles        []CloudInitFilePay `json:"write_files,omitempty"`
+}
+
+type CloudInitFilePay struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Permissions string `json:"permissions,omitempty"`
+}
+
+type SharedFolderPay struct {
+	HostPath  string `json:"host_path"`
+	GuestPath string `json:"guest_path"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+}
+
+// CreateRequest mirrors FluxVM CreateVmRequest JSON contract.
 type CreateRequest struct {
-	Name          string         `json:"name"`
-	Tenant        string         `json:"tenant,omitempty"`
-	Backend       string         `json:"backend"`
-	Image         string         `json:"image"`
-	Kernel        string         `json:"kernel,omitempty"`
-	VCPUs         uint32         `json:"vcpus"`
-	MemoryMiB     uint64         `json:"memory_mib"`
-	Network       map[string]any `json:"network,omitempty"`
-	TTLSeconds    int64          `json:"ttl_seconds,omitempty"`
-	UserData      string         `json:"user_data,omitempty"`
-	SSHPublicKeys []string       `json:"ssh_public_keys,omitempty"`
-	SecureBoot    bool           `json:"secure_boot,omitempty"`
-	TPM           bool           `json:"tpm,omitempty"`
-	Digest        string         `json:"digest,omitempty"`
+	Name          string            `json:"name"`
+	Tenant        string            `json:"tenant,omitempty"`
+	Backend       string            `json:"backend"`
+	Image         string            `json:"image"`
+	Kernel        string            `json:"kernel,omitempty"`
+	VCPUs         uint32            `json:"vcpus"`
+	MemoryMiB     uint64            `json:"memory_mib"`
+	DiskSizeGiB   *uint64           `json:"disk_size_gib,omitempty"`
+	Network       map[string]any    `json:"network,omitempty"`
+	TTLSeconds    int64             `json:"ttl_seconds,omitempty"`
+	CloudInit     *CloudInitPayload `json:"cloud_init,omitempty"`
+	Storage       string            `json:"storage,omitempty"`
+	SharedFolders []SharedFolderPay `json:"shared_folders,omitempty"`
+	SecureBoot    bool              `json:"secure_boot,omitempty"`
+	TPM           bool              `json:"tpm,omitempty"`
 }
 
 type ConsoleInfo struct {
@@ -146,6 +169,30 @@ func (c *Client) Get(ctx context.Context, id string) (*Record, error) {
 	return &r, nil
 }
 
+func buildCloudInit(ci model.CloudInitSpec) *CloudInitPayload {
+	if ci.Hostname == "" && ci.User == "" && len(ci.SSHPublicKeys) == 0 && len(ci.Packages) == 0 && len(ci.RunCmd) == 0 && len(ci.WriteFiles) == 0 && ci.UserData == "" {
+		return nil
+	}
+	out := &CloudInitPayload{
+		Hostname:          ci.Hostname,
+		User:              ci.User,
+		SSHAuthorizedKeys: append([]string{}, ci.SSHPublicKeys...),
+		Packages:          append([]string{}, ci.Packages...),
+		RunCmd:            append([]string{}, ci.RunCmd...),
+	}
+	for _, f := range ci.WriteFiles {
+		out.WriteFiles = append(out.WriteFiles, CloudInitFilePay{Path: f.Path, Content: f.Content, Permissions: f.Permissions})
+	}
+	if ci.UserData != "" {
+		out.WriteFiles = append(out.WriteFiles, CloudInitFilePay{
+			Path:        "/var/lib/kairon/user-data",
+			Content:     ci.UserData,
+			Permissions: "0644",
+		})
+	}
+	return out
+}
+
 func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
@@ -162,7 +209,6 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	if backend == "" {
 		backend = "qemu"
 	}
-	tenant := m.Namespace()
 	network := map[string]any{}
 	if mode := m.Spec.Network.Mode; mode != "" {
 		network["mode"] = mode
@@ -181,21 +227,33 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	if m.Spec.Network.MAC != "" {
 		network["mac"] = m.Spec.Network.MAC
 	}
+	storage := m.Spec.Storage
+	if storage == "" {
+		storage = "default"
+	}
 	payload := CreateRequest{
-		Name:          m.RuntimeName(),
-		Tenant:        tenant,
-		Backend:       backend,
-		Image:         m.Spec.Image.Path,
-		Kernel:        m.Spec.Runtime.Kernel,
-		VCPUs:         cpu,
-		MemoryMiB:     mem,
-		Network:       network,
-		TTLSeconds:    m.Spec.TTLSeconds,
-		UserData:      m.Spec.CloudInit.UserData,
-		SSHPublicKeys: m.Spec.CloudInit.SSHPublicKeys,
-		SecureBoot:    m.Spec.Security.SecureBoot,
-		TPM:           m.Spec.Security.TPM,
-		Digest:        m.Spec.Image.Digest,
+		Name:       m.RuntimeName(),
+		Tenant:     m.Namespace(),
+		Backend:    backend,
+		Image:      m.Spec.Image.Path,
+		Kernel:     m.Spec.Runtime.Kernel,
+		VCPUs:      cpu,
+		MemoryMiB:  mem,
+		Network:    network,
+		TTLSeconds: m.Spec.TTLSeconds,
+		CloudInit:  buildCloudInit(m.Spec.CloudInit),
+		Storage:    storage,
+		SecureBoot: m.Spec.Security.SecureBoot,
+		TPM:        m.Spec.Security.TPM,
+	}
+	if m.Spec.DiskSizeGiB > 0 {
+		v := uint64(m.Spec.DiskSizeGiB)
+		payload.DiskSizeGiB = &v
+	}
+	for _, sf := range m.Spec.SharedFolders {
+		payload.SharedFolders = append(payload.SharedFolders, SharedFolderPay{
+			HostPath: sf.HostPath, GuestPath: sf.GuestPath, ReadOnly: sf.ReadOnly,
+		})
 	}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {
@@ -208,7 +266,6 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	return &rec, nil
 }
 
-// Console returns console connection info when FluxVM exposes GET /v1/vms/{id}/console.
 func (c *Client) Console(ctx context.Context, id string) (*ConsoleInfo, error) {
 	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/console", nil)
 	if err != nil {
@@ -219,6 +276,16 @@ func (c *Client) Console(ctx context.Context, id string) (*ConsoleInfo, error) {
 		return nil, fmt.Errorf("decode FluxVM console: %w", err)
 	}
 	return &info, nil
+}
+
+func (c *Client) Snapshot(ctx context.Context, id, tag string) error {
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/snapshot", map[string]string{"tag": tag})
+	return err
+}
+
+func (c *Client) StartFromSnapshot(ctx context.Context, id, tag string) error {
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/start-from-snapshot", map[string]string{"tag": tag})
+	return err
 }
 
 func (c *Client) Delete(ctx context.Context, id string) error {

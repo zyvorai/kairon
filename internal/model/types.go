@@ -44,22 +44,27 @@ type MachineList struct {
 }
 
 type MachineSpec struct {
-	NodeName   string        `json:"nodeName,omitempty"`
-	Image      ImageSpec     `json:"image"`
-	Resources  ResourceSpec  `json:"resources"`
-	Runtime    RuntimeSpec   `json:"runtime,omitempty"`
-	Network    NetworkSpec   `json:"network,omitempty"`
-	CloudInit  CloudInitSpec `json:"cloudInit,omitempty"`
-	PowerState string        `json:"powerState,omitempty"`
-	Tenant     string        `json:"tenant,omitempty"`
-	TTLSeconds int64         `json:"ttlSeconds,omitempty"`
-	Placement  PlacementSpec `json:"placement,omitempty"`
-	Security   SecuritySpec  `json:"security,omitempty"`
+	NodeName      string         `json:"nodeName,omitempty"`
+	Image         ImageSpec      `json:"image"`
+	Resources     ResourceSpec   `json:"resources"`
+	Runtime       RuntimeSpec    `json:"runtime,omitempty"`
+	Network       NetworkSpec    `json:"network,omitempty"`
+	CloudInit     CloudInitSpec  `json:"cloudInit,omitempty"`
+	PowerState    string         `json:"powerState,omitempty"`
+	Tenant        string         `json:"tenant,omitempty"`
+	TTLSeconds    int64          `json:"ttlSeconds,omitempty"`
+	Placement     PlacementSpec  `json:"placement,omitempty"`
+	Security      SecuritySpec   `json:"security,omitempty"`
+	DiskSizeGiB   int64          `json:"diskSizeGiB,omitempty"`
+	Storage       string         `json:"storage,omitempty"`
+	SharedFolders []SharedFolder `json:"sharedFolders,omitempty"`
 }
 
 type ImageSpec struct {
-	Path   string `json:"path"`
-	Digest string `json:"digest,omitempty"`
+	Path             string `json:"path,omitempty"`
+	Digest           string `json:"digest,omitempty"`
+	MachineImageName string `json:"machineImageName,omitempty"`
+	VirtualDiskName  string `json:"virtualDiskName,omitempty"`
 }
 
 type ResourceSpec struct {
@@ -81,8 +86,13 @@ type NetworkSpec struct {
 }
 
 type CloudInitSpec struct {
-	UserData      string   `json:"userData,omitempty"`
-	SSHPublicKeys []string `json:"sshPublicKeys,omitempty"`
+	Hostname      string          `json:"hostname,omitempty"`
+	User          string          `json:"user,omitempty"`
+	UserData      string          `json:"userData,omitempty"`
+	SSHPublicKeys []string        `json:"sshPublicKeys,omitempty"`
+	Packages      []string        `json:"packages,omitempty"`
+	RunCmd        []string        `json:"runcmd,omitempty"`
+	WriteFiles    []CloudInitFile `json:"writeFiles,omitempty"`
 }
 
 type PlacementSpec struct {

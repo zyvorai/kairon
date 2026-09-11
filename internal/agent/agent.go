@@ -15,6 +15,7 @@ import (
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/storage"
 )
 
 type Agent struct {
@@ -27,6 +28,9 @@ type Agent struct {
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {
+	if err := a.reconcileSnapshots(ctx); err != nil {
+		a.Log.Error("snapshot reconcile failed", "error", err)
+	}
 	machines, err := a.Kube.ListMachines(ctx)
 	if err != nil {
 		return err
@@ -51,6 +55,63 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+func (a *Agent) reconcileSnapshots(ctx context.Context) error {
+	snaps, err := a.Kube.ListMachineSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, snap := range snaps {
+		if snap.Status.Phase == "Succeeded" || snap.Status.Phase == "Failed" {
+			continue
+		}
+		m, err := a.Kube.GetMachine(ctx, snap.Namespace(), snap.Spec.MachineName)
+		if err != nil {
+			st := snap.Status
+			st.Phase = "Failed"
+			st.Message = err.Error()
+			st.ObservedGeneration = snap.Metadata.Generation
+			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
+			continue
+		}
+		if m.Spec.NodeName != a.NodeName {
+			continue
+		}
+		if m.Status.RuntimeID == "" {
+			st := snap.Status
+			st.Phase = "Pending"
+			st.Message = "machine has no runtimeID yet"
+			st.NodeName = a.NodeName
+			st.ObservedGeneration = snap.Metadata.Generation
+			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
+			continue
+		}
+		tag := snap.Spec.Tag
+		if tag == "" {
+			tag = snap.Metadata.Name
+		}
+		if err := a.Flux.Snapshot(ctx, m.Status.RuntimeID, tag); err != nil {
+			st := snap.Status
+			st.Phase = "Failed"
+			st.Message = err.Error()
+			st.NodeName = a.NodeName
+			st.RuntimeID = m.Status.RuntimeID
+			st.ObservedGeneration = snap.Metadata.Generation
+			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
+			continue
+		}
+		st := snap.Status
+		st.Phase = "Succeeded"
+		st.Tag = tag
+		st.NodeName = a.NodeName
+		st.RuntimeID = m.Status.RuntimeID
+		st.Message = ""
+		st.ObservedGeneration = snap.Metadata.Generation
+		_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
+		_ = a.Kube.Eventf(ctx, m, "Normal", "SnapshotCreated", fmt.Sprintf("snapshot tag %s", tag), "kairon-node")
+	}
+	return nil
+}
+
 func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.Metadata.DeletionTimestamp != nil {
 		return a.cleanup(ctx, m)
@@ -64,8 +125,19 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
+	resolved, digest, storageOverride, err := a.resolveImage(ctx, m)
+	if err != nil {
+		return err
+	}
+	m.Spec.Image.Path = resolved
+	if digest != "" && m.Spec.Image.Digest == "" {
+		m.Spec.Image.Digest = digest
+	}
+	if storageOverride != "" && m.Spec.Storage == "" {
+		m.Spec.Storage = storageOverride
+	}
 	if m.Spec.Image.Path == "" {
-		return fmt.Errorf("spec.image.path is required")
+		return fmt.Errorf("spec.image.path (or machineImageName/virtualDiskName) is required")
 	}
 	if a.ImageRoot != "" {
 		root, err := filepath.Abs(a.ImageRoot)
@@ -84,6 +156,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if err := verifyImageDigest(m.Spec.Image.Path, m.Spec.Image.Digest); err != nil {
 		return err
 	}
+	m.Spec.Storage = storage.NormalizeStorage(m.Spec.Storage)
 
 	rec, err := a.current(ctx, m)
 	if err != nil {
@@ -117,6 +190,36 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		_ = a.Kube.Eventf(ctx, m, "Normal", "Started", fmt.Sprintf("Machine phase %s on %s", status.Phase, a.NodeName), "kairon-node")
 	}
 	return nil
+}
+
+func (a *Agent) resolveImage(ctx context.Context, m model.Machine) (path, digest, storageOverride string, err error) {
+	path = m.Spec.Image.Path
+	digest = m.Spec.Image.Digest
+	if m.Spec.Image.VirtualDiskName != "" {
+		disk, err := a.Kube.GetVirtualDisk(ctx, m.Namespace(), m.Spec.Image.VirtualDiskName)
+		if err != nil {
+			return "", "", "", fmt.Errorf("virtualDisk %q: %w", m.Spec.Image.VirtualDiskName, err)
+		}
+		if disk.Status.Phase != "Bound" || disk.Status.Path == "" {
+			return "", "", "", fmt.Errorf("virtualDisk %q not Bound (phase=%s)", m.Spec.Image.VirtualDiskName, disk.Status.Phase)
+		}
+		path = disk.Status.Path
+		storageOverride = disk.Spec.Storage
+	}
+	if m.Spec.Image.MachineImageName != "" {
+		img, err := a.Kube.GetMachineImage(ctx, m.Namespace(), m.Spec.Image.MachineImageName)
+		if err != nil {
+			return "", "", "", fmt.Errorf("machineImage %q: %w", m.Spec.Image.MachineImageName, err)
+		}
+		if img.Status.Phase != "Ready" || img.Status.ResolvedPath == "" {
+			return "", "", "", fmt.Errorf("machineImage %q not Ready (phase=%s): %s", m.Spec.Image.MachineImageName, img.Status.Phase, img.Status.Message)
+		}
+		path = img.Status.ResolvedPath
+		if digest == "" {
+			digest = img.Spec.Digest
+		}
+	}
+	return path, digest, storageOverride, nil
 }
 
 func (a *Agent) current(ctx context.Context, m model.Machine) (*fluxvm.Record, error) {

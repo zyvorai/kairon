@@ -14,6 +14,7 @@ import (
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/scheduler"
+	"github.com/zyvorai/kairon/internal/storage"
 )
 
 var version = "dev"
@@ -43,7 +44,13 @@ func main() {
 		}
 	}()
 	ctl := &controller.Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: *requireLabel}, Log: log}
+	store := &storage.Reconciler{Kube: kc, Log: log}
 	hs.SetReady(true)
+	go func() {
+		if err := store.Run(ctx, *interval); err != nil && ctx.Err() == nil {
+			log.Error("storage reconciler stopped", "error", err)
+		}
+	}()
 	if err := ctl.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("controller stopped", "error", err)
 		os.Exit(1)

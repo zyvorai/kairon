@@ -31,6 +31,8 @@ func TestReconcileCreatesFluxVMAndUpdatesStatus(t *testing.T) {
 	var status model.MachineStatus
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
@@ -96,6 +98,8 @@ func TestImageRootRejectsTraversal(t *testing.T) {
 	statusWasError := false
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{})
 		case r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/bad/status":

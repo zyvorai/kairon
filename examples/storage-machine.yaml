@@ -1,0 +1,48 @@
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MachineImage
+metadata:
+  name: ubuntu-base
+  namespace: default
+spec:
+  source:
+    path: /var/lib/fluxvm/images/ubuntu-24.04.qcow2
+  digest: ""
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: VirtualDisk
+metadata:
+  name: ubuntu-root
+  namespace: default
+spec:
+  size: 20Gi
+  storage: default
+  source:
+    hostPath: /var/lib/fluxvm/images/ubuntu-24.04.qcow2
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: ubuntu-from-disk
+  namespace: default
+spec:
+  image:
+    virtualDiskName: ubuntu-root
+  resources:
+    cpu: "2"
+    memory: 2Gi
+  diskSizeGiB: 20
+  storage: default
+  runtime:
+    backend: qemu
+  network:
+    mode: user
+  powerState: Running
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MachineSnapshot
+metadata:
+  name: ubuntu-from-disk-snap1
+  namespace: default
+spec:
+  machineName: ubuntu-from-disk
+  tag: snap1
