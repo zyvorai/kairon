@@ -178,3 +178,107 @@ spec:
             type: Directory
 {{ end }}
 {{ end }}
+{{ if .Values.ui.enabled }}
+{{ if and (not .Values.ui.allowUnauthenticated) (not .Values.ui.token) }}
+{{ fail "kairon-ui requires ui.token (or ui.allowUnauthenticated=true, local development only)" }}
+{{ end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-ui
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: kairon-ui}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinemigrations"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshots"]
+    verbs: ["get", "list", "watch", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: kairon-ui}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kairon-ui}
+subjects:
+  - {kind: ServiceAccount, name: kairon-ui, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kairon-ui-token
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  token: {{ .Values.ui.token | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kairon-ui, namespace: {{ .Release.Namespace }}}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: kairon-ui}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: kairon-ui}}
+    spec:
+      serviceAccountName: kairon-ui
+      containers:
+        - name: ui
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          args:
+            - "-listen=:8082"
+            - "-allow-unauthenticated={{ .Values.ui.allowUnauthenticated }}"
+          env:
+            - name: KAIRON_UI_TOKEN
+              valueFrom: {secretKeyRef: {name: kairon-ui-token, key: token}}
+          ports: [{name: http, containerPort: 8082}]
+          readinessProbe: {httpGet: {path: /readyz, port: http}}
+          livenessProbe: {httpGet: {path: /healthz, port: http}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kairon-ui
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: {{ .Values.ui.service.type }}
+  selector: {app.kubernetes.io/name: kairon-ui}
+  ports:
+    - {name: http, port: {{ .Values.ui.service.port }}, targetPort: http}
+{{ if .Values.ui.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kairon-ui
+  namespace: {{ .Release.Namespace }}
+{{ if .Values.ui.ingress.annotations }}
+  annotations:
+{{ toYaml .Values.ui.ingress.annotations | indent 4 }}
+{{ end }}
+spec:
+{{ if .Values.ui.ingress.className }}
+  ingressClassName: {{ .Values.ui.ingress.className }}
+{{ end }}
+  rules:
+    - host: {{ .Values.ui.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: kairon-ui, port: {name: http}}
+{{ end }}
+{{ end }}

@@ -14,7 +14,7 @@ def fail(msg):
 
 required = [
     "go.mod", "LICENSE", "README.md", "VERSION", "RELEASE_NOTES.md",
-    "deploy/crd.yaml", "deploy/rbac.yaml", "deploy/controller.yaml", "deploy/node.yaml",
+    "deploy/crd.yaml", "deploy/rbac.yaml", "deploy/controller.yaml", "deploy/node.yaml", "deploy/ui.yaml",
     "charts/kairon/Chart.yaml", "charts/kairon/values.yaml", ".github/workflows/ci.yml",
 ]
 for f in required:
@@ -22,7 +22,7 @@ for f in required:
         fail(f"missing {f}")
 
 raw_yaml = [
-    root / "deploy/crd.yaml", root / "deploy/rbac.yaml", root / "deploy/controller.yaml", root / "deploy/node.yaml",
+    root / "deploy/crd.yaml", root / "deploy/rbac.yaml", root / "deploy/controller.yaml", root / "deploy/node.yaml", root / "deploy/ui.yaml",
 ] + sorted((root / "examples").glob("*.yaml")) + sorted((root / "charts/kairon/crds").glob("*.yaml"))
 for f in raw_yaml:
     try:

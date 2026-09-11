@@ -1,0 +1,172 @@
+import { useEffect, useState } from 'react';
+import { api, apiJSON } from '../api';
+import { Machine } from '../types';
+import { badgeClass } from '../lib/phase';
+
+interface CreateForm {
+  name: string;
+  image: string;
+  cpu: string;
+  memory: string;
+  backend: string;
+  network: string;
+  netns: boolean;
+}
+
+const EMPTY_FORM: CreateForm = { name: '', image: '', cpu: '2', memory: '2Gi', backend: 'qemu', network: 'user', netns: false };
+
+export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machine: string) => void; onSnapshot: (machine: string) => void }) {
+  const [items, setItems] = useState<Machine[]>([]);
+  const [form, setForm] = useState<CreateForm>(EMPTY_FORM);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = () =>
+    api<Machine[]>('/api/v1/machines').then(setItems).catch((e) => setMsg(String(e)));
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setMsg('');
+    try {
+      await apiJSON('/api/v1/machines', 'POST', form);
+      setForm(EMPTY_FORM);
+      await refresh();
+    } catch (err) {
+      setMsg(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function power(name: string, action: 'start' | 'stop') {
+    setMsg('');
+    try {
+      await api(`/api/v1/machines/default/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+      await refresh();
+    } catch (err) {
+      setMsg(String(err));
+    }
+  }
+
+  async function remove(name: string) {
+    if (!confirm(`Delete machine "${name}"? This deletes the underlying VM runtime too.`)) return;
+    setMsg('');
+    try {
+      await api(`/api/v1/machines/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await refresh();
+    } catch (err) {
+      setMsg(String(err));
+    }
+  }
+
+  return (
+    <div className="grid">
+      <div className="card span4">
+        <span className="eyebrow">CREATE MACHINE</span>
+        <h3>New machine</h3>
+        <form onSubmit={create}>
+          <div className="formgrid">
+            <label>
+              Name
+              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            </label>
+            <label>
+              Image path
+              <input required value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="/var/lib/fluxvm/images/db.qcow2" />
+            </label>
+            <label>
+              CPU
+              <input value={form.cpu} onChange={(e) => setForm({ ...form, cpu: e.target.value })} />
+            </label>
+            <label>
+              Memory
+              <input value={form.memory} onChange={(e) => setForm({ ...form, memory: e.target.value })} />
+            </label>
+            <label>
+              Backend
+              <select value={form.backend} onChange={(e) => setForm({ ...form, backend: e.target.value })}>
+                <option value="qemu">qemu</option>
+                <option value="cloud-hypervisor">cloud-hypervisor</option>
+                <option value="firecracker">firecracker</option>
+                <option value="flux-vm">flux-vm</option>
+                <option value="auto">auto</option>
+              </select>
+            </label>
+            <label>
+              Network
+              <select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>
+                <option value="user">user</option>
+                <option value="tap">tap</option>
+                <option value="macvtap">macvtap</option>
+              </select>
+            </label>
+            <div className="check">
+              <input type="checkbox" id="netns" checked={form.netns} onChange={(e) => setForm({ ...form, netns: e.target.checked })} />
+              <label htmlFor="netns">Per-VM network namespace</label>
+            </div>
+          </div>
+          <div className="formactions">
+            <button className="primary" type="submit" disabled={busy}>
+              {busy ? 'Creating...' : 'Create machine'}
+            </button>
+            {msg && <span className={msg.startsWith('Error') ? 'msg error' : 'msg'}>{msg}</span>}
+          </div>
+        </form>
+      </div>
+
+      <div className="card span4">
+        <span className="eyebrow">MACHINES</span>
+        <table className="datatable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Node</th>
+              <th>Phase</th>
+              <th>CPU</th>
+              <th>Memory</th>
+              <th>IP</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((m) => (
+              <tr key={m.metadata.name}>
+                <td>{m.metadata.name}</td>
+                <td>{m.spec.nodeName || m.status?.nodeName || '-'}</td>
+                <td>
+                  <span className={badgeClass(m.status?.phase || '')}>{m.status?.phase || 'Unknown'}</span>
+                </td>
+                <td>{m.spec.resources.cpu}</td>
+                <td>{m.spec.resources.memory}</td>
+                <td>{m.status?.guestIP || '-'}</td>
+                <td>
+                  <div className="rowactions">
+                    <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
+                    <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
+                    <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
+                    <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
+                    <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={7} className="msg">
+                  No machines yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

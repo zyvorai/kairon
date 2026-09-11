@@ -70,3 +70,27 @@ metrics:
   # alerts.yaml's rule group into your own Prometheus rule_files config.
   prometheusRule:
     enabled: false
+ui:
+  # Web dashboard (cmd/kairon-ui). Off by default -- opt in once you have a
+  # token ready, same posture as migration.enabled.
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/kairon-ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  # Static bearer token every /api/v1/... request must present. Required
+  # unless allowUnauthenticated is set -- kairon-ui can create/delete
+  # Machines and force migration recovery actions, so it refuses to start
+  # wide open by accident (both here, via {{ fail }}, and independently in
+  # the Go binary itself -- see cmd/kairon-ui/main.go).
+  token: ""
+  # Local development only. Never set this in a real cluster.
+  allowUnauthenticated: false
+  service:
+    type: ClusterIP
+    port: 8082
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    annotations: {}

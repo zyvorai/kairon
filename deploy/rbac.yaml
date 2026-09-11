@@ -73,3 +73,40 @@ subjects:
   - kind: ServiceAccount
     name: kairon-node
     namespace: kairon-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-ui
+  namespace: kairon-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kairon-ui
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinemigrations"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshots"]
+    verbs: ["get", "list", "watch", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kairon-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kairon-ui
+subjects:
+  - kind: ServiceAccount
+    name: kairon-ui
+    namespace: kairon-system
