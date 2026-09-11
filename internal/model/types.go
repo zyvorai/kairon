@@ -135,6 +135,11 @@ type MachineMigrationSpec struct {
 	BandwidthMbps   uint64 `json:"bandwidthMbps,omitempty"`
 	MaxDowntimeMs   uint64 `json:"maxDowntimeMs,omitempty"`
 	MultifdChannels uint8  `json:"multifdChannels,omitempty"`
+	// MigrationNetwork names a migration network configured on the
+	// destination node's adapter (--migration-network name=ip), used to
+	// select which address the RAM/state transfer binds/advertises.
+	// Empty uses the adapter's default advertise address.
+	MigrationNetwork string `json:"migrationNetwork,omitempty"`
 }
 
 type MachineMigrationStatus struct {

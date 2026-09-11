@@ -291,15 +291,17 @@ func (f *fakeSourceMigrator) Status(context.Context, migration.Session, string) 
 func (f *fakeSourceMigrator) Abort(context.Context, migration.Session, string) error { return nil }
 
 type fakePeerDestination struct {
-	result    migration.PrepareResult
-	commitErr error
-	prepares  int
-	commits   int
-	aborts    int
+	result      migration.PrepareResult
+	commitErr   error
+	prepares    int
+	commits     int
+	aborts      int
+	lastSession migration.Session
 }
 
-func (f *fakePeerDestination) Prepare(context.Context, migration.Session) (migration.PrepareResult, error) {
+func (f *fakePeerDestination) Prepare(_ context.Context, session migration.Session) (migration.PrepareResult, error) {
 	f.prepares++
+	f.lastSession = session
 	return f.result, nil
 }
 func (f *fakePeerDestination) Commit(context.Context, migration.Session) error {
@@ -325,6 +327,17 @@ func TestSourceAgentPreparesTargetThenCompletesTransfer(t *testing.T) {
 	}
 	if status.Phase != "Cutover" || status.RuntimeID != "vm-1" || status.SessionID == "" || status.TransferID != "xfer-1" || status.TransferPhase != "completed" {
 		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestSourceAgentPopulatesMigrationNetworkFromSpec(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session", Backend: "test-adapter"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "completed"}}
+	runLiveAgentReconcileWithNetwork(t, peerServer, source, "migration-fast")
+	if destination.lastSession.MigrationNetwork != "migration-fast" {
+		t.Fatalf("expected MigrationNetwork %q to flow from spec, got %q", "migration-fast", destination.lastSession.MigrationNetwork)
 	}
 }
 
@@ -369,6 +382,11 @@ func TestCommitFailureStopsAtNeedsRecovery(t *testing.T) {
 
 func runLiveAgentReconcile(t *testing.T, peerServer *httptest.Server, _ *fakePeerDestination, source *fakeSourceMigrator) model.MachineMigrationStatus {
 	t.Helper()
+	return runLiveAgentReconcileWithNetwork(t, peerServer, source, "")
+}
+
+func runLiveAgentReconcileWithNetwork(t *testing.T, peerServer *httptest.Server, source *fakeSourceMigrator, migrationNetwork string) model.MachineMigrationStatus {
+	t.Helper()
 	machine := model.Machine{
 		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
 		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
@@ -376,7 +394,7 @@ func runLiveAgentReconcile(t *testing.T, peerServer *httptest.Server, _ *fakePee
 	}
 	item := model.MachineMigration{
 		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
-		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Mode: "pre-copy", BandwidthMbps: 800},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Mode: "pre-copy", BandwidthMbps: 800, MigrationNetwork: migrationNetwork},
 		Status:   model.MachineMigrationStatus{Phase: "Starting", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live"},
 	}
 	var migrationStatus model.MachineMigrationStatus

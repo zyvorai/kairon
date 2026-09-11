@@ -46,12 +46,17 @@ type Session struct {
 	// FluxVM may have resolved defaults (e.g. an auto-generated MAC) the
 	// original spec never pinned down. Additive/optional: a stub or
 	// protocol-only adapter that doesn't need them simply ignores them.
-	DiskPath  string    `json:"diskPath,omitempty"`
-	MAC       string    `json:"mac,omitempty"`
-	VCPUs     uint32    `json:"vcpus,omitempty"`
-	MemoryMiB uint64    `json:"memoryMiB,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	DiskPath  string `json:"diskPath,omitempty"`
+	MAC       string `json:"mac,omitempty"`
+	VCPUs     uint32 `json:"vcpus,omitempty"`
+	MemoryMiB uint64 `json:"memoryMiB,omitempty"`
+	// MigrationNetwork names a migration network configured on the
+	// destination node's adapter, used to pick which address the transfer
+	// binds/advertises instead of the adapter's default. Empty is fully
+	// backward compatible -- the adapter falls back to today's behavior.
+	MigrationNetwork string    `json:"migrationNetwork,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 func (s Session) Validate() error {
@@ -68,6 +73,9 @@ func (s Session) Validate() error {
 	}
 	if s.SourceNode == s.TargetNode {
 		return errors.New("sourceNode and targetNode must differ")
+	}
+	if s.MigrationNetwork != "" && !safeName.MatchString(s.MigrationNetwork) {
+		return fmt.Errorf("invalid migrationNetwork %q", s.MigrationNetwork)
 	}
 	return nil
 }

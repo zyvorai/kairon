@@ -105,6 +105,9 @@ type receiverRequest struct {
 	Spec               createVMSpec `json:"spec"`
 	DiskPath           string       `json:"disk_path"`
 	ReceiverTTLSeconds uint64       `json:"receiver_ttl_seconds,omitempty"`
+	// MigrationBindAddress, when set, is the literal IP FluxVM's receiver
+	// binds/advertises its -incoming listener on instead of 0.0.0.0.
+	MigrationBindAddress string `json:"migration_bind_address,omitempty"`
 }
 
 type receiverInfo struct {
@@ -172,17 +175,24 @@ type adapter struct {
 	advertiseHost  string
 	bridge         string
 	receiverTTLSec uint64
+	// migrationNetworks maps a migration network name (MachineMigrationSpec.MigrationNetwork)
+	// to the literal IP the receiver should bind/advertise on, configured
+	// via repeated -migration-network name=ip flags. A session with no
+	// MigrationNetwork set ignores this map entirely (advertiseHost/0.0.0.0
+	// default behavior, unchanged).
+	migrationNetworks map[string]string
 
 	mu         sync.Mutex
 	destByID   map[string]string // session.ID -> fluxvm receiver id
 	sourceRTID map[string]string // session.ID -> source runtimeID (for status/abort)
 }
 
-func newAdapter(log *slog.Logger, flux *fluxClient, advertiseHost, bridge string, ttl uint64) *adapter {
+func newAdapter(log *slog.Logger, flux *fluxClient, advertiseHost, bridge string, ttl uint64, migrationNetworks map[string]string) *adapter {
 	return &adapter{
 		log: log, flux: flux, advertiseHost: advertiseHost, bridge: bridge, receiverTTLSec: ttl,
-		destByID:   map[string]string{},
-		sourceRTID: map[string]string{},
+		migrationNetworks: migrationNetworks,
+		destByID:          map[string]string{},
+		sourceRTID:        map[string]string{},
 	}
 }
 
@@ -212,6 +222,20 @@ func (a *adapter) prepare(w http.ResponseWriter, r *http.Request) {
 	if backend == "" {
 		backend = "qemu"
 	}
+	advertiseHost := a.advertiseHost
+	bindAddress := ""
+	if session.MigrationNetwork != "" {
+		ip, ok := a.migrationNetworks[session.MigrationNetwork]
+		if !ok {
+			writeJSON(w, http.StatusOK, migration.PrepareResult{
+				TransferSupported: false,
+				Reason:            fmt.Sprintf("unknown migrationNetwork %q (not configured via -migration-network on this adapter)", session.MigrationNetwork),
+			})
+			return
+		}
+		bindAddress = ip
+		advertiseHost = ip
+	}
 	receiverReq := receiverRequest{
 		Spec: createVMSpec{
 			Name:      session.Machine,
@@ -225,8 +249,9 @@ func (a *adapter) prepare(w http.ResponseWriter, r *http.Request) {
 				MAC:    session.MAC,
 			},
 		},
-		DiskPath:           session.DiskPath,
-		ReceiverTTLSeconds: a.receiverTTLSec,
+		DiskPath:             session.DiskPath,
+		ReceiverTTLSeconds:   a.receiverTTLSec,
+		MigrationBindAddress: bindAddress,
 	}
 	var info receiverInfo
 	if _, err := a.flux.do(r.Context(), http.MethodPost, "/v1/migration/receivers", receiverReq, &info); err != nil {
@@ -237,10 +262,10 @@ func (a *adapter) prepare(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.destByID[session.ID] = info.ID
 	a.mu.Unlock()
-	a.log.Info("fluxvm: receiver created", "session", session.ID, "receiverID", info.ID, "port", info.Port)
+	a.log.Info("fluxvm: receiver created", "session", session.ID, "receiverID", info.ID, "port", info.Port, "migrationNetwork", session.MigrationNetwork)
 	writeJSON(w, http.StatusOK, migration.PrepareResult{
 		TransferSupported: true,
-		Endpoint:          fmt.Sprintf("tcp:%s:%d", a.advertiseHost, info.Port),
+		Endpoint:          fmt.Sprintf("tcp:%s:%d", advertiseHost, info.Port),
 		Backend:           backend,
 	})
 }
@@ -350,6 +375,30 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
 }
 
+// migrationNetworkFlag accumulates repeated -migration-network name=ip
+// flags into a name -> IP map.
+type migrationNetworkFlag map[string]string
+
+func (m migrationNetworkFlag) String() string {
+	parts := make([]string, 0, len(m))
+	for name, ip := range m {
+		parts = append(parts, name+"="+ip)
+	}
+	return strings.Join(parts, ",")
+}
+
+func (m migrationNetworkFlag) Set(value string) error {
+	name, ip, ok := strings.Cut(value, "=")
+	if !ok || name == "" || ip == "" {
+		return fmt.Errorf("expected name=ip, got %q", value)
+	}
+	if net.ParseIP(ip) == nil {
+		return fmt.Errorf("invalid IP %q for migration network %q", ip, name)
+	}
+	m[name] = ip
+	return nil
+}
+
 func main() {
 	socket := flag.String("socket", "", "Unix socket path to listen on (required)")
 	fluxURL := flag.String("fluxvm-url", "http://127.0.0.1:8080", "local FluxVM REST API base URL")
@@ -357,6 +406,8 @@ func main() {
 	advertiseHost := flag.String("advertise-host", "127.0.0.1", "address migration peers should use to reach this host's receivers")
 	bridge := flag.String("bridge", "virbr0", "host bridge for receiver tap devices")
 	receiverTTL := flag.Uint64("receiver-ttl-seconds", 300, "how long an unclaimed receiver is kept before FluxVM reclaims it")
+	migrationNetworks := make(migrationNetworkFlag)
+	flag.Var(migrationNetworks, "migration-network", "name=ip mapping a MachineMigration's migrationNetwork to the address the receiver binds/advertises (repeatable)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -366,7 +417,7 @@ func main() {
 	}
 
 	flux := newFluxClient(*fluxURL, *fluxToken)
-	a := newAdapter(log, flux, *advertiseHost, *bridge, *receiverTTL)
+	a := newAdapter(log, flux, *advertiseHost, *bridge, *receiverTTL, migrationNetworks)
 
 	_ = os.Remove(*socket)
 	listener, err := net.Listen("unix", *socket)

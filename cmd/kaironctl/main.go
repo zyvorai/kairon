@@ -188,6 +188,7 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 	bandwidth := fs.Uint64("bandwidth-mbps", 0, "migration adapter bandwidth limit")
 	downtime := fs.Uint64("max-downtime-ms", 0, "maximum requested downtime")
 	multifd := fs.Uint("multifd-channels", 0, "QEMU multifd channels (0 disables explicit setting)")
+	migrationNetwork := fs.String("migration-network", "", "migration network name configured on the target node's adapter (-migration-network name=ip); empty uses the adapter's default advertise address")
 	_ = fs.Parse(args[1:])
 	if *multifd > 255 {
 		fatal(fmt.Errorf("--multifd-channels must be <= 255"))
@@ -198,7 +199,7 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 	migration := model.MachineMigration{
 		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineMigration},
 		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
-		Spec:     model.MachineMigrationSpec{MachineName: machine, Strategy: *strategy, TargetNode: *target, Mode: *mode, BandwidthMbps: *bandwidth, MaxDowntimeMs: *downtime, MultifdChannels: uint8(*multifd)},
+		Spec:     model.MachineMigrationSpec{MachineName: machine, Strategy: *strategy, TargetNode: *target, Mode: *mode, BandwidthMbps: *bandwidth, MaxDowntimeMs: *downtime, MultifdChannels: uint8(*multifd), MigrationNetwork: *migrationNetwork},
 	}
 	out, err := kc.CreateMachineMigration(ctx, *ns, migration)
 	if err != nil {

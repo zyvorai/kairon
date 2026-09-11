@@ -330,6 +330,8 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 		MAC:        rec.Request.Network.MAC,
 		VCPUs:      rec.Request.VCPUs,
 		MemoryMiB:  rec.Request.MemoryMiB,
+
+		MigrationNetwork: item.Spec.MigrationNetwork,
 	}
 	var targetURL string
 	if a.MigrationPeerURL != nil {
