@@ -11,7 +11,7 @@
 [![Release](https://img.shields.io/badge/version-v0.3.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
 
-[Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
+[Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Recovery runbook](docs/runbook-migration-failures.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
 
 </div>
 
@@ -41,6 +41,8 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 - **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates standard snapshot objects
 - **DRA → VFIO** — allocated `ResourceClaim` → PCI BDF → allowlisted `vfio_devices` (fail-closed)
 - **kaironctl** — create, start/stop, migrate, evacuate, snapshot
+- **kairon-ui** — optional web dashboard for machines, migrations, snapshots and operator recovery (see [Dashboard](#dashboard) below)
+- **Operational tooling** — Prometheus metrics + alert rules, a per-node/cluster migration concurrency quota, and `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted (see [docs/runbook-migration-failures.md](docs/runbook-migration-failures.md))
 - **Helm + raw manifests + CI** — auditable, reproducible builds
 
 Live *memory* transfer still needs a node-local [migration adapter](docs/migration-adapter.md). Without one, live requests block **before** the source is touched. Cold migration works today.
@@ -162,6 +164,21 @@ Certificates need `serverAuth` + `clientAuth` and the chart’s migration server
 
 ---
 
+## Dashboard
+
+`kairon-ui` is an optional web dashboard (Go backend + a small React/TypeScript SPA) for Machines, Migrations, Snapshots, and — the one workflow worth a UI on its own — the `NeedsRecovery` operator-attested recovery form. It's a thin wrapper over the same Kubernetes API `kaironctl` uses; it has no side channel and no extra source of truth.
+
+```bash
+helm upgrade --install kairon ./charts/kairon -n kairon-system \
+  --set ui.enabled=true \
+  --set ui.token="$(openssl rand -hex 24)"
+kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
+```
+
+Open `http://127.0.0.1:8082` and paste the token into the "API token" field. `ui.token` is required unless you explicitly set `ui.allowUnauthenticated=true` (local development only) — the chart refuses to render without one, and the binary independently refuses to start without one.
+
+---
+
 ## Snapshots & devices
 
 **CSI snapshot** of PVC-backed volumes:
@@ -206,6 +223,16 @@ Point at a cluster with `KAIRON_KUBE_URL` (for example after `kubectl proxy`) or
 
 ---
 
+## Operability
+
+`kairon-controller` exposes Prometheus metrics on its existing health port (`/metrics`): migration counts by phase, phase age, transfer/downtime histograms, completion counters, and a `dataplane_encrypted` gauge. Example alert rules ship in [`charts/kairon/alerts.yaml`](charts/kairon/alerts.yaml) (optionally rendered as a `PrometheusRule` via `metrics.prometheusRule.enabled=true`), each pointing at [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md).
+
+`migration.maxConcurrentPerNode` / `migration.maxConcurrentCluster` (both `0` = unlimited) cap how many non-terminal migrations may touch one node or the cluster at once — a lightweight admission control, mainly useful to bound the blast radius of a bulk `kaironctl evacuate`.
+
+Real two-host testing and a live `NeedsRecovery` drill (rehearsing operator recovery on purpose) are documented as runbooks with helper scripts, since they need hardware this repository's own CI doesn't have: [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md), [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md).
+
+---
+
 ## Develop
 
 ```bash
@@ -224,7 +251,7 @@ Runtime code uses the **Go standard library only** — no client-go, no generate
 
 ### Production gaps
 
-Pre-GA gaps include a real hypervisor migration adapter, storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, admission/quotas, certificate rotation, confidential-compute enforcement, and large-scale hardware qualification.
+Pre-GA gaps include storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI.
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 

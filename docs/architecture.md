@@ -4,11 +4,12 @@ Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the s
 
 ## Components
 
-- `kairon-controller`: Machine placement, `MachineMigration` state and `MachineSnapshot` -> CSI `VolumeSnapshot` orchestration.
+- `kairon-controller`: Machine placement, `MachineMigration` state and `MachineSnapshot` -> CSI `VolumeSnapshot` orchestration. Exposes Prometheus metrics and a migration concurrency quota (see Operational visibility below).
 - `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, and exposes the mTLS migration peer API.
 - migration peer: TLS 1.3, mandatory client certificate, target prepare/commit/abort and a local atomic session journal.
 - migration adapter: optional HTTP-over-Unix-socket component that implements VMM-specific target/source migration operations.
 - `kaironctl`: thin Kubernetes API client; it never bypasses the controllers.
+- `kairon-ui` (optional): a web dashboard (`internal/uiapi` Go backend + `web/` React SPA) that is itself just another Kubernetes API client, same standing as `kaironctl` -- no privileged side channel, no second source of truth.
 
 ## Cold migration
 
@@ -60,3 +61,9 @@ Destination sessions are persisted as mode `0600` JSON files using write -> fsyn
 ## DRA / VFIO
 
 `Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` `ResourceClaim` objects. The node agent requires an allocation, resolves a PCI BDF, normalizes it and checks a node-local allowlist. Namespace users cannot bypass the host PCI authorization boundary by editing annotations.
+
+## Operational visibility
+
+`kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane; each links to [`runbook-migration-failures.md`](runbook-migration-failures.md).
+
+A migration concurrency quota (`migration.maxConcurrentPerNode`/`maxConcurrentCluster`, both `0` = unlimited) is enforced in the same admission path as target-eligibility checks, rejecting into the existing `Blocked` phase -- not a new state, not a new mechanism.

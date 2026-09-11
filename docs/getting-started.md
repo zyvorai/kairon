@@ -36,7 +36,7 @@ kaironctl migrate demo --strategy cold --target-node worker-2
 
 Use the Helm chart and provide `kairon-migration-tls` with `ca.crt`, `tls.crt`, and `tls.key`, then enable `migration.enabled=true`. The chart credential must have `serverAuth` + `clientAuth` EKUs and DNS SAN `kairon-node` unless `migration.tlsServerName` is changed.
 
-A real live transfer additionally requires a Kairon migration adapter on each node. Current FluxVM does not expose the verified adapter/API required by this release, so an explicit live request without an adapter is safely blocked before source transfer.
+A real live transfer additionally requires a Kairon migration adapter on each node (`cmd/kairon-migration-adapter-fluxvm`; not installed automatically today -- see [`runbook-multi-host-migration-test.md`](runbook-multi-host-migration-test.md)). Without one configured, an explicit live request is safely blocked before source transfer.
 
 ```bash
 kaironctl migrate demo --strategy live --target-node worker-2 --mode pre-copy
@@ -48,6 +48,17 @@ kaironctl migrate demo --strategy live --target-node worker-2 --mode pre-copy
 kaironctl snapshot database --name database-before-upgrade --class csi-snapclass
 kaironctl get snapshots
 ```
+
+## Deploy the web dashboard
+
+```bash
+helm upgrade --install kairon ./charts/kairon -n kairon-system \
+  --set ui.enabled=true \
+  --set ui.token="$(openssl rand -hex 24)"
+kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
+```
+
+Open `http://127.0.0.1:8082` and paste the token from `ui.token`. `ui.token` (or `ui.allowUnauthenticated=true`, local development only) is required -- the chart refuses to render without one, and `kairon-ui` independently refuses to start without one.
 
 ## Network Fabric (eBPF edge)
 

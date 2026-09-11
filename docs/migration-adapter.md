@@ -2,7 +2,7 @@
 
 The adapter isolates hypervisor-specific migration mechanics from Kairon's Kubernetes API. It is a local HTTP service on a root/admin-controlled Unix socket. Kairon never exposes this socket to workload Pods.
 
-Current FluxVM does **not** implement this contract. It is defined by Kairon v0.3 as the integration target for a future FluxVM migration backend or another trusted host component.
+`cmd/kairon-migration-adapter-fluxvm` implements this contract against real FluxVM migration/QMP endpoints -- it is not a stub (see `cmd/kairon-migration-adapter-stub` for the test double used in unit/integration tests). It is not installed automatically by `scripts/deploy-remote.sh` or the Helm chart today; see [`docs/runbook-multi-host-migration-test.md`](runbook-multi-host-migration-test.md) for how to deploy and wire it up.
 
 ## Destination API
 
@@ -14,11 +14,14 @@ Input is `migration.PrepareRequest` containing the immutable session identity. R
 {
   "transferSupported": true,
   "endpoint": "opaque-backend-endpoint",
-  "backend": "qemu"
+  "backend": "qemu",
+  "dataPlaneEncrypted": true
 }
 ```
 
 The endpoint is opaque to Kubernetes and is sent only from the target peer to the authenticated source peer, then to the local source adapter.
+
+`dataPlaneEncrypted` reports whether *this* receiver's RAM/state stream was actually configured with TLS (independent of the always-on mTLS control-plane RPCs between kairon-node peers) -- it flows through to `MachineMigration.status.dataPlaneEncrypted` and the `kairon_migration_dataplane_encrypted` metric. An adapter that predates this field can simply omit it; it decodes to `false`, the conservative assumption.
 
 `POST /v1/destination/{sessionID}/commit`
 
