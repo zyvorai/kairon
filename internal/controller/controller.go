@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
 )
 
@@ -30,6 +32,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			assigned[m.Spec.NodeName]++
 		}
 	}
+	now := time.Now().UTC()
 	for _, m := range machines {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
 			continue
@@ -39,12 +42,25 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = err.Error()
+			status.ObservedGeneration = m.Metadata.Generation
+			status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "False", "FailedScheduling", err.Error(), now)
+			status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "Unscheduled", err.Error(), now)
 			_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+			_ = c.Kube.Eventf(ctx, m, "Warning", "FailedScheduling", err.Error(), "kairon-controller")
 			continue
 		}
 		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": node}}); err != nil {
 			return err
 		}
+		status := m.Status
+		status.Phase = "Pending"
+		status.NodeName = node
+		status.Message = fmt.Sprintf("assigned to %s", node)
+		status.ObservedGeneration = m.Metadata.Generation
+		status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "True", "Scheduled", node, now)
+		status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "WaitingForRuntime", "", now)
+		_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+		_ = c.Kube.Eventf(ctx, m, "Normal", "Scheduled", fmt.Sprintf("Successfully assigned to %s", node), "kairon-controller")
 		assigned[node]++
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
 	}

@@ -8,6 +8,10 @@ const (
 	Finalizer        = "kairon.zyvor.dev/runtime-cleanup"
 	CapableLabel     = "kairon.zyvor.dev/capable"
 	DefaultNamespace = "default"
+
+	ConditionScheduled = "Scheduled"
+	ConditionCreated   = "Created"
+	ConditionReady     = "Ready"
 )
 
 type TypeMeta struct {
@@ -20,6 +24,7 @@ type ObjectMeta struct {
 	Namespace         string            `json:"namespace,omitempty"`
 	UID               string            `json:"uid,omitempty"`
 	ResourceVersion   string            `json:"resourceVersion,omitempty"`
+	Generation        int64             `json:"generation,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	Finalizers        []string          `json:"finalizers,omitempty"`
@@ -44,6 +49,7 @@ type MachineSpec struct {
 	Resources  ResourceSpec  `json:"resources"`
 	Runtime    RuntimeSpec   `json:"runtime,omitempty"`
 	Network    NetworkSpec   `json:"network,omitempty"`
+	CloudInit  CloudInitSpec `json:"cloudInit,omitempty"`
 	PowerState string        `json:"powerState,omitempty"`
 	Tenant     string        `json:"tenant,omitempty"`
 	TTLSeconds int64         `json:"ttlSeconds,omitempty"`
@@ -74,9 +80,45 @@ type NetworkSpec struct {
 	MAC    string `json:"mac,omitempty"`
 }
 
+type CloudInitSpec struct {
+	UserData      string   `json:"userData,omitempty"`
+	SSHPublicKeys []string `json:"sshPublicKeys,omitempty"`
+}
+
 type PlacementSpec struct {
 	Architecture string            `json:"architecture,omitempty"`
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	Tolerations  []Toleration      `json:"tolerations,omitempty"`
+	Affinity     *Affinity         `json:"affinity,omitempty"`
+}
+
+type Toleration struct {
+	Key      string `json:"key,omitempty"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
+}
+
+type Affinity struct {
+	NodeAffinity *NodeAffinity `json:"nodeAffinity,omitempty"`
+}
+
+type NodeAffinity struct {
+	RequiredDuringSchedulingIgnoredDuringExecution *NodeSelector `json:"requiredDuringSchedulingIgnoredDuringExecution,omitempty"`
+}
+
+type NodeSelector struct {
+	NodeSelectorTerms []NodeSelectorTerm `json:"nodeSelectorTerms,omitempty"`
+}
+
+type NodeSelectorTerm struct {
+	MatchExpressions []NodeSelectorRequirement `json:"matchExpressions,omitempty"`
+}
+
+type NodeSelectorRequirement struct {
+	Key      string   `json:"key"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values,omitempty"`
 }
 
 type SecuritySpec struct {
@@ -102,10 +144,17 @@ type Condition struct {
 	LastTransitionTime time.Time `json:"lastTransitionTime"`
 }
 
+type Taint struct {
+	Key    string `json:"key,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect,omitempty"`
+}
+
 type Node struct {
 	Metadata ObjectMeta `json:"metadata"`
 	Spec     struct {
-		Unschedulable bool `json:"unschedulable,omitempty"`
+		Unschedulable bool    `json:"unschedulable,omitempty"`
+		Taints        []Taint `json:"taints,omitempty"`
 	} `json:"spec"`
 	Status struct {
 		Conditions []NodeCondition `json:"conditions,omitempty"`

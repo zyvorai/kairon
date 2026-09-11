@@ -34,7 +34,10 @@ Edit `examples/linux-machine.yaml` so `spec.image.path` exists on the selected h
 ```bash
 kubectl apply -f examples/linux-machine.yaml
 kubectl get machine ubuntu-dev -w
+kubectl describe machine ubuntu-dev
 ```
+
+`status.conditions` (`Scheduled` / `Created` / `Ready`) and Kubernetes Events track placement and FluxVM lifecycle. Optional `spec.cloudInit` and `spec.image.digest` (`sha256:…`) are supported on create.
 
 ## Stop/start
 

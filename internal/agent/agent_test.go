@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
@@ -43,6 +44,8 @@ func TestReconcileCreatesFluxVMAndUpdatesStatus(t *testing.T) {
 			status = p.Status
 			statusPatched = true
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusCreated)
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -77,6 +80,12 @@ func TestReconcileCreatesFluxVMAndUpdatesStatus(t *testing.T) {
 	if status.RuntimeID != "vm-123" || status.Phase != "Running" || status.GuestIP != "10.44.0.8" {
 		t.Fatalf("unexpected status: %+v", status)
 	}
+	if status.ObservedGeneration != machine.Metadata.Generation {
+		t.Fatalf("observedGeneration=%d", status.ObservedGeneration)
+	}
+	if model.ConditionStatus(status.Conditions, model.ConditionReady) != "True" {
+		t.Fatalf("Ready condition=%v", status.Conditions)
+	}
 }
 
 func TestImageRootRejectsTraversal(t *testing.T) {
@@ -96,6 +105,8 @@ func TestImageRootRejectsTraversal(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			statusWasError = p.Status.Phase == "Error"
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/events"):
+			w.WriteHeader(http.StatusCreated)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}

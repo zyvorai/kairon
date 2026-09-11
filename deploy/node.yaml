@@ -25,6 +25,9 @@ spec:
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
           ports:
             - {name: health, containerPort: 8081}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: "1", memory: 512Mi}
           readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 10}
           securityContext:

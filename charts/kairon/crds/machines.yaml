@@ -23,6 +23,9 @@ spec:
         - name: Phase
           type: string
           jsonPath: .status.phase
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
         - name: CPU
           type: string
           jsonPath: .spec.resources.cpu
@@ -75,6 +78,13 @@ spec:
                     bridge: {type: string}
                     parent: {type: string}
                     mac: {type: string}
+                cloudInit:
+                  type: object
+                  properties:
+                    userData: {type: string}
+                    sshPublicKeys:
+                      type: array
+                      items: {type: string}
                 powerState:
                   type: string
                   enum: [Running, Stopped]
@@ -87,6 +97,40 @@ spec:
                     nodeSelector:
                       type: object
                       additionalProperties: {type: string}
+                    tolerations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          key: {type: string}
+                          operator: {type: string}
+                          value: {type: string}
+                          effect: {type: string}
+                    affinity:
+                      type: object
+                      properties:
+                        nodeAffinity:
+                          type: object
+                          properties:
+                            requiredDuringSchedulingIgnoredDuringExecution:
+                              type: object
+                              properties:
+                                nodeSelectorTerms:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      matchExpressions:
+                                        type: array
+                                        items:
+                                          type: object
+                                          required: [key, operator]
+                                          properties:
+                                            key: {type: string}
+                                            operator: {type: string}
+                                            values:
+                                              type: array
+                                              items: {type: string}
                 security:
                   type: object
                   properties:

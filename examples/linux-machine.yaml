@@ -14,6 +14,13 @@ spec:
   network:
     mode: tap
     netns: true
+  cloudInit:
+    userData: |
+      #cloud-config
+      users:
+        - name: ubuntu
+          sudo: ALL=(ALL) NOPASSWD:ALL
+          shell: /bin/bash
   placement:
     architecture: amd64
   powerState: Running

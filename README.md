@@ -18,17 +18,19 @@ This repository is an **MVP/reference implementation**, designed so the core con
 
 ## What works
 
-- `Machine` CRD with a status subresource and printer columns.
-- Deterministic, least-loaded scheduling across Ready Kairon-capable Kubernetes nodes.
+- `Machine` CRD with a status subresource, Ready printer column, and `observedGeneration`.
+- Stable conditions (`Scheduled`, `Created`, `Ready`) and Kubernetes Events for lifecycle.
+- Deterministic, least-loaded scheduling with nodeSelector, tolerations, and required nodeAffinity.
 - Node-local reconciliation to FluxVM `POST /v1/vms`, `GET /v1/vms?name=...`, `GET /v1/vms/{id}`, and `DELETE /v1/vms/{id}`.
 - QEMU, Cloud Hypervisor, Firecracker and FluxVM backend selection exposed through the Machine API; Firecracker supports an explicit kernel path.
 - CPU and memory quantity conversion into FluxVM's `vcpus` and `memory_mib` contract.
 - `user`, `tap`, and `macvtap` network modes, including per-VM netns for TAP.
+- Cloud-init userdata / SSH public keys and optional `sha256:` image digest verification.
 - Declarative start/stop and deletion cleanup with a finalizer.
 - Multi-tenancy mapping: Kubernetes namespace is always the FluxVM tenant; Machine authors cannot override it.
 - In-cluster Kubernetes client implemented with the Go standard library only: no client-go dependency and no generated code requirement.
-- Controller and node health/readiness endpoints.
-- `kaironctl` for create/get/describe/start/stop/delete through the Kubernetes API.
+- Controller and node health/readiness endpoints with CPU/memory requests and limits.
+- `kaironctl` for create/get/describe/start/stop/delete/console through the Kubernetes API.
 - Helm chart, raw manifests, RBAC, GitHub Actions, container builds and test suite.
 
 ## Architecture
@@ -130,6 +132,7 @@ kaironctl get
 kaironctl describe demo
 kaironctl stop demo
 kaironctl start demo
+KAIRON_FLUXVM_URL=http://127.0.0.1:7788 kaironctl console demo
 kaironctl delete demo
 ```
 

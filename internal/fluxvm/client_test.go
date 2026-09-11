@@ -23,7 +23,14 @@ func TestCreateMapping(t *testing.T) {
 	defer s.Close()
 	c := New(s.URL, "")
 	c.HTTP = s.Client()
-	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "1500m", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, Network: model.NetworkSpec{Mode: "tap", NetNS: true}}}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{
+		Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+		Resources: model.ResourceSpec{CPU: "1500m", Memory: "2Gi"},
+		Runtime:   model.RuntimeSpec{Backend: "qemu"},
+		Network:   model.NetworkSpec{Mode: "tap", NetNS: true},
+		CloudInit: model.CloudInitSpec{UserData: "#cloud-config\n", SSHPublicKeys: []string{"ssh-ed25519 AAAA"}},
+		Security:  model.SecuritySpec{SecureBoot: true},
+	}}
 	r, err := c.Create(context.Background(), m, "qemu")
 	if err != nil {
 		t.Fatal(err)
@@ -33,6 +40,9 @@ func TestCreateMapping(t *testing.T) {
 	}
 	if got.Network["mode"] != "tap" || got.Network["netns"] != true {
 		t.Fatalf("network=%v", got.Network)
+	}
+	if got.UserData == "" || len(got.SSHPublicKeys) != 1 || !got.SecureBoot {
+		t.Fatalf("cloud-init/security not forwarded: %+v", got)
 	}
 }
 

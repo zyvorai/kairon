@@ -20,7 +20,7 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
-				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Generation: 3},
 				Spec:     model.MachineSpec{PowerState: "Running"},
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
@@ -34,6 +34,10 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			patchedNode = p["spec"]["nodeName"]
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
+			w.WriteHeader(http.StatusCreated)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}

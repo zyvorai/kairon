@@ -4,6 +4,13 @@ controller:
     tag: latest
     pullPolicy: IfNotPresent
   interval: 5s
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 node:
   image:
     repository: ghcr.io/zyvorai/kairon-node
@@ -15,3 +22,10 @@ node:
   imageRoot: /var/lib/fluxvm/images
   nodeSelector:
     kairon.zyvor.dev/capable: "true"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi

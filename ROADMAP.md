@@ -9,6 +9,31 @@
 - raw manifests + Helm + CI
 - deterministic node naming and namespace-to-tenant isolation
 
+## v0.1.1 — KubeVirt-feel control-plane polish
+
+- `observedGeneration` and stable `Scheduled` / `Created` / `Ready` conditions
+- Kubernetes Events for schedule / create / start / stop / fail
+- `spec.cloudInit.userData` and `sshPublicKeys` forwarded to FluxVM
+- `spec.image.digest` (`sha256:…`) verified before create
+- `spec.placement.tolerations` and required `nodeAffinity`
+- `kaironctl describe` shows conditions/events; `console` via `KAIRON_FLUXVM_URL`
+- workload CPU/memory requests/limits; Ready printer column
+- `secureBoot` / `tpm` passed through to FluxVM create payload
+
+## KubeVirt job map
+
+Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; FluxVM owns VMs):
+
+| Job | Status |
+|---|---|
+| Declare VM + start/stop | v0.1 |
+| Status / Events / cloud-init / placement polish | v0.1.1 |
+| Disks / images / snapshot-clone | v0.2 |
+| Multus / DRA / GPU | v0.3 |
+| Live migrate / fencing / MDB | v0.4 |
+| Admission / image policy / confidential | v0.5 |
+| Conformance / must-gather / KubeVirt import | v1.0 |
+
 ## v0.2 — storage and images
 
 - MachineImage and VirtualDisk CRDs

@@ -36,15 +36,27 @@ func (r Record) ID() string {
 }
 
 type CreateRequest struct {
-	Name       string         `json:"name"`
-	Tenant     string         `json:"tenant,omitempty"`
-	Backend    string         `json:"backend"`
-	Image      string         `json:"image"`
-	Kernel     string         `json:"kernel,omitempty"`
-	VCPUs      uint32         `json:"vcpus"`
-	MemoryMiB  uint64         `json:"memory_mib"`
-	Network    map[string]any `json:"network,omitempty"`
-	TTLSeconds int64          `json:"ttl_seconds,omitempty"`
+	Name          string         `json:"name"`
+	Tenant        string         `json:"tenant,omitempty"`
+	Backend       string         `json:"backend"`
+	Image         string         `json:"image"`
+	Kernel        string         `json:"kernel,omitempty"`
+	VCPUs         uint32         `json:"vcpus"`
+	MemoryMiB     uint64         `json:"memory_mib"`
+	Network       map[string]any `json:"network,omitempty"`
+	TTLSeconds    int64          `json:"ttl_seconds,omitempty"`
+	UserData      string         `json:"user_data,omitempty"`
+	SSHPublicKeys []string       `json:"ssh_public_keys,omitempty"`
+	SecureBoot    bool           `json:"secure_boot,omitempty"`
+	TPM           bool           `json:"tpm,omitempty"`
+	Digest        string         `json:"digest,omitempty"`
+}
+
+type ConsoleInfo struct {
+	URL    string `json:"url,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Serial string `json:"serial,omitempty"`
+	VNC    string `json:"vnc,omitempty"`
 }
 
 func New(baseURL, token string) *Client {
@@ -169,7 +181,22 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	if m.Spec.Network.MAC != "" {
 		network["mac"] = m.Spec.Network.MAC
 	}
-	payload := CreateRequest{Name: m.RuntimeName(), Tenant: tenant, Backend: backend, Image: m.Spec.Image.Path, Kernel: m.Spec.Runtime.Kernel, VCPUs: cpu, MemoryMiB: mem, Network: network, TTLSeconds: m.Spec.TTLSeconds}
+	payload := CreateRequest{
+		Name:          m.RuntimeName(),
+		Tenant:        tenant,
+		Backend:       backend,
+		Image:         m.Spec.Image.Path,
+		Kernel:        m.Spec.Runtime.Kernel,
+		VCPUs:         cpu,
+		MemoryMiB:     mem,
+		Network:       network,
+		TTLSeconds:    m.Spec.TTLSeconds,
+		UserData:      m.Spec.CloudInit.UserData,
+		SSHPublicKeys: m.Spec.CloudInit.SSHPublicKeys,
+		SecureBoot:    m.Spec.Security.SecureBoot,
+		TPM:           m.Spec.Security.TPM,
+		Digest:        m.Spec.Image.Digest,
+	}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {
 		return nil, err
@@ -179,6 +206,19 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 		return nil, fmt.Errorf("decode FluxVM create: %w", err)
 	}
 	return &rec, nil
+}
+
+// Console returns console connection info when FluxVM exposes GET /v1/vms/{id}/console.
+func (c *Client) Console(ctx context.Context, id string) (*ConsoleInfo, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/console", nil)
+	if err != nil {
+		return nil, err
+	}
+	var info ConsoleInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("decode FluxVM console: %w", err)
+	}
+	return &info, nil
 }
 
 func (c *Client) Delete(ctx context.Context, id string) error {

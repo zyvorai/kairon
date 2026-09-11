@@ -23,6 +23,9 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines"]
     verbs: ["get", "list", "watch", "patch", "update"]
@@ -48,6 +51,9 @@ kind: ClusterRole
 metadata:
   name: kairon-node
 rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines"]
     verbs: ["get", "list", "watch", "patch", "update"]

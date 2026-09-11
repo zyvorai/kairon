@@ -144,3 +144,81 @@ func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	err := c.request(ctx, http.MethodGet, "/api/v1/nodes", nil, &list, "")
 	return list.Items, err
 }
+
+// Event is a subset of core/v1 Event used for Machine lifecycle signals.
+type Event struct {
+	APIVersion     string            `json:"apiVersion"`
+	Kind           string            `json:"kind"`
+	Metadata       model.ObjectMeta  `json:"metadata"`
+	InvolvedObject map[string]string `json:"involvedObject"`
+	Reason         string            `json:"reason,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	Type           string            `json:"type,omitempty"`
+	Source         map[string]string `json:"source,omitempty"`
+	Count          int               `json:"count,omitempty"`
+	FirstTimestamp time.Time         `json:"firstTimestamp,omitempty"`
+	LastTimestamp  time.Time         `json:"lastTimestamp,omitempty"`
+}
+
+type EventList struct {
+	Items []Event `json:"items"`
+}
+
+func (c *Client) CreateEvent(ctx context.Context, ns string, ev Event) error {
+	if ev.APIVersion == "" {
+		ev.APIVersion = "v1"
+	}
+	if ev.Kind == "" {
+		ev.Kind = "Event"
+	}
+	if ev.Metadata.Namespace == "" {
+		ev.Metadata.Namespace = ns
+	}
+	if ev.Count == 0 {
+		ev.Count = 1
+	}
+	now := time.Now().UTC()
+	if ev.FirstTimestamp.IsZero() {
+		ev.FirstTimestamp = now
+	}
+	if ev.LastTimestamp.IsZero() {
+		ev.LastTimestamp = now
+	}
+	path := fmt.Sprintf("/api/v1/namespaces/%s/events", url.PathEscape(ns))
+	return c.request(ctx, http.MethodPost, path, ev, nil, "")
+}
+
+// Eventf records a namespaced Event referencing a Machine. Failures are ignored by callers that use `_ =`.
+func (c *Client) Eventf(ctx context.Context, m model.Machine, eventType, reason, message, component string) error {
+	now := time.Now().UTC()
+	name := fmt.Sprintf("%s.%x", m.Metadata.Name, now.UnixNano())
+	ev := Event{
+		Metadata: model.ObjectMeta{Name: name, Namespace: m.Namespace()},
+		InvolvedObject: map[string]string{
+			"apiVersion":      model.APIVersion,
+			"kind":            model.KindMachine,
+			"name":            m.Metadata.Name,
+			"namespace":       m.Namespace(),
+			"uid":             m.Metadata.UID,
+			"resourceVersion": m.Metadata.ResourceVersion,
+		},
+		Reason:         reason,
+		Message:        message,
+		Type:           eventType,
+		Source:         map[string]string{"component": component},
+		Count:          1,
+		FirstTimestamp: now,
+		LastTimestamp:  now,
+	}
+	return c.CreateEvent(ctx, m.Namespace(), ev)
+}
+
+func (c *Client) ListEventsForMachine(ctx context.Context, ns, name string) ([]Event, error) {
+	field := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Machine,involvedObject.apiVersion=%s", name, model.APIVersion)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/events?fieldSelector=%s", url.PathEscape(ns), url.QueryEscape(field))
+	var list EventList
+	if err := c.request(ctx, http.MethodGet, path, nil, &list, ""); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
