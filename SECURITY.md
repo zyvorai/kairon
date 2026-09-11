@@ -1,24 +1,30 @@
-# Security policy
+# Security
 
-Report suspected vulnerabilities privately to Zyvor maintainers before opening a public issue. Include affected version, deployment mode, reproduction steps, and impact.
+Kairon controls host-level VM execution. Treat the controller, node agents, FluxVM and any migration adapter as privileged infrastructure even when the Kairon process itself runs as a non-root container.
 
-## v0.2 security boundaries
+## v0.3 migration security
 
-- Kubernetes namespace is used as the FluxVM tenant boundary.
-- Node agents only reconcile Machines assigned to their own node.
-- Image paths can be constrained to an administrator-selected root; traversal outside that root is rejected before FluxVM is called.
-- Runtime cleanup uses a Kubernetes finalizer.
-- Live migration accepts only validated `tcp:host:port` destinations. `exec:`, `unix:`, malformed addresses, and invalid ports are rejected by Kairon.
-- Live cutover sets `kairon.zyvor.dev/adopt-only=true`. If the expected migrated runtime is absent, the target node agent refuses to create a new VM.
-- A DRA `ResourceClaim` must have an allocation. PCI BDFs are syntax-checked and must be present in the node-local `KAIRON_VFIO_ALLOWLIST`; the default empty allowlist denies all passthrough.
-- ResourceClaim annotations are mapping hints, not authorization. The node-local allowlist is the host-device authorization boundary.
+- Users cannot submit a raw QEMU/TCP/exec migration destination. The target is a Kubernetes node selected by Kairon.
+- Node-to-node migration control uses TLS 1.3 and `RequireAndVerifyClientCert`.
+- Peer API responses use `Cache-Control: no-store`.
+- The destination session ID is deterministic but contains no secret. Transfer endpoints remain inside the mTLS peer exchange and are not copied into CRD status.
+- Destination session files are mode `0600` and written using fsync + atomic rename.
+- Reusing a session ID with different immutable VM/source/target identity returns HTTP 409.
+- A target that has no adapter returns `Unsupported`; the source VM is not touched.
+- Source transfer failure aborts the prepared target.
+- Commit ambiguity produces `NeedsRecovery`; Kairon does not automatically restart/cut over and risk split brain.
+- The post-commit adopt-only guard refuses to create a fresh target runtime if the expected incoming VM cannot be found.
 
-## Operational warnings
+The baseline Helm deployment uses a shared cluster migration certificate with both server/client authentication EKUs for operational simplicity. For stronger node identity and independent key rotation, use per-node credentials or SPIFFE-style workload identity and configure the expected server name appropriately.
 
-Cold migration does not copy host-local disks. Operators must ensure the target has coherent access to all required state.
+## DRA / VFIO
 
-Live migration transport preparation, encryption/authentication, storage coherency, and network-state handoff are not automated in v0.2. Do not expose QEMU migration listeners publicly; use a trusted private network or an appropriately protected tunnel.
+A `ResourceClaim` must be allocated before Kairon considers it. Resolved PCI BDFs are syntax checked and must be present in the node administrator's explicit allowlist. Empty allowlists deny passthrough.
 
-MachineSnapshot delegates data consistency to the CSI driver and workload. v0.2 does not freeze the guest filesystem before snapshot creation.
+## Images
 
-Kairon is pre-GA. Hostile multi-tenant production use additionally requires admission policy, quotas, audit guarantees, image provenance, runtime hardening, fencing, and hardware qualification.
+`--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. Signed-image policy is not yet implemented.
+
+## Reporting
+
+Report security issues privately to the Zyvor project maintainers rather than opening a public exploit issue.

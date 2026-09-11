@@ -52,7 +52,7 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 
 func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running", RuntimeID: "vm-1"}}
-	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Destination: "tcp:10.0.0.2:4444"}, Status: model.MachineMigrationStatus{Phase: "Cutover", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live", RuntimeID: "vm-1"}}
+	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: "Cutover", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live", RuntimeID: "vm-1"}}
 	guarded := false
 	phase := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

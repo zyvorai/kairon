@@ -2,31 +2,37 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
 var pciBDFPattern = regexp.MustCompile(`(?i)^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
 
 type Agent struct {
-	NodeName       string
-	Kube           *kube.Client
-	Flux           *fluxvm.Client
-	DefaultBackend string
-	ImageRoot      string
-	VFIOAllowlist  map[string]struct{}
-	Log            *slog.Logger
+	NodeName         string
+	Kube             *kube.Client
+	Flux             *fluxvm.Client
+	DefaultBackend   string
+	ImageRoot        string
+	VFIOAllowlist    map[string]struct{}
+	MigrationPeer    *migration.Client
+	SourceMigrator   migration.SourceDriver
+	MigrationPort    int
+	MigrationPeerURL func(context.Context, string) (string, error)
+	Log              *slog.Logger
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {
@@ -270,37 +276,15 @@ func NormalizeBDF(raw string) (string, error) {
 	return bdf, nil
 }
 
-func ValidateMigrationDestination(raw string) error {
-	if !strings.HasPrefix(raw, "tcp:") {
-		return fmt.Errorf("live migration destination must use tcp:host:port")
-	}
-	addr := strings.TrimPrefix(raw, "tcp:")
-	host, portText, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("invalid live migration destination %q: %w", raw, err)
-	}
-	if strings.TrimSpace(host) == "" {
-		return fmt.Errorf("live migration destination host is empty")
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("live migration destination has invalid TCP port %q", portText)
-	}
-	return nil
-}
-
-func (a *Agent) reconcileMigration(ctx context.Context, migration model.MachineMigration) error {
-	phase := migration.Status.Phase
+func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigration) error {
+	phase := item.Status.Phase
 	if phase != "Starting" && phase != "Running" {
 		return nil
 	}
-	if migration.Status.EffectiveStrategy != "live" {
+	if item.Status.EffectiveStrategy != "live" {
 		return nil
 	}
-	if err := ValidateMigrationDestination(migration.Spec.Destination); err != nil {
-		return err
-	}
-	machine, err := a.Kube.GetMachine(ctx, migration.Namespace(), migration.Spec.MachineName)
+	machine, err := a.Kube.GetMachine(ctx, item.Namespace(), item.Spec.MachineName)
 	if err != nil {
 		return err
 	}
@@ -309,85 +293,182 @@ func (a *Agent) reconcileMigration(ctx context.Context, migration model.MachineM
 	}
 	backend := machine.Spec.Runtime.Backend
 	if backend != "" && backend != "auto" && backend != "qemu" {
-		return fmt.Errorf("FluxVM live migration currently requires qemu backend, Machine requests %s", backend)
+		return fmt.Errorf("live migration currently requires qemu backend, Machine requests %s", backend)
+	}
+	if a.MigrationPeer == nil || a.SourceMigrator == nil {
+		return a.blockLiveMigration(ctx, item, "secure migration control plane or source adapter is not configured; source runtime was left untouched")
 	}
 
-	status := migration.Status
-	var fluxStatus fluxvm.MigrationStatus
+	rec, err := a.current(ctx, machine)
+	if err != nil {
+		return err
+	}
+	if rec == nil || rec.ID() == "" {
+		return fmt.Errorf("source FluxVM runtime not found")
+	}
+	session := migration.Session{
+		ID:         migrationSessionID(item),
+		Namespace:  item.Namespace(),
+		Machine:    item.Spec.MachineName,
+		SourceNode: item.Status.SourceNode,
+		TargetNode: item.Status.TargetNode,
+		RuntimeID:  rec.ID(),
+	}
+	var targetURL string
+	if a.MigrationPeerURL != nil {
+		targetURL, err = a.MigrationPeerURL(ctx, item.Status.TargetNode)
+	} else {
+		targetURL, err = a.targetControlURL(ctx, item.Status.TargetNode)
+	}
+	if err != nil {
+		return err
+	}
+
+	status := item.Status
 	if phase == "Starting" {
-		rec, err := a.current(ctx, machine)
+		prepared, err := a.MigrationPeer.Prepare(ctx, targetURL, session)
 		if err != nil {
-			return err
+			return fmt.Errorf("prepare target %s: %w", item.Status.TargetNode, err)
 		}
-		if rec == nil || rec.ID() == "" {
-			return fmt.Errorf("source FluxVM runtime not found")
+		status.SessionID = prepared.SessionID
+		status.RuntimeID = rec.ID()
+		status.Backend = prepared.Backend
+		status.TransferPhase = prepared.Phase
+		if !prepared.TransferSupported {
+			message := prepared.Reason
+			if message == "" {
+				message = "target node has no live migration backend"
+			}
+			return a.blockLiveMigrationWithStatus(ctx, item, status, message+"; source runtime was left untouched")
 		}
-		mode := migration.Spec.Mode
+		mode := item.Spec.Mode
 		if mode == "" {
 			mode = "pre-copy"
 		}
 		if mode != "pre-copy" && mode != "post-copy" {
+			_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
 			return fmt.Errorf("unsupported migration mode %q", mode)
 		}
-		fluxStatus, err = a.Flux.StartMigration(ctx, rec.ID(), fluxvm.MigrationStartRequest{
-			Destination:     migration.Spec.Destination,
-			Mode:            mode,
-			BandwidthMbps:   migration.Spec.BandwidthMbps,
-			MaxDowntimeMs:   migration.Spec.MaxDowntimeMs,
-			MultifdChannels: migration.Spec.MultifdChannels,
+		transfer, err := a.SourceMigrator.Start(ctx, migration.SourceRequest{
+			Session:   session,
+			RuntimeID: rec.ID(),
+			Endpoint:  prepared.Endpoint,
+			Options: migration.SourceOptions{
+				Mode:            mode,
+				BandwidthMbps:   item.Spec.BandwidthMbps,
+				MaxDowntimeMs:   item.Spec.MaxDowntimeMs,
+				MultifdChannels: item.Spec.MultifdChannels,
+			},
 		})
 		if err != nil {
-			return err
+			_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
+			if errors.Is(err, migration.ErrUnsupported) {
+				return a.blockLiveMigrationWithStatus(ctx, item, status, err.Error()+"; prepared target was aborted and source runtime was left untouched")
+			}
+			status.Phase = "Failed"
+			status.TransferPhase = "start-failed"
+			status.Message = "start source transfer failed; prepared target was aborted: " + err.Error()
+			return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
 		}
-		status.RuntimeID = rec.ID()
-	} else {
-		if status.RuntimeID == "" {
-			return fmt.Errorf("Running migration has no runtimeID")
-		}
-		fluxStatus, err = a.Flux.MigrationStatus(ctx, status.RuntimeID)
-		if err != nil {
-			return err
-		}
+		status.TransferID = transfer.TransferID
+		return a.projectTransfer(ctx, item, status, session, targetURL, transfer)
 	}
-	applyMigrationProgress(&status, fluxStatus)
-	return a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+
+	if status.SessionID == "" || status.TransferID == "" {
+		return fmt.Errorf("running migration is missing sessionID or transferID")
+	}
+	transfer, err := a.SourceMigrator.Status(ctx, session, status.TransferID)
+	if err != nil {
+		return fmt.Errorf("poll source transfer: %w", err)
+	}
+	return a.projectTransfer(ctx, item, status, session, targetURL, transfer)
 }
 
-func applyMigrationProgress(status *model.MachineMigrationStatus, s fluxvm.MigrationStatus) {
-	phase := strings.ToLower(s.Phase)
-	if phase == "" {
-		phase = strings.ToLower(s.Status)
-	}
-	status.FluxPhase = phase
-	if s.RAMTransferred != nil {
-		status.RAMTransferred = *s.RAMTransferred
-	}
-	if s.RAMRemaining != nil {
-		status.RAMRemaining = *s.RAMRemaining
-	}
-	if s.RAMTotal != nil {
-		status.RAMTotal = *s.RAMTotal
-	}
-	if s.TotalTimeMs != nil {
-		status.TotalTimeMs = *s.TotalTimeMs
-	}
-	if s.DowntimeMs != nil {
-		status.DowntimeMs = *s.DowntimeMs
+func (a *Agent) projectTransfer(ctx context.Context, item model.MachineMigration, status model.MachineMigrationStatus, session migration.Session, targetURL string, transfer migration.TransferStatus) error {
+	phase := strings.ToLower(strings.TrimSpace(transfer.Phase))
+	status.TransferPhase = phase
+	status.RAMTransferred = transfer.RAMTransferred
+	status.RAMRemaining = transfer.RAMRemaining
+	status.RAMTotal = transfer.RAMTotal
+	status.TotalTimeMs = transfer.TotalTimeMs
+	status.DowntimeMs = transfer.DowntimeMs
+	if transfer.TransferID != "" {
+		status.TransferID = transfer.TransferID
 	}
 	switch phase {
-	case "completed":
+	case "completed", "transferred":
+		if err := a.MigrationPeer.Commit(ctx, targetURL, session.ID); err != nil {
+			status.Phase = "NeedsRecovery"
+			status.Message = "source transfer completed but target commit failed; automatic cutover is stopped to avoid split brain: " + err.Error()
+			return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+		}
 		status.Phase = "Cutover"
-		status.Message = "FluxVM source migration completed; waiting for guarded target adoption"
-	case "failed", "cancelled", "canceled":
+		status.Message = "source transfer completed and target committed; waiting for guarded target adoption"
+	case "failed", "cancelled", "canceled", "aborted":
+		_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
 		status.Phase = "Failed"
-		status.Message = s.Error
+		status.Message = transfer.Message
 		if status.Message == "" {
-			status.Message = "FluxVM migration " + phase
+			status.Message = "source transfer " + phase + "; prepared target aborted"
 		}
 	default:
 		status.Phase = "Running"
-		status.Message = "FluxVM live migration in progress"
+		status.Message = "live migration transfer in progress"
 	}
+	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+}
+
+func (a *Agent) blockLiveMigration(ctx context.Context, item model.MachineMigration, message string) error {
+	return a.blockLiveMigrationWithStatus(ctx, item, item.Status, message)
+}
+
+func (a *Agent) blockLiveMigrationWithStatus(ctx context.Context, item model.MachineMigration, status model.MachineMigrationStatus, message string) error {
+	status.Phase = "Blocked"
+	status.Message = message
+	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+}
+
+func migrationSessionID(item model.MachineMigration) string {
+	seed := item.Metadata.UID
+	if seed == "" {
+		seed = item.Namespace() + "/" + item.Metadata.Name
+	}
+	sum := sha256.Sum256([]byte(seed))
+	return fmt.Sprintf("kmm-%x", sum[:16])
+}
+
+func (a *Agent) targetControlURL(ctx context.Context, targetNode string) (string, error) {
+	if targetNode == "" {
+		return "", fmt.Errorf("migration target node is empty")
+	}
+	nodes, err := a.Kube.ListNodes(ctx)
+	if err != nil {
+		return "", err
+	}
+	var address string
+	for _, node := range nodes {
+		if node.Metadata.Name != targetNode {
+			continue
+		}
+		for _, candidate := range node.Status.Addresses {
+			if candidate.Type == "InternalIP" && strings.TrimSpace(candidate.Address) != "" {
+				address = strings.TrimSpace(candidate.Address)
+				break
+			}
+		}
+		break
+	}
+	if address == "" {
+		return "", fmt.Errorf("target node %q has no InternalIP for the mTLS migration control plane", targetNode)
+	}
+	port := a.MigrationPort
+	if port == 0 {
+		port = 9443
+	}
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid migration port %d", port)
+	}
+	return "https://" + net.JoinHostPort(address, fmt.Sprintf("%d", port)), nil
 }
 
 func normalizePhase(s string) string {

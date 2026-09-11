@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -266,28 +268,110 @@ func TestDRAClaimFailsClosedWithoutAllowlist(t *testing.T) {
 	}
 }
 
-func TestValidateMigrationDestination(t *testing.T) {
-	for _, good := range []string{"tcp:10.0.0.2:4444", "tcp:[2001:db8::2]:4444", "tcp:migrate.internal:49152"} {
-		if err := ValidateMigrationDestination(good); err != nil {
-			t.Fatalf("%s: %v", good, err)
-		}
+type fakeSourceMigrator struct {
+	startStatus migration.TransferStatus
+	startErr    error
+	starts      int
+	last        migration.SourceRequest
+}
+
+func (f *fakeSourceMigrator) Start(_ context.Context, req migration.SourceRequest) (migration.TransferStatus, error) {
+	f.starts++
+	f.last = req
+	return f.startStatus, f.startErr
+}
+func (f *fakeSourceMigrator) Status(context.Context, migration.Session, string) (migration.TransferStatus, error) {
+	return f.startStatus, nil
+}
+func (f *fakeSourceMigrator) Abort(context.Context, migration.Session, string) error { return nil }
+
+type fakePeerDestination struct {
+	result    migration.PrepareResult
+	commitErr error
+	prepares  int
+	commits   int
+	aborts    int
+}
+
+func (f *fakePeerDestination) Prepare(context.Context, migration.Session) (migration.PrepareResult, error) {
+	f.prepares++
+	return f.result, nil
+}
+func (f *fakePeerDestination) Commit(context.Context, migration.Session) error {
+	f.commits++
+	return f.commitErr
+}
+func (f *fakePeerDestination) Abort(context.Context, migration.Session) error {
+	f.aborts++
+	return nil
+}
+
+func TestSourceAgentPreparesTargetThenCompletesTransfer(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session", Backend: "test-adapter"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "completed", RAMTotal: 4096, RAMTransferred: 4096}}
+	status := runLiveAgentReconcile(t, peerServer, destination, source)
+	if destination.prepares != 1 || destination.commits != 1 || destination.aborts != 0 {
+		t.Fatalf("destination prepares=%d commits=%d aborts=%d", destination.prepares, destination.commits, destination.aborts)
 	}
-	for _, bad := range []string{"exec:/bin/sh", "unix:/tmp/migrate.sock", "tcp:10.0.0.2", "tcp::4444", "tcp:host:70000"} {
-		if err := ValidateMigrationDestination(bad); err == nil {
-			t.Fatalf("expected %s to be rejected", bad)
-		}
+	if source.starts != 1 || source.last.Endpoint != "opaque://incoming/session" || source.last.Options.BandwidthMbps != 800 {
+		t.Fatalf("source starts=%d request=%+v", source.starts, source.last)
+	}
+	if status.Phase != "Cutover" || status.RuntimeID != "vm-1" || status.SessionID == "" || status.TransferID != "xfer-1" || status.TransferPhase != "completed" {
+		t.Fatalf("status=%+v", status)
 	}
 }
 
-func TestSourceAgentStartsLiveMigrationAndProjectsCompletion(t *testing.T) {
+func TestUnsupportedTargetBlocksBeforeSourceTransfer(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: false, Reason: "adapter unavailable"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "must-not-run", Phase: "completed"}}
+	status := runLiveAgentReconcile(t, peerServer, destination, source)
+	if source.starts != 0 {
+		t.Fatalf("source transfer started %d times", source.starts)
+	}
+	if status.Phase != "Blocked" || !strings.Contains(status.Message, "source runtime was left untouched") {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestSourceStartFailureAbortsPreparedTarget(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startErr: fmt.Errorf("source adapter start failed")}
+	status := runLiveAgentReconcile(t, peerServer, destination, source)
+	if destination.aborts != 1 {
+		t.Fatalf("target aborts=%d, want 1", destination.aborts)
+	}
+	if status.Phase != "Failed" || !strings.Contains(status.Message, "source adapter start failed") {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestCommitFailureStopsAtNeedsRecovery(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session"}, commitErr: fmt.Errorf("commit failed")}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "completed"}}
+	status := runLiveAgentReconcile(t, peerServer, destination, source)
+	if status.Phase != "NeedsRecovery" || !strings.Contains(status.Message, "avoid split brain") {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func runLiveAgentReconcile(t *testing.T, peerServer *httptest.Server, _ *fakePeerDestination, source *fakeSourceMigrator) model.MachineMigrationStatus {
+	t.Helper()
 	machine := model.Machine{
 		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
 		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
 		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
 	}
-	migration := model.MachineMigration{
-		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"},
-		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Destination: "tcp:10.0.0.2:4444", Mode: "pre-copy", BandwidthMbps: 800},
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Mode: "pre-copy", BandwidthMbps: 800},
 		Status:   model.MachineMigrationStatus{Phase: "Starting", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live"},
 	}
 	var migrationStatus model.MachineMigrationStatus
@@ -298,7 +382,7 @@ func TestSourceAgentStartsLiveMigrationAndProjectsCompletion(t *testing.T) {
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
-			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
 			_ = json.NewEncoder(w).Encode(machine)
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
@@ -313,32 +397,26 @@ func TestSourceAgentStartsLiveMigrationAndProjectsCompletion(t *testing.T) {
 		}
 	}))
 	defer ks.Close()
-	var request fluxvm.MigrationStartRequest
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1" {
 			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/migration/start":
-			_ = json.NewDecoder(r.Body).Decode(&request)
-			remaining := uint64(0)
-			_ = json.NewEncoder(w).Encode(fluxvm.MigrationStatus{Phase: "completed", Status: "completed", RAMRemaining: &remaining})
-		default:
-			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+			return
 		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 	}))
 	defer fs.Close()
 	kc, _ := kube.New(ks.URL, "", "", false)
 	kc.HTTP = ks.Client()
 	fc := fluxvm.New(fs.URL, "")
 	fc.HTTP = fs.Client()
-	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(peerServer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
 	if err := a.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if request.Destination != "tcp:10.0.0.2:4444" || request.BandwidthMbps != 800 {
-		t.Fatalf("migration request=%+v", request)
-	}
-	if migrationStatus.Phase != "Cutover" || migrationStatus.RuntimeID != "vm-1" || migrationStatus.FluxPhase != "completed" {
-		t.Fatalf("migration status=%+v", migrationStatus)
-	}
+	return migrationStatus
 }

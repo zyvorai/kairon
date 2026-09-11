@@ -1,20 +1,30 @@
-# Kairon v0.2.0
+# Kairon v0.3.0
 
-Kairon v0.2.0 adds relocation, snapshot orchestration, and guarded device passthrough on top of the v0.1 VM lifecycle.
+Kairon v0.3.0 replaces the provisional live-migration transport from v0.2 with a secure backend-neutral control plane.
 
 ## Added
 
-- `MachineMigration` CRD and controller state machine.
-- Cold migration and multi-Machine node evacuation.
-- FluxVM live-migration start/status integration using the current `destination`, `mode`, `bandwidth_mbps`, `max_downtime_ms`, and `multifd_channels` contract.
-- Migration RAM/downtime status projection.
-- Target adopt-only guard to prevent accidental double boot.
-- `MachineSnapshot` and CSI `VolumeSnapshot` orchestration.
-- Kubernetes DRA `ResourceClaim` resolution to allowlisted PCI BDFs and FluxVM `vfio_devices`.
-- CLI migration, evacuation, snapshot, and status commands.
-- Typed Kubernetes API errors for idempotent controllers.
-- Security tests for migration URI validation, adopt-only behavior, and VFIO fail-closed behavior.
+- TLS 1.3 mutual-authentication node peer service on port 9443.
+- Target-first `prepare -> transfer -> commit` migration protocol.
+- Atomic per-node session journal with idempotency/conflict detection.
+- Unix-socket migration adapter contract for VMM-specific implementation.
+- Rollback/abort when source transfer fails.
+- `NeedsRecovery` state for ambiguous post-transfer target commit failures.
+- Target node `InternalIP` discovery from the Kubernetes Node API.
+- Helm settings for migration TLS, state storage and optional adapter socket.
 
-## Explicit boundary
+## Changed
 
-Source-side FluxVM live migration is integrated. Automatic creation/authentication of the destination incoming QEMU runtime is not claimed because no verified target-preparation FluxVM API is available in the runtime contract used by this release. Operators must prepare that endpoint before `strategy: live`; `strategy: auto` can use cold relocation when no live destination is supplied.
+- `MachineMigration.spec.destination` was removed. Users select only a target node.
+- `auto` uses cold migration until cluster-wide live-backend capability discovery exists.
+- Live status uses backend-neutral `sessionID`, `transferID`, `transferPhase`, and `backend` fields.
+- The node RBAC role can read Node addresses for peer discovery.
+
+## Removed
+
+- Unverified FluxVM `/migration/start`, `/migration/status`, and `/migration/cancel` client calls.
+- User-provided raw `tcp:host:port` migration transport.
+
+## Runtime boundary
+
+The current FluxVM source tree does not expose a verified migration/QMP API. Therefore Kairon's secure orchestration is implemented and tested, but real VM memory-state live transfer requires a migration adapter. Without one, live migration is blocked before source transfer; cold migration is unaffected.

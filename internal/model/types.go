@@ -134,8 +134,7 @@ type MachineMigrationSpec struct {
 	MachineName     string `json:"machineName"`
 	Strategy        string `json:"strategy,omitempty"` // auto|live|cold
 	TargetNode      string `json:"targetNode,omitempty"`
-	Destination     string `json:"destination,omitempty"` // validated tcp:host:port for live
-	Mode            string `json:"mode,omitempty"`        // pre-copy|post-copy
+	Mode            string `json:"mode,omitempty"` // pre-copy|post-copy
 	BandwidthMbps   uint64 `json:"bandwidthMbps,omitempty"`
 	MaxDowntimeMs   uint64 `json:"maxDowntimeMs,omitempty"`
 	MultifdChannels uint8  `json:"multifdChannels,omitempty"`
@@ -148,7 +147,10 @@ type MachineMigrationStatus struct {
 	TargetNode        string `json:"targetNode,omitempty"`
 	EffectiveStrategy string `json:"effectiveStrategy,omitempty"`
 	RuntimeID         string `json:"runtimeID,omitempty"`
-	FluxPhase         string `json:"fluxPhase,omitempty"`
+	SessionID         string `json:"sessionID,omitempty"`
+	TransferID        string `json:"transferID,omitempty"`
+	TransferPhase     string `json:"transferPhase,omitempty"`
+	Backend           string `json:"backend,omitempty"`
 	RAMTransferred    uint64 `json:"ramTransferred,omitempty"`
 	RAMRemaining      uint64 `json:"ramRemaining,omitempty"`
 	RAMTotal          uint64 `json:"ramTotal,omitempty"`
@@ -258,7 +260,13 @@ type Node struct {
 	} `json:"spec"`
 	Status struct {
 		Conditions []NodeCondition `json:"conditions,omitempty"`
+		Addresses  []NodeAddress   `json:"addresses,omitempty"`
 	} `json:"status"`
+}
+
+type NodeAddress struct {
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 type NodeCondition struct {

@@ -17,3 +17,18 @@ node:
   vfioAllowlist: ""
   nodeSelector:
     kairon.zyvor.dev/capable: "true"
+migration:
+  # Secure peer preparation is opt-in until a Kairon migration adapter is installed.
+  enabled: false
+  port: 9443
+  tlsSecretName: kairon-migration-tls
+  # DNS SAN expected in the shared cluster migration certificate.
+  tlsServerName: kairon-node
+  stateDir: /var/run/kairon/migrations
+  # Empty uses emptyDir. For node-reboot/pod-replacement durability, pre-create a
+  # writable host directory for UID 65532 and set this path.
+  stateHostPath: ""
+  # Optional local Kairon migration adapter. Current FluxVM does not expose this
+  # contract, so leave empty unless an adapter is installed on every VM node.
+  adapterSocket: ""
+  adapterHostPath: ""

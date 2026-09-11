@@ -1,59 +1,62 @@
 # Architecture
 
-Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the source of truth; FluxVM owns VMM process lifecycle.
+Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the source of truth; FluxVM owns normal VMM lifecycle. Live-transfer mechanics are behind a backend-neutral migration adapter rather than assumed FluxVM/QMP endpoints.
 
 ## Components
 
-- `kairon-controller`: schedules Machines, drives MachineMigration state, and reconciles MachineSnapshot objects into CSI VolumeSnapshots.
-- `kairon-node`: one per virtualization node; reconciles assigned Machines into the node-local FluxVM endpoint, drives source-side FluxVM live migration, and resolves authorized DRA claims into VFIO BDFs.
-- `kaironctl`: thin client over the Kubernetes API. It does not bypass the controllers.
+- `kairon-controller`: Machine placement, `MachineMigration` state and `MachineSnapshot` -> CSI `VolumeSnapshot` orchestration.
+- `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, and exposes the mTLS migration peer API.
+- migration peer: TLS 1.3, mandatory client certificate, target prepare/commit/abort and a local atomic session journal.
+- migration adapter: optional HTTP-over-Unix-socket component that implements VMM-specific target/source migration operations.
+- `kaironctl`: thin Kubernetes API client; it never bypasses the controllers.
 
 ## Cold migration
 
 ```text
-Pending
-  -> Stopping
-     Machine.powerState=Stopped
-  -> Restarting
-     wait source status=Stopped
-     Machine.nodeName=target
-     Machine.powerState=Running
-  -> Succeeded
-     wait target status=Running
+Pending -> Stopping -> Restarting -> Succeeded
+             |             |
+      verify source    assign target
+         stopped       and restart
 ```
 
-The state is represented in Kubernetes and is restart-safe. v0.2 does not copy host-local storage.
+This state is represented in Kubernetes and is restart-safe. Kairon does not copy host-local disk content.
 
 ## Live migration
 
 ```text
 Pending
   -> Starting
-     validate target and tcp:host:port destination
+     source peer authenticates target over mTLS
+     target adapter prepares destination
+     target journals Prepared session
   -> Running
-     source kairon-node -> FluxVM migration/start + migration/status
+     source adapter transfers VM state to opaque endpoint
   -> Cutover
-     FluxVM reports completed
+     transfer completed AND target commit succeeded
   -> Adopting
-     controller moves Machine.nodeName to target
-     controller sets kairon.zyvor.dev/adopt-only=true
-     target node agent must discover the existing migrated runtime
+     Machine.nodeName=target
+     kairon.zyvor.dev/adopt-only=true
   -> Succeeded
-     controller removes adopt-only after target reports Running
+     target discovers incoming runtime and reports Running
 ```
 
-The target agent cannot create a VM while the adopt-only annotation is set. A missing incoming runtime therefore becomes a visible blocked Machine rather than an accidental second boot.
+Failure rules:
 
-v0.2 intentionally does not claim zero-touch live migration. The FluxVM contract used here has a verified source-side migration API; Kairon does not have a verified runtime endpoint for provisioning/authenticating the target incoming QEMU listener. The explicit `spec.destination` must therefore point at a target prepared outside Kairon.
+- Target unsupported: `Blocked`; source is untouched.
+- Source start/transfer failure: target is aborted; no cutover.
+- Source transfer succeeds but target commit fails: `NeedsRecovery`; no automatic cutover or restart.
+- Target runtime missing after commit: adopt-only guard blocks duplicate creation.
+
+No raw destination URI is accepted from users. A peer endpoint is derived from the selected target node `InternalIP`; TLS validates the configured migration server identity.
+
+## Session durability
+
+Destination sessions are persisted as mode `0600` JSON files using write -> fsync -> atomic rename. The default Helm `emptyDir` survives process/container restart within the Pod. For Pod replacement/node-level durability, configure `migration.stateHostPath` to a pre-created directory writable by the non-root Kairon UID.
 
 ## CSI snapshots
 
-`Machine.spec.volumes[]` records PVC names for Kubernetes storage orchestration. A MachineSnapshot creates one `snapshot.storage.k8s.io/v1` VolumeSnapshot per declared PVC and projects each `readyToUse` state into MachineSnapshot status.
-
-This is snapshot orchestration, not VM disk attachment. Arbitrary PVC -> FluxVM block-device attachment remains future work.
+`Machine.spec.volumes[]` stores PVC references. `MachineSnapshot` creates one standard `snapshot.storage.k8s.io/v1` `VolumeSnapshot` per PVC and mirrors readiness into Kairon status.
 
 ## DRA / VFIO
 
-`Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` ResourceClaims. The node agent requires an allocation, extracts a PCI BDF from the claim annotation or a BDF-shaped allocation result, normalizes it, and checks it against the node's explicit allowlist. Only approved BDFs are passed to FluxVM `vfio_devices`.
-
-The node-local allowlist is a privilege boundary: namespace users cannot request arbitrary host PCI functions merely by editing a claim annotation.
+`Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` `ResourceClaim` objects. The node agent requires an allocation, resolves a PCI BDF, normalizes it and checks a node-local allowlist. Namespace users cannot bypass the host PCI authorization boundary by editing annotations.

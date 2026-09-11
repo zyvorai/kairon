@@ -56,10 +56,8 @@ spec:
                 default: auto
               targetNode:
                 type: string
-              destination:
-                type: string
-                description: Prepared incoming QEMU endpoint. Kairon validates tcp:host:port
-                  before calling FluxVM.
+                description: Target Kubernetes node. Live migration target preparation
+                  is negotiated automatically over the Kairon mTLS peer API.
               mode:
                 type: string
                 enum:
@@ -93,8 +91,6 @@ spec:
                 type: string
               runtimeID:
                 type: string
-              fluxPhase:
-                type: string
               ramTransferred:
                 type: integer
                 format: int64
@@ -115,3 +111,16 @@ spec:
                 type: integer
                 format: int64
                 minimum: 0
+              sessionID:
+                type: string
+                description: Opaque Kairon peer session identifier; never contains
+                  credentials.
+              transferID:
+                type: string
+                description: Opaque source-adapter transfer identifier.
+              transferPhase:
+                type: string
+                description: Source migration adapter phase.
+              backend:
+                type: string
+                description: Migration adapter backend selected by the target node.

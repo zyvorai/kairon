@@ -33,11 +33,19 @@ jobs:
         run: |
           helm lint charts/kairon
           helm template kairon charts/kairon --namespace kairon-system > /tmp/kairon.yaml
+          helm template kairon charts/kairon --namespace kairon-system --set migration.enabled=true > /tmp/kairon-migration.yaml
           python3 - <<'PY'
           import yaml
-          with open('/tmp/kairon.yaml') as f:
-              list(yaml.safe_load_all(f))
-          print('helm render YAML: OK')
+          for path in ['/tmp/kairon.yaml', '/tmp/kairon-migration.yaml']:
+              with open(path) as f:
+                  docs = [d for d in yaml.safe_load_all(f) if d]
+              assert docs, path
+          enabled = [d for d in yaml.safe_load_all(open('/tmp/kairon-migration.yaml')) if d]
+          ds = next(d for d in enabled if d.get('kind') == 'DaemonSet')
+          container = ds['spec']['template']['spec']['containers'][0]
+          assert any(str(arg).startswith('--migration-ca=') for arg in container['args'])
+          assert any(port.get('name') == 'migration' for port in container['ports'])
+          print('helm render YAML: OK (migration disabled + enabled)')
           PY
 
   container:

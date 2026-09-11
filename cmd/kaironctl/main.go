@@ -181,9 +181,8 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 	name := fs.String("name", "", "MachineMigration name")
 	strategy := fs.String("strategy", "auto", "auto|live|cold")
 	target := fs.String("target-node", "", "target Kubernetes node; empty lets the scheduler choose")
-	destination := fs.String("destination", "", "prepared incoming QEMU listener, tcp:host:port")
 	mode := fs.String("mode", "pre-copy", "pre-copy|post-copy")
-	bandwidth := fs.Uint64("bandwidth-mbps", 0, "FluxVM migration bandwidth limit")
+	bandwidth := fs.Uint64("bandwidth-mbps", 0, "migration adapter bandwidth limit")
 	downtime := fs.Uint64("max-downtime-ms", 0, "maximum requested downtime")
 	multifd := fs.Uint("multifd-channels", 0, "QEMU multifd channels (0 disables explicit setting)")
 	_ = fs.Parse(args[1:])
@@ -196,7 +195,7 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 	migration := model.MachineMigration{
 		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineMigration},
 		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
-		Spec:     model.MachineMigrationSpec{MachineName: machine, Strategy: *strategy, TargetNode: *target, Destination: *destination, Mode: *mode, BandwidthMbps: *bandwidth, MaxDowntimeMs: *downtime, MultifdChannels: uint8(*multifd)},
+		Spec:     model.MachineMigrationSpec{MachineName: machine, Strategy: *strategy, TargetNode: *target, Mode: *mode, BandwidthMbps: *bandwidth, MaxDowntimeMs: *downtime, MultifdChannels: uint8(*multifd)},
 	}
 	out, err := kc.CreateMachineMigration(ctx, *ns, migration)
 	if err != nil {
@@ -211,7 +210,7 @@ func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
 	}
 	node := args[0]
 	fs := flag.NewFlagSet("evacuate", flag.ExitOnError)
-	strategy := fs.String("strategy", "cold", "cold|auto; live evacuation requires per-VM destination listeners and should use migrate")
+	strategy := fs.String("strategy", "cold", "cold|auto; use migrate --strategy live for the secure peer handshake")
 	_ = fs.Parse(args[1:])
 	if *strategy != "cold" && *strategy != "auto" {
 		fatal(fmt.Errorf("evacuate supports --strategy cold|auto; use migrate for explicit live migration"))

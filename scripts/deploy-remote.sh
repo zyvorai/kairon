@@ -70,6 +70,11 @@ Flags:
   --node-name=NAME        Seed NODE_NAME (default: the remote's own hostname).
                           Must match the Node object name in your cluster.
   --interval=DURATION     Reconciliation interval baked into the unit (default 3s).
+  --node-port=N           kairon-node health port (default 8081). If busy on
+                          the remote host and not explicitly set, a random
+                          free port is chosen automatically and reported.
+  --controller-port=N     kairon-controller health port (default 8080), same
+                          auto-fallback-if-busy behavior as --node-port.
   --version=STRING        Version stamped into the binary (default: git describe,
                           or 'dev' if this checkout isn't a git repository).
   --ssh-port=N            SSH port (default 22, env SSH_PORT).
@@ -107,6 +112,10 @@ BACKEND_OVERRIDE=""
 IMAGE_ROOT_OVERRIDE=""
 NODE_NAME_OVERRIDE=""
 INTERVAL="3s"
+NODE_PORT="8081"
+NODE_PORT_EXPLICIT=0
+CONTROLLER_PORT="8080"
+CONTROLLER_PORT_EXPLICIT=0
 VERSION_OVERRIDE="${KAIRON_VERSION:-}"
 SSH_PORT="${SSH_PORT:-22}"
 USER_ARG=""
@@ -148,6 +157,8 @@ while [[ $# -gt 0 ]]; do
     --image-root=*) IMAGE_ROOT_OVERRIDE="${1#*=}" ;;
     --node-name=*) NODE_NAME_OVERRIDE="${1#*=}" ;;
     --interval=*) INTERVAL="${1#*=}" ;;
+    --node-port=*) NODE_PORT="${1#*=}"; NODE_PORT_EXPLICIT=1 ;;
+    --controller-port=*) CONTROLLER_PORT="${1#*=}"; CONTROLLER_PORT_EXPLICIT=1 ;;
     --version=*) VERSION_OVERRIDE="${1#*=}" ;;
     --ssh-port=*) SSH_PORT="${1#*=}" ;;
     -h|--help) usage; exit 0 ;;
@@ -285,6 +296,8 @@ FLUXVM_URL:               ${RESOLVED_FLUXVM_URL}
 KAIRON_DEFAULT_BACKEND:   ${RESOLVED_BACKEND}
 KAIRON_IMAGE_ROOT:        ${RESOLVED_IMAGE_ROOT}
 KAIRON_KUBE_URL:          ${KUBE_URL:-<not set -- service will start but stay not-ready until configured>}
+Node health port:         ${NODE_PORT}$([[ "$NODE_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")
+$([[ "$WITH_CONTROLLER" == "1" ]] && echo "Controller health port:  ${CONTROLLER_PORT}$([[ "$CONTROLLER_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
 Start after install:      $([[ "$NO_START" == "1" ]] && echo "no (--no-start)" || echo "yes")
 
 Remote paths:
@@ -297,11 +310,13 @@ EOF
 run_status() {
   info "checking kairon-node on ${USER_ARG}@${HOST_ARG}..."
   ssh_cmd "$REMOTE" '
+    port_of() { grep -oE -- "--health-addr=:[0-9]+" "$1" 2>/dev/null | cut -d: -f2; }
     if systemctl list-unit-files kairon-node.service >/dev/null 2>&1; then
       systemctl status kairon-node.service --no-pager -l || true
+      p=$(port_of /etc/systemd/system/kairon-node.service)
       echo "---"
-      curl -s -o /dev/null -w "healthz=%{http_code}\n" http://127.0.0.1:8081/healthz 2>/dev/null
-      curl -s -o /dev/null -w "readyz=%{http_code}\n" http://127.0.0.1:8081/readyz 2>/dev/null
+      curl -s -o /dev/null -w "healthz=%{http_code}\n" "http://127.0.0.1:${p:-8081}/healthz" 2>/dev/null
+      curl -s -o /dev/null -w "readyz=%{http_code}\n" "http://127.0.0.1:${p:-8081}/readyz" 2>/dev/null
     else
       echo "kairon-node.service is not installed on this host"
     fi
@@ -427,6 +442,10 @@ run_deploy() {
     printf 'KUBE_CA=%q\n' "$KUBE_CA"
     printf 'KUBE_INSECURE=%q\n' "$KUBE_INSECURE"
     printf 'INTERVAL=%q\n' "$INTERVAL"
+    printf 'NODE_PORT=%q\n' "$NODE_PORT"
+    printf 'NODE_PORT_EXPLICIT=%q\n' "$NODE_PORT_EXPLICIT"
+    printf 'CONTROLLER_PORT=%q\n' "$CONTROLLER_PORT"
+    printf 'CONTROLLER_PORT_EXPLICIT=%q\n' "$CONTROLLER_PORT_EXPLICIT"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -482,12 +501,47 @@ else
   fi
 fi
 
+port_in_use() {
+  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"
+}
+
+# Resolves the port to actually use for a health server: if the caller
+# explicitly asked for a port, that port is used as-is (a busy explicit
+# port is a hard failure, not silently overridden). Otherwise, if the
+# default is busy (common: some unrelated service already on 8080/8081),
+# a random free port in the ephemeral range is picked automatically.
+resolve_port() {
+  local desired="$1" explicit="$2" name="$3"
+  if ! port_in_use "$desired"; then
+    echo "$desired"
+    return 0
+  fi
+  if [[ "$explicit" == "1" ]]; then
+    echo "ERROR: --$name-port=$desired is already in use on this host" >&2
+    return 1
+  fi
+  warn "default port $desired for $name is already in use on this host -- picking a random free port"
+  local tries=0 candidate
+  while [[ $tries -lt 50 ]]; do
+    candidate=$(( (RANDOM % 20000) + 20000 ))
+    if ! port_in_use "$candidate"; then
+      warn "$name health port auto-selected: $candidate (pass --$name-port=$candidate to pin it on future deploys)"
+      echo "$candidate"
+      return 0
+    fi
+    tries=$((tries + 1))
+  done
+  echo "ERROR: could not find a free port for $name after 50 attempts" >&2
+  return 1
+}
+
+RESOLVED_NODE_PORT="$(resolve_port "$NODE_PORT" "$NODE_PORT_EXPLICIT" "node")" || exit 1
 install -m 0644 -o root -g root ./kairon-node.service /etc/systemd/system/kairon-node.service
-if [[ "$INTERVAL" != "3s" ]]; then
-  sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-node --interval=$INTERVAL --health-addr=:8081#" /etc/systemd/system/kairon-node.service
-fi
+sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-node --interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT#" /etc/systemd/system/kairon-node.service
 if [[ "$WITH_CONTROLLER" == "1" ]]; then
+  RESOLVED_CONTROLLER_PORT="$(resolve_port "$CONTROLLER_PORT" "$CONTROLLER_PORT_EXPLICIT" "controller")" || exit 1
   install -m 0644 -o root -g root ./kairon-controller.service /etc/systemd/system/kairon-controller.service
+  sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-controller --interval=5s --health-addr=:$RESOLVED_CONTROLLER_PORT#" /etc/systemd/system/kairon-controller.service
   if [[ ! -f /etc/kairon/kairon-controller.env ]]; then
     : > /etc/kairon/kairon-controller.env
     chmod 0640 /etc/kairon/kairon-controller.env
@@ -548,8 +602,10 @@ INSTALL_EOF
   fi
 
   info "verifying kairon-node..."
+  local node_port
+  node_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-node.service | cut -d: -f2" || echo 8081)"
   local node_report node_active node_healthz node_readyz
-  node_report="$(verify_remote kairon-node.service 8081)"
+  node_report="$(verify_remote kairon-node.service "${node_port:-8081}")"
   node_active="$(sed -n '1p' <<< "$node_report")"
   node_healthz="$(sed -n '2p' <<< "$node_report")"
   node_readyz="$(sed -n '3p' <<< "$node_report")"
@@ -569,8 +625,10 @@ INSTALL_EOF
   fi
 
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
+    local ctrl_port
+    ctrl_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-controller.service | cut -d: -f2" || echo 8080)"
     local ctrl_report ctrl_active ctrl_healthz ctrl_readyz
-    ctrl_report="$(verify_remote kairon-controller.service 8080)"
+    ctrl_report="$(verify_remote kairon-controller.service "${ctrl_port:-8080}")"
     ctrl_active="$(sed -n '1p' <<< "$ctrl_report")"
     ctrl_healthz="$(sed -n '2p' <<< "$ctrl_report")"
     ctrl_readyz="$(sed -n '3p' <<< "$ctrl_report")"

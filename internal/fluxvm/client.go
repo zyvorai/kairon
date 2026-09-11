@@ -48,25 +48,6 @@ type CreateRequest struct {
 	VFIODevices []string       `json:"vfio_devices,omitempty"`
 }
 
-type MigrationStartRequest struct {
-	Destination     string `json:"destination"`
-	Mode            string `json:"mode,omitempty"`
-	BandwidthMbps   uint64 `json:"bandwidth_mbps,omitempty"`
-	MaxDowntimeMs   uint64 `json:"max_downtime_ms,omitempty"`
-	MultifdChannels uint8  `json:"multifd_channels,omitempty"`
-}
-
-type MigrationStatus struct {
-	Phase          string  `json:"phase"`
-	Status         string  `json:"status,omitempty"`
-	RAMTransferred *uint64 `json:"ram_transferred,omitempty"`
-	RAMRemaining   *uint64 `json:"ram_remaining,omitempty"`
-	RAMTotal       *uint64 `json:"ram_total,omitempty"`
-	TotalTimeMs    *uint64 `json:"total_time_ms,omitempty"`
-	DowntimeMs     *uint64 `json:"downtime_ms,omitempty"`
-	Error          string  `json:"error,omitempty"`
-}
-
 func New(baseURL, token string) *Client {
 	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 20 * time.Second}}
 }
@@ -226,43 +207,4 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("fluxvm DELETE /v1/vms/%s: HTTP %d: %s", id, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
-}
-
-func (c *Client) StartMigration(ctx context.Context, id string, req MigrationStartRequest) (MigrationStatus, error) {
-	var out MigrationStatus
-	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/start", req)
-	if err != nil {
-		return out, err
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return out, fmt.Errorf("decode FluxVM migration start: %w", err)
-	}
-	return out, nil
-}
-
-func (c *Client) MigrationStatus(ctx context.Context, id string) (MigrationStatus, error) {
-	var out MigrationStatus
-	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/migration/status", nil)
-	if err != nil {
-		return out, err
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return out, fmt.Errorf("decode FluxVM migration status: %w", err)
-	}
-	return out, nil
-}
-
-func (c *Client) CancelMigration(ctx context.Context, id string) (MigrationStatus, error) {
-	var out MigrationStatus
-	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/cancel", map[string]any{})
-	if err != nil {
-		return out, err
-	}
-	if len(data) == 0 {
-		return out, nil
-	}
-	if err := json.Unmarshal(data, &out); err != nil {
-		return out, fmt.Errorf("decode FluxVM migration cancel: %w", err)
-	}
-	return out, nil
 }

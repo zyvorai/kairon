@@ -35,6 +35,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: kairon-node}
 rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status"]
     verbs: ["get", "list", "watch", "patch", "update"]
@@ -78,6 +81,11 @@ spec:
     metadata: {labels: {app.kubernetes.io/name: kairon-node}}
     spec:
       serviceAccountName: kairon-node
+{{ if .Values.migration.enabled }}
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+{{ end }}
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
@@ -86,11 +94,61 @@ spec:
         - name: node
           image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag }}"
           imagePullPolicy: {{ .Values.node.image.pullPolicy }}
-          args: ["--interval={{ .Values.node.interval }}", "--fluxvm-url={{ .Values.node.fluxvmURL }}", "--default-backend={{ .Values.node.defaultBackend }}", "--image-root={{ .Values.node.imageRoot }}", "--vfio-allowlist={{ .Values.node.vfioAllowlist }}"]
+          args:
+            - "--interval={{ .Values.node.interval }}"
+            - "--fluxvm-url={{ .Values.node.fluxvmURL }}"
+            - "--default-backend={{ .Values.node.defaultBackend }}"
+            - "--image-root={{ .Values.node.imageRoot }}"
+            - "--vfio-allowlist={{ .Values.node.vfioAllowlist }}"
+{{ if .Values.migration.enabled }}
+            - "--migration-addr=:{{ .Values.migration.port }}"
+            - "--migration-port={{ .Values.migration.port }}"
+            - "--migration-ca=/etc/kairon/migration-tls/ca.crt"
+            - "--migration-cert=/etc/kairon/migration-tls/tls.crt"
+            - "--migration-key=/etc/kairon/migration-tls/tls.key"
+            - "--migration-server-name={{ .Values.migration.tlsServerName }}"
+            - "--migration-state-dir={{ .Values.migration.stateDir }}"
+{{ if .Values.migration.adapterSocket }}
+            - "--migration-adapter-socket={{ .Values.migration.adapterSocket }}"
+{{ end }}
+{{ end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
-          ports: [{name: health, containerPort: 8081}]
+          ports:
+            - {name: health, containerPort: 8081}
+{{ if .Values.migration.enabled }}
+            - {name: migration, containerPort: {{ .Values.migration.port }}, protocol: TCP}
+{{ end }}
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+{{ if .Values.migration.enabled }}
+          volumeMounts:
+            - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
+            - {name: migration-state, mountPath: {{ .Values.migration.stateDir | quote }}}
+{{ if .Values.migration.adapterHostPath }}
+            - {name: migration-adapter, mountPath: {{ .Values.migration.adapterHostPath | quote }}}
+{{ end }}
+{{ end }}
+{{ if .Values.migration.enabled }}
+      volumes:
+        - name: migration-tls
+          secret:
+            secretName: {{ .Values.migration.tlsSecretName }}
+            defaultMode: 0440
+        - name: migration-state
+{{ if .Values.migration.stateHostPath }}
+          hostPath:
+            path: {{ .Values.migration.stateHostPath | quote }}
+            type: Directory
+{{- else }}
+          emptyDir: {}
+{{ end }}
+{{ if .Values.migration.adapterHostPath }}
+        - name: migration-adapter
+          hostPath:
+            path: {{ .Values.migration.adapterHostPath | quote }}
+            type: Directory
+{{ end }}
+{{ end }}

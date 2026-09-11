@@ -48,6 +48,9 @@ kind: ClusterRole
 metadata:
   name: kairon-node
 rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status"]
     verbs: ["get", "list", "watch", "patch", "update"]

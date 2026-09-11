@@ -45,18 +45,26 @@ try:
         v = d["spec"]["versions"][0]
         if v["name"] != "v1alpha1" or "status" not in v.get("subresources", {}):
             fail(f"{d['metadata']['name']} must expose v1alpha1 + status")
+    migration = next(d for d in crds if d["metadata"]["name"] == "machinemigrations.kairon.zyvor.dev")
+    props = migration["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
+    if "destination" in props["spec"]["properties"]:
+        fail("MachineMigration.spec.destination must not exist in v0.3")
+    migration_status = props["status"]["properties"]
+    for field in ["sessionID", "transferID", "transferPhase", "backend"]:
+        if field not in migration_status:
+            fail(f"MachineMigration.status missing {field}")
 except Exception as e:
     fail(f"CRD semantic check failed: {e}")
 
 try:
     chart = yaml.safe_load((root / "charts/kairon/Chart.yaml").read_text())
-    if chart.get("version") != "0.2.0" or chart.get("appVersion") != "0.2.0":
-        fail("Helm chart version/appVersion must be 0.2.0")
+    if chart.get("version") != "0.3.0" or chart.get("appVersion") != "0.3.0":
+        fail("Helm chart version/appVersion must be 0.3.0")
 except Exception as e:
     fail(f"Chart semantic check failed: {e}")
 
-if (root / "VERSION").read_text().strip() != "v0.2.0":
-    fail("VERSION must be v0.2.0")
+if (root / "VERSION").read_text().strip() != "v0.3.0":
+    fail("VERSION must be v0.3.0")
 
 readme = (root / "README.md").read_text()
 for needle in [

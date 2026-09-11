@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zyvorai/kairon/internal/agent"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
@@ -101,7 +100,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 }
 
 func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, nodes []model.Node, assigned map[string]int) error {
-	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" {
+	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" {
 		return nil
 	}
 	if strings.TrimSpace(migration.Spec.MachineName) == "" {
@@ -134,11 +133,8 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		status.EffectiveStrategy = strategy
 		status.Message = ""
 		if strategy == "live" {
-			if err := agent.ValidateMigrationDestination(migration.Spec.Destination); err != nil {
-				return c.blockMigration(ctx, migration, err.Error())
-			}
 			status.Phase = "Starting"
-			status.Message = "source node agent will initiate FluxVM live migration"
+			status.Message = "source node agent will securely prepare the target before touching the source runtime"
 			return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
 		}
 		status.Phase = "Stopping"
@@ -151,7 +147,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 
 	switch phase {
 	case "Starting", "Running":
-		// The source node agent owns FluxVM migration initiation/polling.
+		// The source node agent owns peer preparation, transfer and commit.
 		return nil
 	case "Cutover":
 		if status.EffectiveStrategy != "live" {
@@ -225,14 +221,11 @@ func effectiveStrategy(machine model.Machine, migration model.MachineMigration) 
 		if !liveBackendEligible(machine.Spec.Runtime.Backend) {
 			return "", fmt.Errorf("live migration requires qemu backend; Machine requests %q", machine.Spec.Runtime.Backend)
 		}
-		if migration.Spec.Destination == "" {
-			return "", fmt.Errorf("live migration requires spec.destination for the prepared incoming QEMU target")
-		}
 		return "live", nil
 	case "auto":
-		if migration.Spec.Destination != "" && liveBackendEligible(machine.Spec.Runtime.Backend) {
-			return "live", nil
-		}
+		// Until Kairon has cluster-wide backend capability discovery, auto stays
+		// conservative and chooses the fully implemented cold path. Operators can
+		// explicitly request live to use the v0.3 secure handshake.
 		return "cold", nil
 	default:
 		return "", fmt.Errorf("unsupported migration strategy %q", migration.Spec.Strategy)
