@@ -31,7 +31,7 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 | Disks / images / snapshot-clone | v0.2 (hostPath/PVC bind + snapshot; OCI pull & CSI mount pending) |
 | Multus / DRA / GPU | v0.3 |
 | Live migrate / fencing / MDB | v0.4 (fencing + MDB + MachineMigration foundation) |
-| Admission / image policy / confidential | v0.5 |
+| Admission / image policy / confidential | v0.5 (validating webhook + digest; SNP/TDX pending) |
 | Conformance / must-gather / KubeVirt import | v1.0 |
 
 ## v0.2 — storage and images
@@ -64,11 +64,13 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 
 ## v0.5 — security
 
-- validating/mutating admission webhook
-- Secure Boot + vTPM API
-- SEV-SNP and TDX capability discovery
-- image policy/provenance
-- network-policy identities and audit stream
+- Validating admission webhook for Machine (`internal/admission`, `deploy/webhook.yaml`)
+- Prometheus `/metrics` on controller health port
+- `scripts/must-gather.sh` supportability bundle
+- Secure Boot + vTPM API fields forwarded (enforcement still FluxVM/backend dependent)
+- SEV-SNP and TDX capability discovery pending
+- Image policy/provenance beyond digest check pending
+- Network-policy identities and audit stream pending
 
 ## v1.0 — production
 
@@ -78,4 +80,4 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 - Windows/Linux matrix
 - KubeVirt import/translation utility
 - Transiva migration workflow
-- supportability bundle and must-gather
+- supportability bundle and must-gather (`scripts/must-gather.sh` shipped; expand coverage)

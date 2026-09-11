@@ -29,6 +29,7 @@ This repository is an **MVP/reference implementation**, designed so the core con
 - `MachineImage`, `VirtualDisk`, and `MachineSnapshot` CRDs; PVC/hostPath disk binding; FluxVM snapshot tags.
 - Machine `diskSizeGiB` / `storage` backends and virtiofs `sharedFolders` passed to FluxVM.
 - Node fencing + reschedule, `MachineDisruptionBudget`, and `MachineMigration` (FluxVM live migrate foundation).
+- Validating admission library/webhook, Prometheus `/metrics`, and `scripts/must-gather.sh`.
 - Declarative start/stop and deletion cleanup with a finalizer.
 - Multi-tenancy mapping: Kubernetes namespace is always the FluxVM tenant; Machine authors cannot override it.
 - In-cluster Kubernetes client implemented with the Go standard library only: no client-go dependency and no generated code requirement.

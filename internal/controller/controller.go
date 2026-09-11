@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
@@ -17,6 +18,7 @@ type Controller struct {
 	Scheduler  scheduler.Scheduler
 	Log        *slog.Logger
 	FenceGrace time.Duration
+	Metrics    *health.Metrics
 }
 
 func (c *Controller) fenceGrace() time.Duration {
@@ -88,6 +90,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		_ = c.Kube.Eventf(ctx, m, "Normal", "Scheduled", fmt.Sprintf("Successfully assigned to %s", node), "kairon-controller")
 		assigned[node]++
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
+		if c.Metrics != nil {
+			c.Metrics.MachinesScheduled.Add(1)
+		}
 	}
 	return nil
 }
@@ -205,6 +210,9 @@ func (c *Controller) releaseMachine(ctx context.Context, m model.Machine, reason
 	_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 	_ = c.Kube.Eventf(ctx, m, "Warning", reason, message, "kairon-controller")
 	c.Log.Info("released machine placement", "machine", m.Metadata.Name, "reason", reason)
+	if c.Metrics != nil && reason == "Fenced" {
+		c.Metrics.MachinesFenced.Add(1)
+	}
 	return nil
 }
 
@@ -271,6 +279,9 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) error {
 	defer t.Stop()
 	for {
 		if err := c.Reconcile(ctx); err != nil {
+			if c.Metrics != nil {
+				c.Metrics.ReconcileErrors.Add(1)
+			}
 			c.Log.Error("reconcile failed", "error", err)
 		}
 		select {

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/admission"
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -21,7 +22,8 @@ var version = "dev"
 
 func main() {
 	interval := flag.Duration("interval", 5*time.Second, "reconciliation interval")
-	healthAddr := flag.String("health-addr", ":8080", "health server address")
+	healthAddr := flag.String("health-addr", ":8080", "health/metrics server address")
+	webhookAddr := flag.String("webhook-addr", "", "optional validating webhook listen address (e.g. :9443)")
 	requireLabel := flag.Bool("require-capable-label", true, "only schedule onto nodes labeled kairon.zyvor.dev/capable=true")
 	fenceGrace := flag.Duration("fence-grace", 60*time.Second, "how long a node may be NotReady before Machines are fenced and rescheduled")
 	showVersion := flag.Bool("version", false, "print version")
@@ -38,13 +40,31 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	hs := &health.Server{}
+	metrics := &health.Metrics{}
+	hs := &health.Server{Metrics: metrics}
 	go func() {
 		if err := hs.Run(ctx, *healthAddr); err != nil && err != http.ErrServerClosed {
 			log.Error("health server", "error", err)
 		}
 	}()
-	ctl := &controller.Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: *requireLabel}, Log: log, FenceGrace: *fenceGrace}
+	if *webhookAddr != "" {
+		go func() {
+			mux := http.NewServeMux()
+			mux.Handle("/validate", admission.Handler{})
+			srv := &http.Server{Addr: *webhookAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+			go func() {
+				<-ctx.Done()
+				c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				_ = srv.Shutdown(c)
+			}()
+			log.Info("admission webhook listening", "addr", *webhookAddr)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("webhook server", "error", err)
+			}
+		}()
+	}
+	ctl := &controller.Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: *requireLabel}, Log: log, FenceGrace: *fenceGrace, Metrics: metrics}
 	store := &storage.Reconciler{Kube: kc, Log: log}
 	hs.SetReady(true)
 	go func() {
