@@ -3,3 +3,5 @@ dist/
 coverage.out
 *.log
 .DS_Store
+.claude/
+.deploy-last

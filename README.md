@@ -6,6 +6,8 @@
 
 **Kubernetes declares. Kairon orchestrates. FluxVM executes.**
 
+[Apache License 2.0](LICENSE) · [zyvor.dev](https://zyvor.dev) · [Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+
 </div>
 
 Kairon is an Apache-2.0 Kubernetes control plane for virtual machines executed by [Zyvor FluxVM](https://github.com/zyvorai/fluxvm). It does not create a `virt-launcher` Pod for every VM and it does not use libvirt. Kubernetes remains the desired-state API, `kairon-controller` handles placement/relocation/storage orchestration, and `kairon-node` drives the node-local FluxVM runtime.
@@ -245,3 +247,9 @@ Supportability bundle:
 ## Production gaps
 
 Kairon v0.3 is pre-GA. A real hypervisor migration adapter still needs to be implemented in FluxVM (or as a separate privileged node component) before real memory-state live migration can run. Other gaps include storage/network migration preflight, automatic fencing integration, PVC-to-FluxVM disk attachment, DRA topology-aware placement, admission/quotas, certificate automation and rotation, confidential-compute enforcement, upgrade compatibility tests, and large-scale real-hardware qualification. See [`ROADMAP.md`](ROADMAP.md) and [`SECURITY.md`](SECURITY.md).
+
+## License
+
+Copyright 2026 Zyvor ([zyvor.dev](https://zyvor.dev)).
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).

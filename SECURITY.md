@@ -1,6 +1,10 @@
-# Security
+# Security policy
 
-Kairon controls host-level VM execution. Treat the controller, node agents, FluxVM and any migration adapter as privileged infrastructure even when the Kairon process itself runs as a non-root container.
+Kairon is Apache-2.0 open-source software from [Zyvor](https://zyvor.dev). It controls host-level VM execution. Treat the controller, node agents, FluxVM and any migration adapter as privileged infrastructure even when the Kairon process itself runs as a non-root container.
+
+## Reporting a vulnerability
+
+Please report security issues privately to **security@zyvor.dev**. Do not open a public GitHub issue for unfixed vulnerabilities.
 
 ## v0.3 migration security
 
@@ -24,7 +28,3 @@ A `ResourceClaim` must be allocated before Kairon considers it. Resolved PCI BDF
 ## Images
 
 `--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. Signed-image policy is not yet implemented.
-
-## Reporting
-
-Report security issues privately to the Zyvor project maintainers rather than opening a public exploit issue.

@@ -1,4 +1,9 @@
 Kairon
-Copyright 2026 Zyvor AI Labs
+Copyright 2026 Zyvor (https://zyvor.dev)
 
-Kairon is an Apache-2.0 licensed Kubernetes-native virtual machine orchestration project.
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+Kairon is a Kubernetes-native virtual machine orchestration project from Zyvor.
+Website: https://zyvor.dev
+Source: https://github.com/zyvorai/kairon
