@@ -30,10 +30,10 @@ rules:
     resources: ["events"]
     verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machineimages", "virtualdisks", "machinesnapshots"]
+    resources: ["machines", "machineimages", "virtualdisks", "machinesnapshots", "machinedisruptionbudgets", "machinemigrations"]
     verbs: ["get", "list", "watch", "patch", "update"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines/status", "machineimages/status", "virtualdisks/status", "machinesnapshots/status"]
+    resources: ["machines/status", "machineimages/status", "virtualdisks/status", "machinesnapshots/status", "machinedisruptionbudgets/status", "machinemigrations/status"]
     verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -58,10 +58,10 @@ rules:
     resources: ["events"]
     verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machineimages", "virtualdisks", "machinesnapshots"]
+    resources: ["machines", "machineimages", "virtualdisks", "machinesnapshots", "machinedisruptionbudgets", "machinemigrations"]
     verbs: ["get", "list", "watch", "patch", "update"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines/status", "machineimages/status", "virtualdisks/status", "machinesnapshots/status"]
+    resources: ["machines/status", "machineimages/status", "virtualdisks/status", "machinesnapshots/status", "machinedisruptionbudgets/status", "machinemigrations/status"]
     verbs: ["get", "patch", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

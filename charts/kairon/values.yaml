@@ -4,6 +4,7 @@ controller:
     tag: latest
     pullPolicy: IfNotPresent
   interval: 5s
+  fenceGrace: 60s
   resources:
     requests:
       cpu: 50m

@@ -31,6 +31,9 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	if err := a.reconcileSnapshots(ctx); err != nil {
 		a.Log.Error("snapshot reconcile failed", "error", err)
 	}
+	if err := a.reconcileMigrations(ctx); err != nil {
+		a.Log.Error("migration reconcile failed", "error", err)
+	}
 	machines, err := a.Kube.ListMachines(ctx)
 	if err != nil {
 		return err
@@ -108,6 +111,110 @@ func (a *Agent) reconcileSnapshots(ctx context.Context) error {
 		st.ObservedGeneration = snap.Metadata.Generation
 		_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
 		_ = a.Kube.Eventf(ctx, m, "Normal", "SnapshotCreated", fmt.Sprintf("snapshot tag %s", tag), "kairon-node")
+	}
+	return nil
+}
+
+func (a *Agent) reconcileMigrations(ctx context.Context) error {
+	migs, err := a.Kube.ListMachineMigrations(ctx)
+	if err != nil {
+		return err
+	}
+	for _, mig := range migs {
+		phase := strings.ToLower(mig.Status.Phase)
+		if phase == "completed" || phase == "failed" || phase == "cancelled" {
+			continue
+		}
+		m, err := a.Kube.GetMachine(ctx, mig.Namespace(), mig.Spec.MachineName)
+		if err != nil {
+			st := mig.Status
+			st.Phase = "Failed"
+			st.Message = err.Error()
+			st.ObservedGeneration = mig.Metadata.Generation
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
+			continue
+		}
+		if m.Spec.NodeName != a.NodeName {
+			continue
+		}
+		if m.Status.RuntimeID == "" {
+			st := mig.Status
+			st.Phase = "Pending"
+			st.Message = "machine has no runtimeID"
+			st.SourceNode = a.NodeName
+			st.ObservedGeneration = mig.Metadata.Generation
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
+			continue
+		}
+		if mig.Spec.Destination == "" {
+			st := mig.Status
+			st.Phase = "Failed"
+			st.Message = "spec.destination is required (tcp: or unix: URI)"
+			st.ObservedGeneration = mig.Metadata.Generation
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
+			continue
+		}
+		req := fluxvm.MigrationStartRequest{
+			Destination: mig.Spec.Destination,
+			Mode:        mig.Spec.Mode,
+		}
+		if mig.Spec.BandwidthMbps > 0 {
+			v := uint64(mig.Spec.BandwidthMbps)
+			req.BandwidthMbps = &v
+		}
+		if mig.Spec.MaxDowntimeMs > 0 {
+			v := uint64(mig.Spec.MaxDowntimeMs)
+			req.MaxDowntimeMs = &v
+		}
+		if phase == "" || phase == "pending" || phase == "none" {
+			st, err := a.Flux.StartMigration(ctx, m.Status.RuntimeID, req)
+			if err != nil {
+				fail := mig.Status
+				fail.Phase = "Failed"
+				fail.Message = err.Error()
+				fail.SourceNode = a.NodeName
+				fail.RuntimeID = m.Status.RuntimeID
+				fail.ObservedGeneration = mig.Metadata.Generation
+				_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, fail)
+				_ = a.Kube.Eventf(ctx, m, "Warning", "MigrationFailed", err.Error(), "kairon-node")
+				continue
+			}
+			out := mig.Status
+			out.Phase = st.Phase
+			if out.Phase == "" {
+				out.Phase = "Active"
+			}
+			out.Message = st.Status
+			out.SourceNode = a.NodeName
+			out.RuntimeID = m.Status.RuntimeID
+			out.ObservedGeneration = mig.Metadata.Generation
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, out)
+			_ = a.Kube.Eventf(ctx, m, "Normal", "MigrationStarted", mig.Spec.Destination, "kairon-node")
+			continue
+		}
+		st, err := a.Flux.MigrationStatus(ctx, m.Status.RuntimeID)
+		if err != nil {
+			fail := mig.Status
+			fail.Message = err.Error()
+			fail.ObservedGeneration = mig.Metadata.Generation
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, fail)
+			continue
+		}
+		out := mig.Status
+		out.Phase = st.Phase
+		out.Message = st.Status
+		if st.Error != "" {
+			out.Message = st.Error
+		}
+		out.SourceNode = a.NodeName
+		out.RuntimeID = m.Status.RuntimeID
+		out.ObservedGeneration = mig.Metadata.Generation
+		_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, out)
+		if strings.EqualFold(st.Phase, "completed") && mig.Spec.TargetNodeName != "" {
+			_ = a.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{
+				"spec": map[string]any{"nodeName": mig.Spec.TargetNodeName},
+			})
+		}
 	}
 	return nil
 }

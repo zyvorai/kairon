@@ -1,0 +1,20 @@
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MachineDisruptionBudget
+metadata:
+  name: critical-vms
+  namespace: default
+spec:
+  maxUnavailable: 1
+  selector:
+    tier: critical
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MachineMigration
+metadata:
+  name: migrate-ubuntu
+  namespace: default
+spec:
+  machineName: ubuntu-dev
+  destination: tcp:10.0.0.20:4444
+  mode: pre-copy
+  targetNodeName: worker-2

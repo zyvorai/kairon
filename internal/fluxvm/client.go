@@ -288,6 +288,56 @@ func (c *Client) StartFromSnapshot(ctx context.Context, id, tag string) error {
 	return err
 }
 
+type MigrationStartRequest struct {
+	Destination     string  `json:"destination"`
+	Mode            string  `json:"mode,omitempty"`
+	BandwidthMbps   *uint64 `json:"bandwidth_mbps,omitempty"`
+	MaxDowntimeMs   *uint64 `json:"max_downtime_ms,omitempty"`
+	MultifdChannels *uint8  `json:"multifd_channels,omitempty"`
+}
+
+type MigrationStatus struct {
+	Phase  string `json:"phase,omitempty"`
+	Status string `json:"status,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (c *Client) StartMigration(ctx context.Context, id string, req MigrationStartRequest) (*MigrationStatus, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/start", req)
+	if err != nil {
+		return nil, err
+	}
+	var st MigrationStatus
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+func (c *Client) MigrationStatus(ctx context.Context, id string) (*MigrationStatus, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/migration/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var st MigrationStatus
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+func (c *Client) CancelMigration(ctx context.Context, id string) (*MigrationStatus, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/cancel", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var st MigrationStatus
+	if err := json.Unmarshal(data, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/vms/"+url.PathEscape(id), nil)
 	if err != nil {

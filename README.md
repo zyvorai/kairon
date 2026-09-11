@@ -28,6 +28,7 @@ This repository is an **MVP/reference implementation**, designed so the core con
 - Cloud-init userdata / SSH public keys and optional `sha256:` image digest verification.
 - `MachineImage`, `VirtualDisk`, and `MachineSnapshot` CRDs; PVC/hostPath disk binding; FluxVM snapshot tags.
 - Machine `diskSizeGiB` / `storage` backends and virtiofs `sharedFolders` passed to FluxVM.
+- Node fencing + reschedule, `MachineDisruptionBudget`, and `MachineMigration` (FluxVM live migrate foundation).
 - Declarative start/stop and deletion cleanup with a finalizer.
 - Multi-tenancy mapping: Kubernetes namespace is always the FluxVM tenant; Machine authors cannot override it.
 - In-cluster Kubernetes client implemented with the Go standard library only: no client-go dependency and no generated code requirement.

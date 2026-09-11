@@ -30,7 +30,7 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 | Status / Events / cloud-init / placement polish | v0.1.1 |
 | Disks / images / snapshot-clone | v0.2 (hostPath/PVC bind + snapshot; OCI pull & CSI mount pending) |
 | Multus / DRA / GPU | v0.3 |
-| Live migrate / fencing / MDB | v0.4 |
+| Live migrate / fencing / MDB | v0.4 (fencing + MDB + MachineMigration foundation) |
 | Admission / image policy / confidential | v0.5 |
 | Conformance / must-gather / KubeVirt import | v1.0 |
 
@@ -54,12 +54,13 @@ Same user jobs as KubeVirt, different execution model (no virt-launcher Pod; Flu
 
 ## v0.4 — availability
 
-- QEMU pre-copy live migration
-- shared-storage and block-migration modes
-- node evacuation API
-- PodDisruptionBudget-like MachineDisruptionBudget
-- fencing and stale-runtime garbage collection
-- lease/heartbeat-aware rescheduling
+- QEMU pre-copy live migration via MachineMigration → FluxVM migration API
+- MachineDisruptionBudget (voluntary evacuate / maxUnavailable)
+- Node fencing after `--fence-grace` when Node NotReady/missing; clears placement for reschedule
+- Evacuate annotation `kairon.zyvor.dev/evacuate=true` (MDB-gated)
+- Shared-storage assumption for live migration (FluxVM contract); block-migration modes still pending
+- Stale-runtime GC on fenced nodes still requires node-local cleanup when host returns
+- lease/heartbeat-aware rescheduling refinements pending
 
 ## v0.5 — security
 

@@ -326,3 +326,90 @@ spec:
                 runtimeID: {type: string}
                 message: {type: string}
                 observedGeneration: {type: integer, format: int64}
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinedisruptionbudgets.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinedisruptionbudgets
+    singular: machinedisruptionbudget
+    kind: MachineDisruptionBudget
+    shortNames: [mdb]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Allowed, type: integer, jsonPath: .status.disruptionsAllowed}
+        - {name: Healthy, type: integer, jsonPath: .status.currentHealthy}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [maxUnavailable]
+              properties:
+                maxUnavailable: {type: integer, minimum: 0}
+                selector:
+                  type: object
+                  additionalProperties: {type: string}
+            status:
+              type: object
+              properties:
+                currentHealthy: {type: integer}
+                desiredHealthy: {type: integer}
+                disruptionsAllowed: {type: integer}
+                observedGeneration: {type: integer, format: int64}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinemigrations.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinemigrations
+    singular: machinemigration
+    kind: MachineMigration
+    shortNames: [mmig]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      additionalPrinterColumns:
+        - {name: Phase, type: string, jsonPath: .status.phase}
+        - {name: Machine, type: string, jsonPath: .spec.machineName}
+        - {name: Dest, type: string, jsonPath: .spec.destination}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [machineName, destination]
+              properties:
+                machineName: {type: string, minLength: 1}
+                destination: {type: string, minLength: 1}
+                mode: {type: string}
+                bandwidthMbps: {type: integer, format: int64, minimum: 0}
+                maxDowntimeMs: {type: integer, format: int64, minimum: 0}
+                targetNodeName: {type: string}
+            status:
+              type: object
+              properties:
+                phase: {type: string}
+                message: {type: string}
+                sourceNode: {type: string}
+                runtimeID: {type: string}
+                observedGeneration: {type: integer, format: int64}

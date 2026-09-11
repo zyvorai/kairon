@@ -10,7 +10,7 @@ required=["go.mod","LICENSE","README.md","deploy/crd.yaml","deploy/rbac.yaml","d
 for f in required:
     if not (root/f).exists(): fail(f"missing {f}")
 
-for f in [root/'deploy/crd.yaml',root/'deploy/rbac.yaml',root/'deploy/controller.yaml',root/'deploy/node.yaml',root/'examples/linux-machine.yaml',root/'examples/firecracker-machine.yaml',root/'examples/storage-machine.yaml']:
+for f in [root/'deploy/crd.yaml',root/'deploy/rbac.yaml',root/'deploy/controller.yaml',root/'deploy/node.yaml',root/'examples/linux-machine.yaml',root/'examples/firecracker-machine.yaml',root/'examples/storage-machine.yaml',root/'examples/availability.yaml']:
     try:
         docs=list(yaml.safe_load_all(f.read_text()))
         if not docs or any(d is None for d in docs): fail(f"empty YAML document in {f.relative_to(root)}")
@@ -19,7 +19,7 @@ for f in [root/'deploy/crd.yaml',root/'deploy/rbac.yaml',root/'deploy/controller
 try:
     crds=list(yaml.safe_load_all((root/'deploy/crd.yaml').read_text()))
     names={c['metadata']['name'] for c in crds}
-    expect={'machines.kairon.zyvor.dev','machineimages.kairon.zyvor.dev','virtualdisks.kairon.zyvor.dev','machinesnapshots.kairon.zyvor.dev'}
+    expect={'machines.kairon.zyvor.dev','machineimages.kairon.zyvor.dev','virtualdisks.kairon.zyvor.dev','machinesnapshots.kairon.zyvor.dev','machinedisruptionbudgets.kairon.zyvor.dev','machinemigrations.kairon.zyvor.dev'}
     if names!=expect: fail(f'unexpected CRD set: {sorted(names)}')
     for crd in crds:
         if crd['spec']['group']!='kairon.zyvor.dev': fail('unexpected CRD group')
