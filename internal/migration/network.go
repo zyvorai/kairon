@@ -6,8 +6,10 @@ package migration
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 // NetworkAwareDestination restores/resumes FluxVM network state around peer prepare/commit.
@@ -46,4 +48,36 @@ func (d NetworkAwareDestination) Commit(ctx context.Context, session Session) er
 
 func (d NetworkAwareDestination) Abort(ctx context.Context, session Session) error {
 	return d.Inner.Abort(ctx, session)
+}
+
+// Diagnose reports the destination's own durable session-store phase
+// (session.Phase, as loaded by the caller from Store) alongside live ground
+// truth from the destination's FluxVM, looked up by the deterministic
+// runtime name Machine.RuntimeName() produces -- the same mechanism the
+// destination agent already uses to discover an incoming runtime after
+// cutover (docs/architecture.md). session.Phase == "Prepared" is NOT proof
+// the destination never committed (see Commit's own doc comment above), so
+// callers making a NeedsRecovery decision must use both fields, not just
+// SessionPhase.
+func (d NetworkAwareDestination) Diagnose(ctx context.Context, session Session) (DiagnosisResult, error) {
+	result := DiagnosisResult{
+		SessionPhase: session.Phase,
+		ObservedAt:   time.Now().UTC(),
+	}
+	if d.Flux == nil {
+		return result, nil
+	}
+	runtimeName := model.Machine{Metadata: model.ObjectMeta{Namespace: session.Namespace, Name: session.Machine}}.RuntimeName()
+	rec, err := d.Flux.LookupByName(ctx, runtimeName)
+	if err != nil {
+		return result, fmt.Errorf("looking up destination runtime %q: %w", runtimeName, err)
+	}
+	if rec == nil {
+		return result, nil
+	}
+	result.DestinationRuntimeFound = true
+	result.DestinationRuntimeStatus = rec.Status
+	result.DestinationRuntimeID = rec.ID()
+	result.DestinationGuestIP = rec.GuestIP
+	return result, nil
 }

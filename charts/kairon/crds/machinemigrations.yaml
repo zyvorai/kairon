@@ -79,6 +79,39 @@ spec:
                 type: integer
                 minimum: 0
                 maximum: 255
+              migrationNetwork:
+                type: string
+                description: Migration network name configured on the target node's
+                  adapter (-migration-network name=ip), selecting which address the
+                  RAM/state transfer binds/advertises. Empty uses the adapter's
+                  default advertise address.
+              recovery:
+                type: object
+                description: Operator's explicit, attested instruction for resolving
+                  a migration parked in NeedsRecovery. Never set by Kairon itself;
+                  never acted on unless acknowledgedDiagnosis matches action.
+                required:
+                - action
+                - acknowledgedDiagnosis
+                - reason
+                properties:
+                  action:
+                    type: string
+                    enum:
+                    - ConfirmDestinationCommitted
+                    - ConfirmDestinationNotCommitted
+                    - ForceAbort
+                  acknowledgedDiagnosis:
+                    type: string
+                    enum:
+                    - DestinationCommitted
+                    - DestinationNotCommitted
+                    - Unknown
+                  reason:
+                    type: string
+                    minLength: 1
+                    description: Free-text evidence for what you observed that
+                      justifies this action.
           status:
             type: object
             properties:
@@ -127,3 +160,29 @@ spec:
               backend:
                 type: string
                 description: Migration adapter backend selected by the target node.
+              recovery:
+                type: object
+                description: Populated only while phase == NeedsRecovery -- a live
+                  diagnosis snapshot refreshed every reconcile tick, plus a permanent
+                  audit record of whatever recovery action was actually applied.
+                properties:
+                  sourceRuntimeStatus:
+                    type: string
+                  destinationSessionPhase:
+                    type: string
+                  destinationRuntimeStatus:
+                    type: string
+                  destinationRuntimeFound:
+                    type: boolean
+                  diagnosedAt:
+                    type: string
+                    format: date-time
+                  appliedAction:
+                    type: string
+                  appliedReason:
+                    type: string
+                  appliedAcknowledgedDiagnosis:
+                    type: string
+                  appliedAt:
+                    type: string
+                    format: date-time

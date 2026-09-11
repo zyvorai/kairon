@@ -140,7 +140,43 @@ type MachineMigrationSpec struct {
 	// select which address the RAM/state transfer binds/advertises.
 	// Empty uses the adapter's default advertise address.
 	MigrationNetwork string `json:"migrationNetwork,omitempty"`
+	// Recovery is the operator's explicit, attested instruction for
+	// resolving a migration parked in NeedsRecovery -- never set by Kairon
+	// itself, and never acted on unless AcknowledgedDiagnosis matches
+	// Action (see internal/agent's reconcileNeedsRecovery). Left unset
+	// (nil), a NeedsRecovery migration stays parked indefinitely with no
+	// automatic resolution, by design.
+	Recovery *MachineMigrationRecoverySpec `json:"recovery,omitempty"`
 }
+
+// MachineMigrationRecoverySpec is the operator's attested recovery
+// instruction: what to do (Action), what they observed that justifies it
+// (AcknowledgedDiagnosis), and why (Reason, free text). All three are
+// required together -- reconcileNeedsRecovery refuses to act if
+// AcknowledgedDiagnosis doesn't match Action, or Reason is empty, rather
+// than silently guessing.
+type MachineMigrationRecoverySpec struct {
+	// One of ConfirmDestinationCommitted, ConfirmDestinationNotCommitted, ForceAbort.
+	Action string `json:"action"`
+	// One of DestinationCommitted, DestinationNotCommitted, Unknown --
+	// must match Action (Confirm*Committed requires DestinationCommitted,
+	// Confirm*NotCommitted requires DestinationNotCommitted; ForceAbort
+	// accepts any).
+	AcknowledgedDiagnosis string `json:"acknowledgedDiagnosis"`
+	// Free-text evidence for what the operator observed. Required --
+	// this is what turns a guess into an attested, audited decision.
+	Reason string `json:"reason"`
+}
+
+const (
+	RecoveryActionConfirmDestinationCommitted    = "ConfirmDestinationCommitted"
+	RecoveryActionConfirmDestinationNotCommitted = "ConfirmDestinationNotCommitted"
+	RecoveryActionForceAbort                     = "ForceAbort"
+
+	RecoveryDiagnosisDestinationCommitted    = "DestinationCommitted"
+	RecoveryDiagnosisDestinationNotCommitted = "DestinationNotCommitted"
+	RecoveryDiagnosisUnknown                 = "Unknown"
+)
 
 type MachineMigrationStatus struct {
 	Phase             string `json:"phase,omitempty"`
@@ -158,6 +194,29 @@ type MachineMigrationStatus struct {
 	RAMTotal          uint64 `json:"ramTotal,omitempty"`
 	TotalTimeMs       uint64 `json:"totalTimeMs,omitempty"`
 	DowntimeMs        uint64 `json:"downtimeMs,omitempty"`
+	// Recovery is populated only while Phase == NeedsRecovery: a live
+	// diagnosis snapshot refreshed every reconcile tick, plus a permanent
+	// record of whatever recovery action was actually applied (if any) --
+	// kept even if spec.recovery is later edited or cleared.
+	Recovery *MachineMigrationRecoveryStatus `json:"recovery,omitempty"`
+}
+
+// MachineMigrationRecoveryStatus mirrors migration.DiagnosisResult (the
+// live ground truth Kairon can currently see) plus an audit trail of
+// whatever recovery action was actually applied.
+type MachineMigrationRecoveryStatus struct {
+	SourceRuntimeStatus      string     `json:"sourceRuntimeStatus,omitempty"`
+	DestinationSessionPhase  string     `json:"destinationSessionPhase,omitempty"`
+	DestinationRuntimeStatus string     `json:"destinationRuntimeStatus,omitempty"`
+	DestinationRuntimeFound  bool       `json:"destinationRuntimeFound,omitempty"`
+	DiagnosedAt              *time.Time `json:"diagnosedAt,omitempty"`
+	// AppliedAction/AppliedReason/AppliedAcknowledgedDiagnosis/AppliedAt
+	// echo spec.recovery at the moment an action was actually taken --
+	// a permanent audit record independent of later spec.recovery edits.
+	AppliedAction                string     `json:"appliedAction,omitempty"`
+	AppliedReason                string     `json:"appliedReason,omitempty"`
+	AppliedAcknowledgedDiagnosis string     `json:"appliedAcknowledgedDiagnosis,omitempty"`
+	AppliedAt                    *time.Time `json:"appliedAt,omitempty"`
 }
 
 func (m MachineMigration) Namespace() string {

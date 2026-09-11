@@ -43,6 +43,12 @@ func (c *Client) Abort(ctx context.Context, baseURL, id string) error {
 	return c.do(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/internal/v1/migrations/"+id+"/abort", map[string]any{}, nil)
 }
 
+func (c *Client) Diagnose(ctx context.Context, baseURL, id string) (DiagnosisResult, error) {
+	var out DiagnosisResult
+	err := c.do(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/internal/v1/migrations/"+id+"/diagnosis", nil, &out)
+	return out, err
+}
+
 func (c *Client) do(ctx context.Context, method, endpoint string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {

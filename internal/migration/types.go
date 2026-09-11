@@ -111,6 +111,33 @@ type DestinationDriver interface {
 	Abort(context.Context, Session) error
 }
 
+// DiagnosisResult is a read-only snapshot of what's actually known about a
+// migration stuck in NeedsRecovery -- both the destination's own durable
+// session-store phase and, when a Flux client is available, live ground
+// truth from the destination's FluxVM. SessionPhase alone is NOT proof of
+// whether the destination actually committed: Commit() only advances the
+// store to "Committed" after both the inner adapter commit AND network
+// resume succeed, so a destination VM can be genuinely running while the
+// store still says "Prepared" (see NetworkAwareDestination.Commit).
+type DiagnosisResult struct {
+	SessionPhase             string    `json:"sessionPhase"`
+	DestinationRuntimeFound  bool      `json:"destinationRuntimeFound"`
+	DestinationRuntimeStatus string    `json:"destinationRuntimeStatus,omitempty"`
+	DestinationRuntimeID     string    `json:"destinationRuntimeID,omitempty"`
+	DestinationGuestIP       string    `json:"destinationGuestIP,omitempty"`
+	ObservedAt               time.Time `json:"observedAt"`
+}
+
+// Diagnosable is implemented by a DestinationDriver that can report live
+// ground truth about a session, beyond its own durable phase -- kept
+// separate from DestinationDriver (rather than added to it) so existing
+// implementations and test fakes don't need changes. Callers should
+// type-assert for it and degrade gracefully (report only the session-store
+// phase) when a driver doesn't implement it.
+type Diagnosable interface {
+	Diagnose(ctx context.Context, session Session) (DiagnosisResult, error)
+}
+
 type UnsupportedDestinationDriver struct{ Reason string }
 
 func (d UnsupportedDestinationDriver) Prepare(context.Context, Session) (PrepareResult, error) {

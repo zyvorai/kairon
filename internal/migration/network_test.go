@@ -56,3 +56,47 @@ func TestNetworkAwareDestinationRestoreResume(t *testing.T) {
 		t.Fatalf("restore=%v resume=%v inner=%+v", restore, resume, inner)
 	}
 }
+
+func TestNetworkAwareDestinationDiagnoseFindsDestinationRuntime(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms" && r.URL.Query().Get("name") == "kairon-ns-m" {
+			_ = json.NewEncoder(w).Encode([]fluxvm.Record{{UUID: "rt-2", Name: "kairon-ns-m", Status: "Running", GuestIP: "10.0.0.5"}})
+			return
+		}
+		http.Error(w, "unexpected "+r.URL.String(), 404)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	d := NetworkAwareDestination{Inner: &countingDest{}, Flux: fc}
+	session := Session{ID: "s1", Namespace: "ns", Machine: "m", SourceNode: "a", TargetNode: "b", Phase: "Prepared"}
+	result, err := d.Diagnose(context.Background(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionPhase != "Prepared" || !result.DestinationRuntimeFound || result.DestinationRuntimeStatus != "Running" || result.DestinationRuntimeID != "rt-2" || result.DestinationGuestIP != "10.0.0.5" {
+		t.Fatalf("unexpected diagnosis: %+v", result)
+	}
+}
+
+func TestNetworkAwareDestinationDiagnoseReportsNotFound(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms" {
+			_ = json.NewEncoder(w).Encode([]fluxvm.Record{})
+			return
+		}
+		http.Error(w, "unexpected "+r.URL.String(), 404)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	d := NetworkAwareDestination{Inner: &countingDest{}, Flux: fc}
+	session := Session{ID: "s1", Namespace: "ns", Machine: "m", SourceNode: "a", TargetNode: "b", Phase: "Prepared"}
+	result, err := d.Diagnose(context.Background(), session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionPhase != "Prepared" || result.DestinationRuntimeFound {
+		t.Fatalf("expected DestinationRuntimeFound=false, got %+v", result)
+	}
+}

@@ -53,6 +53,8 @@ func main() {
 		cmdMigrate(ctx, kc, os.Args[2:])
 	case "evacuate":
 		cmdEvacuate(ctx, kc, os.Args[2:])
+	case "recover":
+		cmdRecover(ctx, kc, os.Args[2:])
 	case "snapshot":
 		cmdSnapshot(ctx, kc, os.Args[2:])
 	default:
@@ -244,6 +246,63 @@ func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
 	fmt.Printf("evacuation queued: %d machine(s) from %s\n", created, node)
 }
 
+// cmdRecover is a thin convenience layer over spec.recovery, not a second
+// source of truth: it prints the migration's current status.Recovery
+// diagnosis (so the operator sees ground truth before acting), then patches
+// spec.recovery -- internal/agent's reconcileNeedsRecovery is what actually
+// validates and applies it.
+func cmdRecover(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON\n" +
+			"  ACTION: ConfirmDestinationCommitted | ConfirmDestinationNotCommitted | ForceAbort\n" +
+			"  DIAGNOSIS: DestinationCommitted | DestinationNotCommitted | Unknown"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("recover", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	action := fs.String("action", "", "recovery action (required)")
+	diagnosis := fs.String("diagnosis", "", "what you observed, attested (required)")
+	reason := fs.String("reason", "", "evidence for this decision (required)")
+	_ = fs.Parse(args[1:])
+
+	current, err := kc.GetMachineMigration(ctx, *ns, name)
+	if err != nil {
+		fatal(fmt.Errorf("get machinemigration %s/%s: %w", *ns, name, err))
+	}
+	if current.Status.Phase != "NeedsRecovery" {
+		fatal(fmt.Errorf("machinemigration %s/%s is in phase %q, not NeedsRecovery", *ns, name, current.Status.Phase))
+	}
+	fmt.Println("current diagnosis:")
+	if r := current.Status.Recovery; r != nil {
+		fmt.Printf("  source runtime status:       %s\n", dash(r.SourceRuntimeStatus))
+		fmt.Printf("  destination session phase:   %s\n", dash(r.DestinationSessionPhase))
+		fmt.Printf("  destination runtime found:   %v\n", r.DestinationRuntimeFound)
+		fmt.Printf("  destination runtime status:  %s\n", dash(r.DestinationRuntimeStatus))
+		if r.DiagnosedAt != nil {
+			fmt.Printf("  diagnosed at:                %s\n", r.DiagnosedAt.Format(time.RFC3339))
+		}
+	} else {
+		fmt.Println("  (none yet -- wait for the source agent's next reconcile tick)")
+	}
+
+	if *action == "" || *diagnosis == "" || *reason == "" {
+		fatal(fmt.Errorf("--action, --diagnosis and --reason are all required"))
+	}
+	patch := map[string]any{
+		"spec": map[string]any{
+			"recovery": model.MachineMigrationRecoverySpec{
+				Action:                *action,
+				AcknowledgedDiagnosis: *diagnosis,
+				Reason:                *reason,
+			},
+		},
+	}
+	if err := kc.PatchMachineMigration(ctx, *ns, name, patch); err != nil {
+		fatal(fmt.Errorf("patch machinemigration %s/%s: %w", *ns, name, err))
+	}
+	fmt.Printf("machinemigration/%s: recovery %s requested; the source node's agent will validate and apply it on its next reconcile\n", name, *action)
+}
+
 func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
 		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS]"))
@@ -282,7 +341,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots] | describe | create | delete | start | stop | migrate | evacuate | snapshot | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots] | describe | create | delete | start | stop | migrate | evacuate | recover | snapshot | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

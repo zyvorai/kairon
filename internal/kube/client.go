@@ -190,6 +190,10 @@ func (c *Client) PatchMachineMigrationStatus(ctx context.Context, ns, name strin
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinemigrations", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) PatchMachineMigration(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinemigrations", name), patch, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineSnapshots(ctx context.Context) ([]model.MachineSnapshot, error) {
 	var list model.MachineSnapshotList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots", nil, &list, "")

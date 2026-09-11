@@ -291,6 +291,9 @@ func NormalizeBDF(raw string) (string, error) {
 
 func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigration) error {
 	phase := item.Status.Phase
+	if phase == "NeedsRecovery" {
+		return a.reconcileNeedsRecovery(ctx, item)
+	}
 	if phase != "Starting" && phase != "Running" {
 		return nil
 	}
@@ -440,6 +443,129 @@ func (a *Agent) projectTransfer(ctx context.Context, item model.MachineMigration
 	default:
 		status.Phase = "Running"
 		status.Message = "live migration transfer in progress"
+	}
+	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+}
+
+// reconcileNeedsRecovery never auto-resolves a NeedsRecovery migration --
+// every tick it only refreshes a live diagnosis of what's actually known
+// (status.Recovery's diagnosis fields), and acts *only* when the operator
+// has set spec.recovery with an AcknowledgedDiagnosis that matches the
+// requested Action and a non-empty Reason. See docs/architecture.md and
+// SECURITY.md: an ambiguous commit must never auto-resolve.
+func (a *Agent) reconcileNeedsRecovery(ctx context.Context, item model.MachineMigration) error {
+	status := item.Status
+	if a.MigrationPeer == nil {
+		return fmt.Errorf("secure migration control plane is not configured; cannot diagnose NeedsRecovery")
+	}
+	var targetURL string
+	var err error
+	if a.MigrationPeerURL != nil {
+		targetURL, err = a.MigrationPeerURL(ctx, item.Status.TargetNode)
+	} else {
+		targetURL, err = a.targetControlURL(ctx, item.Status.TargetNode)
+	}
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	recovery := status.Recovery
+	if recovery == nil {
+		recovery = &model.MachineMigrationRecoveryStatus{}
+	}
+	recovery.DiagnosedAt = &now
+	if status.RuntimeID != "" {
+		if rec, err := a.Flux.Get(ctx, status.RuntimeID); err != nil {
+			a.Log.Warn("NeedsRecovery: source runtime lookup failed", "runtimeID", status.RuntimeID, "error", err)
+			recovery.SourceRuntimeStatus = ""
+		} else {
+			recovery.SourceRuntimeStatus = rec.Status
+		}
+	}
+	if status.SessionID != "" {
+		diag, err := a.MigrationPeer.Diagnose(ctx, targetURL, status.SessionID)
+		if err != nil {
+			a.Log.Warn("NeedsRecovery: destination diagnosis failed", "sessionID", status.SessionID, "error", err)
+		} else {
+			recovery.DestinationSessionPhase = diag.SessionPhase
+			recovery.DestinationRuntimeFound = diag.DestinationRuntimeFound
+			recovery.DestinationRuntimeStatus = diag.DestinationRuntimeStatus
+		}
+	}
+	status.Recovery = recovery
+
+	action := item.Spec.Recovery
+	if action == nil {
+		// Parked, but the operator can now see live diagnosis via `kubectl
+		// get machinemigration -o yaml` without triggering anything.
+		return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+	}
+	if strings.TrimSpace(action.Reason) == "" {
+		status.Message = "spec.recovery.reason is required -- refusing to act without the operator's attested evidence"
+		return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+	}
+	diagnosisMatches := map[string]string{
+		model.RecoveryActionConfirmDestinationCommitted:    model.RecoveryDiagnosisDestinationCommitted,
+		model.RecoveryActionConfirmDestinationNotCommitted: model.RecoveryDiagnosisDestinationNotCommitted,
+	}
+	if want, ok := diagnosisMatches[action.Action]; ok && action.AcknowledgedDiagnosis != want {
+		status.Message = fmt.Sprintf(
+			"spec.recovery.acknowledgedDiagnosis (%s) does not match spec.recovery.action (%s); refusing to act -- update spec.recovery to match what you actually observed",
+			action.AcknowledgedDiagnosis, action.Action,
+		)
+		return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+	} else if !ok && action.Action != model.RecoveryActionForceAbort {
+		status.Message = fmt.Sprintf("unknown spec.recovery.action %q", action.Action)
+		return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+	}
+
+	appliedAt := time.Now().UTC()
+	recovery.AppliedAction = action.Action
+	recovery.AppliedReason = action.Reason
+	recovery.AppliedAcknowledgedDiagnosis = action.AcknowledgedDiagnosis
+	recovery.AppliedAt = &appliedAt
+
+	switch action.Action {
+	case model.RecoveryActionConfirmDestinationCommitted:
+		// Idempotent: heals the case where the destination actually
+		// committed but a prior network-resume step failed before the
+		// session store could be updated to "Committed" (see
+		// NetworkAwareDestination.Commit's own doc comment).
+		if err := a.MigrationPeer.Commit(ctx, targetURL, status.SessionID); err != nil {
+			a.Log.Warn("NeedsRecovery: ConfirmDestinationCommitted re-commit failed; proceeding anyway on operator's attestation", "sessionID", status.SessionID, "error", err)
+		}
+		if status.RuntimeID != "" {
+			if err := a.Flux.Delete(ctx, status.RuntimeID); err != nil {
+				a.Log.Warn("NeedsRecovery: best-effort source runtime delete failed", "runtimeID", status.RuntimeID, "error", err)
+			}
+		}
+		status.Phase = "Cutover"
+		status.Message = "recovery: operator confirmed destination committed; source runtime removed, handing off to normal cutover"
+	case model.RecoveryActionConfirmDestinationNotCommitted:
+		if err := a.MigrationPeer.Commit(ctx, targetURL, status.SessionID); err != nil {
+			_ = a.MigrationPeer.Abort(ctx, targetURL, status.SessionID)
+			status.Phase = "Failed"
+			status.Message = "recovery: retried commit failed, confirming destination never committed: " + err.Error() + "; host-level inspection is required before reusing this Machine"
+			break
+		}
+		if status.RuntimeID != "" {
+			if err := a.Flux.Delete(ctx, status.RuntimeID); err != nil {
+				a.Log.Warn("NeedsRecovery: best-effort source runtime delete failed", "runtimeID", status.RuntimeID, "error", err)
+			}
+		}
+		status.Phase = "Cutover"
+		status.Message = "recovery: retried commit succeeded; source runtime removed, handing off to normal cutover"
+	case model.RecoveryActionForceAbort:
+		// Deliberately never touches the source runtime here: ground truth
+		// is unknown by definition, so destroying the only possibly-live
+		// copy of the guest is out of bounds. A 409 from Abort is expected
+		// and fine if the destination secretly did commit.
+		if err := a.MigrationPeer.Abort(ctx, targetURL, status.SessionID); err != nil {
+			a.Log.Warn("NeedsRecovery: ForceAbort peer abort failed", "sessionID", status.SessionID, "error", err)
+		}
+		status.Phase = "Failed"
+		status.Message = "recovery: operator forced abort; source runtime was left untouched -- verify its state before reuse"
 	}
 	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
 }

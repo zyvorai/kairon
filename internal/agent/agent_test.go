@@ -297,6 +297,10 @@ type fakePeerDestination struct {
 	commits     int
 	aborts      int
 	lastSession migration.Session
+
+	// diagnosis, when non-nil, makes this fake implement migration.Diagnosable.
+	diagnosis    *migration.DiagnosisResult
+	diagnosisErr error
 }
 
 func (f *fakePeerDestination) Prepare(_ context.Context, session migration.Session) (migration.PrepareResult, error) {
@@ -311,6 +315,12 @@ func (f *fakePeerDestination) Commit(context.Context, migration.Session) error {
 func (f *fakePeerDestination) Abort(context.Context, migration.Session) error {
 	f.aborts++
 	return nil
+}
+func (f *fakePeerDestination) Diagnose(_ context.Context, session migration.Session) (migration.DiagnosisResult, error) {
+	if f.diagnosis == nil {
+		return migration.DiagnosisResult{SessionPhase: session.Phase}, f.diagnosisErr
+	}
+	return *f.diagnosis, f.diagnosisErr
 }
 
 func TestSourceAgentPreparesTargetThenCompletesTransfer(t *testing.T) {
@@ -442,4 +452,194 @@ func runLiveAgentReconcileWithNetwork(t *testing.T, peerServer *httptest.Server,
 		t.Fatal(err)
 	}
 	return migrationStatus
+}
+
+// runNeedsRecoveryReconcile drives a single reconcile of a migration already
+// parked in NeedsRecovery, with sourceNode/targetNode/sessionID/runtimeID
+// pre-populated (as a real Starting-phase reconcile would have left them).
+// storedSessionPhase seeds the peer server's own session store, mirroring
+// what the destination's Commit sequence would have actually left behind.
+func runNeedsRecoveryReconcile(t *testing.T, recovery *model.MachineMigrationRecoverySpec, destination *fakePeerDestination, storedSessionPhase string, fluxHandler http.HandlerFunc) model.MachineMigrationStatus {
+	t.Helper()
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Recovery: recovery},
+		Status: model.MachineMigrationStatus{
+			Phase: "NeedsRecovery", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live",
+			RuntimeID: "vm-1", SessionID: "sess-1",
+		},
+	}
+	store := migration.NewFileStore(t.TempDir())
+	if err := store.Put(migration.Session{ID: "sess-1", Namespace: "prod", Machine: "db", SourceNode: "worker-1", TargetNode: "worker-2", Phase: storedSessionPhase}); err != nil {
+		t.Fatal(err)
+	}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: store, Driver: destination}).Handler())
+	defer peerServer.Close()
+
+	var migrationStatus model.MachineMigrationStatus
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			migrationStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(fluxHandler)
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer:    migration.NewClient(peerServer.Client()),
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return migrationStatus
+}
+
+func defaultNeedsRecoveryFluxHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1" {
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: "kairon-prod-db", Status: "Running"})
+			return
+		}
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-1" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}
+}
+
+func TestNeedsRecoveryDiagnosisPopulatesStatus(t *testing.T) {
+	destination := &fakePeerDestination{diagnosis: &migration.DiagnosisResult{SessionPhase: "Prepared", DestinationRuntimeFound: true, DestinationRuntimeStatus: "Running"}}
+	status := runNeedsRecoveryReconcile(t, nil, destination, "Prepared", defaultNeedsRecoveryFluxHandler(t))
+	if status.Phase != "NeedsRecovery" {
+		t.Fatalf("expected phase to stay NeedsRecovery with no spec.recovery set, got %+v", status)
+	}
+	if status.Recovery == nil {
+		t.Fatal("expected status.Recovery to be populated")
+	}
+	if status.Recovery.SourceRuntimeStatus != "Running" {
+		t.Errorf("expected sourceRuntimeStatus=Running, got %q", status.Recovery.SourceRuntimeStatus)
+	}
+	if status.Recovery.DestinationSessionPhase != "Prepared" || !status.Recovery.DestinationRuntimeFound || status.Recovery.DestinationRuntimeStatus != "Running" {
+		t.Errorf("unexpected recovery diagnosis: %+v", status.Recovery)
+	}
+	if status.Recovery.DiagnosedAt == nil {
+		t.Error("expected DiagnosedAt to be set")
+	}
+}
+
+func TestNeedsRecoveryRejectsMismatchedDiagnosis(t *testing.T) {
+	destination := &fakePeerDestination{diagnosis: &migration.DiagnosisResult{DestinationRuntimeFound: false}}
+	recovery := &model.MachineMigrationRecoverySpec{
+		Action:                model.RecoveryActionConfirmDestinationCommitted,
+		AcknowledgedDiagnosis: model.RecoveryDiagnosisDestinationNotCommitted,
+		Reason:                "I saw the destination was not running",
+	}
+	status := runNeedsRecoveryReconcile(t, recovery, destination, "Prepared", defaultNeedsRecoveryFluxHandler(t))
+	if status.Phase != "NeedsRecovery" {
+		t.Fatalf("expected phase to stay NeedsRecovery on a mismatched diagnosis, got %+v", status)
+	}
+	if !strings.Contains(status.Message, "does not match") {
+		t.Errorf("expected a mismatch rejection message, got %q", status.Message)
+	}
+	if destination.commits != 0 || destination.aborts != 0 {
+		t.Errorf("expected no commit/abort to be attempted, got commits=%d aborts=%d", destination.commits, destination.aborts)
+	}
+}
+
+func TestNeedsRecoveryConfirmCommittedTransitionsToCutover(t *testing.T) {
+	destination := &fakePeerDestination{diagnosis: &migration.DiagnosisResult{DestinationRuntimeFound: true, DestinationRuntimeStatus: "Running"}}
+	recovery := &model.MachineMigrationRecoverySpec{
+		Action:                model.RecoveryActionConfirmDestinationCommitted,
+		AcknowledgedDiagnosis: model.RecoveryDiagnosisDestinationCommitted,
+		Reason:                "Confirmed the guest is running on the destination via console",
+	}
+	status := runNeedsRecoveryReconcile(t, recovery, destination, "Prepared", defaultNeedsRecoveryFluxHandler(t))
+	if status.Phase != "Cutover" {
+		t.Fatalf("expected phase Cutover, got %+v", status)
+	}
+	if destination.commits != 1 {
+		t.Errorf("expected exactly one commit retry, got %d", destination.commits)
+	}
+	if status.Recovery == nil || status.Recovery.AppliedAction != model.RecoveryActionConfirmDestinationCommitted || status.Recovery.AppliedAt == nil {
+		t.Errorf("expected an audit record of the applied action, got %+v", status.Recovery)
+	}
+}
+
+func TestNeedsRecoveryConfirmNotCommittedRetriesThenFails(t *testing.T) {
+	destination := &fakePeerDestination{commitErr: fmt.Errorf("destination rejects commit: unknown session")}
+	recovery := &model.MachineMigrationRecoverySpec{
+		Action:                model.RecoveryActionConfirmDestinationNotCommitted,
+		AcknowledgedDiagnosis: model.RecoveryDiagnosisDestinationNotCommitted,
+		Reason:                "Destination FluxVM has no record of this VM",
+	}
+	status := runNeedsRecoveryReconcile(t, recovery, destination, "Prepared", defaultNeedsRecoveryFluxHandler(t))
+	if status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed after the retried commit also fails, got %+v", status)
+	}
+	if destination.commits != 1 {
+		t.Errorf("expected exactly one retried commit attempt, got %d", destination.commits)
+	}
+	if destination.aborts != 1 {
+		t.Errorf("expected an abort after the retried commit failed, got %d", destination.aborts)
+	}
+}
+
+func TestNeedsRecoveryForceAbortLeavesSourceRuntimeAlone(t *testing.T) {
+	destination := &fakePeerDestination{}
+	fluxCalls := map[string]int{}
+	fluxHandler := func(w http.ResponseWriter, r *http.Request) {
+		fluxCalls[r.Method+" "+r.URL.Path]++
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: "kairon-prod-db", Status: "Running"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-1":
+			t.Error("ForceAbort must never delete the source runtime")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}
+	recovery := &model.MachineMigrationRecoverySpec{
+		Action:                model.RecoveryActionForceAbort,
+		AcknowledgedDiagnosis: model.RecoveryDiagnosisUnknown,
+		Reason:                "Cannot determine which side is authoritative; forcing abort as an escape hatch",
+	}
+	status := runNeedsRecoveryReconcile(t, recovery, destination, "Prepared", fluxHandler)
+	if status.Phase != "Failed" {
+		t.Fatalf("expected phase Failed, got %+v", status)
+	}
+	if destination.aborts != 1 {
+		t.Errorf("expected exactly one abort, got %d", destination.aborts)
+	}
+	if fluxCalls["DELETE /v1/vms/vm-1"] != 0 {
+		t.Errorf("expected the source runtime to never be deleted, got %d DELETE calls", fluxCalls["DELETE /v1/vms/vm-1"])
+	}
 }

@@ -26,6 +26,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/v1/migrations/{id}", s.get)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/commit", s.commit)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/abort", s.abort)
+	mux.HandleFunc("GET /internal/v1/migrations/{id}/diagnosis", s.diagnosis)
 	return http.MaxBytesHandler(mux, 8<<20)
 }
 
@@ -176,6 +177,37 @@ func (s *Server) transition(w http.ResponseWriter, r *http.Request, desired stri
 		return
 	}
 	writeJSON(w, http.StatusOK, response(session))
+}
+
+// diagnosis is strictly read-only (never mutates Store) so it's always
+// safe to poll, including on every NeedsRecovery reconcile tick -- it
+// answers "what do we actually know" without requiring or implying any
+// recovery action has been decided.
+func (s *Server) diagnosis(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("migration store is not configured"))
+		return
+	}
+	session, err := s.Store.Get(r.PathValue("id"))
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	diagnosable, ok := s.Driver.(Diagnosable)
+	if !ok {
+		writeJSON(w, http.StatusOK, DiagnosisResult{SessionPhase: session.Phase, ObservedAt: s.now()})
+		return
+	}
+	result, err := diagnosable.Diagnose(r.Context(), session)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("diagnose destination: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func response(session Session) PrepareResponse {

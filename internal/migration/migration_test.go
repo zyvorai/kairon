@@ -98,6 +98,73 @@ func TestCommitAndAbortLifecycle(t *testing.T) {
 	}
 }
 
+type fakeDiagnosableDestination struct {
+	fakeDestination
+	diagnosis DiagnosisResult
+	diagErr   error
+	diagCalls int
+}
+
+func (f *fakeDiagnosableDestination) Diagnose(context.Context, Session) (DiagnosisResult, error) {
+	f.diagCalls++
+	return f.diagnosis, f.diagErr
+}
+
+func TestDiagnosisFallsBackToSessionPhaseWhenDriverIsNotDiagnosable(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	ts := httptest.NewServer((&Server{Store: store, Driver: d}).Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Diagnose(context.Background(), ts.URL, "kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionPhase != "Prepared" {
+		t.Errorf("expected SessionPhase=Prepared, got %+v", result)
+	}
+	if result.DestinationRuntimeFound {
+		t.Errorf("a non-Diagnosable driver must not report DestinationRuntimeFound, got %+v", result)
+	}
+}
+
+func TestDiagnosisUsesDriverWhenAvailable(t *testing.T) {
+	d := &fakeDiagnosableDestination{
+		fakeDestination: fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}},
+		diagnosis:       DiagnosisResult{SessionPhase: "Prepared", DestinationRuntimeFound: true, DestinationRuntimeStatus: "Running", DestinationRuntimeID: "vm-2"},
+	}
+	store := NewFileStore(t.TempDir())
+	ts := httptest.NewServer((&Server{Store: store, Driver: d}).Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Diagnose(context.Background(), ts.URL, "kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.diagCalls != 1 {
+		t.Errorf("expected exactly one Diagnose call, got %d", d.diagCalls)
+	}
+	if result != d.diagnosis {
+		t.Errorf("expected the driver's diagnosis to be returned verbatim, got %+v", result)
+	}
+}
+
+func TestDiagnosisOnUnknownSessionIsNotFound(t *testing.T) {
+	d := &fakeDestination{}
+	ts := httptest.NewServer((&Server{Store: NewFileStore(t.TempDir()), Driver: d}).Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if _, err := c.Diagnose(context.Background(), ts.URL, "does-not-exist"); err == nil {
+		t.Fatal("expected an error for an unknown session id")
+	}
+}
+
 func TestUnsupportedDestinationIsPersistedWithoutEndpoint(t *testing.T) {
 	d := UnsupportedDestinationDriver{Reason: "adapter absent"}
 	store := NewFileStore(t.TempDir())
