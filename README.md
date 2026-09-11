@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
-[![Release](https://img.shields.io/badge/version-v0.3.0-blue)](VERSION)
+[![Release](https://img.shields.io/badge/version-v0.4.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
 
 [Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Recovery runbook](docs/runbook-migration-failures.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
@@ -30,7 +30,7 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 
 ---
 
-## What you get in v0.3
+## What you get in v0.4
 
 - **Machine CRD** — CPU, memory, image, network, power, volumes, DRA device claims
 - **Network Fabric** — rich `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge (see [docs/network-fabric.md](docs/network-fabric.md))
@@ -45,7 +45,7 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 - **Operational tooling** — Prometheus metrics + alert rules, a per-node/cluster migration concurrency quota, and `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted (see [docs/runbook-migration-failures.md](docs/runbook-migration-failures.md))
 - **Helm + raw manifests + CI** — auditable, reproducible builds
 
-Live *memory* transfer still needs a node-local [migration adapter](docs/migration-adapter.md). Without one, live requests block **before** the source is touched. Cold migration works today.
+Live *memory* transfer needs a node-local [migration adapter](docs/migration-adapter.md) deployed and configured on each node — a real one now ships (`cmd/kairon-migration-adapter-fluxvm`), but it isn't installed automatically yet. Without one, live requests block **before** the source is touched. Cold migration works today.
 
 ---
 
@@ -247,7 +247,7 @@ Runtime code uses the **Go standard library only** — no client-go, no generate
 
 ## Status
 
-**v0.3.0** is open source and honest about maturity. Cold relocation, snapshots, DRA bridging, and the secure live *control plane* are real. Full live memory migration waits on a FluxVM (or other) adapter. HA fencing, PVC attach, admission, and qualification work are tracked in [`ROADMAP.md`](ROADMAP.md).
+**v0.4.0** is open source and honest about maturity. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — but real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](#operability)). HA fencing, PVC attach, full admission/quotas, and qualification work are tracked in [`ROADMAP.md`](ROADMAP.md).
 
 ### Production gaps
 

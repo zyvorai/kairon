@@ -1,24 +1,30 @@
-# Unreleased
+# Kairon v0.4.0
 
-Operational tooling and a web dashboard, built on top of v0.3.0's secure migration control plane. No CRD version bump; `status.dataPlaneEncrypted` and the concurrency-quota fields are additive.
+Kairon v0.4.0 turns v0.3.0's secure migration *control plane* into a working live-migration *backend*, and adds the operational tooling (metrics, alerting, a concurrency quota, a web dashboard) needed to actually run it. No CRD version bump; every new field is additive.
 
 ## Added
 
+- A real FluxVM-backed migration adapter (`cmd/kairon-migration-adapter-fluxvm`), implementing the destination/source adapter contract (`docs/migration-adapter.md`) against real FluxVM migration/QMP endpoints -- previously only a defined contract with a test-double stub (`cmd/kairon-migration-adapter-stub`).
+- Per-migration migration network selection (`spec.migrationNetwork`) and adapter-side `-migration-network name=ip` address policy.
+- Opt-in authenticated/encrypted migration data-plane transport (`migration.dataplaneTls`, adapter `-migration-data-tls`), with `MachineMigration.status.dataPlaneEncrypted` reporting whether a given migration's RAM/state stream was actually encrypted (distinct from the always-on mTLS control-plane RPCs). A loud startup warning logs from the adapter whenever data-plane TLS is disabled.
+- Operator recovery commands for `NeedsRecovery` (`kaironctl recover`), with CRD schema for `spec.recovery`/`status.recovery`, and `docs/runbook-migration-failures.md` documenting the decision tree.
 - `kairon-ui`: an optional web dashboard (Go backend in `cmd/kairon-ui` + `internal/uiapi`, a React/TypeScript SPA in `web/`) for Machines, Migrations, Snapshots, and operator-attested `NeedsRecovery` recovery. Static bearer-token auth, opt-in via `ui.enabled` in the Helm chart (first Service/Ingress in this chart).
-- Prometheus metrics (`internal/metrics`) on `kairon-controller`'s existing health port: migration counts by phase, phase age, transfer/downtime duration histograms, completion counters, and a data-plane-encryption gauge.
-- Example Prometheus alert rules (`charts/kairon/alerts.yaml`), optionally rendered as a `PrometheusRule` via `metrics.prometheusRule.enabled`.
+- Prometheus metrics (`internal/metrics`) on `kairon-controller`'s existing health port: migration counts by phase, phase age, transfer/downtime duration histograms, completion counters, and a data-plane-encryption gauge. Example alert rules (`charts/kairon/alerts.yaml`), optionally rendered as a `PrometheusRule` via `metrics.prometheusRule.enabled`.
 - `migration.maxConcurrentPerNode` / `migration.maxConcurrentCluster`: an opt-in per-node/cluster concurrency quota on non-terminal migrations, admitted through the existing `Blocked` phase.
-- `MachineMigration.status.dataPlaneEncrypted`: whether the live-migration RAM/state stream (not the always-on mTLS control-plane RPCs) was actually encrypted, set from the adapter's own `prepare()` response. A loud startup warning logs from `kairon-migration-adapter-fluxvm` whenever data-plane TLS is disabled.
 - `internal/integration`: a CI-runnable test package driving the controller and node agent together through a real migration pipeline (Starting → Running → Cutover → Adopting → Succeeded, and the `NeedsRecovery` path), against one shared fake Kubernetes backend.
-- `docs/runbook-migration-failures.md`: how to diagnose and resolve `NeedsRecovery`, cross-referenced from the new alerts.
-- `docs/runbook-multi-host-migration-test.md` and `docs/runbook-recovery-drill.md`: real two-host live-migration testing and a live `NeedsRecovery` drill, as runbooks and helper scripts (not yet exercised against real hardware in this repository's own CI, which has no second host).
-- `systemd/kairon-migration-adapter-fluxvm.service` and `scripts/gen-migration-mtls-certs.sh`: closes a gap in `scripts/deploy-remote.sh`, which previously only supported installing the test-double adapter stub, not the real one.
+- `docs/runbook-multi-host-migration-test.md` and `docs/runbook-recovery-drill.md`: real two-host live-migration testing and a live `NeedsRecovery` drill, as runbooks and helper scripts.
+- `systemd/kairon-migration-adapter-fluxvm.service` and `scripts/gen-migration-mtls-certs.sh`: closes a gap in `scripts/deploy-remote.sh`, which previously only supported installing the test-double adapter stub.
+- Apache-2.0 SPDX headers across source and manifests; the project is now open-sourced under zyvor.dev.
 
 ## Changed
 
 - `go.mod`'s `go` directive is now `1.27.1` (previously `1.23`); CI's `go-version` pins updated to match.
 - `Dockerfile` gained a `ui` build target (a Node stage building `web/dist`, copied into the same distroless image as the Go binary) and its base Go image was bumped to `golang:1.27-bookworm`.
 - CI gained a `web` job (typecheck/test/build the dashboard) and a fourth `container` build step for the `ui` image target.
+
+## Runtime boundary
+
+A real migration adapter now exists (see Added, above), but it is not installed automatically by `scripts/deploy-remote.sh` or the Helm chart today -- see `docs/runbook-multi-host-migration-test.md` for how to deploy and wire it up. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks with helper scripts but have not yet been exercised against real hardware in this repository's own CI, which has no second host.
 
 # Kairon v0.3.0
 
