@@ -35,3 +35,10 @@ migration:
   # contract, so leave empty unless an adapter is installed on every VM node.
   adapterSocket: ""
   adapterHostPath: ""
+  # Authenticate/encrypt the QEMU migration data stream (not just the
+  # control-plane RPCs, which always use mTLS) via TLS. Opt-in: enable only
+  # once every node's kairon-migration-adapter-fluxvm and FluxVM binary is
+  # upgraded to support it (see ROADMAP v0.4). Requires adapterHostPath, so
+  # the host-level adapter systemd unit can read the same cert material this
+  # chart already gives kairon-node via tlsSecretName.
+  dataplaneTls: false

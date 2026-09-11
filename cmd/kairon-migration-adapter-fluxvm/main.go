@@ -107,7 +107,8 @@ type receiverRequest struct {
 	ReceiverTTLSeconds uint64       `json:"receiver_ttl_seconds,omitempty"`
 	// MigrationBindAddress, when set, is the literal IP FluxVM's receiver
 	// binds/advertises its -incoming listener on instead of 0.0.0.0.
-	MigrationBindAddress string `json:"migration_bind_address,omitempty"`
+	MigrationBindAddress string        `json:"migration_bind_address,omitempty"`
+	Tls                  *migrationTLS `json:"tls,omitempty"`
 }
 
 type receiverInfo struct {
@@ -117,12 +118,23 @@ type receiverInfo struct {
 	ExpiresAt string `json:"expires_at"`
 }
 
+// migrationTLS mirrors FluxVM's MigrationTlsSpec. TLSHostname is meaningful
+// only for the source (client) side -- the receiver never verifies a
+// hostname, so prepare() leaves it empty.
+type migrationTLS struct {
+	CaPath      string `json:"ca_path"`
+	CertPath    string `json:"cert_path"`
+	KeyPath     string `json:"key_path"`
+	TLSHostname string `json:"tls_hostname,omitempty"`
+}
+
 type migrationStartRequest struct {
-	Destination     string `json:"destination"`
-	Mode            string `json:"mode,omitempty"`
-	BandwidthMbps   uint64 `json:"bandwidth_mbps,omitempty"`
-	MaxDowntimeMs   uint64 `json:"max_downtime_ms,omitempty"`
-	MultifdChannels uint8  `json:"multifd_channels,omitempty"`
+	Destination     string        `json:"destination"`
+	Mode            string        `json:"mode,omitempty"`
+	BandwidthMbps   uint64        `json:"bandwidth_mbps,omitempty"`
+	MaxDowntimeMs   uint64        `json:"max_downtime_ms,omitempty"`
+	MultifdChannels uint8         `json:"multifd_channels,omitempty"`
+	Tls             *migrationTLS `json:"tls,omitempty"`
 }
 
 // migrationStatus mirrors FluxVM's MigrationStatus JSON shape.
@@ -181,19 +193,36 @@ type adapter struct {
 	// MigrationNetwork set ignores this map entirely (advertiseHost/0.0.0.0
 	// default behavior, unchanged).
 	migrationNetworks map[string]string
+	// tlsCA/tlsCert/tlsKey, when all non-empty (gated by -migration-data-tls),
+	// are paths readable on THIS host that both prepare() (receiver) and
+	// sourceStart() (source) hand to FluxVM, which materializes them into
+	// the filenames QEMU's tls-creds-x509 object expects. nil/empty means
+	// today's plain-transport behavior, unchanged.
+	tlsCA, tlsCert, tlsKey string
 
 	mu         sync.Mutex
 	destByID   map[string]string // session.ID -> fluxvm receiver id
 	sourceRTID map[string]string // session.ID -> source runtimeID (for status/abort)
 }
 
-func newAdapter(log *slog.Logger, flux *fluxClient, advertiseHost, bridge string, ttl uint64, migrationNetworks map[string]string) *adapter {
+func newAdapter(log *slog.Logger, flux *fluxClient, advertiseHost, bridge string, ttl uint64, migrationNetworks map[string]string, tlsCA, tlsCert, tlsKey string) *adapter {
 	return &adapter{
 		log: log, flux: flux, advertiseHost: advertiseHost, bridge: bridge, receiverTTLSec: ttl,
 		migrationNetworks: migrationNetworks,
-		destByID:          map[string]string{},
-		sourceRTID:        map[string]string{},
+		tlsCA:             tlsCA, tlsCert: tlsCert, tlsKey: tlsKey,
+		destByID:   map[string]string{},
+		sourceRTID: map[string]string{},
 	}
+}
+
+// migrationTLSSpec builds a *migrationTLS from the adapter's configured
+// cert paths, or nil when TLS is disabled (tlsCA empty). hostname is only
+// meaningful for the source side; pass "" for the receiver.
+func (a *adapter) migrationTLSSpec(hostname string) *migrationTLS {
+	if a.tlsCA == "" {
+		return nil
+	}
+	return &migrationTLS{CaPath: a.tlsCA, CertPath: a.tlsCert, KeyPath: a.tlsKey, TLSHostname: hostname}
 }
 
 func (a *adapter) handler() http.Handler {
@@ -252,6 +281,7 @@ func (a *adapter) prepare(w http.ResponseWriter, r *http.Request) {
 		DiskPath:             session.DiskPath,
 		ReceiverTTLSeconds:   a.receiverTTLSec,
 		MigrationBindAddress: bindAddress,
+		Tls:                  a.migrationTLSSpec(""),
 	}
 	var info receiverInfo
 	if _, err := a.flux.do(r.Context(), http.MethodPost, "/v1/migration/receivers", receiverReq, &info); err != nil {
@@ -321,6 +351,7 @@ func (a *adapter) sourceStart(w http.ResponseWriter, r *http.Request) {
 		BandwidthMbps:   req.Options.BandwidthMbps,
 		MaxDowntimeMs:   req.Options.MaxDowntimeMs,
 		MultifdChannels: req.Options.MultifdChannels,
+		Tls:             a.migrationTLSSpec(endpointHost(req.Endpoint)),
 	}
 	var status migrationStatus
 	if _, err := a.flux.do(r.Context(), http.MethodPost, "/v1/vms/"+req.RuntimeID+"/migration/start", startReq, &status); err != nil {
@@ -363,6 +394,24 @@ func (a *adapter) sourceAbort(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// endpointHost extracts the host from a "tcp:host:port" migration endpoint
+// URI (the shape prepare() builds and sourceStart() receives back), for use
+// as the TLS client's expected server hostname. Returns "" if endpoint
+// isn't a recognizable tcp: URI (e.g. a non-FluxVM adapter's own scheme) --
+// the caller then sends no tls_hostname, which FluxVM's receiver-side
+// verify-peer still enforces via the CA, just without hostname pinning.
+func endpointHost(endpoint string) string {
+	rest, ok := strings.CutPrefix(endpoint, "tcp:")
+	if !ok {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(rest)
+	if err != nil {
+		return ""
+	}
+	return host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -408,6 +457,10 @@ func main() {
 	receiverTTL := flag.Uint64("receiver-ttl-seconds", 300, "how long an unclaimed receiver is kept before FluxVM reclaims it")
 	migrationNetworks := make(migrationNetworkFlag)
 	flag.Var(migrationNetworks, "migration-network", "name=ip mapping a MachineMigration's migrationNetwork to the address the receiver binds/advertises (repeatable)")
+	dataTLS := flag.Bool("migration-data-tls", false, "authenticate/encrypt the QEMU migration data stream via TLS (requires -migration-ca/-migration-cert/-migration-key)")
+	tlsCA := flag.String("migration-ca", os.Getenv("KAIRON_MIGRATION_CA"), "CA cert path for migration data-plane TLS (default: $KAIRON_MIGRATION_CA)")
+	tlsCert := flag.String("migration-cert", os.Getenv("KAIRON_MIGRATION_CERT"), "cert path for migration data-plane TLS (default: $KAIRON_MIGRATION_CERT)")
+	tlsKey := flag.String("migration-key", os.Getenv("KAIRON_MIGRATION_KEY"), "key path for migration data-plane TLS (default: $KAIRON_MIGRATION_KEY)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -415,9 +468,20 @@ func main() {
 		log.Error("--socket is required")
 		os.Exit(2)
 	}
+	if *dataTLS && (*tlsCA == "" || *tlsCert == "" || *tlsKey == "") {
+		log.Error("-migration-data-tls is fail-closed: -migration-ca, -migration-cert and -migration-key must all be set")
+		os.Exit(2)
+	}
+	if !*dataTLS {
+		// Never silently enable TLS just because cert flags happen to be
+		// set -- rollout is opt-in via -migration-data-tls (see ROADMAP
+		// v0.4's ordering: flip clusters over once every node's adapter
+		// and FluxVM binary is upgraded, not implicitly).
+		*tlsCA, *tlsCert, *tlsKey = "", "", ""
+	}
 
 	flux := newFluxClient(*fluxURL, *fluxToken)
-	a := newAdapter(log, flux, *advertiseHost, *bridge, *receiverTTL, migrationNetworks)
+	a := newAdapter(log, flux, *advertiseHost, *bridge, *receiverTTL, migrationNetworks, *tlsCA, *tlsCert, *tlsKey)
 
 	_ = os.Remove(*socket)
 	listener, err := net.Listen("unix", *socket)

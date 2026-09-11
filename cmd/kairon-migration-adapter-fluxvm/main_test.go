@@ -21,8 +21,16 @@ func testAdapter(t *testing.T, fluxHandler http.HandlerFunc, migrationNetworks m
 	flux := httptest.NewServer(fluxHandler)
 	t.Cleanup(flux.Close)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a := newAdapter(log, newFluxClient(flux.URL, ""), "203.0.113.1", "virbr0", 300, migrationNetworks)
+	a := newAdapter(log, newFluxClient(flux.URL, ""), "203.0.113.1", "virbr0", 300, migrationNetworks, "", "", "")
 	return a, flux
+}
+
+func testAdapterWithTLS(t *testing.T, fluxHandler http.HandlerFunc) *adapter {
+	t.Helper()
+	flux := httptest.NewServer(fluxHandler)
+	t.Cleanup(flux.Close)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return newAdapter(log, newFluxClient(flux.URL, ""), "203.0.113.1", "virbr0", 300, nil, "/etc/ca.pem", "/etc/cert.pem", "/etc/key.pem")
 }
 
 func prepareSession() migration.Session {
@@ -114,5 +122,81 @@ func TestPrepareWithUnresolvableMigrationNetworkFailsWithoutCallingFluxVM(t *tes
 	}
 	if called {
 		t.Error("expected FluxVM not to be called for an unresolvable migrationNetwork")
+	}
+}
+
+func TestPrepareWithoutTLSConfiguredSendsNoTls(t *testing.T) {
+	a, _ := testAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		var req receiverRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Tls != nil {
+			t.Errorf("expected nil Tls, got %+v", req.Tls)
+		}
+		writeJSON(w, http.StatusOK, receiverInfo{ID: "recv-1", Status: "Receiving", Port: 45001, ExpiresAt: time.Now().Format(time.RFC3339)})
+	}, nil)
+	doPrepare(t, a, prepareSession())
+}
+
+func TestPrepareWithTLSConfiguredSendsCertPathsAndNoHostname(t *testing.T) {
+	a := testAdapterWithTLS(t, func(w http.ResponseWriter, r *http.Request) {
+		var req receiverRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Tls == nil {
+			t.Fatal("expected non-nil Tls")
+		}
+		if req.Tls.CaPath != "/etc/ca.pem" || req.Tls.CertPath != "/etc/cert.pem" || req.Tls.KeyPath != "/etc/key.pem" {
+			t.Errorf("unexpected cert paths: %+v", req.Tls)
+		}
+		if req.Tls.TLSHostname != "" {
+			t.Errorf("expected empty TLSHostname on the receiver side, got %q", req.Tls.TLSHostname)
+		}
+		writeJSON(w, http.StatusOK, receiverInfo{ID: "recv-1", Status: "Receiving", Port: 45001, ExpiresAt: time.Now().Format(time.RFC3339)})
+	})
+	doPrepare(t, a, prepareSession())
+}
+
+func TestSourceStartWithTLSConfiguredSendsCertPathsAndParsedHostname(t *testing.T) {
+	a := testAdapterWithTLS(t, func(w http.ResponseWriter, r *http.Request) {
+		var req migrationStartRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Tls == nil {
+			t.Fatal("expected non-nil Tls")
+		}
+		if req.Tls.CaPath != "/etc/ca.pem" || req.Tls.CertPath != "/etc/cert.pem" || req.Tls.KeyPath != "/etc/key.pem" {
+			t.Errorf("unexpected cert paths: %+v", req.Tls)
+		}
+		if req.Tls.TLSHostname != "10.10.10.5" {
+			t.Errorf("expected TLSHostname parsed from endpoint, got %q", req.Tls.TLSHostname)
+		}
+		writeJSON(w, http.StatusOK, migrationStatus{Phase: "Active", Status: "active"})
+	})
+
+	body, err := json.Marshal(migration.SourceRequest{
+		Session:   prepareSession(),
+		RuntimeID: "vm-1",
+		Endpoint:  "tcp:10.10.10.5:45001",
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/source/start", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	a.sourceStart(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEndpointHost(t *testing.T) {
+	cases := map[string]string{
+		"tcp:10.0.0.5:4444":       "10.0.0.5",
+		"tcp:[::1]:4444":          "::1",
+		"unix:/run/incoming.sock": "",
+		"not-a-uri":               "",
+	}
+	for endpoint, want := range cases {
+		if got := endpointHost(endpoint); got != want {
+			t.Errorf("endpointHost(%q) = %q, want %q", endpoint, got, want)
+		}
 	}
 }

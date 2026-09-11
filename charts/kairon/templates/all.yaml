@@ -93,6 +93,22 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
 {{ toYaml .Values.node.nodeSelector | indent 8 }}
+{{ if and .Values.migration.enabled .Values.migration.adapterHostPath .Values.migration.dataplaneTls }}
+      initContainers:
+        # kairon-migration-adapter-fluxvm runs as a bare-host systemd unit,
+        # not in this pod -- it has no access to the migration-tls Secret
+        # volume below. Materialize the same cert material it needs (for
+        # the QEMU migration data-plane TLS, distinct from this pod's own
+        # mTLS control-plane connection) onto the adapterHostPath volume,
+        # which the host-level adapter process reads directly.
+        - name: migration-adapter-tls
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /adapter/tls && cp /etc/kairon/migration-tls/ca.crt /etc/kairon/migration-tls/tls.crt /etc/kairon/migration-tls/tls.key /adapter/tls/"]
+          volumeMounts:
+            - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
+            - {name: migration-adapter, mountPath: /adapter}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+{{ end }}
       containers:
         - name: node
           image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag }}"
