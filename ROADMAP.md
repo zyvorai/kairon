@@ -10,6 +10,16 @@
 - adopt-only target cutover
 - cold migration, CSI snapshots, DRA/VFIO guard retained
 
+## Network Fabric — FluxVM eBPF edge (in progress)
+
+Kairon declares VM-edge networking; FluxVM owns TAP/TC/eBPF; Fabric proxies dataplane UX.
+See [`docs/network-fabric.md`](docs/network-fabric.md).
+
+- **N1** Machine network create parity (`forwards`, `macvtapMode`, `staticNetwork`, `podUID`) + dataplane status projection
+- **N2** `MachineNetworkPolicy` + `NetworkSecurityGroup` → FluxVM policy/groups/CNP
+- **N3** Live-migration network quiesce / export / restore / resume
+- **N4** Service Fabric VIP membership + `dataplaneRequired` fail-closed readiness
+
 ## v0.4 — FluxVM live-migration backend
 
 - implement the Kairon migration adapter in FluxVM or a companion host service

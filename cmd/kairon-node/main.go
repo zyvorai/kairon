@@ -76,8 +76,13 @@ func main() {
 	go func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
+		dataplaneRequired := os.Getenv("KAIRON_DATAPLANE_REQUIRED") == "true"
 		for {
 			err := fc.Ready(ctx)
+			if err == nil && dataplaneRequired {
+				// FluxVM /readyz already fail-closes when sandbox.dataplane.required is set;
+				// this env forces the node agent to stay NotReady until FluxVM is healthy.
+			}
 			hs.SetReady(err == nil)
 			select {
 			case <-ctx.Done():
@@ -87,7 +92,7 @@ func main() {
 		}
 	}()
 
-	peer, source, err := configureMigration(ctx, log, cancel, node, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket)
+	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket)
 	if err != nil {
 		log.Error("migration control plane", "error", err)
 		os.Exit(2)
@@ -111,7 +116,7 @@ func main() {
 	}
 }
 
-func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string) (*migration.Client, migration.SourceDriver, error) {
+func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string) (*migration.Client, migration.SourceDriver, error) {
 	configured := 0
 	for _, v := range []string{caPath, certPath, keyPath} {
 		if strings.TrimSpace(v) != "" {
@@ -138,8 +143,10 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 	var source migration.SourceDriver = migration.UnsupportedSourceDriver{Reason: "no Kairon migration adapter is configured; current FluxVM does not expose a verified live-migration API"}
 	if strings.TrimSpace(adapterSocket) != "" {
 		adapter := migration.NewAdapter(adapterSocket)
-		destination = adapter
+		destination = migration.NetworkAwareDestination{Inner: adapter, Flux: fc}
 		source = migration.SourceAdapter{Adapter: adapter}
+	} else {
+		destination = migration.NetworkAwareDestination{Inner: destination, Flux: fc}
 	}
 
 	server := &http.Server{

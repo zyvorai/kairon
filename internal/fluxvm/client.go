@@ -29,6 +29,7 @@ type Record struct {
 	Name    string `json:"name,omitempty"`
 	Status  string `json:"status,omitempty"`
 	GuestIP string `json:"guest_ip,omitempty"`
+	TapName string `json:"tap_name,omitempty"`
 }
 
 func (r Record) ID() string {
@@ -36,6 +37,10 @@ func (r Record) ID() string {
 		return r.IDValue
 	}
 	return r.UUID
+}
+
+type CloudInitSpec struct {
+	StaticNetwork bool `json:"static_network,omitempty"`
 }
 
 type CreateRequest struct {
@@ -47,6 +52,8 @@ type CreateRequest struct {
 	VCPUs       uint32         `json:"vcpus"`
 	MemoryMiB   uint64         `json:"memory_mib"`
 	Network     map[string]any `json:"network,omitempty"`
+	CloudInit   *CloudInitSpec `json:"cloud_init,omitempty"`
+	PodUID      string         `json:"pod_uid,omitempty"`
 	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
 	VFIODevices []string       `json:"vfio_devices,omitempty"`
 }
@@ -159,25 +166,23 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		backend = "qemu"
 	}
 	tenant := m.Namespace()
-	network := map[string]any{}
-	if mode := m.Spec.Network.Mode; mode != "" {
-		network["mode"] = mode
-	} else {
-		network["mode"] = "user"
+	network := BuildNetworkMap(m.Spec.Network)
+	payload := CreateRequest{
+		Name:        m.RuntimeName(),
+		Tenant:      tenant,
+		Backend:     backend,
+		Image:       m.Spec.Image.Path,
+		Kernel:      m.Spec.Runtime.Kernel,
+		VCPUs:       cpu,
+		MemoryMiB:   mem,
+		Network:     network,
+		TTLSeconds:  m.Spec.TTLSeconds,
+		VFIODevices: vfioDevices,
+		PodUID:      m.Spec.Network.PodUID,
 	}
-	if m.Spec.Network.NetNS {
-		network["netns"] = true
+	if m.Spec.Network.StaticNetwork {
+		payload.CloudInit = &CloudInitSpec{StaticNetwork: true}
 	}
-	if m.Spec.Network.Bridge != "" {
-		network["bridge"] = m.Spec.Network.Bridge
-	}
-	if m.Spec.Network.Parent != "" {
-		network["parent"] = m.Spec.Network.Parent
-	}
-	if m.Spec.Network.MAC != "" {
-		network["mac"] = m.Spec.Network.MAC
-	}
-	payload := CreateRequest{Name: m.RuntimeName(), Tenant: tenant, Backend: backend, Image: m.Spec.Image.Path, Kernel: m.Spec.Runtime.Kernel, VCPUs: cpu, MemoryMiB: mem, Network: network, TTLSeconds: m.Spec.TTLSeconds, VFIODevices: vfioDevices}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {
 		return nil, err

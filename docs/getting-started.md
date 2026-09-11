@@ -48,3 +48,15 @@ kaironctl migrate demo --strategy live --target-node worker-2 --mode pre-copy
 kaironctl snapshot database --name database-before-upgrade --class csi-snapclass
 kaironctl get snapshots
 ```
+
+## Network Fabric (eBPF edge)
+
+Apply the example Machine + policy + security group, then follow the tutorial:
+
+```bash
+kubectl apply -f examples/network-fabric-machine.yaml
+```
+
+- Tutorial: [tutorials/network-fabric.md](tutorials/network-fabric.md)
+- User guides: [guides/machine-network.md](guides/machine-network.md), [guides/network-policy.md](guides/network-policy.md)
+- Reference: [network-fabric.md](network-fabric.md)

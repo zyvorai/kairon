@@ -26,7 +26,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/v1/migrations/{id}", s.get)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/commit", s.commit)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/abort", s.abort)
-	return http.MaxBytesHandler(mux, 1<<20)
+	return http.MaxBytesHandler(mux, 8<<20)
 }
 
 func (s *Server) now() time.Time {

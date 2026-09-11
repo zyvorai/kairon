@@ -39,6 +39,8 @@ try:
         "machines.kairon.zyvor.dev",
         "machinemigrations.kairon.zyvor.dev",
         "machinesnapshots.kairon.zyvor.dev",
+        "machinenetworkpolicies.kairon.zyvor.dev",
+        "networksecuritygroups.kairon.zyvor.dev",
     }
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")
@@ -73,9 +75,20 @@ readme = (root / "README.md").read_text()
 for needle in [
     "without KubeVirt", "without libvirt", "FluxVM", "Apache-2.0", "Production gaps",
     "MachineMigration", "MachineSnapshot", "adopt-only", "ResourceClaim", "vfio_devices",
+    "MachineNetworkPolicy", "Network Fabric",
 ]:
     if needle not in readme:
         fail(f"README missing {needle!r}")
+
+for f in [
+    "docs/network-fabric.md",
+    "docs/tutorials/network-fabric.md",
+    "docs/guides/machine-network.md",
+    "docs/guides/network-policy.md",
+    "examples/network-fabric-machine.yaml",
+]:
+    if not (root / f).exists():
+        fail(f"missing {f}")
 
 if errors:
     print("VALIDATION FAILED")

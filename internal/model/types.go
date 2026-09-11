@@ -47,18 +47,19 @@ type MachineList struct {
 }
 
 type MachineSpec struct {
-	NodeName     string                 `json:"nodeName,omitempty"`
-	Image        ImageSpec              `json:"image"`
-	Resources    ResourceSpec           `json:"resources"`
-	Runtime      RuntimeSpec            `json:"runtime,omitempty"`
-	Network      NetworkSpec            `json:"network,omitempty"`
-	PowerState   string                 `json:"powerState,omitempty"`
-	Tenant       string                 `json:"tenant,omitempty"`
-	TTLSeconds   int64                  `json:"ttlSeconds,omitempty"`
-	Placement    PlacementSpec          `json:"placement,omitempty"`
-	Security     SecuritySpec           `json:"security,omitempty"`
-	Volumes      []MachineVolume        `json:"volumes,omitempty"`
-	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
+	NodeName      string                 `json:"nodeName,omitempty"`
+	Image         ImageSpec              `json:"image"`
+	Resources     ResourceSpec           `json:"resources"`
+	Runtime       RuntimeSpec            `json:"runtime,omitempty"`
+	Network       NetworkSpec            `json:"network,omitempty"`
+	ServiceFabric ServiceFabricSpec      `json:"serviceFabric,omitempty"`
+	PowerState    string                 `json:"powerState,omitempty"`
+	Tenant        string                 `json:"tenant,omitempty"`
+	TTLSeconds    int64                  `json:"ttlSeconds,omitempty"`
+	Placement     PlacementSpec          `json:"placement,omitempty"`
+	Security      SecuritySpec           `json:"security,omitempty"`
+	Volumes       []MachineVolume        `json:"volumes,omitempty"`
+	DeviceClaims  []DeviceClaimReference `json:"deviceClaims,omitempty"`
 }
 
 type ImageSpec struct {
@@ -74,14 +75,6 @@ type ResourceSpec struct {
 type RuntimeSpec struct {
 	Backend string `json:"backend,omitempty"`
 	Kernel  string `json:"kernel,omitempty"`
-}
-
-type NetworkSpec struct {
-	Mode   string `json:"mode,omitempty"`
-	NetNS  bool   `json:"netns,omitempty"`
-	Bridge string `json:"bridge,omitempty"`
-	Parent string `json:"parent,omitempty"`
-	MAC    string `json:"mac,omitempty"`
 }
 
 type PlacementSpec struct {
@@ -104,13 +97,14 @@ type DeviceClaimReference struct {
 }
 
 type MachineStatus struct {
-	Phase              string      `json:"phase,omitempty"`
-	NodeName           string      `json:"nodeName,omitempty"`
-	RuntimeID          string      `json:"runtimeID,omitempty"`
-	GuestIP            string      `json:"guestIP,omitempty"`
-	ObservedGeneration int64       `json:"observedGeneration,omitempty"`
-	Message            string      `json:"message,omitempty"`
-	Conditions         []Condition `json:"conditions,omitempty"`
+	Phase              string                `json:"phase,omitempty"`
+	NodeName           string                `json:"nodeName,omitempty"`
+	RuntimeID          string                `json:"runtimeID,omitempty"`
+	GuestIP            string                `json:"guestIP,omitempty"`
+	Network            *MachineNetworkStatus `json:"network,omitempty"`
+	ObservedGeneration int64                 `json:"observedGeneration,omitempty"`
+	Message            string                `json:"message,omitempty"`
+	Conditions         []Condition           `json:"conditions,omitempty"`
 }
 
 type Condition struct {
@@ -300,12 +294,26 @@ func (m Machine) DesiredPowerState() string {
 }
 
 func HasFinalizer(m Machine, name string) bool {
-	for _, f := range m.Metadata.Finalizers {
+	return HasFinalizerList(m.Metadata.Finalizers, name)
+}
+
+func HasFinalizerList(finalizers []string, name string) bool {
+	for _, f := range finalizers {
 		if f == name {
 			return true
 		}
 	}
 	return false
+}
+
+func RemoveFinalizer(finalizers []string, name string) []string {
+	out := make([]string, 0, len(finalizers))
+	for _, f := range finalizers {
+		if f != name {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func AnnotationTrue(meta ObjectMeta, key string) bool {

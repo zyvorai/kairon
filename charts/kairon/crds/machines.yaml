@@ -1,6 +1,7 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
+
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -106,6 +107,45 @@ spec:
                     type: string
                   mac:
                     type: string
+                  tapName:
+                    type: string
+                  macvtapMode:
+                    type: string
+                    enum:
+                    - bridge
+                    - vepa
+                    - private
+                    - passthru
+                  forwards:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - hostPort
+                      - guestPort
+                      properties:
+                        hostPort:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        guestPort:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        protocol:
+                          type: string
+                          enum:
+                          - tcp
+                          - udp
+                          default: tcp
+                  staticNetwork:
+                    type: boolean
+                    default: false
+                  podUID:
+                    type: string
+                  dataplaneRequired:
+                    type: boolean
+                    default: false
               powerState:
                 type: string
                 enum:
@@ -158,6 +198,28 @@ spec:
                     name:
                       type: string
                       minLength: 1
+              serviceFabric:
+                type: object
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - name
+                      - port
+                      properties:
+                        name:
+                          type: string
+                          minLength: 1
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                        weight:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
           status:
             type: object
             properties:
@@ -194,3 +256,27 @@ spec:
                     lastTransitionTime:
                       type: string
                       format: date-time
+              network:
+                type: object
+                properties:
+                  guestIP:
+                    type: string
+                  tapName:
+                    type: string
+                  dataplane:
+                    type: object
+                    properties:
+                      attached:
+                        type: boolean
+                      mode:
+                        type: string
+                      schemaVersion:
+                        type: integer
+                      identity:
+                        type: integer
+                      policyFingerprint:
+                        type: string
+                      policySynced:
+                        type: boolean
+                      interface:
+                        type: string

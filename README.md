@@ -11,7 +11,7 @@
 [![Release](https://img.shields.io/badge/version-v0.3.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
 
-[Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Migration adapter](docs/migration-adapter.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
+[Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
 
 </div>
 
@@ -33,6 +33,7 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 ## What you get in v0.3
 
 - **Machine CRD** — CPU, memory, image, network, power, volumes, DRA device claims
+- **Network Fabric** — rich `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge (see [docs/network-fabric.md](docs/network-fabric.md))
 - **Placement** — Ready, capable-labeled nodes; least-loaded with deterministic tie-break
 - **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API
 - **Secure live handshake** — TLS 1.3 mTLS `prepare → transfer → commit`; no user-supplied `tcp:` URIs

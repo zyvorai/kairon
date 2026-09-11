@@ -5,6 +5,7 @@ package migration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -20,20 +21,21 @@ var (
 var ErrUnsupported = errors.New("live migration backend unsupported")
 
 type Session struct {
-	ID                string    `json:"id"`
-	Namespace         string    `json:"namespace"`
-	Machine           string    `json:"machine"`
-	SourceNode        string    `json:"sourceNode"`
-	TargetNode        string    `json:"targetNode"`
-	RuntimeID         string    `json:"runtimeID,omitempty"`
-	Phase             string    `json:"phase"`
-	Backend           string    `json:"backend,omitempty"`
-	Endpoint          string    `json:"endpoint,omitempty"`
-	TransferSupported bool      `json:"transferSupported"`
-	Reason            string    `json:"reason,omitempty"`
-	TransferID        string    `json:"transferID,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                string          `json:"id"`
+	Namespace         string          `json:"namespace"`
+	Machine           string          `json:"machine"`
+	SourceNode        string          `json:"sourceNode"`
+	TargetNode        string          `json:"targetNode"`
+	RuntimeID         string          `json:"runtimeID,omitempty"`
+	Phase             string          `json:"phase"`
+	Backend           string          `json:"backend,omitempty"`
+	Endpoint          string          `json:"endpoint,omitempty"`
+	TransferSupported bool            `json:"transferSupported"`
+	Reason            string          `json:"reason,omitempty"`
+	TransferID        string          `json:"transferID,omitempty"`
+	NetworkSnapshot   json.RawMessage `json:"networkSnapshot,omitempty"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
 }
 
 func (s Session) Validate() error {

@@ -212,6 +212,34 @@ func (c *Client) PatchMachineSnapshotStatus(ctx context.Context, ns, name string
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) ListMachineNetworkPolicies(ctx context.Context) ([]model.MachineNetworkPolicy, error) {
+	var list model.MachineNetworkPolicyList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) PatchMachineNetworkPolicy(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinenetworkpolicies", name), patch, nil, "application/merge-patch+json")
+}
+
+func (c *Client) PatchMachineNetworkPolicyStatus(ctx context.Context, ns, name string, status model.MachineNetworkPolicyStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinenetworkpolicies", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListNetworkSecurityGroups(ctx context.Context) ([]model.NetworkSecurityGroup, error) {
+	var list model.NetworkSecurityGroupList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) PatchNetworkSecurityGroup(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "networksecuritygroups", name), patch, nil, "application/merge-patch+json")
+}
+
+func (c *Client) PatchNetworkSecurityGroupStatus(ctx context.Context, ns, name string, status model.NetworkSecurityGroupStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "networksecuritygroups", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) GetResourceClaim(ctx context.Context, ns, name string) (model.ResourceClaim, error) {
 	var claim model.ResourceClaim
 	path := fmt.Sprintf("/apis/resource.k8s.io/v1/namespaces/%s/resourceclaims/%s", url.PathEscape(ns), url.PathEscape(name))

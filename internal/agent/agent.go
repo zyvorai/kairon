@@ -57,6 +57,9 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 			_ = a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 		}
 	}
+	if err := a.reconcileNetworkResources(ctx); err != nil {
+		return err
+	}
 	migrations, err := a.Kube.ListMachineMigrations(ctx)
 	if err != nil {
 		// This lets a v0.2 node binary coexist during a rolling CRD upgrade.
@@ -129,6 +132,12 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	status.RuntimeID = rec.ID()
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
+	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
+		return err
+	}
+	if err := a.reconcileServiceFabric(ctx, m, status.GuestIP); err != nil {
+		return err
+	}
 	status.Conditions = []model.Condition{{Type: "Ready", Status: readyStatus(status.Phase), Reason: "FluxVMReconciled", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
@@ -176,6 +185,7 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 	status.NodeName = a.NodeName
 	status.RuntimeID = ""
 	status.GuestIP = ""
+	status.Network = nil
 	status.Message = ""
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "PoweredOff", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
@@ -329,6 +339,13 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 
 	status := item.Status
 	if phase == "Starting" {
+		if err := a.Flux.NetworkMigrationQuiesce(ctx, rec.ID()); err != nil {
+			a.Log.Warn("network migration quiesce failed; continuing", "runtimeID", rec.ID(), "error", err)
+		} else if snap, err := a.Flux.NetworkMigrationExport(ctx, rec.ID()); err != nil {
+			a.Log.Warn("network migration export failed; continuing without snapshot", "runtimeID", rec.ID(), "error", err)
+		} else {
+			session.NetworkSnapshot = snap
+		}
 		prepared, err := a.MigrationPeer.Prepare(ctx, targetURL, session)
 		if err != nil {
 			return fmt.Errorf("prepare target %s: %w", item.Status.TargetNode, err)
