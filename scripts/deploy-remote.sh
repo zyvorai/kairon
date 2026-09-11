@@ -392,7 +392,10 @@ run_deploy() {
   local remote_hostname
   remote_hostname="$(ssh_cmd "$REMOTE" hostname)" || die "could not SSH to ${REMOTE}"
   ok "connected (remote hostname: $remote_hostname)"
-  RESOLVED_NODE_NAME="${NODE_NAME_OVERRIDE:-$remote_hostname}"
+  # Kubernetes Node names are always lowercase DNS-1123 labels; 'hostname'
+  # commonly returns mixed case, which would silently mismatch spec.nodeName
+  # and cause kairon-node to skip every machine assigned to it with no error.
+  RESOLVED_NODE_NAME="${NODE_NAME_OVERRIDE:-$(tr '[:upper:]' '[:lower:]' <<< "$remote_hostname")}"
 
   detect_sudo
   detect_arch
