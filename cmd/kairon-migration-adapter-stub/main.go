@@ -193,23 +193,29 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code rather than calling os.Exit directly,
+// so every deferred cleanup (e.g. cancel()) actually runs before exit.
+func run() int {
 	socket := flag.String("socket", "", "Unix socket path to listen on (required)")
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if *socket == "" {
 		log.Error("--socket is required")
-		os.Exit(2)
+		return 2
 	}
 
 	_ = os.Remove(*socket)
 	listener, err := net.Listen("unix", *socket)
 	if err != nil {
 		log.Error("listen", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := os.Chmod(*socket, 0o660); err != nil {
 		log.Error("chmod socket", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -226,6 +232,7 @@ func main() {
 	log.Info("kairon-migration-adapter-stub listening", "socket", *socket)
 	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("serve", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

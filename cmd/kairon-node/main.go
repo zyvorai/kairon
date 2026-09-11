@@ -27,6 +27,12 @@ import (
 var version = "dev"
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code rather than calling os.Exit directly,
+// so every deferred cleanup (e.g. cancel()) actually runs before exit.
+func run() int {
 	interval := flag.Duration("interval", 3*time.Second, "reconciliation interval")
 	healthAddr := flag.String("health-addr", ":8081", "health server address")
 	fluxURL := flag.String("fluxvm-url", env("FLUXVM_URL", "http://127.0.0.1:7788"), "node-local FluxVM URL")
@@ -45,24 +51,24 @@ func main() {
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
-		return
+		return 0
 	}
 	node := os.Getenv("NODE_NAME")
 	if node == "" {
 		fmt.Fprintln(os.Stderr, "NODE_NAME is required")
-		os.Exit(2)
+		return 2
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	kc, err := kube.FromEnvironment()
 	if err != nil {
 		log.Error("kubernetes client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	fc := fluxvm.New(*fluxURL, os.Getenv("FLUXVM_TOKEN"))
 	vfioAllowlist, err := agent.ParseVFIOAllowlist(*vfioAllowlistRaw)
 	if err != nil {
 		log.Error("invalid VFIO allowlist", "error", err)
-		os.Exit(2)
+		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -76,13 +82,10 @@ func main() {
 	go func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
-		dataplaneRequired := os.Getenv("KAIRON_DATAPLANE_REQUIRED") == "true"
+		// FluxVM's own /readyz already fail-closes when sandbox.dataplane.required
+		// is set, so the node agent's readiness only needs to track it directly.
 		for {
 			err := fc.Ready(ctx)
-			if err == nil && dataplaneRequired {
-				// FluxVM /readyz already fail-closes when sandbox.dataplane.required is set;
-				// this env forces the node agent to stay NotReady until FluxVM is healthy.
-			}
 			hs.SetReady(err == nil)
 			select {
 			case <-ctx.Done():
@@ -95,7 +98,7 @@ func main() {
 	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket)
 	if err != nil {
 		log.Error("migration control plane", "error", err)
-		os.Exit(2)
+		return 2
 	}
 
 	a := &agent.Agent{
@@ -112,8 +115,9 @@ func main() {
 	}
 	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("agent stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string) (*migration.Client, migration.SourceDriver, error) {

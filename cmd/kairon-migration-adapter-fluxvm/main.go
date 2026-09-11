@@ -69,7 +69,7 @@ func (c *fluxClient) do(ctx context.Context, method, path string, body, out any)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp.StatusCode, fmt.Errorf("fluxvm %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
@@ -449,6 +449,12 @@ func (m migrationNetworkFlag) Set(value string) error {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code rather than calling os.Exit directly,
+// so every deferred cleanup (e.g. cancel()) actually runs before exit.
+func run() int {
 	socket := flag.String("socket", "", "Unix socket path to listen on (required)")
 	fluxURL := flag.String("fluxvm-url", "http://127.0.0.1:8080", "local FluxVM REST API base URL")
 	fluxToken := flag.String("fluxvm-token", os.Getenv("FLUXVM_TOKEN"), "FluxVM admin Bearer token (default: $FLUXVM_TOKEN)")
@@ -466,11 +472,11 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if *socket == "" {
 		log.Error("--socket is required")
-		os.Exit(2)
+		return 2
 	}
 	if *dataTLS && (*tlsCA == "" || *tlsCert == "" || *tlsKey == "") {
 		log.Error("-migration-data-tls is fail-closed: -migration-ca, -migration-cert and -migration-key must all be set")
-		os.Exit(2)
+		return 2
 	}
 	if !*dataTLS {
 		// Never silently enable TLS just because cert flags happen to be
@@ -487,11 +493,11 @@ func main() {
 	listener, err := net.Listen("unix", *socket)
 	if err != nil {
 		log.Error("listen", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := os.Chmod(*socket, 0o660); err != nil {
 		log.Error("chmod socket", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -508,6 +514,7 @@ func main() {
 	log.Info("kairon-migration-adapter-fluxvm listening", "socket", *socket, "fluxvmURL", *fluxURL)
 	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Error("serve", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

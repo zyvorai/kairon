@@ -54,7 +54,7 @@ func FromEnvironment() (*Client, error) {
 	host := os.Getenv("KUBERNETES_SERVICE_HOST")
 	port := os.Getenv("KUBERNETES_SERVICE_PORT")
 	if host == "" || port == "" {
-		return nil, fmt.Errorf("Kubernetes endpoint not configured: set KAIRON_KUBE_URL or run in cluster")
+		return nil, fmt.Errorf("kubernetes endpoint not configured: set KAIRON_KUBE_URL or run in cluster")
 	}
 	token, err := os.ReadFile(filepath.Join(serviceAccountDir, "token"))
 	if err != nil {
@@ -105,7 +105,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any, out
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &APIError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}

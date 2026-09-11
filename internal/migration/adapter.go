@@ -97,7 +97,7 @@ func (a *Adapter) do(ctx context.Context, method, path string, body any, out any
 	if err != nil {
 		return fmt.Errorf("migration adapter %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("migration adapter %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))

@@ -448,27 +448,30 @@ func TestMigrationBlockedWhenMachineUnscheduled(t *testing.T) {
 	}
 }
 
-func TestMigrationBlockedWhenNoEligibleTarget(t *testing.T) {
-	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
-	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}}
-	phase, message := "", ""
+// reconcileMigrationBlockedCheck drives one Reconcile for a single seeded
+// Machine/MachineMigration/node-list fixture and returns the migration
+// status PATCH's phase/message, matching the shared setup all "Blocked"
+// scenarios need.
+func reconcileMigrationBlockedCheck(t *testing.T, machine model.Machine, nodes []model.Node, migration model.MachineMigration) (phase, message string) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
-			// Only the source node exists (Choose excludes it), so no target is eligible.
-			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1")}})
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: nodes})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/machinemigrations/"+migration.Metadata.Name+"/status"):
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			phase, message = p.Status.Phase, p.Status.Message
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch:
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -481,6 +484,14 @@ func TestMigrationBlockedWhenNoEligibleTarget(t *testing.T) {
 	if err := ctl.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	return phase, message
+}
+
+func TestMigrationBlockedWhenNoEligibleTarget(t *testing.T) {
+	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
+	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}}
+	// Only the source node exists (Choose excludes it), so no target is eligible.
+	phase, message := reconcileMigrationBlockedCheck(t, machine, []model.Node{readyCapableNode("worker-1")}, migration)
 	if phase != "Blocked" || !strings.Contains(message, "no migration target available") {
 		t.Fatalf("phase=%q message=%q", phase, message)
 	}
@@ -489,35 +500,7 @@ func TestMigrationBlockedWhenNoEligibleTarget(t *testing.T) {
 func TestMigrationBlockedWhenStrategyUnsupported(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
 	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "warm"}}
-	phase, message := "", ""
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
-			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
-			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-2")}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
-			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
-			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
-			var p struct {
-				Status model.MachineMigrationStatus `json:"status"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&p)
-			phase, message = p.Status.Phase, p.Status.Message
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-	kc, _ := kube.New(srv.URL, "", "", false)
-	kc.HTTP = srv.Client()
-	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := ctl.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	phase, message := reconcileMigrationBlockedCheck(t, machine, []model.Node{readyCapableNode("worker-2")}, migration)
 	if phase != "Blocked" || !strings.Contains(message, `unsupported migration strategy "warm"`) {
 		t.Fatalf("phase=%q message=%q", phase, message)
 	}
@@ -526,35 +509,7 @@ func TestMigrationBlockedWhenStrategyUnsupported(t *testing.T) {
 func TestMigrationBlockedWhenLiveOnNonQemuBackend(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Runtime: model.RuntimeSpec{Backend: "container"}}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
 	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}}
-	phase, message := "", ""
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
-			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
-			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-2")}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
-			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
-			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
-			var p struct {
-				Status model.MachineMigrationStatus `json:"status"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&p)
-			phase, message = p.Status.Phase, p.Status.Message
-			w.WriteHeader(http.StatusOK)
-		default:
-			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-	kc, _ := kube.New(srv.URL, "", "", false)
-	kc.HTTP = srv.Client()
-	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := ctl.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	phase, message := reconcileMigrationBlockedCheck(t, machine, []model.Node{readyCapableNode("worker-2")}, migration)
 	if phase != "Blocked" || !strings.Contains(message, "live migration requires qemu backend") {
 		t.Fatalf("phase=%q message=%q", phase, message)
 	}
@@ -696,7 +651,7 @@ func TestSnapshotFailsOnMissingVolumeFields(t *testing.T) {
 	if err := ctl.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if phase != "Failed" || !strings.Contains(message, "Machine volume requires name and claimName") {
+	if phase != "Failed" || !strings.Contains(message, "machine volume requires name and claimName") {
 		t.Fatalf("phase=%q message=%q", phase, message)
 	}
 }

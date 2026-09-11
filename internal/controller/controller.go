@@ -111,10 +111,10 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 	}
 	machine, ok := machines[migration.Namespace()+"/"+migration.Spec.MachineName]
 	if !ok {
-		return fmt.Errorf("Machine %s/%s not found", migration.Namespace(), migration.Spec.MachineName)
+		return fmt.Errorf("machine %s/%s not found", migration.Namespace(), migration.Spec.MachineName)
 	}
 	if machine.Metadata.DeletionTimestamp != nil {
-		return fmt.Errorf("Machine is being deleted")
+		return fmt.Errorf("machine is being deleted")
 	}
 
 	status := migration.Status
@@ -154,7 +154,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		return nil
 	case "Cutover":
 		if status.EffectiveStrategy != "live" {
-			return fmt.Errorf("Cutover phase is only valid for live migration")
+			return fmt.Errorf("cutover phase is only valid for live migration")
 		}
 		patch := map[string]any{
 			"spec": map[string]any{"nodeName": status.TargetNode},
@@ -272,16 +272,16 @@ func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.Machi
 	}
 	machine, ok := machines[snapshot.Namespace()+"/"+snapshot.Spec.MachineName]
 	if !ok {
-		return fmt.Errorf("Machine %s/%s not found", snapshot.Namespace(), snapshot.Spec.MachineName)
+		return fmt.Errorf("machine %s/%s not found", snapshot.Namespace(), snapshot.Spec.MachineName)
 	}
 	if len(machine.Spec.Volumes) == 0 {
-		return fmt.Errorf("Machine has no PVC-backed spec.volumes to snapshot")
+		return fmt.Errorf("machine has no PVC-backed spec.volumes to snapshot")
 	}
 	refs := make([]model.VolumeSnapshotReference, 0, len(machine.Spec.Volumes))
 	allReady := true
 	for _, volume := range machine.Spec.Volumes {
 		if strings.TrimSpace(volume.Name) == "" || strings.TrimSpace(volume.ClaimName) == "" {
-			return fmt.Errorf("Machine volume requires name and claimName")
+			return fmt.Errorf("machine volume requires name and claimName")
 		}
 		name := snapshotVolumeName(snapshot.Metadata.Name, volume.Name)
 		vs, err := c.Kube.GetVolumeSnapshot(ctx, snapshot.Namespace(), name)

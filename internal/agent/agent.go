@@ -211,7 +211,7 @@ func (a *Agent) resolveVFIODevices(ctx context.Context, m model.Machine) ([]stri
 		return nil, nil
 	}
 	if len(a.VFIOAllowlist) == 0 {
-		return nil, fmt.Errorf("Machine requests DRA devices but KAIRON_VFIO_ALLOWLIST is empty; refusing unapproved VFIO passthrough")
+		return nil, fmt.Errorf("machine requests DRA devices but KAIRON_VFIO_ALLOWLIST is empty; refusing unapproved VFIO passthrough")
 	}
 	seen := map[string]struct{}{}
 	for _, ref := range m.Spec.DeviceClaims {

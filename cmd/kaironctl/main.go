@@ -20,15 +20,21 @@ import (
 var version = "dev"
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code rather than calling os.Exit directly,
+// so every deferred cleanup (e.g. cancel()) actually runs before exit.
+func run() int {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	// Metadata commands must work on a developer laptop without kubeconfig or
 	// in-cluster credentials.
 	if os.Args[1] == "version" {
 		fmt.Println(version)
-		return
+		return 0
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -59,8 +65,9 @@ func main() {
 		cmdSnapshot(ctx, kc, os.Args[2:])
 	default:
 		usage()
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }
 
 func nsFlag(args []string) (string, []string) {

@@ -166,7 +166,7 @@ func (c *Client) NetworkMigrationRestore(ctx context.Context, id string, snapsho
 	if len(snapshot) == 0 {
 		body = map[string]any{}
 	} else if err := json.Unmarshal(snapshot, &body); err != nil {
-		body = json.RawMessage(snapshot)
+		body = snapshot
 	}
 	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/network/migration/restore", body)
 	return err

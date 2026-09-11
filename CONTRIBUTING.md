@@ -3,7 +3,7 @@
 Kairon is Apache License 2.0 open source from [Zyvor](https://zyvor.dev).
 
 1. Fork the repository and create a focused branch.
-2. Run `make all` before opening a pull request.
+2. Run `make all` before opening a pull request. This now also runs `golangci-lint` (install it locally: https://golangci-lint.run/welcome/install/), the race detector, and a coverage floor (`internal/...` must stay at or above `COVERAGE_THRESHOLD`, currently 50%).
 3. Add tests for scheduler, API, reconciliation or parsing changes.
 4. Keep the control plane dependency-light and never add a libvirt/KubeVirt runtime dependency.
 5. Document API behavior changes in `docs/` and update examples.

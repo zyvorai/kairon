@@ -69,7 +69,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("migration peer %s: HTTP %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(data)))

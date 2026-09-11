@@ -23,6 +23,12 @@ import (
 var version = "dev"
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code rather than calling os.Exit directly,
+// so every deferred cleanup (e.g. cancel()) actually runs before exit.
+func run() int {
 	interval := flag.Duration("interval", 5*time.Second, "reconciliation interval")
 	healthAddr := flag.String("health-addr", ":8080", "health server address")
 	requireLabel := flag.Bool("require-capable-label", true, "only schedule onto nodes labeled kairon.zyvor.dev/capable=true")
@@ -30,13 +36,13 @@ func main() {
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
-		return
+		return 0
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	kc, err := kube.FromEnvironment()
 	if err != nil {
 		log.Error("kubernetes client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -50,6 +56,7 @@ func main() {
 	hs.SetReady(true)
 	if err := ctl.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("controller stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }

@@ -1,0 +1,26 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - unconvert
+    - gocritic
+    - misspell
+    - bodyclose
+    - prealloc
+    - dupl
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
