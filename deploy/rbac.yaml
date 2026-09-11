@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kairon-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-controller
+  namespace: kairon-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-node
+  namespace: kairon-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kairon-controller
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines/status"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kairon-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kairon-controller
+subjects:
+  - kind: ServiceAccount
+    name: kairon-controller
+    namespace: kairon-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kairon-node
+rules:
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machines/status"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kairon-node
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kairon-node
+subjects:
+  - kind: ServiceAccount
+    name: kairon-node
+    namespace: kairon-system

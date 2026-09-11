@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kairon
+description: Kubernetes-native VM orchestration backed by Zyvor FluxVM
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

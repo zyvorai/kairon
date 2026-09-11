@@ -1,0 +1,114 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machines.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machines
+    singular: machine
+    kind: Machine
+    shortNames: [km, kvmachine]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Node
+          type: string
+          jsonPath: .spec.nodeName
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: CPU
+          type: string
+          jsonPath: .spec.resources.cpu
+        - name: Memory
+          type: string
+          jsonPath: .spec.resources.memory
+        - name: IP
+          type: string
+          jsonPath: .status.guestIP
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [image, resources]
+              properties:
+                nodeName:
+                  type: string
+                image:
+                  type: object
+                  required: [path]
+                  properties:
+                    path: {type: string, minLength: 1}
+                    digest: {type: string}
+                resources:
+                  type: object
+                  required: [cpu, memory]
+                  properties:
+                    cpu: {type: string, minLength: 1}
+                    memory: {type: string, minLength: 1}
+                runtime:
+                  type: object
+                  properties:
+                    backend:
+                      type: string
+                      enum: [auto, qemu, cloud-hypervisor, firecracker, flux-vm]
+                      default: auto
+                    kernel:
+                      type: string
+                network:
+                  type: object
+                  properties:
+                    mode:
+                      type: string
+                      enum: [user, tap, macvtap]
+                      default: user
+                    netns: {type: boolean, default: false}
+                    bridge: {type: string}
+                    parent: {type: string}
+                    mac: {type: string}
+                powerState:
+                  type: string
+                  enum: [Running, Stopped]
+                  default: Running
+                ttlSeconds: {type: integer, format: int64, minimum: 0}
+                placement:
+                  type: object
+                  properties:
+                    architecture: {type: string}
+                    nodeSelector:
+                      type: object
+                      additionalProperties: {type: string}
+                security:
+                  type: object
+                  properties:
+                    secureBoot: {type: boolean}
+                    tpm: {type: boolean}
+            status:
+              type: object
+              properties:
+                phase: {type: string}
+                nodeName: {type: string}
+                runtimeID: {type: string}
+                guestIP: {type: string}
+                observedGeneration: {type: integer, format: int64}
+                message: {type: string}
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status, lastTransitionTime]
+                    properties:
+                      type: {type: string}
+                      status: {type: string}
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string, format: date-time}

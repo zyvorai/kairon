@@ -1,0 +1,7 @@
+bin/
+dist/
+coverage.out
+*.log
+.DS_Store
+.deploy-last
+.claude/
