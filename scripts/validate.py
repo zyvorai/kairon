@@ -71,7 +71,7 @@ if (root / "VERSION").read_text().strip() != "v0.3.0":
 
 readme = (root / "README.md").read_text()
 for needle in [
-    "without KubeVirt or libvirt", "FluxVM", "Apache-2.0", "Production gaps",
+    "without KubeVirt", "without libvirt", "FluxVM", "Apache-2.0", "Production gaps",
     "MachineMigration", "MachineSnapshot", "adopt-only", "ResourceClaim", "vfio_devices",
 ]:
     if needle not in readme:
