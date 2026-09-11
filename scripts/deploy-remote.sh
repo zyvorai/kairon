@@ -75,6 +75,28 @@ Flags:
                           free port is chosen automatically and reported.
   --controller-port=N     kairon-controller health port (default 8080), same
                           auto-fallback-if-busy behavior as --node-port.
+  --migration-ca=PATH     Local CA PEM file for the live-migration mTLS peer
+                          control plane. All three of --migration-ca/-cert/-key
+                          must be given together (fail-closed, matches
+                          kairon-node's own validation) -- omit all three to
+                          leave live migration disabled (cold migration still
+                          works). Copied to /etc/kairon/migration/ on the host.
+  --migration-cert=PATH   Local node certificate PEM (needs ExtKeyUsage
+                          serverAuth + clientAuth -- this node acts as both
+                          migration server and client).
+  --migration-key=PATH    Local node private key PEM matching --migration-cert.
+  --migration-server-name=NAME  Expected TLS ServerName from migration peers
+                          (default kairon-node).
+  --migration-port=N      Migration mTLS peer port (default 9443), same
+                          auto-fallback-if-busy behavior as --node-port.
+  --migration-adapter-socket=PATH  Unix socket path for the local migration
+                          adapter (default /run/kairon/migration-adapter.sock).
+                          Only meaningful once migration mTLS is configured.
+  --with-migration-adapter-stub  Build and install kairon-migration-adapter-stub,
+                          a test double that simulates transfers without moving
+                          real VM memory -- see docs/migration-adapter.md. Use
+                          only for testing the migration control plane; a real
+                          deployment needs a real hypervisor-level adapter.
   --version=STRING        Version stamped into the binary (default: git describe,
                           or 'dev' if this checkout isn't a git repository).
   --ssh-port=N            SSH port (default 22, env SSH_PORT).
@@ -116,6 +138,14 @@ NODE_PORT="8081"
 NODE_PORT_EXPLICIT=0
 CONTROLLER_PORT="8080"
 CONTROLLER_PORT_EXPLICIT=0
+MIGRATION_CA=""
+MIGRATION_CERT=""
+MIGRATION_KEY=""
+MIGRATION_SERVER_NAME="kairon-node"
+MIGRATION_PORT="9443"
+MIGRATION_PORT_EXPLICIT=0
+MIGRATION_ADAPTER_SOCKET="/run/kairon/migration-adapter.sock"
+WITH_MIGRATION_ADAPTER_STUB=0
 VERSION_OVERRIDE="${KAIRON_VERSION:-}"
 SSH_PORT="${SSH_PORT:-22}"
 USER_ARG=""
@@ -159,6 +189,13 @@ while [[ $# -gt 0 ]]; do
     --interval=*) INTERVAL="${1#*=}" ;;
     --node-port=*) NODE_PORT="${1#*=}"; NODE_PORT_EXPLICIT=1 ;;
     --controller-port=*) CONTROLLER_PORT="${1#*=}"; CONTROLLER_PORT_EXPLICIT=1 ;;
+    --migration-ca=*) MIGRATION_CA="${1#*=}" ;;
+    --migration-cert=*) MIGRATION_CERT="${1#*=}" ;;
+    --migration-key=*) MIGRATION_KEY="${1#*=}" ;;
+    --migration-server-name=*) MIGRATION_SERVER_NAME="${1#*=}" ;;
+    --migration-port=*) MIGRATION_PORT="${1#*=}"; MIGRATION_PORT_EXPLICIT=1 ;;
+    --migration-adapter-socket=*) MIGRATION_ADAPTER_SOCKET="${1#*=}" ;;
+    --with-migration-adapter-stub) WITH_MIGRATION_ADAPTER_STUB=1 ;;
     --version=*) VERSION_OVERRIDE="${1#*=}" ;;
     --ssh-port=*) SSH_PORT="${1#*=}" ;;
     -h|--help) usage; exit 0 ;;
@@ -168,6 +205,24 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+MIGRATION_CONFIGURED=0
+migration_paths_given=0
+for p in "$MIGRATION_CA" "$MIGRATION_CERT" "$MIGRATION_KEY"; do
+  [[ -n "$p" ]] && migration_paths_given=$((migration_paths_given + 1))
+done
+if [[ "$migration_paths_given" -gt 0 && "$migration_paths_given" -lt 3 ]]; then
+  die "--migration-ca, --migration-cert and --migration-key must be given together (fail-closed, matches kairon-node's own validation)"
+fi
+if [[ "$migration_paths_given" -eq 3 ]]; then
+  MIGRATION_CONFIGURED=1
+  for p in "$MIGRATION_CA" "$MIGRATION_CERT" "$MIGRATION_KEY"; do
+    [[ -f "$p" ]] || die "migration cert file not found: $p"
+  done
+fi
+if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" && "$MIGRATION_CONFIGURED" != "1" ]]; then
+  die "--with-migration-adapter-stub requires --migration-ca/-cert/-key (the stub is only useful once migration mTLS is configured)"
+fi
 
 if [[ ${#POSITIONAL[@]} -ge 1 ]]; then
   if [[ "${POSITIONAL[0]}" == *@* ]]; then
@@ -351,11 +406,13 @@ set -euo pipefail
 PURGE="$1"
 systemctl stop kairon-node.service 2>/dev/null || true
 systemctl stop kairon-controller.service 2>/dev/null || true
+systemctl stop kairon-migration-adapter-stub.service 2>/dev/null || true
 systemctl disable kairon-node.service 2>/dev/null || true
 systemctl disable kairon-controller.service 2>/dev/null || true
-rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service
+systemctl disable kairon-migration-adapter-stub.service 2>/dev/null || true
+rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service /etc/systemd/system/kairon-migration-adapter-stub.service
 systemctl daemon-reload
-rm -f /usr/bin/kairon-node /usr/bin/kairon-controller /usr/bin/kaironctl
+rm -f /usr/bin/kairon-node /usr/bin/kairon-controller /usr/bin/kaironctl /usr/bin/kairon-migration-adapter-stub
 if [[ "$PURGE" == "1" ]]; then
   rm -rf /etc/kairon
   userdel kairon 2>/dev/null || true
@@ -424,6 +481,9 @@ run_deploy() {
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
     ( cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$RESOLVED_GOARCH" go build -trimpath -ldflags="-s -w -X main.version=$RESOLVED_VERSION" -o "$build_dir/kairon-controller" ./cmd/kairon-controller )
   fi
+  if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
+    ( cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$RESOLVED_GOARCH" go build -trimpath -o "$build_dir/kairon-migration-adapter-stub" ./cmd/kairon-migration-adapter-stub )
+  fi
   ok "build complete: $build_dir"
 
   local local_stage
@@ -446,6 +506,12 @@ run_deploy() {
     printf 'NODE_PORT_EXPLICIT=%q\n' "$NODE_PORT_EXPLICIT"
     printf 'CONTROLLER_PORT=%q\n' "$CONTROLLER_PORT"
     printf 'CONTROLLER_PORT_EXPLICIT=%q\n' "$CONTROLLER_PORT_EXPLICIT"
+    printf 'MIGRATION_CONFIGURED=%q\n' "$MIGRATION_CONFIGURED"
+    printf 'MIGRATION_SERVER_NAME=%q\n' "$MIGRATION_SERVER_NAME"
+    printf 'MIGRATION_PORT=%q\n' "$MIGRATION_PORT"
+    printf 'MIGRATION_PORT_EXPLICIT=%q\n' "$MIGRATION_PORT_EXPLICIT"
+    printf 'MIGRATION_ADAPTER_SOCKET=%q\n' "$MIGRATION_ADAPTER_SOCKET"
+    printf 'WITH_MIGRATION_ADAPTER_STUB=%q\n' "$WITH_MIGRATION_ADAPTER_STUB"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -489,6 +555,17 @@ if [[ ! -f /etc/kairon/kairon-node.env ]]; then
     if [[ -n "$KUBE_CA" ]]; then echo "KAIRON_KUBE_CA=$KUBE_CA"; else echo "#KAIRON_KUBE_CA="; fi
     if [[ "$KUBE_INSECURE" == "1" ]]; then echo "KAIRON_KUBE_INSECURE=true"; else echo "#KAIRON_KUBE_INSECURE=false"; fi
     echo "#FLUXVM_TOKEN="
+    if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
+      echo "KAIRON_MIGRATION_CA=/etc/kairon/migration/ca.pem"
+      echo "KAIRON_MIGRATION_CERT=/etc/kairon/migration/cert.pem"
+      echo "KAIRON_MIGRATION_KEY=/etc/kairon/migration/key.pem"
+      echo "KAIRON_MIGRATION_SERVER_NAME=$MIGRATION_SERVER_NAME"
+      echo "KAIRON_MIGRATION_ADAPTER_SOCKET=$MIGRATION_ADAPTER_SOCKET"
+    else
+      echo "#KAIRON_MIGRATION_CA="
+      echo "#KAIRON_MIGRATION_CERT="
+      echo "#KAIRON_MIGRATION_KEY="
+    fi
   } > /etc/kairon/kairon-node.env
   chmod 0640 /etc/kairon/kairon-node.env
   chown root:kairon /etc/kairon/kairon-node.env
@@ -499,6 +576,24 @@ else
     warn "--kube-* flags were given but ignored because the env file already exists"
     warn "edit /etc/kairon/kairon-node.env by hand, then: systemctl restart kairon-node"
   fi
+  if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
+    warn "--migration-* flags were given but ignored because the env file already exists"
+  fi
+fi
+
+if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
+  install -d -m 0750 -o root -g kairon /etc/kairon/migration
+  install -m 0640 -o root -g kairon ./migration-ca.pem /etc/kairon/migration/ca.pem
+  install -m 0640 -o root -g kairon ./migration-cert.pem /etc/kairon/migration/cert.pem
+  install -m 0640 -o root -g kairon ./migration-key.pem /etc/kairon/migration/key.pem
+  ok "installed migration mTLS materials to /etc/kairon/migration/"
+fi
+
+if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
+  install -m 0755 -o root -g root ./kairon-migration-adapter-stub /usr/bin/kairon-migration-adapter-stub
+  install -m 0644 -o root -g root ./kairon-migration-adapter-stub.service /etc/systemd/system/kairon-migration-adapter-stub.service
+  sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-migration-adapter-stub --socket=$MIGRATION_ADAPTER_SOCKET#" /etc/systemd/system/kairon-migration-adapter-stub.service
+  ok "installed kairon-migration-adapter-stub (TEST DOUBLE -- simulates transfers, does not move real VM memory)"
 fi
 
 port_in_use() {
@@ -536,8 +631,13 @@ resolve_port() {
 }
 
 RESOLVED_NODE_PORT="$(resolve_port "$NODE_PORT" "$NODE_PORT_EXPLICIT" "node")" || exit 1
+NODE_EXEC_ARGS="--interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT"
+if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
+  RESOLVED_MIGRATION_PORT="$(resolve_port "$MIGRATION_PORT" "$MIGRATION_PORT_EXPLICIT" "migration")" || exit 1
+  NODE_EXEC_ARGS="$NODE_EXEC_ARGS --migration-addr=:$RESOLVED_MIGRATION_PORT"
+fi
 install -m 0644 -o root -g root ./kairon-node.service /etc/systemd/system/kairon-node.service
-sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-node --interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT#" /etc/systemd/system/kairon-node.service
+sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-node $NODE_EXEC_ARGS#" /etc/systemd/system/kairon-node.service
 if [[ "$WITH_CONTROLLER" == "1" ]]; then
   RESOLVED_CONTROLLER_PORT="$(resolve_port "$CONTROLLER_PORT" "$CONTROLLER_PORT_EXPLICIT" "controller")" || exit 1
   install -m 0644 -o root -g root ./kairon-controller.service /etc/systemd/system/kairon-controller.service
@@ -557,6 +657,10 @@ fi
 systemctl daemon-reload
 
 if [[ "$NO_START" != "1" ]]; then
+  if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
+    systemctl enable --now kairon-migration-adapter-stub.service
+    ok "enabled + started kairon-migration-adapter-stub.service"
+  fi
   systemctl enable --now kairon-node.service
   ok "enabled + started kairon-node.service"
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
@@ -567,6 +671,7 @@ if [[ "$NO_START" != "1" ]]; then
 else
   systemctl enable kairon-node.service
   [[ "$WITH_CONTROLLER" == "1" ]] && systemctl enable kairon-controller.service
+  [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]] && systemctl enable kairon-migration-adapter-stub.service
   warn "--no-start given: service(s) installed and enabled but not started"
 fi
 
@@ -576,6 +681,15 @@ INSTALL_EOF
   local scp_files=("$build_dir/kairon-node" "$build_dir/kaironctl" "$REPO_ROOT/systemd/kairon-node.service")
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
     scp_files+=("$build_dir/kairon-controller" "$REPO_ROOT/systemd/kairon-controller.service")
+  fi
+  if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
+    cp "$MIGRATION_CA" "$local_stage/migration-ca.pem"
+    cp "$MIGRATION_CERT" "$local_stage/migration-cert.pem"
+    cp "$MIGRATION_KEY" "$local_stage/migration-key.pem"
+    scp_files+=("$local_stage/migration-ca.pem" "$local_stage/migration-cert.pem" "$local_stage/migration-key.pem")
+  fi
+  if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
+    scp_files+=("$build_dir/kairon-migration-adapter-stub" "$REPO_ROOT/systemd/kairon-migration-adapter-stub.service")
   fi
   scp_files+=("$local_stage/params.env" "$local_stage/install.sh")
 
