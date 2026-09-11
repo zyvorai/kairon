@@ -1,6 +1,8 @@
 :root {
   --apple-blue: #0071e3;
   --apple-blue-hover: #0077ed;
+  /* zyvor.dev accent -- matches fabric/web's --tone-orange */
+  --zyvor-orange: #ff5a15;
   --apple-ink: #1d1d1f;
   --apple-gray: #f5f5f7;
   --apple-border: #d2d2d7;
@@ -94,11 +96,15 @@ button.danger:hover {
   gap: 8px;
 }
 .brand small { font-weight: 500; letter-spacing: 0; color: #777; }
+.brand small a {
+  color: var(--zyvor-orange);
+  text-decoration: none;
+  font-weight: 700;
+}
+.brand small a:hover { text-decoration: underline; }
 .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #0071e3;
+  display: block;
+  border-radius: 6px;
 }
 .navlinks { display: flex; gap: 6px; }
 .nav button {
@@ -143,7 +149,7 @@ main {
   font-size: 12px !important;
   letter-spacing: 0.15em;
   font-weight: 800;
-  color: #0071e3 !important;
+  color: var(--zyvor-orange) !important;
 }
 .tokenbox { font-size: 12px; color: #777; min-width: 240px; }
 .tokenbox input,

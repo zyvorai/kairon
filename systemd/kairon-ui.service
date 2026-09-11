@@ -1,0 +1,47 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+[Unit]
+Description=kairon-ui - kairon web dashboard (Machines, Migrations, Snapshots, recovery)
+Documentation=https://github.com/zyvorai/kairon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kairon-ui --listen=:8082 --web-dir=/etc/kairon/ui-web
+Restart=on-failure
+RestartSec=5s
+EnvironmentFile=/etc/kairon/kairon-ui.env
+
+User=kairon
+Group=kairon
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+LimitNOFILE=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kairon-ui
+
+[Install]
+WantedBy=multi-user.target

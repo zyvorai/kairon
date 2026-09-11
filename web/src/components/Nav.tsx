@@ -13,8 +13,14 @@ export default function Nav({ page, setPage }: { page: Page; setPage: (p: Page) 
   return (
     <nav className="nav">
       <div className="brand">
-        <span className="dot" />
-        KAIRON <small>by Zyvor</small>
+        <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={20} height={20} />
+        KAIRON{' '}
+        <small>
+          by{' '}
+          <a href="https://zyvor.dev" target="_blank" rel="noreferrer">
+            Zyvor
+          </a>
+        </small>
       </div>
       <div className="navlinks">
         {ITEMS.map(([id, icon, label]) => (

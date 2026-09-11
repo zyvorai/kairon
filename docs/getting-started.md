@@ -60,6 +60,14 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 
 Open `http://127.0.0.1:8082` and paste the token from `ui.token`. `ui.token` (or `ui.allowUnauthenticated=true`, local development only) is required -- the chart refuses to render without one, and `kairon-ui` independently refuses to start without one.
 
+Bare-metal alternative:
+
+```bash
+scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui
+```
+
+Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js.
+
 ## Network Fabric (eBPF edge)
 
 Apply the example Machine + policy + security group, then follow the tutorial:

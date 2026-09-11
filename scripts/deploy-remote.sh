@@ -41,6 +41,11 @@ requires a reachable Kubernetes API (in-cluster, or via --kube-url) to
 become ready -- see --kube-url below. A service that starts but reports
 "not ready" because no cluster is configured yet is expected, not a bug.
 
+Optionally also deploys kairon-controller (--with-controller) and/or the
+kairon-ui web dashboard (--with-ui). --with-ui is the one component that
+needs a local Node.js/npm toolchain (to build web/dist) -- every other
+component and mode of this script stays Node-free.
+
 Everything is cross-compiled on your machine with
   CGO_ENABLED=0 GOOS=linux GOARCH=<arch> go build
 and shipped as a static binary. No Go toolchain and no source tree is
@@ -54,6 +59,21 @@ Target:
 Flags:
   --with-controller       Also build/install/enable kairon-controller
                           (systemd unit kairon-controller.service).
+  --with-ui               Also build/install/enable kairon-ui (systemd unit
+                          kairon-ui.service), the web dashboard for
+                          Machines/Migrations/Snapshots/recovery. Requires
+                          'npm' locally (used once to build web/dist -- the
+                          only place this script needs Node.js, and only
+                          with --with-ui).
+  --ui-token=TOKEN        Static bearer token for the dashboard. If omitted
+                          (and --ui-allow-unauthenticated isn't set), one is
+                          auto-generated locally and printed once at the end
+                          of the run -- save it, it is not shown again.
+  --ui-allow-unauthenticated  Start kairon-ui without a token (local
+                          development only -- every dashboard route is then
+                          open to anyone who can reach the port).
+  --ui-port=N             kairon-ui listen port (default 8082), same
+                          auto-fallback-if-busy behavior as --node-port.
   --no-start              Install files but do not enable/start the service(s).
   --sync-only             Copy binaries + unit files to the remote host only;
                           skip user/dir/config/unit install and service start.
@@ -115,6 +135,7 @@ Examples:
   $SCRIPT_NAME sus@80.79.5.173 --dry-run
   $SCRIPT_NAME 80.79.5.173 sus
   $SCRIPT_NAME sus@80.79.5.173 --kube-url=https://10.0.0.5:6443 --kube-insecure
+  $SCRIPT_NAME sus@80.79.5.173 --with-controller --with-ui
   $SCRIPT_NAME status sus@80.79.5.173
   $SCRIPT_NAME --uninstall sus@80.79.5.173
 EOF
@@ -122,6 +143,13 @@ EOF
 
 MODE="deploy"
 WITH_CONTROLLER=0
+WITH_UI=0
+UI_TOKEN=""
+UI_ALLOW_UNAUTHENTICATED=0
+UI_PORT="8082"
+UI_PORT_EXPLICIT=0
+RESOLVED_UI_TOKEN=""
+RESOLVED_UI_TOKEN_SOURCE="none"
 NO_START=0
 SYNC_ONLY=0
 DRY_RUN=0
@@ -175,6 +203,10 @@ POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-controller) WITH_CONTROLLER=1 ;;
+    --with-ui) WITH_UI=1 ;;
+    --ui-token=*) UI_TOKEN="${1#*=}" ;;
+    --ui-allow-unauthenticated) UI_ALLOW_UNAUTHENTICATED=1 ;;
+    --ui-port=*) UI_PORT="${1#*=}"; UI_PORT_EXPLICIT=1 ;;
     --no-start) NO_START=1 ;;
     --sync-only) SYNC_ONLY=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -346,7 +378,7 @@ print_plan() {
 Dry run -- no SSH connections, no build, no changes.
 
 Target:                 ${USER_ARG}@${HOST_ARG} (port $SSH_PORT)
-Components:              kairon-node, kaironctl$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", kairon-controller")
+Components:              kairon-node, kaironctl$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", kairon-controller")$([[ "$WITH_UI" == "1" ]] && echo ", kairon-ui")
 Arch:                    ${RESOLVED_GOARCH}
 Version:                 ${RESOLVED_VERSION}
 Node name:                ${RESOLVED_NODE_NAME}
@@ -356,12 +388,16 @@ KAIRON_IMAGE_ROOT:        ${RESOLVED_IMAGE_ROOT}
 KAIRON_KUBE_URL:          ${KUBE_URL:-<not set -- service will start but stay not-ready until configured>}
 Node health port:         ${NODE_PORT}$([[ "$NODE_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")
 $([[ "$WITH_CONTROLLER" == "1" ]] && echo "Controller health port:  ${CONTROLLER_PORT}$([[ "$CONTROLLER_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
+$([[ "$WITH_UI" == "1" ]] && echo "UI port:                 ${UI_PORT}$([[ "$UI_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
+$([[ "$WITH_UI" == "1" ]] && echo "Dashboard token:          $(if [[ -n "$UI_TOKEN" ]]; then echo "provided via --ui-token"; elif [[ "$UI_ALLOW_UNAUTHENTICATED" == "1" ]]; then echo "none (--ui-allow-unauthenticated -- open dashboard, local/dev only)"; else echo "will be auto-generated at deploy time (openssl rand -hex 24) and printed once at the end"; fi)")
 Start after install:      $([[ "$NO_START" == "1" ]] && echo "no (--no-start)" || echo "yes")
 
 Remote paths:
-  /usr/bin/kairon-node, /usr/bin/kaironctl$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", /usr/bin/kairon-controller")
+  /usr/bin/kairon-node, /usr/bin/kaironctl$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", /usr/bin/kairon-controller")$([[ "$WITH_UI" == "1" ]] && echo ", /usr/bin/kairon-ui")
   /etc/kairon/kairon-node.env   (seeded only if absent)
-  /etc/systemd/system/kairon-node.service$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", kairon-controller.service")
+  /etc/systemd/system/kairon-node.service$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", kairon-controller.service")$([[ "$WITH_UI" == "1" ]] && echo ", kairon-ui.service")
+$([[ "$WITH_UI" == "1" ]] && echo "  /etc/kairon/ui-web/ (web assets, replaced on every --with-ui deploy)")
+$([[ "$WITH_UI" == "1" ]] && echo "  /etc/kairon/kairon-ui.env   (seeded only if absent)")
 EOF
 }
 
@@ -382,6 +418,10 @@ run_status() {
       echo "---"
       systemctl status kairon-controller.service --no-pager -l || true
     fi
+    if systemctl list-unit-files kairon-ui.service >/dev/null 2>&1; then
+      echo "---"
+      systemctl status kairon-ui.service --no-pager -l || true
+    fi
   ' || true
 }
 
@@ -392,30 +432,32 @@ run_uninstall() {
 Dry run -- no SSH connections, no changes.
 
 Would uninstall from ${USER_ARG}@${HOST_ARG}:
-  stop+disable kairon-node.service, kairon-controller.service
-  remove /etc/systemd/system/{kairon-node,kairon-controller}.service
-  remove /usr/bin/{kairon-node,kairon-controller,kaironctl}
-  $([[ "$PURGE" == "1" ]] && echo "remove /etc/kairon and the 'kairon' user (--purge)" || echo "keep /etc/kairon and the 'kairon' user (pass --purge to remove them)")
+  stop+disable kairon-node.service, kairon-controller.service, kairon-ui.service
+  remove /etc/systemd/system/{kairon-node,kairon-controller,kairon-ui}.service
+  remove /usr/bin/{kairon-node,kairon-controller,kaironctl,kairon-ui}
+  $([[ "$PURGE" == "1" ]] && echo "remove /etc/kairon (incl. ui-web) and the 'kairon' user (--purge)" || echo "keep /etc/kairon (incl. ui-web) and the 'kairon' user (pass --purge to remove them)")
 EOF
     return 0
   fi
   info "connecting to ${USER_ARG}@${HOST_ARG}..."
   ssh_cmd "$REMOTE" true || die "could not SSH to ${REMOTE}"
   detect_sudo
-  info "uninstalling kairon-node / kairon-controller / kaironctl from ${USER_ARG}@${HOST_ARG}..."
+  info "uninstalling kairon-node / kairon-controller / kairon-ui / kaironctl from ${USER_ARG}@${HOST_ARG}..."
   local remote_script
   remote_script="$(cat <<'UNINSTALL_EOF'
 set -euo pipefail
 PURGE="$1"
 systemctl stop kairon-node.service 2>/dev/null || true
 systemctl stop kairon-controller.service 2>/dev/null || true
+systemctl stop kairon-ui.service 2>/dev/null || true
 systemctl stop kairon-migration-adapter-stub.service 2>/dev/null || true
 systemctl disable kairon-node.service 2>/dev/null || true
 systemctl disable kairon-controller.service 2>/dev/null || true
+systemctl disable kairon-ui.service 2>/dev/null || true
 systemctl disable kairon-migration-adapter-stub.service 2>/dev/null || true
-rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service /etc/systemd/system/kairon-migration-adapter-stub.service
+rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service /etc/systemd/system/kairon-ui.service /etc/systemd/system/kairon-migration-adapter-stub.service
 systemctl daemon-reload
-rm -f /usr/bin/kairon-node /usr/bin/kairon-controller /usr/bin/kaironctl /usr/bin/kairon-migration-adapter-stub
+rm -f /usr/bin/kairon-node /usr/bin/kairon-controller /usr/bin/kairon-ui /usr/bin/kaironctl /usr/bin/kairon-migration-adapter-stub
 if [[ "$PURGE" == "1" ]]; then
   rm -rf /etc/kairon
   userdel kairon 2>/dev/null || true
@@ -442,7 +484,7 @@ save_deploy_last() {
   {
     echo "HOST=$HOST_ARG"
     echo "DEPLOY_USER=$USER_ARG"
-    echo "MODE=$([[ "$WITH_CONTROLLER" == "1" ]] && echo node+controller || echo node)"
+    echo "MODE=node$([[ "$WITH_CONTROLLER" == "1" ]] && echo +controller)$([[ "$WITH_UI" == "1" ]] && echo +ui)"
     echo "VERSION=$RESOLVED_VERSION"
     echo "COMMIT=$RESOLVED_COMMIT"
     echo "UPDATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -461,6 +503,18 @@ run_deploy() {
     RESOLVED_GOARCH="${ARCH_OVERRIDE:-<auto-detected at run time>}"
     print_plan
     return 0
+  fi
+
+  if [[ "$WITH_UI" == "1" ]]; then
+    if [[ -n "$UI_TOKEN" ]]; then
+      RESOLVED_UI_TOKEN="$UI_TOKEN"
+      RESOLVED_UI_TOKEN_SOURCE="explicit"
+    elif [[ "$UI_ALLOW_UNAUTHENTICATED" != "1" ]]; then
+      command -v openssl >/dev/null 2>&1 || die "--with-ui needs a token: install 'openssl' (used to auto-generate one), or pass --ui-token=..., or pass --ui-allow-unauthenticated (local/dev only)"
+      RESOLVED_UI_TOKEN="$(openssl rand -hex 24)"
+      RESOLVED_UI_TOKEN_SOURCE="generated"
+      warn "auto-generated a dashboard token (shown once at the end of this run) -- pass --ui-token=... to pin it across redeploys"
+    fi
   fi
 
   info "connecting to ${USER_ARG}@${HOST_ARG}..."
@@ -487,7 +541,18 @@ run_deploy() {
   if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
     ( cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$RESOLVED_GOARCH" go build -trimpath -o "$build_dir/kairon-migration-adapter-stub" ./cmd/kairon-migration-adapter-stub )
   fi
+  if [[ "$WITH_UI" == "1" ]]; then
+    ( cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$RESOLVED_GOARCH" go build -trimpath -ldflags="-s -w -X main.version=$RESOLVED_VERSION" -o "$build_dir/kairon-ui" ./cmd/kairon-ui )
+  fi
   ok "build complete: $build_dir"
+
+  if [[ "$WITH_UI" == "1" ]]; then
+    command -v npm >/dev/null 2>&1 || die "--with-ui requires 'npm' on PATH to build web/dist locally (the only place this script needs Node.js, and only with --with-ui)"
+    info "building kairon-ui web assets (npm install && npm run build)..."
+    ( cd "$REPO_ROOT/web" && npm install && npm run build )
+    [[ -d "$REPO_ROOT/web/dist" ]] || die "npm run build did not produce web/dist -- check the build output above"
+    ok "web/dist built"
+  fi
 
   local local_stage
   local_stage="$(mktemp -d)"
@@ -515,6 +580,11 @@ run_deploy() {
     printf 'MIGRATION_PORT_EXPLICIT=%q\n' "$MIGRATION_PORT_EXPLICIT"
     printf 'MIGRATION_ADAPTER_SOCKET=%q\n' "$MIGRATION_ADAPTER_SOCKET"
     printf 'WITH_MIGRATION_ADAPTER_STUB=%q\n' "$WITH_MIGRATION_ADAPTER_STUB"
+    printf 'WITH_UI=%q\n' "$WITH_UI"
+    printf 'UI_ALLOW_UNAUTHENTICATED=%q\n' "$UI_ALLOW_UNAUTHENTICATED"
+    printf 'UI_TOKEN=%q\n' "$RESOLVED_UI_TOKEN"
+    printf 'UI_PORT=%q\n' "$UI_PORT"
+    printf 'UI_PORT_EXPLICIT=%q\n' "$UI_PORT_EXPLICIT"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -545,6 +615,11 @@ ok "installed kairon-node, kaironctl to /usr/bin"
 if [[ "$WITH_CONTROLLER" == "1" ]]; then
   install -m 0755 -o root -g root ./kairon-controller /usr/bin/kairon-controller
   ok "installed kairon-controller to /usr/bin"
+fi
+
+if [[ "$WITH_UI" == "1" ]]; then
+  install -m 0755 -o root -g root ./kairon-ui /usr/bin/kairon-ui
+  ok "installed kairon-ui to /usr/bin"
 fi
 
 if [[ ! -f /etc/kairon/kairon-node.env ]]; then
@@ -590,6 +665,38 @@ if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
   install -m 0640 -o root -g kairon ./migration-cert.pem /etc/kairon/migration/cert.pem
   install -m 0640 -o root -g kairon ./migration-key.pem /etc/kairon/migration/key.pem
   ok "installed migration mTLS materials to /etc/kairon/migration/"
+fi
+
+if [[ "$WITH_UI" == "1" ]]; then
+  # Pure build output, not hand-edited config -- always replaced on redeploy
+  # (unlike kairon-ui.env below) so a version bump never leaves stale chunks
+  # behind alongside the new ones.
+  rm -rf /etc/kairon/ui-web
+  install -d -m 0750 -o root -g kairon /etc/kairon/ui-web
+  tar -xzf ./kairon-ui-web.tar.gz -C /etc/kairon/ui-web
+  find /etc/kairon/ui-web -type d -exec chmod 0750 {} \; -exec chown root:kairon {} \;
+  find /etc/kairon/ui-web -type f -exec chmod 0640 {} \; -exec chown root:kairon {} \;
+  ok "installed web dashboard assets to /etc/kairon/ui-web"
+
+  if [[ ! -f /etc/kairon/kairon-ui.env ]]; then
+    {
+      if [[ -n "$UI_TOKEN" ]]; then echo "KAIRON_UI_TOKEN=$UI_TOKEN"; else echo "#KAIRON_UI_TOKEN="; fi
+      if [[ "$UI_ALLOW_UNAUTHENTICATED" == "1" ]]; then echo "KAIRON_UI_ALLOW_UNAUTHENTICATED=true"; else echo "#KAIRON_UI_ALLOW_UNAUTHENTICATED=false"; fi
+      if [[ -n "$KUBE_URL" ]]; then echo "KAIRON_KUBE_URL=$KUBE_URL"; else echo "#KAIRON_KUBE_URL="; fi
+      if [[ -n "$KUBE_TOKEN" ]]; then echo "KAIRON_KUBE_TOKEN=$KUBE_TOKEN"; else echo "#KAIRON_KUBE_TOKEN="; fi
+      if [[ -n "$KUBE_CA" ]]; then echo "KAIRON_KUBE_CA=$KUBE_CA"; else echo "#KAIRON_KUBE_CA="; fi
+      if [[ "$KUBE_INSECURE" == "1" ]]; then echo "KAIRON_KUBE_INSECURE=true"; else echo "#KAIRON_KUBE_INSECURE=false"; fi
+    } > /etc/kairon/kairon-ui.env
+    chmod 0640 /etc/kairon/kairon-ui.env
+    chown root:kairon /etc/kairon/kairon-ui.env
+    ok "seeded /etc/kairon/kairon-ui.env"
+  else
+    warn "/etc/kairon/kairon-ui.env already exists -- left untouched"
+    if [[ -n "$UI_TOKEN$KUBE_URL$KUBE_TOKEN$KUBE_CA" || "$UI_ALLOW_UNAUTHENTICATED" == "1" || "$KUBE_INSECURE" == "1" ]]; then
+      warn "--ui-token/--ui-allow-unauthenticated/--kube-* flags were given but ignored because the env file already exists"
+      warn "edit /etc/kairon/kairon-ui.env by hand, then: systemctl restart kairon-ui"
+    fi
+  fi
 fi
 
 if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
@@ -656,24 +763,43 @@ if [[ "$WITH_CONTROLLER" == "1" ]]; then
     ok "seeded /etc/kairon/kairon-controller.env"
   fi
 fi
+if [[ "$WITH_UI" == "1" ]]; then
+  RESOLVED_UI_PORT="$(resolve_port "$UI_PORT" "$UI_PORT_EXPLICIT" "ui")" || exit 1
+  install -m 0644 -o root -g root ./kairon-ui.service /etc/systemd/system/kairon-ui.service
+  sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-ui --listen=:$RESOLVED_UI_PORT --web-dir=/etc/kairon/ui-web#" /etc/systemd/system/kairon-ui.service
+fi
 
 systemctl daemon-reload
 
 if [[ "$NO_START" != "1" ]]; then
+  # `enable --now` is a no-op start if the unit is already active from a
+  # prior deploy -- the process keeps running with its OLD ExecStart
+  # (stale port, stale token/env), silently ignoring whatever this deploy
+  # just changed. `restart` starts a stopped unit or restarts a running
+  # one, so a redeploy always actually takes effect.
   if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
-    systemctl enable --now kairon-migration-adapter-stub.service
+    systemctl enable kairon-migration-adapter-stub.service
+    systemctl restart kairon-migration-adapter-stub.service
     ok "enabled + started kairon-migration-adapter-stub.service"
   fi
-  systemctl enable --now kairon-node.service
+  systemctl enable kairon-node.service
+  systemctl restart kairon-node.service
   ok "enabled + started kairon-node.service"
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
-    systemctl enable --now kairon-controller.service
+    systemctl enable kairon-controller.service
+    systemctl restart kairon-controller.service
     ok "enabled + started kairon-controller.service"
+  fi
+  if [[ "$WITH_UI" == "1" ]]; then
+    systemctl enable kairon-ui.service
+    systemctl restart kairon-ui.service
+    ok "enabled + started kairon-ui.service"
   fi
   sleep 2
 else
   systemctl enable kairon-node.service
   [[ "$WITH_CONTROLLER" == "1" ]] && systemctl enable kairon-controller.service
+  [[ "$WITH_UI" == "1" ]] && systemctl enable kairon-ui.service
   [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]] && systemctl enable kairon-migration-adapter-stub.service
   warn "--no-start given: service(s) installed and enabled but not started"
 fi
@@ -693,6 +819,11 @@ INSTALL_EOF
   fi
   if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
     scp_files+=("$build_dir/kairon-migration-adapter-stub" "$REPO_ROOT/systemd/kairon-migration-adapter-stub.service")
+  fi
+  if [[ "$WITH_UI" == "1" ]]; then
+    scp_files+=("$build_dir/kairon-ui" "$REPO_ROOT/systemd/kairon-ui.service")
+    tar -C "$REPO_ROOT/web/dist" -czf "$local_stage/kairon-ui-web.tar.gz" .
+    scp_files+=("$local_stage/kairon-ui-web.tar.gz")
   fi
   scp_files+=("$local_stage/params.env" "$local_stage/install.sh")
 
@@ -752,6 +883,45 @@ INSTALL_EOF
     [[ "$ctrl_active" == "active" ]] && ok "kairon-controller.service is active" || err "kairon-controller.service is '$ctrl_active'"
     [[ "$ctrl_healthz" == "200" ]] && ok "controller healthz: $ctrl_healthz" || warn "controller healthz: $ctrl_healthz"
     [[ "$ctrl_readyz" == "200" ]] && ok "controller readyz: $ctrl_readyz" || warn "controller readyz: $ctrl_readyz"
+  fi
+
+  if [[ "$WITH_UI" == "1" ]]; then
+    local ui_port
+    ui_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--listen=:[0-9]+' /etc/systemd/system/kairon-ui.service | cut -d: -f2" || echo 8082)"
+    # kairon-ui's /readyz is an unconditional 200 with no actual Kubernetes
+    # reachability check (unlike node/controller), so only healthz is a
+    # meaningful signal here -- verify_remote's readyz line is discarded.
+    local ui_report ui_active ui_healthz
+    ui_report="$(verify_remote kairon-ui.service "${ui_port:-8082}")"
+    ui_active="$(sed -n '1p' <<< "$ui_report")"
+    ui_healthz="$(sed -n '2p' <<< "$ui_report")"
+    [[ "$ui_active" == "active" ]] && ok "kairon-ui.service is active" || err "kairon-ui.service is '$ui_active' (expected active)"
+    [[ "$ui_healthz" == "200" ]] && ok "ui healthz: $ui_healthz" || warn "ui healthz: $ui_healthz"
+
+    echo
+    ok "dashboard: http://${HOST_ARG}:${ui_port:-8082}"
+    # /etc/kairon/kairon-ui.env is root:kairon 0640 -- the SSH user is
+    # neither, so this check needs sudo (ssh_exec_privileged), not a plain
+    # ssh_cmd, or "permission denied" gets misread as "token not applied".
+    case "$RESOLVED_UI_TOKEN_SOURCE" in
+      generated)
+        if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_UI_TOKEN=$RESOLVED_UI_TOKEN\$' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
+          ok "dashboard token (auto-generated, shown once -- save it now): $RESOLVED_UI_TOKEN"
+        else
+          tip "an existing /etc/kairon/kairon-ui.env was left untouched -- the freshly generated token above was NOT applied; ssh in and 'sudo cat /etc/kairon/kairon-ui.env' to see the active one"
+        fi
+        ;;
+      explicit)
+        if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_UI_TOKEN=$RESOLVED_UI_TOKEN\$' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
+          ok "dashboard token: the value passed via --ui-token"
+        else
+          tip "an existing /etc/kairon/kairon-ui.env was left untouched -- --ui-token was NOT applied; ssh in and 'sudo cat /etc/kairon/kairon-ui.env' to see the active one"
+        fi
+        ;;
+      *)
+        tip "dashboard token: unchanged (--ui-allow-unauthenticated, or an existing env file was left as-is) -- ssh in and 'sudo cat /etc/kairon/kairon-ui.env' to see the active config"
+        ;;
+    esac
   fi
 
   echo
