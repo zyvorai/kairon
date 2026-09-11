@@ -1,45 +1,41 @@
-# Test report
+# Kairon v0.2.0 test report
 
-Generated and verified in the ChatGPT build environment on 2026-09-11.
+Generated from the release candidate in this repository.
 
-## Passed locally
+## Release gates
 
 - `make all` — PASS
-  - `gofmt`
+  - gofmt check
   - `go vet ./...`
   - `go test ./...`
-  - static `CGO_ENABLED=0` builds of `kairon-controller`, `kairon-node`, and `kaironctl`
-  - repository + Kubernetes YAML validation
-- `go test -race -timeout 60s ./internal/...` — PASS
-- `git diff --cached --check` — PASS
+  - static builds for `kairon-controller`, `kairon-node`, and `kaironctl`
+  - Kubernetes/repository manifest validation
+  - version smoke tests for all three binaries
+- `go test -race ./...` — PASS
+- `go test -cover ./...` — PASS
 
-## Reconcile tests
+## Package coverage
 
-- scheduler selects a Ready Kairon-capable least-loaded node
-- controller patches `spec.nodeName` through a mock Kubernetes API
-- node agent performs Machine -> FluxVM lookup/create -> Machine status reconciliation
-- image-root policy rejects host paths outside the configured image directory
-- FluxVM DELETE is idempotent when the runtime is already absent
+- `internal/agent`: 63.6%
+- `internal/controller`: 55.7%
+- `internal/fluxvm`: 54.0%
+- `internal/health`: 42.1%
+- `internal/kube`: 26.7%
+- `internal/model`: 45.5%
+- `internal/scheduler`: 77.1%
 
-## Coverage snapshot
+## v0.2 behavior directly exercised
 
-Coverage is intentionally focused on core control-loop code. See package-level output below.
+- adopt-only target guard refuses duplicate VM creation
+- allocated DRA ResourceClaim -> normalized/allowlisted PCI BDF -> FluxVM `vfio_devices`
+- missing VFIO allowlist fails closed
+- migration URI accepts only valid `tcp:host:port`
+- source node calls FluxVM migration start contract and projects completion
+- controlled cold migration stops the source before reassignment and restarts only after Stopped
+- controller live cutover sets target assignment plus adopt-only guard
+- MachineSnapshot creates a standard CSI VolumeSnapshot and projects ready state
+- existing VM lifecycle, image-root traversal rejection, scheduling, FluxVM mapping, health, quantity parsing
 
-```text
-ok  	github.com/zyvorai/kairon/internal/agent	0.049s	coverage: 50.0% of statements
-ok  	github.com/zyvorai/kairon/internal/controller	(cached)	coverage: 46.9% of statements
-ok  	github.com/zyvorai/kairon/internal/fluxvm	0.040s	coverage: 54.9% of statements
-ok  	github.com/zyvorai/kairon/internal/health	(cached)	coverage: 42.1% of statements
-ok  	github.com/zyvorai/kairon/internal/kube	(cached)	coverage: 38.6% of statements
-ok  	github.com/zyvorai/kairon/internal/model	(cached)	coverage: 54.1% of statements
-ok  	github.com/zyvorai/kairon/internal/scheduler	(cached)	coverage: 77.1% of statements
-```
+## Environment boundary
 
-## Not executed in this sandbox
-
-- real Kubernetes control-plane conformance
-- real KVM/FluxVM VM boot or live-migration tests
-- Docker image build (Docker is unavailable here)
-- Helm render/install test (Helm is unavailable here)
-
-Those are wired into the repository structure/CI roadmap, but they should not be represented as locally verified.
+The tests use deterministic HTTP test servers for Kubernetes and FluxVM API contracts. They do not execute KVM/QEMU, a real CSI driver, or physical VFIO hardware in this build environment. End-to-end live migration still requires a compatible incoming QEMU target prepared before the source migration request, as documented in README.md.

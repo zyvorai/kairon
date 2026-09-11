@@ -4,28 +4,20 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
+	"regexp"
+	"strings"
 	"time"
 
-	"github.com/zyvorai/kairon/internal/health"
+	"github.com/zyvorai/kairon/internal/agent"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
 )
 
 type Controller struct {
-	Kube       *kube.Client
-	Scheduler  scheduler.Scheduler
-	Log        *slog.Logger
-	FenceGrace time.Duration
-	Metrics    *health.Metrics
-}
-
-func (c *Controller) fenceGrace() time.Duration {
-	if c.FenceGrace <= 0 {
-		return 60 * time.Second
-	}
-	return c.FenceGrace
+	Kube      *kube.Client
+	Scheduler scheduler.Scheduler
+	Log       *slog.Logger
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
@@ -37,28 +29,38 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	nodeByName := map[string]model.Node{}
-	for _, n := range nodes {
-		nodeByName[n.Metadata.Name] = n
-	}
-	if err := c.reconcileMDBs(ctx, machines); err != nil {
-		c.Log.Error("mdb reconcile", "error", err)
-	}
-	if err := c.reconcileFencing(ctx, machines, nodeByName); err != nil {
+	assigned := countAssigned(machines)
+	machineIndex := indexMachines(machines)
+
+	migrations, err := c.Kube.ListMachineMigrations(ctx)
+	if err != nil && !kube.IsNotFound(err) {
 		return err
 	}
-	// refresh after fencing may have cleared assignments
-	machines, err = c.Kube.ListMachines(ctx)
-	if err != nil {
-		return err
-	}
-	assigned := map[string]int{}
-	for _, m := range machines {
-		if m.Spec.NodeName != "" && m.Metadata.DeletionTimestamp == nil && m.DesiredPowerState() == "Running" {
-			assigned[m.Spec.NodeName]++
+	for _, migration := range migrations {
+		if err := c.reconcileMigration(ctx, migration, machineIndex, nodes, assigned); err != nil {
+			status := migration.Status
+			status.Phase = "Failed"
+			status.Message = err.Error()
+			_ = c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+			c.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
 		}
 	}
-	now := time.Now().UTC()
+
+	snapshots, err := c.Kube.ListMachineSnapshots(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	for _, snapshot := range snapshots {
+		if err := c.reconcileSnapshot(ctx, snapshot, machineIndex); err != nil {
+			status := snapshot.Status
+			status.Phase = "Failed"
+			status.ReadyToUse = false
+			status.Message = err.Error()
+			_ = c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+			c.Log.Error("snapshot reconcile failed", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "error", err)
+		}
+	}
+
 	for _, m := range machines {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
 			continue
@@ -68,210 +70,282 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = err.Error()
-			status.ObservedGeneration = m.Metadata.Generation
-			status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "False", "FailedScheduling", err.Error(), now)
-			status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "Unscheduled", err.Error(), now)
 			_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-			_ = c.Kube.Eventf(ctx, m, "Warning", "FailedScheduling", err.Error(), "kairon-controller")
 			continue
 		}
 		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": node}}); err != nil {
 			return err
 		}
-		status := m.Status
-		status.Phase = "Pending"
-		status.NodeName = node
-		status.Message = fmt.Sprintf("assigned to %s", node)
-		status.ObservedGeneration = m.Metadata.Generation
-		status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "True", "Scheduled", node, now)
-		status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "WaitingForRuntime", "", now)
-		status.Conditions = model.SetCondition(status.Conditions, model.ConditionNodeHealthy, "True", "NodeReady", node, now)
-		_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-		_ = c.Kube.Eventf(ctx, m, "Normal", "Scheduled", fmt.Sprintf("Successfully assigned to %s", node), "kairon-controller")
 		assigned[node]++
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
-		if c.Metrics != nil {
-			c.Metrics.MachinesScheduled.Add(1)
-		}
 	}
 	return nil
 }
 
-func nodeReady(n model.Node) bool {
-	if n.Spec.Unschedulable {
-		return false
-	}
-	for _, c := range n.Status.Conditions {
-		if c.Type == "Ready" {
-			return c.Status == "True"
+func countAssigned(machines []model.Machine) map[string]int {
+	assigned := map[string]int{}
+	for _, m := range machines {
+		if m.Spec.NodeName != "" && m.Metadata.DeletionTimestamp == nil && m.DesiredPowerState() == "Running" {
+			assigned[m.Spec.NodeName]++
 		}
 	}
-	return false
+	return assigned
 }
 
-func (c *Controller) reconcileFencing(ctx context.Context, machines []model.Machine, nodes map[string]model.Node) error {
-	now := time.Now().UTC()
-	grace := c.fenceGrace()
+func indexMachines(machines []model.Machine) map[string]model.Machine {
+	out := make(map[string]model.Machine, len(machines))
 	for _, m := range machines {
-		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName == "" {
-			continue
-		}
-		// Voluntary evacuate
-		if m.Metadata.Annotations[model.AnnotationEvacuate] == "true" {
-			if !c.disruptionAllowed(ctx, m) {
-				status := m.Status
-				status.Message = "evacuation blocked by MachineDisruptionBudget"
-				status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "True", "EvacuateBlocked", status.Message, now)
-				_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-				_ = c.Kube.Eventf(ctx, m, "Warning", "EvacuateBlocked", status.Message, "kairon-controller")
-				continue
-			}
-			if err := c.releaseMachine(ctx, m, "Evacuated", "voluntary evacuate annotation"); err != nil {
-				return err
-			}
-			continue
-		}
-		n, ok := nodes[m.Spec.NodeName]
-		healthy := ok && nodeReady(n)
-		if healthy {
-			ann := m.Metadata.Annotations
-			if ann != nil && ann[model.AnnotationFenceSince] != "" {
-				_ = c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": map[string]any{"annotations": map[string]any{
-					model.AnnotationFenceSince: nil,
-				}}})
-			}
-			if model.ConditionStatus(m.Status.Conditions, model.ConditionNodeHealthy) != "True" {
-				status := m.Status
-				status.Conditions = model.SetCondition(status.Conditions, model.ConditionNodeHealthy, "True", "NodeReady", m.Spec.NodeName, now)
-				_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-			}
-			continue
-		}
-		reason := "NodeNotReady"
-		if !ok {
-			reason = "NodeMissing"
-		}
-		status := m.Status
-		status.Conditions = model.SetCondition(status.Conditions, model.ConditionNodeHealthy, "False", reason, m.Spec.NodeName, now)
-		status.Phase = "Unknown"
-		status.Message = fmt.Sprintf("node %s unhealthy (%s); fencing after %s", m.Spec.NodeName, reason, grace)
-		_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+		out[m.Namespace()+"/"+m.Metadata.Name] = m
+	}
+	return out
+}
 
-		ann := m.Metadata.Annotations
-		if ann == nil {
-			ann = map[string]string{}
+func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, nodes []model.Node, assigned map[string]int) error {
+	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" {
+		return nil
+	}
+	if strings.TrimSpace(migration.Spec.MachineName) == "" {
+		return fmt.Errorf("spec.machineName is required")
+	}
+	machine, ok := machines[migration.Namespace()+"/"+migration.Spec.MachineName]
+	if !ok {
+		return fmt.Errorf("Machine %s/%s not found", migration.Namespace(), migration.Spec.MachineName)
+	}
+	if machine.Metadata.DeletionTimestamp != nil {
+		return fmt.Errorf("Machine is being deleted")
+	}
+
+	status := migration.Status
+	phase := status.Phase
+	if phase == "" || phase == "Pending" {
+		if machine.Spec.NodeName == "" {
+			return c.blockMigration(ctx, migration, "Machine has not been scheduled yet")
 		}
-		sinceStr := ann[model.AnnotationFenceSince]
-		if sinceStr == "" {
-			ann[model.AnnotationFenceSince] = strconv.FormatInt(now.Unix(), 10)
-			_ = c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": map[string]any{"annotations": ann}})
-			_ = c.Kube.Eventf(ctx, m, "Warning", "NodeUnhealthy", status.Message, "kairon-controller")
-			continue
-		}
-		sinceUnix, err := strconv.ParseInt(sinceStr, 10, 64)
+		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, nodes, assigned)
 		if err != nil {
-			ann[model.AnnotationFenceSince] = strconv.FormatInt(now.Unix(), 10)
-			_ = c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": map[string]any{"annotations": ann}})
-			continue
+			return c.blockMigration(ctx, migration, err.Error())
 		}
-		if now.Sub(time.Unix(sinceUnix, 0).UTC()) < grace {
-			continue
+		strategy, err := effectiveStrategy(machine, migration)
+		if err != nil {
+			return c.blockMigration(ctx, migration, err.Error())
 		}
-		if err := c.releaseMachine(ctx, m, "Fenced", fmt.Sprintf("fenced from unhealthy node %s", m.Spec.NodeName)); err != nil {
+		status.SourceNode = machine.Spec.NodeName
+		status.TargetNode = target
+		status.EffectiveStrategy = strategy
+		status.Message = ""
+		if strategy == "live" {
+			if err := agent.ValidateMigrationDestination(migration.Spec.Destination); err != nil {
+				return c.blockMigration(ctx, migration, err.Error())
+			}
+			status.Phase = "Starting"
+			status.Message = "source node agent will initiate FluxVM live migration"
+			return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+		}
+		status.Phase = "Stopping"
+		status.Message = "stopping source runtime for controlled cold evacuation"
+		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, map[string]any{"spec": map[string]any{"powerState": "Stopped"}}); err != nil {
 			return err
 		}
+		return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
 	}
-	return nil
+
+	switch phase {
+	case "Starting", "Running":
+		// The source node agent owns FluxVM migration initiation/polling.
+		return nil
+	case "Cutover":
+		if status.EffectiveStrategy != "live" {
+			return fmt.Errorf("Cutover phase is only valid for live migration")
+		}
+		patch := map[string]any{
+			"spec": map[string]any{"nodeName": status.TargetNode},
+			"metadata": map[string]any{"annotations": map[string]any{
+				model.AnnotationAdoptOnly:    "true",
+				model.AnnotationMigrationRef: migration.Metadata.Name,
+			}},
+		}
+		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, patch); err != nil {
+			return err
+		}
+		status.Phase = "Adopting"
+		status.Message = "source migration completed; target is in adopt-only mode"
+		return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+	case "Adopting":
+		if machine.Spec.NodeName != status.TargetNode || machine.Status.NodeName != status.TargetNode || machine.Status.Phase != "Running" {
+			return nil
+		}
+		patch := map[string]any{"metadata": map[string]any{"annotations": map[string]any{
+			model.AnnotationAdoptOnly:    nil,
+			model.AnnotationMigrationRef: nil,
+		}}}
+		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, patch); err != nil {
+			return err
+		}
+		status.Phase = "Succeeded"
+		status.Message = "live migration completed and target runtime adopted"
+		return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+	case "Stopping":
+		if machine.Status.Phase != "Stopped" {
+			return nil
+		}
+		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": status.TargetNode, "powerState": "Running"}}); err != nil {
+			return err
+		}
+		status.Phase = "Restarting"
+		status.Message = "source stopped; Machine reassigned to target"
+		return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+	case "Restarting":
+		if machine.Spec.NodeName == status.TargetNode && machine.Status.NodeName == status.TargetNode && machine.Status.Phase == "Running" {
+			status.Phase = "Succeeded"
+			status.Message = "cold migration completed"
+			return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown migration status phase %q", phase)
+	}
 }
 
-func (c *Controller) releaseMachine(ctx context.Context, m model.Machine, reason, message string) error {
-	now := time.Now().UTC()
-	patch := map[string]any{
-		"metadata": map[string]any{"annotations": map[string]any{
-			model.AnnotationFenceSince: nil,
-			model.AnnotationEvacuate:   nil,
-		}},
-		"spec": map[string]any{"nodeName": nil},
-	}
-	if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, patch); err != nil {
-		return err
-	}
-	status := m.Status
-	status.Phase = "Pending"
-	status.NodeName = ""
-	status.RuntimeID = ""
-	status.GuestIP = ""
+func (c *Controller) blockMigration(ctx context.Context, migration model.MachineMigration, message string) error {
+	status := migration.Status
+	status.Phase = "Blocked"
 	status.Message = message
-	status.ObservedGeneration = m.Metadata.Generation
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "False", reason, message, now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionCreated, "False", reason, "", now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", reason, message, now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionNodeHealthy, "False", reason, message, now)
-	_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-	_ = c.Kube.Eventf(ctx, m, "Warning", reason, message, "kairon-controller")
-	c.Log.Info("released machine placement", "machine", m.Metadata.Name, "reason", reason)
-	if c.Metrics != nil && reason == "Fenced" {
-		c.Metrics.MachinesFenced.Add(1)
-	}
-	return nil
+	return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
 }
 
-func (c *Controller) reconcileMDBs(ctx context.Context, machines []model.Machine) error {
-	mdbs, err := c.Kube.ListMachineDisruptionBudgets(ctx)
-	if err != nil {
-		return err
+func effectiveStrategy(machine model.Machine, migration model.MachineMigration) (string, error) {
+	strategy := strings.ToLower(strings.TrimSpace(migration.Spec.Strategy))
+	if strategy == "" {
+		strategy = "auto"
 	}
-	for _, mdb := range mdbs {
-		healthy := 0
-		desired := 0
-		for _, m := range machines {
-			if m.Namespace() != mdb.Namespace() {
-				continue
-			}
-			if !model.LabelsMatch(mdb.Spec.Selector, m.Metadata.Labels) {
-				continue
-			}
-			desired++
-			if m.Status.Phase == "Running" && model.ConditionStatus(m.Status.Conditions, model.ConditionReady) == "True" {
-				healthy++
-			}
+	switch strategy {
+	case "cold":
+		return "cold", nil
+	case "live":
+		if !liveBackendEligible(machine.Spec.Runtime.Backend) {
+			return "", fmt.Errorf("live migration requires qemu backend; Machine requests %q", machine.Spec.Runtime.Backend)
 		}
-		maxUn := mdb.Spec.MaxUnavailable
-		if maxUn < 0 {
-			maxUn = 0
+		if migration.Spec.Destination == "" {
+			return "", fmt.Errorf("live migration requires spec.destination for the prepared incoming QEMU target")
 		}
-		allowed := maxUn - (desired - healthy)
-		if allowed < 0 {
-			allowed = 0
+		return "live", nil
+	case "auto":
+		if migration.Spec.Destination != "" && liveBackendEligible(machine.Spec.Runtime.Backend) {
+			return "live", nil
 		}
-		st := model.MachineDisruptionBudgetStatus{
-			CurrentHealthy:     healthy,
-			DesiredHealthy:     desired,
-			DisruptionsAllowed: allowed,
-			ObservedGeneration: mdb.Metadata.Generation,
-		}
-		_ = c.Kube.PatchMachineDisruptionBudgetStatus(ctx, mdb.Namespace(), mdb.Metadata.Name, st)
+		return "cold", nil
+	default:
+		return "", fmt.Errorf("unsupported migration strategy %q", migration.Spec.Strategy)
 	}
-	return nil
 }
 
-func (c *Controller) disruptionAllowed(ctx context.Context, m model.Machine) bool {
-	mdbs, err := c.Kube.ListMachineDisruptionBudgets(ctx)
+func liveBackendEligible(backend string) bool {
+	return backend == "" || backend == "auto" || backend == "qemu"
+}
+
+func (c *Controller) migrationTarget(machine model.Machine, requested string, nodes []model.Node, assigned map[string]int) (string, error) {
+	var candidates []model.Node
+	for _, n := range nodes {
+		if n.Metadata.Name == machine.Spec.NodeName {
+			continue
+		}
+		if requested != "" && n.Metadata.Name != requested {
+			continue
+		}
+		candidates = append(candidates, n)
+	}
+	if requested != "" && len(candidates) == 0 {
+		return "", fmt.Errorf("target node %q does not exist or is the current source node", requested)
+	}
+	target, err := c.Scheduler.Choose(machine, candidates, assigned)
 	if err != nil {
-		return false
+		if requested != "" {
+			return "", fmt.Errorf("target node %q is not eligible: %w", requested, err)
+		}
+		return "", fmt.Errorf("no migration target available: %w", err)
 	}
-	for _, mdb := range mdbs {
-		if mdb.Namespace() != m.Namespace() {
-			continue
-		}
-		if !model.LabelsMatch(mdb.Spec.Selector, m.Metadata.Labels) {
-			continue
-		}
-		if mdb.Status.DisruptionsAllowed <= 0 {
-			return false
-		}
+	return target, nil
+}
+
+func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {
+	if snapshot.Status.Phase == "Succeeded" || snapshot.Status.Phase == "Failed" {
+		return nil
 	}
-	return true
+	if strings.TrimSpace(snapshot.Spec.MachineName) == "" {
+		return fmt.Errorf("spec.machineName is required")
+	}
+	machine, ok := machines[snapshot.Namespace()+"/"+snapshot.Spec.MachineName]
+	if !ok {
+		return fmt.Errorf("Machine %s/%s not found", snapshot.Namespace(), snapshot.Spec.MachineName)
+	}
+	if len(machine.Spec.Volumes) == 0 {
+		return fmt.Errorf("Machine has no PVC-backed spec.volumes to snapshot")
+	}
+	refs := make([]model.VolumeSnapshotReference, 0, len(machine.Spec.Volumes))
+	allReady := true
+	for _, volume := range machine.Spec.Volumes {
+		if strings.TrimSpace(volume.Name) == "" || strings.TrimSpace(volume.ClaimName) == "" {
+			return fmt.Errorf("Machine volume requires name and claimName")
+		}
+		name := snapshotVolumeName(snapshot.Metadata.Name, volume.Name)
+		vs, err := c.Kube.GetVolumeSnapshot(ctx, snapshot.Namespace(), name)
+		if err != nil {
+			if !kube.IsNotFound(err) {
+				return err
+			}
+			claim := volume.ClaimName
+			vs = model.VolumeSnapshot{
+				TypeMeta: model.TypeMeta{APIVersion: "snapshot.storage.k8s.io/v1", Kind: "VolumeSnapshot"},
+				Metadata: model.ObjectMeta{Name: name, Namespace: snapshot.Namespace(), Labels: map[string]string{
+					"kairon.zyvor.dev/machine":  machine.Metadata.Name,
+					"kairon.zyvor.dev/snapshot": snapshot.Metadata.Name,
+				}},
+				Spec: model.VolumeSnapshotSpec{Source: model.VolumeSnapshotSource{PersistentVolumeClaimName: &claim}},
+			}
+			if snapshot.Spec.VolumeSnapshotClassName != "" {
+				className := snapshot.Spec.VolumeSnapshotClassName
+				vs.Spec.VolumeSnapshotClassName = &className
+			}
+			vs, err = c.Kube.CreateVolumeSnapshot(ctx, snapshot.Namespace(), vs)
+			if err != nil {
+				return err
+			}
+		}
+		if vs.Status.Error != nil && vs.Status.Error.Message != nil && *vs.Status.Error.Message != "" {
+			return fmt.Errorf("VolumeSnapshot %s failed: %s", name, *vs.Status.Error.Message)
+		}
+		ready := vs.Status.ReadyToUse != nil && *vs.Status.ReadyToUse
+		if !ready {
+			allReady = false
+		}
+		refs = append(refs, model.VolumeSnapshotReference{VolumeName: volume.Name, VolumeSnapshotName: name, ReadyToUse: ready})
+	}
+	status := snapshot.Status
+	status.VolumeSnapshots = refs
+	status.ReadyToUse = allReady
+	if allReady {
+		status.Phase = "Succeeded"
+		status.Message = "all CSI VolumeSnapshots are ready to use"
+	} else {
+		status.Phase = "Pending"
+		status.Message = "waiting for CSI VolumeSnapshots"
+	}
+	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+}
+
+var nonDNS = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func snapshotVolumeName(snapshot, volume string) string {
+	name := strings.ToLower(snapshot + "-" + volume)
+	name = nonDNS.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-")
+	if len(name) > 63 {
+		name = strings.TrimRight(name[:63], "-")
+	}
+	if name == "" {
+		return "kairon-snapshot"
+	}
+	return name
 }
 
 func (c *Controller) Run(ctx context.Context, interval time.Duration) error {
@@ -279,9 +353,6 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) error {
 	defer t.Stop()
 	for {
 		if err := c.Reconcile(ctx); err != nil {
-			if c.Metrics != nil {
-				c.Metrics.ReconcileErrors.Add(1)
-			}
 			c.Log.Error("reconcile failed", "error", err)
 		}
 		select {

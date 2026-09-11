@@ -15,14 +15,14 @@ kind: ClusterRole
 metadata: {name: kairon-controller}
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "persistentvolumes", "persistentvolumeclaims"]
+    resources: ["nodes"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status", "machineimages", "machineimages/status", "virtualdisks", "virtualdisks/status", "machinesnapshots", "machinesnapshots/status", "machinedisruptionbudgets", "machinedisruptionbudgets/status", "machinemigrations", "machinemigrations/status"]
+    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status"]
     verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -35,12 +35,12 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: kairon-node}
 rules:
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status", "machineimages", "machineimages/status", "virtualdisks", "virtualdisks/status", "machinesnapshots", "machinesnapshots/status", "machinedisruptionbudgets", "machinedisruptionbudgets/status", "machinemigrations", "machinemigrations/status"]
+    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status"]
     verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["resourceclaims"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -63,10 +63,8 @@ spec:
         - name: controller
           image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
-          args: ["--interval={{ .Values.controller.interval }}", "--fence-grace={{ .Values.controller.fenceGrace }}"]
+          args: ["--interval={{ .Values.controller.interval }}"]
           ports: [{name: health, containerPort: 8080}]
-          resources:
-{{ toYaml .Values.controller.resources | indent 12 }}
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
@@ -88,13 +86,11 @@ spec:
         - name: node
           image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag }}"
           imagePullPolicy: {{ .Values.node.image.pullPolicy }}
-          args: ["--interval={{ .Values.node.interval }}", "--fluxvm-url={{ .Values.node.fluxvmURL }}", "--default-backend={{ .Values.node.defaultBackend }}", "--image-root={{ .Values.node.imageRoot }}"]
+          args: ["--interval={{ .Values.node.interval }}", "--fluxvm-url={{ .Values.node.fluxvmURL }}", "--default-backend={{ .Values.node.defaultBackend }}", "--image-root={{ .Values.node.imageRoot }}", "--vfio-allowlist={{ .Values.node.vfioAllowlist }}"]
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
           ports: [{name: health, containerPort: 8081}]
-          resources:
-{{ toYaml .Values.node.resources | indent 12 }}
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}

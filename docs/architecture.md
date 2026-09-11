@@ -1,44 +1,59 @@
 # Architecture
 
-Kairon separates orchestration from execution.
+Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the source of truth; FluxVM owns VMM process lifecycle.
 
-## Cluster controller
+## Components
 
-`kairon-controller` watches/list-polls `Machine` resources and Kubernetes Nodes. An unscheduled running Machine is assigned to the least-loaded Ready node matching:
+- `kairon-controller`: schedules Machines, drives MachineMigration state, and reconciles MachineSnapshot objects into CSI VolumeSnapshots.
+- `kairon-node`: one per virtualization node; reconciles assigned Machines into the node-local FluxVM endpoint, drives source-side FluxVM live migration, and resolves authorized DRA claims into VFIO BDFs.
+- `kaironctl`: thin client over the Kubernetes API. It does not bypass the controllers.
 
-- `kairon.zyvor.dev/capable=true`
-- `spec.placement.architecture`
-- `spec.placement.nodeSelector`
+## Cold migration
 
-The assignment is persisted in `spec.nodeName`; this makes placement visible, auditable and deterministic.
+```text
+Pending
+  -> Stopping
+     Machine.powerState=Stopped
+  -> Restarting
+     wait source status=Stopped
+     Machine.nodeName=target
+     Machine.powerState=Running
+  -> Succeeded
+     wait target status=Running
+```
 
-## Node agent
+The state is represented in Kubernetes and is restart-safe. v0.2 does not copy host-local storage.
 
-`kairon-node` runs as a host-networked DaemonSet. It only reconciles Machines whose `spec.nodeName` is its own node. The agent talks to node-local FluxVM on `127.0.0.1:7788`.
+## Live migration
 
-For each Machine it:
+```text
+Pending
+  -> Starting
+     validate target and tcp:host:port destination
+  -> Running
+     source kairon-node -> FluxVM migration/start + migration/status
+  -> Cutover
+     FluxVM reports completed
+  -> Adopting
+     controller moves Machine.nodeName to target
+     controller sets kairon.zyvor.dev/adopt-only=true
+     target node agent must discover the existing migrated runtime
+  -> Succeeded
+     controller removes adopt-only after target reports Running
+```
 
-1. installs the runtime-cleanup finalizer;
-2. finds an existing FluxVM VM by `status.runtimeID` or deterministic runtime name;
-3. creates the VM if desired state is Running and no runtime exists;
-4. deletes the runtime if desired state is Stopped;
-5. mirrors runtime ID, phase and guest IP into Machine status;
-6. deletes the runtime before releasing the finalizer during Machine deletion.
+The target agent cannot create a VM while the adopt-only annotation is set. A missing incoming runtime therefore becomes a visible blocked Machine rather than an accidental second boot.
 
-## Why no wrapper Pod
+v0.2 intentionally does not claim zero-touch live migration. The FluxVM contract used here has a verified source-side migration API; Kairon does not have a verified runtime endpoint for provisioning/authenticating the target incoming QEMU listener. The explicit `spec.destination` must therefore point at a target prepared outside Kairon.
 
-A full VM consumes host KVM, storage and networking resources independently of a normal container process. Kairon models that directly. Kubernetes remains the desired-state API and authorization system, while the FluxVM process on the node is the execution layer.
+## CSI snapshots
 
-This avoids coupling VM lifecycle to a per-VM launcher Pod. The tradeoff is that Kairon must explicitly implement scheduling accounting, node-failure fencing, migration and DRA integration; those are roadmap items rather than hidden behind a Pod abstraction.
+`Machine.spec.volumes[]` records PVC names for Kubernetes storage orchestration. A MachineSnapshot creates one `snapshot.storage.k8s.io/v1` VolumeSnapshot per declared PVC and projects each `readyToUse` state into MachineSnapshot status.
 
-## Control loop model
+This is snapshot orchestration, not VM disk attachment. Arbitrary PVC -> FluxVM block-device attachment remains future work.
 
-All operations are idempotent. The Kubernetes Machine object is source of truth. Runtime names use `kairon-<namespace>-<name>`, allowing recovery when status was lost but the VM still exists.
+## DRA / VFIO
 
-## Failure semantics in v0.1
+`Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` ResourceClaims. The node agent requires an allocation, extracts a PCI BDF from the claim annotation or a BDF-shaped allocation result, normalizes it, and checks it against the node's explicit allowlist. Only approved BDFs are passed to FluxVM `vfio_devices`.
 
-- Controller restart: safe; placement is stored in `spec.nodeName`.
-- Node-agent restart: safe; runtime lookup is name/idempotency based.
-- FluxVM restart: agent retries reconciliation.
-- Kubernetes API outage: existing VMs continue running.
-- Node loss: **not automatically failed over in v0.1**. Automated fencing and migration are required before HA production use.
+The node-local allowlist is a privilege boundary: namespace users cannot request arbitrary host PCI functions merely by editing a claim annotation.

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
-	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -60,12 +59,6 @@ func (s Scheduler) eligible(m model.Machine, n model.Node) bool {
 			return false
 		}
 	}
-	if !tolerates(m.Spec.Placement.Tolerations, n.Spec.Taints) {
-		return false
-	}
-	if !matchesAffinity(m.Spec.Placement.Affinity, n) {
-		return false
-	}
 	return true
 }
 
@@ -76,99 +69,4 @@ func ready(n model.Node) bool {
 		}
 	}
 	return false
-}
-
-func tolerates(tolerations []model.Toleration, taints []model.Taint) bool {
-	for _, taint := range taints {
-		if taint.Effect != "" && taint.Effect != "NoSchedule" && taint.Effect != "NoExecute" {
-			continue
-		}
-		if !tolerationMatches(tolerations, taint) {
-			return false
-		}
-	}
-	return true
-}
-
-func tolerationMatches(tolerations []model.Toleration, taint model.Taint) bool {
-	for _, tol := range tolerations {
-		if tol.Effect != "" && tol.Effect != taint.Effect {
-			continue
-		}
-		op := strings.ToLower(tol.Operator)
-		if op == "" {
-			op = "equal"
-		}
-		switch op {
-		case "exists":
-			if tol.Key == "" || tol.Key == taint.Key {
-				return true
-			}
-		case "equal":
-			if tol.Key == taint.Key && tol.Value == taint.Value {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func matchesAffinity(aff *model.Affinity, n model.Node) bool {
-	if aff == nil || aff.NodeAffinity == nil || aff.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-		return true
-	}
-	terms := aff.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
-	if len(terms) == 0 {
-		return true
-	}
-	for _, term := range terms {
-		if matchTerm(term, n) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchTerm(term model.NodeSelectorTerm, n model.Node) bool {
-	if len(term.MatchExpressions) == 0 {
-		return true
-	}
-	for _, req := range term.MatchExpressions {
-		if !matchRequirement(req, n) {
-			return false
-		}
-	}
-	return true
-}
-
-func matchRequirement(req model.NodeSelectorRequirement, n model.Node) bool {
-	val, ok := n.Metadata.Labels[req.Key]
-	switch req.Operator {
-	case "Exists":
-		return ok
-	case "DoesNotExist":
-		return !ok
-	case "In":
-		if !ok {
-			return false
-		}
-		for _, v := range req.Values {
-			if v == val {
-				return true
-			}
-		}
-		return false
-	case "NotIn":
-		if !ok {
-			return true
-		}
-		for _, v := range req.Values {
-			if v == val {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
 }

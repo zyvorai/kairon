@@ -1,0 +1,117 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinemigrations.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinemigrations
+    singular: machinemigration
+    kind: MachineMigration
+    shortNames:
+    - kmm
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Machine
+      type: string
+      jsonPath: .spec.machineName
+    - name: Strategy
+      type: string
+      jsonPath: .status.effectiveStrategy
+    - name: Source
+      type: string
+      jsonPath: .status.sourceNode
+    - name: Target
+      type: string
+      jsonPath: .status.targetNode
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - machineName
+            properties:
+              machineName:
+                type: string
+                minLength: 1
+              strategy:
+                type: string
+                enum:
+                - auto
+                - live
+                - cold
+                default: auto
+              targetNode:
+                type: string
+              destination:
+                type: string
+                description: Prepared incoming QEMU endpoint. Kairon validates tcp:host:port
+                  before calling FluxVM.
+              mode:
+                type: string
+                enum:
+                - pre-copy
+                - post-copy
+                default: pre-copy
+              bandwidthMbps:
+                type: integer
+                format: int64
+                minimum: 0
+              maxDowntimeMs:
+                type: integer
+                format: int64
+                minimum: 0
+              multifdChannels:
+                type: integer
+                minimum: 0
+                maximum: 255
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+              message:
+                type: string
+              sourceNode:
+                type: string
+              targetNode:
+                type: string
+              effectiveStrategy:
+                type: string
+              runtimeID:
+                type: string
+              fluxPhase:
+                type: string
+              ramTransferred:
+                type: integer
+                format: int64
+                minimum: 0
+              ramRemaining:
+                type: integer
+                format: int64
+                minimum: 0
+              ramTotal:
+                type: integer
+                format: int64
+                minimum: 0
+              totalTimeMs:
+                type: integer
+                format: int64
+                minimum: 0
+              downtimeMs:
+                type: integer
+                format: int64
+                minimum: 0

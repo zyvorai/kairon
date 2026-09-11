@@ -3,15 +3,16 @@ package model
 import "time"
 
 const (
-	APIVersion       = "kairon.zyvor.dev/v1alpha1"
-	KindMachine      = "Machine"
-	Finalizer        = "kairon.zyvor.dev/runtime-cleanup"
-	CapableLabel     = "kairon.zyvor.dev/capable"
-	DefaultNamespace = "default"
-
-	ConditionScheduled = "Scheduled"
-	ConditionCreated   = "Created"
-	ConditionReady     = "Ready"
+	APIVersion             = "kairon.zyvor.dev/v1alpha1"
+	KindMachine            = "Machine"
+	KindMachineMigration   = "MachineMigration"
+	KindMachineSnapshot    = "MachineSnapshot"
+	Finalizer              = "kairon.zyvor.dev/runtime-cleanup"
+	CapableLabel           = "kairon.zyvor.dev/capable"
+	DefaultNamespace       = "default"
+	AnnotationAdoptOnly    = "kairon.zyvor.dev/adopt-only"
+	AnnotationVFIOBDF      = "kairon.zyvor.dev/vfio-bdf"
+	AnnotationMigrationRef = "kairon.zyvor.dev/migration"
 )
 
 type TypeMeta struct {
@@ -24,7 +25,6 @@ type ObjectMeta struct {
 	Namespace         string            `json:"namespace,omitempty"`
 	UID               string            `json:"uid,omitempty"`
 	ResourceVersion   string            `json:"resourceVersion,omitempty"`
-	Generation        int64             `json:"generation,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
 	Finalizers        []string          `json:"finalizers,omitempty"`
@@ -44,27 +44,23 @@ type MachineList struct {
 }
 
 type MachineSpec struct {
-	NodeName      string         `json:"nodeName,omitempty"`
-	Image         ImageSpec      `json:"image"`
-	Resources     ResourceSpec   `json:"resources"`
-	Runtime       RuntimeSpec    `json:"runtime,omitempty"`
-	Network       NetworkSpec    `json:"network,omitempty"`
-	CloudInit     CloudInitSpec  `json:"cloudInit,omitempty"`
-	PowerState    string         `json:"powerState,omitempty"`
-	Tenant        string         `json:"tenant,omitempty"`
-	TTLSeconds    int64          `json:"ttlSeconds,omitempty"`
-	Placement     PlacementSpec  `json:"placement,omitempty"`
-	Security      SecuritySpec   `json:"security,omitempty"`
-	DiskSizeGiB   int64          `json:"diskSizeGiB,omitempty"`
-	Storage       string         `json:"storage,omitempty"`
-	SharedFolders []SharedFolder `json:"sharedFolders,omitempty"`
+	NodeName     string                 `json:"nodeName,omitempty"`
+	Image        ImageSpec              `json:"image"`
+	Resources    ResourceSpec           `json:"resources"`
+	Runtime      RuntimeSpec            `json:"runtime,omitempty"`
+	Network      NetworkSpec            `json:"network,omitempty"`
+	PowerState   string                 `json:"powerState,omitempty"`
+	Tenant       string                 `json:"tenant,omitempty"`
+	TTLSeconds   int64                  `json:"ttlSeconds,omitempty"`
+	Placement    PlacementSpec          `json:"placement,omitempty"`
+	Security     SecuritySpec           `json:"security,omitempty"`
+	Volumes      []MachineVolume        `json:"volumes,omitempty"`
+	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
 }
 
 type ImageSpec struct {
-	Path             string `json:"path,omitempty"`
-	Digest           string `json:"digest,omitempty"`
-	MachineImageName string `json:"machineImageName,omitempty"`
-	VirtualDiskName  string `json:"virtualDiskName,omitempty"`
+	Path   string `json:"path"`
+	Digest string `json:"digest,omitempty"`
 }
 
 type ResourceSpec struct {
@@ -85,55 +81,23 @@ type NetworkSpec struct {
 	MAC    string `json:"mac,omitempty"`
 }
 
-type CloudInitSpec struct {
-	Hostname      string          `json:"hostname,omitempty"`
-	User          string          `json:"user,omitempty"`
-	UserData      string          `json:"userData,omitempty"`
-	SSHPublicKeys []string        `json:"sshPublicKeys,omitempty"`
-	Packages      []string        `json:"packages,omitempty"`
-	RunCmd        []string        `json:"runcmd,omitempty"`
-	WriteFiles    []CloudInitFile `json:"writeFiles,omitempty"`
-}
-
 type PlacementSpec struct {
 	Architecture string            `json:"architecture,omitempty"`
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-	Tolerations  []Toleration      `json:"tolerations,omitempty"`
-	Affinity     *Affinity         `json:"affinity,omitempty"`
-}
-
-type Toleration struct {
-	Key      string `json:"key,omitempty"`
-	Operator string `json:"operator,omitempty"`
-	Value    string `json:"value,omitempty"`
-	Effect   string `json:"effect,omitempty"`
-}
-
-type Affinity struct {
-	NodeAffinity *NodeAffinity `json:"nodeAffinity,omitempty"`
-}
-
-type NodeAffinity struct {
-	RequiredDuringSchedulingIgnoredDuringExecution *NodeSelector `json:"requiredDuringSchedulingIgnoredDuringExecution,omitempty"`
-}
-
-type NodeSelector struct {
-	NodeSelectorTerms []NodeSelectorTerm `json:"nodeSelectorTerms,omitempty"`
-}
-
-type NodeSelectorTerm struct {
-	MatchExpressions []NodeSelectorRequirement `json:"matchExpressions,omitempty"`
-}
-
-type NodeSelectorRequirement struct {
-	Key      string   `json:"key"`
-	Operator string   `json:"operator"`
-	Values   []string `json:"values,omitempty"`
 }
 
 type SecuritySpec struct {
 	SecureBoot bool `json:"secureBoot,omitempty"`
 	TPM        bool `json:"tpm,omitempty"`
+}
+
+type MachineVolume struct {
+	Name      string `json:"name"`
+	ClaimName string `json:"claimName"`
+}
+
+type DeviceClaimReference struct {
+	Name string `json:"name"`
 }
 
 type MachineStatus struct {
@@ -154,17 +118,143 @@ type Condition struct {
 	LastTransitionTime time.Time `json:"lastTransitionTime"`
 }
 
-type Taint struct {
-	Key    string `json:"key,omitempty"`
-	Value  string `json:"value,omitempty"`
-	Effect string `json:"effect,omitempty"`
+type MachineMigration struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta             `json:"metadata"`
+	Spec     MachineMigrationSpec   `json:"spec"`
+	Status   MachineMigrationStatus `json:"status,omitempty"`
+}
+
+type MachineMigrationList struct {
+	TypeMeta `json:",inline"`
+	Items    []MachineMigration `json:"items"`
+}
+
+type MachineMigrationSpec struct {
+	MachineName     string `json:"machineName"`
+	Strategy        string `json:"strategy,omitempty"` // auto|live|cold
+	TargetNode      string `json:"targetNode,omitempty"`
+	Destination     string `json:"destination,omitempty"` // validated tcp:host:port for live
+	Mode            string `json:"mode,omitempty"`        // pre-copy|post-copy
+	BandwidthMbps   uint64 `json:"bandwidthMbps,omitempty"`
+	MaxDowntimeMs   uint64 `json:"maxDowntimeMs,omitempty"`
+	MultifdChannels uint8  `json:"multifdChannels,omitempty"`
+}
+
+type MachineMigrationStatus struct {
+	Phase             string `json:"phase,omitempty"`
+	Message           string `json:"message,omitempty"`
+	SourceNode        string `json:"sourceNode,omitempty"`
+	TargetNode        string `json:"targetNode,omitempty"`
+	EffectiveStrategy string `json:"effectiveStrategy,omitempty"`
+	RuntimeID         string `json:"runtimeID,omitempty"`
+	FluxPhase         string `json:"fluxPhase,omitempty"`
+	RAMTransferred    uint64 `json:"ramTransferred,omitempty"`
+	RAMRemaining      uint64 `json:"ramRemaining,omitempty"`
+	RAMTotal          uint64 `json:"ramTotal,omitempty"`
+	TotalTimeMs       uint64 `json:"totalTimeMs,omitempty"`
+	DowntimeMs        uint64 `json:"downtimeMs,omitempty"`
+}
+
+func (m MachineMigration) Namespace() string {
+	if m.Metadata.Namespace == "" {
+		return DefaultNamespace
+	}
+	return m.Metadata.Namespace
+}
+
+type MachineSnapshot struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta            `json:"metadata"`
+	Spec     MachineSnapshotSpec   `json:"spec"`
+	Status   MachineSnapshotStatus `json:"status,omitempty"`
+}
+
+type MachineSnapshotList struct {
+	TypeMeta `json:",inline"`
+	Items    []MachineSnapshot `json:"items"`
+}
+
+type MachineSnapshotSpec struct {
+	MachineName             string `json:"machineName"`
+	VolumeSnapshotClassName string `json:"volumeSnapshotClassName,omitempty"`
+}
+
+type MachineSnapshotStatus struct {
+	Phase           string                    `json:"phase,omitempty"`
+	Message         string                    `json:"message,omitempty"`
+	ReadyToUse      bool                      `json:"readyToUse,omitempty"`
+	VolumeSnapshots []VolumeSnapshotReference `json:"volumeSnapshots,omitempty"`
+}
+
+type VolumeSnapshotReference struct {
+	VolumeName         string `json:"volumeName"`
+	VolumeSnapshotName string `json:"volumeSnapshotName"`
+	ReadyToUse         bool   `json:"readyToUse,omitempty"`
+}
+
+func (s MachineSnapshot) Namespace() string {
+	if s.Metadata.Namespace == "" {
+		return DefaultNamespace
+	}
+	return s.Metadata.Namespace
+}
+
+// Minimal Kubernetes ResourceClaim representation used by the node agent.
+type ResourceClaim struct {
+	Metadata ObjectMeta          `json:"metadata"`
+	Status   ResourceClaimStatus `json:"status,omitempty"`
+}
+
+type ResourceClaimStatus struct {
+	Allocation *ResourceClaimAllocation `json:"allocation,omitempty"`
+}
+
+type ResourceClaimAllocation struct {
+	Devices ResourceClaimDeviceAllocation `json:"devices,omitempty"`
+}
+
+type ResourceClaimDeviceAllocation struct {
+	Results []DeviceRequestAllocationResult `json:"results,omitempty"`
+}
+
+type DeviceRequestAllocationResult struct {
+	Request string `json:"request,omitempty"`
+	Driver  string `json:"driver,omitempty"`
+	Pool    string `json:"pool,omitempty"`
+	Device  string `json:"device,omitempty"`
+}
+
+// Minimal CSI snapshot.storage.k8s.io/v1 representation.
+type VolumeSnapshot struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta           `json:"metadata"`
+	Spec     VolumeSnapshotSpec   `json:"spec"`
+	Status   VolumeSnapshotStatus `json:"status,omitempty"`
+}
+
+type VolumeSnapshotSpec struct {
+	Source                  VolumeSnapshotSource `json:"source"`
+	VolumeSnapshotClassName *string              `json:"volumeSnapshotClassName,omitempty"`
+}
+
+type VolumeSnapshotSource struct {
+	PersistentVolumeClaimName *string `json:"persistentVolumeClaimName,omitempty"`
+}
+
+type VolumeSnapshotStatus struct {
+	ReadyToUse *bool                `json:"readyToUse,omitempty"`
+	Error      *VolumeSnapshotError `json:"error,omitempty"`
+}
+
+type VolumeSnapshotError struct {
+	Message *string `json:"message,omitempty"`
 }
 
 type Node struct {
 	Metadata ObjectMeta `json:"metadata"`
 	Spec     struct {
-		Unschedulable bool    `json:"unschedulable,omitempty"`
-		Taints        []Taint `json:"taints,omitempty"`
+		Unschedulable bool `json:"unschedulable,omitempty"`
 	} `json:"spec"`
 	Status struct {
 		Conditions []NodeCondition `json:"conditions,omitempty"`
@@ -205,4 +295,8 @@ func HasFinalizer(m Machine, name string) bool {
 		}
 	}
 	return false
+}
+
+func AnnotationTrue(meta ObjectMeta, key string) bool {
+	return meta.Annotations != nil && meta.Annotations[key] == "true"
 }

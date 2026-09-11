@@ -2,21 +2,22 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
+	"net"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
-	"github.com/zyvorai/kairon/internal/storage"
 )
+
+var pciBDFPattern = regexp.MustCompile(`(?i)^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
 
 type Agent struct {
 	NodeName       string
@@ -24,16 +25,11 @@ type Agent struct {
 	Flux           *fluxvm.Client
 	DefaultBackend string
 	ImageRoot      string
+	VFIOAllowlist  map[string]struct{}
 	Log            *slog.Logger
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {
-	if err := a.reconcileSnapshots(ctx); err != nil {
-		a.Log.Error("snapshot reconcile failed", "error", err)
-	}
-	if err := a.reconcileMigrations(ctx); err != nil {
-		a.Log.Error("migration reconcile failed", "error", err)
-	}
 	machines, err := a.Kube.ListMachines(ctx)
 	if err != nil {
 		return err
@@ -44,176 +40,32 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 		}
 		if err := a.reconcileMachine(ctx, m); err != nil {
 			a.Log.Error("machine reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
-			now := time.Now().UTC()
 			status := m.Status
 			status.Phase = "Error"
 			status.NodeName = a.NodeName
 			status.Message = err.Error()
-			status.ObservedGeneration = m.Metadata.Generation
-			status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "ReconcileFailed", err.Error(), now)
+			status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "ReconcileFailed", Message: err.Error(), LastTransitionTime: time.Now().UTC()}}
 			_ = a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
-			_ = a.Kube.Eventf(ctx, m, "Warning", "Failed", err.Error(), "kairon-node")
 		}
 	}
-	return nil
-}
-
-func (a *Agent) reconcileSnapshots(ctx context.Context) error {
-	snaps, err := a.Kube.ListMachineSnapshots(ctx)
+	migrations, err := a.Kube.ListMachineMigrations(ctx)
 	if err != nil {
+		// This lets a v0.2 node binary coexist during a rolling CRD upgrade.
+		if kube.IsNotFound(err) {
+			return nil
+		}
 		return err
 	}
-	for _, snap := range snaps {
-		if snap.Status.Phase == "Succeeded" || snap.Status.Phase == "Failed" {
+	for _, migration := range migrations {
+		if migration.Status.SourceNode != a.NodeName {
 			continue
 		}
-		m, err := a.Kube.GetMachine(ctx, snap.Namespace(), snap.Spec.MachineName)
-		if err != nil {
-			st := snap.Status
-			st.Phase = "Failed"
-			st.Message = err.Error()
-			st.ObservedGeneration = snap.Metadata.Generation
-			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
-			continue
-		}
-		if m.Spec.NodeName != a.NodeName {
-			continue
-		}
-		if m.Status.RuntimeID == "" {
-			st := snap.Status
-			st.Phase = "Pending"
-			st.Message = "machine has no runtimeID yet"
-			st.NodeName = a.NodeName
-			st.ObservedGeneration = snap.Metadata.Generation
-			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
-			continue
-		}
-		tag := snap.Spec.Tag
-		if tag == "" {
-			tag = snap.Metadata.Name
-		}
-		if err := a.Flux.Snapshot(ctx, m.Status.RuntimeID, tag); err != nil {
-			st := snap.Status
-			st.Phase = "Failed"
-			st.Message = err.Error()
-			st.NodeName = a.NodeName
-			st.RuntimeID = m.Status.RuntimeID
-			st.ObservedGeneration = snap.Metadata.Generation
-			_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
-			continue
-		}
-		st := snap.Status
-		st.Phase = "Succeeded"
-		st.Tag = tag
-		st.NodeName = a.NodeName
-		st.RuntimeID = m.Status.RuntimeID
-		st.Message = ""
-		st.ObservedGeneration = snap.Metadata.Generation
-		_ = a.Kube.PatchMachineSnapshotStatus(ctx, snap.Namespace(), snap.Metadata.Name, st)
-		_ = a.Kube.Eventf(ctx, m, "Normal", "SnapshotCreated", fmt.Sprintf("snapshot tag %s", tag), "kairon-node")
-	}
-	return nil
-}
-
-func (a *Agent) reconcileMigrations(ctx context.Context) error {
-	migs, err := a.Kube.ListMachineMigrations(ctx)
-	if err != nil {
-		return err
-	}
-	for _, mig := range migs {
-		phase := strings.ToLower(mig.Status.Phase)
-		if phase == "completed" || phase == "failed" || phase == "cancelled" {
-			continue
-		}
-		m, err := a.Kube.GetMachine(ctx, mig.Namespace(), mig.Spec.MachineName)
-		if err != nil {
-			st := mig.Status
-			st.Phase = "Failed"
-			st.Message = err.Error()
-			st.ObservedGeneration = mig.Metadata.Generation
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
-			continue
-		}
-		if m.Spec.NodeName != a.NodeName {
-			continue
-		}
-		if m.Status.RuntimeID == "" {
-			st := mig.Status
-			st.Phase = "Pending"
-			st.Message = "machine has no runtimeID"
-			st.SourceNode = a.NodeName
-			st.ObservedGeneration = mig.Metadata.Generation
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
-			continue
-		}
-		if mig.Spec.Destination == "" {
-			st := mig.Status
-			st.Phase = "Failed"
-			st.Message = "spec.destination is required (tcp: or unix: URI)"
-			st.ObservedGeneration = mig.Metadata.Generation
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, st)
-			continue
-		}
-		req := fluxvm.MigrationStartRequest{
-			Destination: mig.Spec.Destination,
-			Mode:        mig.Spec.Mode,
-		}
-		if mig.Spec.BandwidthMbps > 0 {
-			v := uint64(mig.Spec.BandwidthMbps)
-			req.BandwidthMbps = &v
-		}
-		if mig.Spec.MaxDowntimeMs > 0 {
-			v := uint64(mig.Spec.MaxDowntimeMs)
-			req.MaxDowntimeMs = &v
-		}
-		if phase == "" || phase == "pending" || phase == "none" {
-			st, err := a.Flux.StartMigration(ctx, m.Status.RuntimeID, req)
-			if err != nil {
-				fail := mig.Status
-				fail.Phase = "Failed"
-				fail.Message = err.Error()
-				fail.SourceNode = a.NodeName
-				fail.RuntimeID = m.Status.RuntimeID
-				fail.ObservedGeneration = mig.Metadata.Generation
-				_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, fail)
-				_ = a.Kube.Eventf(ctx, m, "Warning", "MigrationFailed", err.Error(), "kairon-node")
-				continue
-			}
-			out := mig.Status
-			out.Phase = st.Phase
-			if out.Phase == "" {
-				out.Phase = "Active"
-			}
-			out.Message = st.Status
-			out.SourceNode = a.NodeName
-			out.RuntimeID = m.Status.RuntimeID
-			out.ObservedGeneration = mig.Metadata.Generation
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, out)
-			_ = a.Kube.Eventf(ctx, m, "Normal", "MigrationStarted", mig.Spec.Destination, "kairon-node")
-			continue
-		}
-		st, err := a.Flux.MigrationStatus(ctx, m.Status.RuntimeID)
-		if err != nil {
-			fail := mig.Status
-			fail.Message = err.Error()
-			fail.ObservedGeneration = mig.Metadata.Generation
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, fail)
-			continue
-		}
-		out := mig.Status
-		out.Phase = st.Phase
-		out.Message = st.Status
-		if st.Error != "" {
-			out.Message = st.Error
-		}
-		out.SourceNode = a.NodeName
-		out.RuntimeID = m.Status.RuntimeID
-		out.ObservedGeneration = mig.Metadata.Generation
-		_ = a.Kube.PatchMachineMigrationStatus(ctx, mig.Namespace(), mig.Metadata.Name, out)
-		if strings.EqualFold(st.Phase, "completed") && mig.Spec.TargetNodeName != "" {
-			_ = a.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{
-				"spec": map[string]any{"nodeName": mig.Spec.TargetNodeName},
-			})
+		if err := a.reconcileMigration(ctx, migration); err != nil {
+			status := migration.Status
+			status.Phase = "Failed"
+			status.Message = err.Error()
+			_ = a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+			a.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
 		}
 	}
 	return nil
@@ -232,101 +84,63 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
-	resolved, digest, storageOverride, err := a.resolveImage(ctx, m)
-	if err != nil {
-		return err
-	}
-	m.Spec.Image.Path = resolved
-	if digest != "" && m.Spec.Image.Digest == "" {
-		m.Spec.Image.Digest = digest
-	}
-	if storageOverride != "" && m.Spec.Storage == "" {
-		m.Spec.Storage = storageOverride
-	}
 	if m.Spec.Image.Path == "" {
-		return fmt.Errorf("spec.image.path (or machineImageName/virtualDiskName) is required")
+		return fmt.Errorf("spec.image.path is required")
 	}
-	if a.ImageRoot != "" {
-		root, err := filepath.Abs(a.ImageRoot)
-		if err != nil {
-			return fmt.Errorf("resolve image root: %w", err)
-		}
-		img, err := filepath.Abs(m.Spec.Image.Path)
-		if err != nil {
-			return fmt.Errorf("resolve image path: %w", err)
-		}
-		rel, err := filepath.Rel(root, img)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("image path %q is outside allowed root %q", m.Spec.Image.Path, a.ImageRoot)
-		}
-	}
-	if err := verifyImageDigest(m.Spec.Image.Path, m.Spec.Image.Digest); err != nil {
+	if err := a.validateImagePath(m); err != nil {
 		return err
 	}
-	m.Spec.Storage = storage.NormalizeStorage(m.Spec.Storage)
 
 	rec, err := a.current(ctx, m)
 	if err != nil {
 		return err
 	}
-	created := false
+	if rec == nil && model.AnnotationTrue(m.Metadata, model.AnnotationAdoptOnly) {
+		status := m.Status
+		status.Phase = "Blocked"
+		status.NodeName = a.NodeName
+		status.Message = "adopt-only cutover guard: incoming FluxVM runtime was not found; refusing to create a duplicate VM"
+		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "IncomingRuntimeMissing", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
+		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	}
 	if rec == nil {
-		rec, err = a.Flux.Create(ctx, m, a.DefaultBackend)
+		vfioDevices, err := a.resolveVFIODevices(ctx, m)
 		if err != nil {
 			return err
 		}
-		created = true
-		a.Log.Info("created runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID())
-		_ = a.Kube.Eventf(ctx, m, "Normal", "Created", fmt.Sprintf("FluxVM runtime %s created", rec.ID()), "kairon-node")
+		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices)
+		if err != nil {
+			return err
+		}
+		a.Log.Info("created runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID(), "vfioDevices", vfioDevices)
 	}
-	now := time.Now().UTC()
 	status := m.Status
 	status.Phase = normalizePhase(rec.Status)
 	status.NodeName = a.NodeName
 	status.RuntimeID = rec.ID()
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
-	status.ObservedGeneration = m.Metadata.Generation
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "True", "Assigned", a.NodeName, now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionCreated, "True", "RuntimeExists", rec.ID(), now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, readyStatus(status.Phase), "FluxVMReconciled", "", now)
-	if err := a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); err != nil {
-		return err
-	}
-	if created {
-		_ = a.Kube.Eventf(ctx, m, "Normal", "Started", fmt.Sprintf("Machine phase %s on %s", status.Phase, a.NodeName), "kairon-node")
-	}
-	return nil
+	status.Conditions = []model.Condition{{Type: "Ready", Status: readyStatus(status.Phase), Reason: "FluxVMReconciled", LastTransitionTime: time.Now().UTC()}}
+	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
 
-func (a *Agent) resolveImage(ctx context.Context, m model.Machine) (path, digest, storageOverride string, err error) {
-	path = m.Spec.Image.Path
-	digest = m.Spec.Image.Digest
-	if m.Spec.Image.VirtualDiskName != "" {
-		disk, err := a.Kube.GetVirtualDisk(ctx, m.Namespace(), m.Spec.Image.VirtualDiskName)
-		if err != nil {
-			return "", "", "", fmt.Errorf("virtualDisk %q: %w", m.Spec.Image.VirtualDiskName, err)
-		}
-		if disk.Status.Phase != "Bound" || disk.Status.Path == "" {
-			return "", "", "", fmt.Errorf("virtualDisk %q not Bound (phase=%s)", m.Spec.Image.VirtualDiskName, disk.Status.Phase)
-		}
-		path = disk.Status.Path
-		storageOverride = disk.Spec.Storage
+func (a *Agent) validateImagePath(m model.Machine) error {
+	if a.ImageRoot == "" {
+		return nil
 	}
-	if m.Spec.Image.MachineImageName != "" {
-		img, err := a.Kube.GetMachineImage(ctx, m.Namespace(), m.Spec.Image.MachineImageName)
-		if err != nil {
-			return "", "", "", fmt.Errorf("machineImage %q: %w", m.Spec.Image.MachineImageName, err)
-		}
-		if img.Status.Phase != "Ready" || img.Status.ResolvedPath == "" {
-			return "", "", "", fmt.Errorf("machineImage %q not Ready (phase=%s): %s", m.Spec.Image.MachineImageName, img.Status.Phase, img.Status.Message)
-		}
-		path = img.Status.ResolvedPath
-		if digest == "" {
-			digest = img.Spec.Digest
-		}
+	root, err := filepath.Abs(a.ImageRoot)
+	if err != nil {
+		return fmt.Errorf("resolve image root: %w", err)
 	}
-	return path, digest, storageOverride, nil
+	img, err := filepath.Abs(m.Spec.Image.Path)
+	if err != nil {
+		return fmt.Errorf("resolve image path: %w", err)
+	}
+	rel, err := filepath.Rel(root, img)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("image path %q is outside allowed root %q", m.Spec.Image.Path, a.ImageRoot)
+	}
+	return nil
 }
 
 func (a *Agent) current(ctx context.Context, m model.Machine) (*fluxvm.Record, error) {
@@ -347,19 +161,14 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 		if err := a.Flux.Delete(ctx, rec.ID()); err != nil {
 			return err
 		}
-		_ = a.Kube.Eventf(ctx, m, "Normal", "Stopped", "FluxVM runtime deleted", "kairon-node")
 	}
-	now := time.Now().UTC()
 	status := m.Status
 	status.Phase = "Stopped"
 	status.NodeName = a.NodeName
 	status.RuntimeID = ""
 	status.GuestIP = ""
 	status.Message = ""
-	status.ObservedGeneration = m.Metadata.Generation
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionScheduled, "True", "Assigned", a.NodeName, now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionCreated, "False", "PoweredOff", "", now)
-	status.Conditions = model.SetCondition(status.Conditions, model.ConditionReady, "False", "PoweredOff", "", now)
+	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "PoweredOff", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
 
@@ -378,29 +187,207 @@ func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
 	return a.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}})
 }
 
-func verifyImageDigest(path, want string) error {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return nil
+func (a *Agent) resolveVFIODevices(ctx context.Context, m model.Machine) ([]string, error) {
+	if len(m.Spec.DeviceClaims) == 0 {
+		return nil, nil
 	}
-	algo, hexDigest, ok := strings.Cut(want, ":")
-	if !ok || algo != "sha256" || hexDigest == "" {
-		return fmt.Errorf("spec.image.digest must be sha256:<hex>, got %q", want)
+	if len(a.VFIOAllowlist) == 0 {
+		return nil, fmt.Errorf("Machine requests DRA devices but KAIRON_VFIO_ALLOWLIST is empty; refusing unapproved VFIO passthrough")
 	}
-	f, err := os.Open(path)
+	seen := map[string]struct{}{}
+	for _, ref := range m.Spec.DeviceClaims {
+		if strings.TrimSpace(ref.Name) == "" {
+			return nil, fmt.Errorf("deviceClaims contains an empty ResourceClaim name")
+		}
+		claim, err := a.Kube.GetResourceClaim(ctx, m.Namespace(), ref.Name)
+		if err != nil {
+			return nil, fmt.Errorf("get ResourceClaim %s: %w", ref.Name, err)
+		}
+		if claim.Status.Allocation == nil {
+			return nil, fmt.Errorf("ResourceClaim %s has no DRA allocation yet", ref.Name)
+		}
+		var candidates []string
+		if claim.Metadata.Annotations != nil {
+			for _, raw := range strings.Split(claim.Metadata.Annotations[model.AnnotationVFIOBDF], ",") {
+				if v := strings.TrimSpace(raw); v != "" {
+					candidates = append(candidates, v)
+				}
+			}
+		}
+		if claim.Status.Allocation != nil {
+			for _, r := range claim.Status.Allocation.Devices.Results {
+				if pciBDFPattern.MatchString(strings.TrimSpace(r.Device)) {
+					candidates = append(candidates, r.Device)
+				}
+			}
+		}
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("ResourceClaim %s is allocated but exposes no PCI BDF; set %s or use a DRA driver whose device result is a BDF", ref.Name, model.AnnotationVFIOBDF)
+		}
+		for _, raw := range candidates {
+			bdf, err := NormalizeBDF(raw)
+			if err != nil {
+				return nil, fmt.Errorf("ResourceClaim %s: %w", ref.Name, err)
+			}
+			if _, ok := a.VFIOAllowlist[bdf]; !ok {
+				return nil, fmt.Errorf("VFIO device %s from ResourceClaim %s is not in this node's allowlist", bdf, ref.Name)
+			}
+			seen[bdf] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for bdf := range seen {
+		out = append(out, bdf)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func ParseVFIOAllowlist(raw string) (map[string]struct{}, error) {
+	out := map[string]struct{}{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		bdf, err := NormalizeBDF(item)
+		if err != nil {
+			return nil, err
+		}
+		out[bdf] = struct{}{}
+	}
+	return out, nil
+}
+
+func NormalizeBDF(raw string) (string, error) {
+	bdf := strings.ToLower(strings.TrimSpace(raw))
+	if !pciBDFPattern.MatchString(bdf) {
+		return "", fmt.Errorf("invalid PCI BDF %q", raw)
+	}
+	if strings.Count(bdf, ":") == 1 {
+		bdf = "0000:" + bdf
+	}
+	return bdf, nil
+}
+
+func ValidateMigrationDestination(raw string) error {
+	if !strings.HasPrefix(raw, "tcp:") {
+		return fmt.Errorf("live migration destination must use tcp:host:port")
+	}
+	addr := strings.TrimPrefix(raw, "tcp:")
+	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("open image for digest: %w", err)
+		return fmt.Errorf("invalid live migration destination %q: %w", raw, err)
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("hash image: %w", err)
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("live migration destination host is empty")
 	}
-	got := hex.EncodeToString(h.Sum(nil))
-	if !strings.EqualFold(got, hexDigest) {
-		return fmt.Errorf("image digest mismatch: want sha256:%s got sha256:%s", hexDigest, got)
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("live migration destination has invalid TCP port %q", portText)
 	}
 	return nil
+}
+
+func (a *Agent) reconcileMigration(ctx context.Context, migration model.MachineMigration) error {
+	phase := migration.Status.Phase
+	if phase != "Starting" && phase != "Running" {
+		return nil
+	}
+	if migration.Status.EffectiveStrategy != "live" {
+		return nil
+	}
+	if err := ValidateMigrationDestination(migration.Spec.Destination); err != nil {
+		return err
+	}
+	machine, err := a.Kube.GetMachine(ctx, migration.Namespace(), migration.Spec.MachineName)
+	if err != nil {
+		return err
+	}
+	if machine.Spec.NodeName != a.NodeName {
+		return fmt.Errorf("source Machine is assigned to %s, not %s", machine.Spec.NodeName, a.NodeName)
+	}
+	backend := machine.Spec.Runtime.Backend
+	if backend != "" && backend != "auto" && backend != "qemu" {
+		return fmt.Errorf("FluxVM live migration currently requires qemu backend, Machine requests %s", backend)
+	}
+
+	status := migration.Status
+	var fluxStatus fluxvm.MigrationStatus
+	if phase == "Starting" {
+		rec, err := a.current(ctx, machine)
+		if err != nil {
+			return err
+		}
+		if rec == nil || rec.ID() == "" {
+			return fmt.Errorf("source FluxVM runtime not found")
+		}
+		mode := migration.Spec.Mode
+		if mode == "" {
+			mode = "pre-copy"
+		}
+		if mode != "pre-copy" && mode != "post-copy" {
+			return fmt.Errorf("unsupported migration mode %q", mode)
+		}
+		fluxStatus, err = a.Flux.StartMigration(ctx, rec.ID(), fluxvm.MigrationStartRequest{
+			Destination:     migration.Spec.Destination,
+			Mode:            mode,
+			BandwidthMbps:   migration.Spec.BandwidthMbps,
+			MaxDowntimeMs:   migration.Spec.MaxDowntimeMs,
+			MultifdChannels: migration.Spec.MultifdChannels,
+		})
+		if err != nil {
+			return err
+		}
+		status.RuntimeID = rec.ID()
+	} else {
+		if status.RuntimeID == "" {
+			return fmt.Errorf("Running migration has no runtimeID")
+		}
+		fluxStatus, err = a.Flux.MigrationStatus(ctx, status.RuntimeID)
+		if err != nil {
+			return err
+		}
+	}
+	applyMigrationProgress(&status, fluxStatus)
+	return a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+}
+
+func applyMigrationProgress(status *model.MachineMigrationStatus, s fluxvm.MigrationStatus) {
+	phase := strings.ToLower(s.Phase)
+	if phase == "" {
+		phase = strings.ToLower(s.Status)
+	}
+	status.FluxPhase = phase
+	if s.RAMTransferred != nil {
+		status.RAMTransferred = *s.RAMTransferred
+	}
+	if s.RAMRemaining != nil {
+		status.RAMRemaining = *s.RAMRemaining
+	}
+	if s.RAMTotal != nil {
+		status.RAMTotal = *s.RAMTotal
+	}
+	if s.TotalTimeMs != nil {
+		status.TotalTimeMs = *s.TotalTimeMs
+	}
+	if s.DowntimeMs != nil {
+		status.DowntimeMs = *s.DowntimeMs
+	}
+	switch phase {
+	case "completed":
+		status.Phase = "Cutover"
+		status.Message = "FluxVM source migration completed; waiting for guarded target adoption"
+	case "failed", "cancelled", "canceled":
+		status.Phase = "Failed"
+		status.Message = s.Error
+		if status.Message == "" {
+			status.Message = "FluxVM migration " + phase
+		}
+	default:
+		status.Phase = "Running"
+		status.Message = "FluxVM live migration in progress"
+	}
 }
 
 func normalizePhase(s string) string {
@@ -421,7 +408,6 @@ func normalizePhase(s string) string {
 		return "Unknown"
 	}
 }
-
 func readyStatus(phase string) string {
 	if phase == "Running" {
 		return "True"

@@ -20,12 +20,25 @@ jobs:
         run: test -z "$(gofmt -l cmd internal)"
       - name: Vet
         run: go vet ./...
-      - name: Test
+      - name: Test with race detector
         run: go test -race ./...
-      - name: Build
-        run: make build
+      - name: Build and smoke test
+        run: make build smoke
       - name: Validate manifests and repository
-        run: python3 -m pip install pyyaml && python3 scripts/validate.py
+        run: |
+          python3 -m pip install pyyaml
+          python3 scripts/validate.py
+      - uses: azure/setup-helm@v4.3.0
+      - name: Helm lint and render
+        run: |
+          helm lint charts/kairon
+          helm template kairon charts/kairon --namespace kairon-system > /tmp/kairon.yaml
+          python3 - <<'PY'
+          import yaml
+          with open('/tmp/kairon.yaml') as f:
+              list(yaml.safe_load_all(f))
+          print('helm render YAML: OK')
+          PY
 
   container:
     runs-on: ubuntu-latest

@@ -1,0 +1,15 @@
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MachineMigration
+metadata:
+  name: demo-to-worker-2
+  namespace: default
+spec:
+  machineName: demo
+  strategy: live
+  targetNode: worker-2
+  # The incoming QEMU/FluxVM target must already be prepared in v0.2.
+  destination: tcp:10.0.0.12:4444
+  mode: pre-copy
+  bandwidthMbps: 800
+  maxDowntimeMs: 200
+  multifdChannels: 4

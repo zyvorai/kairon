@@ -6,10 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
-	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -20,6 +20,12 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
+	}
+	// Metadata commands must work on a developer laptop without kubeconfig or
+	// in-cluster credentials.
+	if os.Args[1] == "version" {
+		fmt.Println(version)
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -40,17 +46,19 @@ func main() {
 		cmdPower(ctx, kc, os.Args[2:], "Running")
 	case "stop":
 		cmdPower(ctx, kc, os.Args[2:], "Stopped")
-	case "console":
-		cmdConsole(ctx, kc, os.Args[2:])
-	case "version":
-		fmt.Println(version)
+	case "migrate":
+		cmdMigrate(ctx, kc, os.Args[2:])
+	case "evacuate":
+		cmdEvacuate(ctx, kc, os.Args[2:])
+	case "snapshot":
+		cmdSnapshot(ctx, kc, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
 	}
 }
 
-func nsFlag(name string, args []string) (string, []string) {
+func nsFlag(args []string) (string, []string) {
 	ns := "default"
 	var out []string
 	for i := 0; i < len(args); i++ {
@@ -65,20 +73,46 @@ func nsFlag(name string, args []string) (string, []string) {
 }
 
 func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
-	ns, args := nsFlag("get", args)
-	_ = args
-	items, err := kc.ListMachinesNamespace(ctx, ns)
-	if err != nil {
-		fatal(err)
+	ns, args := nsFlag(args)
+	resource := "machines"
+	if len(args) > 0 {
+		resource = strings.ToLower(args[0])
 	}
-	fmt.Printf("NAME\tNODE\tPHASE\tREADY\tCPU\tMEMORY\tIP\n")
-	for _, m := range items {
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, dash(m.Spec.NodeName), dash(m.Status.Phase), dash(model.ConditionStatus(m.Status.Conditions, model.ConditionReady)), m.Spec.Resources.CPU, m.Spec.Resources.Memory, dash(m.Status.GuestIP))
+	switch resource {
+	case "machine", "machines", "vm", "vms":
+		items, err := kc.ListMachinesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tNODE\tPHASE\tCPU\tMEMORY\tIP\n")
+		for _, m := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, dash(m.Spec.NodeName), dash(m.Status.Phase), m.Spec.Resources.CPU, m.Spec.Resources.Memory, dash(m.Status.GuestIP))
+		}
+	case "migration", "migrations", "machinemigrations":
+		items, err := kc.ListMachineMigrationsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tMACHINE\tSTRATEGY\tSOURCE\tTARGET\tPHASE\n")
+		for _, m := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, m.Spec.MachineName, dash(m.Status.EffectiveStrategy), dash(m.Status.SourceNode), dash(m.Status.TargetNode), dash(m.Status.Phase))
+		}
+	case "snapshot", "snapshots", "machinesnapshots":
+		items, err := kc.ListMachineSnapshotsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tMACHINE\tPHASE\tREADY\n")
+		for _, s := range items {
+			fmt.Printf("%s\t%s\t%s\t%t\n", s.Metadata.Name, s.Spec.MachineName, dash(s.Status.Phase), s.Status.ReadyToUse)
+		}
+	default:
+		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
 }
 
 func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
-	ns, args := nsFlag("describe", args)
+	ns, args := nsFlag(args)
 	if len(args) != 1 {
 		fatal(fmt.Errorf("describe requires NAME"))
 	}
@@ -86,45 +120,8 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("Name:         %s\n", m.Metadata.Name)
-	fmt.Printf("Namespace:    %s\n", m.Namespace())
-	fmt.Printf("Generation:   %d\n", m.Metadata.Generation)
-	fmt.Printf("Node:         %s\n", dash(m.Spec.NodeName))
-	fmt.Printf("Phase:        %s\n", dash(m.Status.Phase))
-	fmt.Printf("ObservedGen:  %d\n", m.Status.ObservedGeneration)
-	fmt.Printf("RuntimeID:    %s\n", dash(m.Status.RuntimeID))
-	fmt.Printf("GuestIP:      %s\n", dash(m.Status.GuestIP))
-	fmt.Printf("Image:        %s\n", m.Spec.Image.Path)
-	if m.Spec.Image.Digest != "" {
-		fmt.Printf("Digest:       %s\n", m.Spec.Image.Digest)
-	}
-	fmt.Printf("Resources:    cpu=%s memory=%s\n", m.Spec.Resources.CPU, m.Spec.Resources.Memory)
-	fmt.Printf("PowerState:   %s\n", m.DesiredPowerState())
-	if m.Spec.CloudInit.UserData != "" || len(m.Spec.CloudInit.SSHPublicKeys) > 0 {
-		fmt.Printf("CloudInit:    userData=%t sshKeys=%d\n", m.Spec.CloudInit.UserData != "", len(m.Spec.CloudInit.SSHPublicKeys))
-	}
-	if m.Status.Message != "" {
-		fmt.Printf("Message:      %s\n", m.Status.Message)
-	}
-	fmt.Println("Conditions:")
-	if len(m.Status.Conditions) == 0 {
-		fmt.Println("  <none>")
-	}
-	for _, c := range m.Status.Conditions {
-		fmt.Printf("  %s=%s reason=%s message=%s transition=%s\n", c.Type, c.Status, c.Reason, c.Message, c.LastTransitionTime.UTC().Format(time.RFC3339))
-	}
-	events, err := kc.ListEventsForMachine(ctx, ns, m.Metadata.Name)
-	fmt.Println("Events:")
-	if err != nil {
-		fmt.Printf("  <unavailable: %v>\n", err)
-		return
-	}
-	if len(events) == 0 {
-		fmt.Println("  <none>")
-	}
-	for _, ev := range events {
-		fmt.Printf("  %s %s %s\n", ev.Type, ev.Reason, ev.Message)
-	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	fmt.Println(string(b))
 }
 
 func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
@@ -140,22 +137,11 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	backend := fs.String("backend", "qemu", "qemu|cloud-hypervisor|firecracker|flux-vm|auto")
 	network := fs.String("network", "user", "user|tap|macvtap")
 	netns := fs.Bool("netns", false, "use per-VM network namespace for TAP")
-	sshKey := fs.String("ssh-key", "", "optional SSH public key for cloud-init")
 	_ = fs.Parse(args[1:])
 	if *image == "" {
 		fatal(fmt.Errorf("--image PATH is required"))
 	}
-	spec := model.MachineSpec{
-		Image:      model.ImageSpec{Path: *image},
-		Resources:  model.ResourceSpec{CPU: *cpu, Memory: *memory},
-		Runtime:    model.RuntimeSpec{Backend: *backend},
-		Network:    model.NetworkSpec{Mode: *network, NetNS: *netns},
-		PowerState: "Running",
-	}
-	if *sshKey != "" {
-		spec.CloudInit.SSHPublicKeys = []string{*sshKey}
-	}
-	m := model.Machine{TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine}, Metadata: model.ObjectMeta{Name: name, Namespace: *ns}, Spec: spec}
+	m := model.Machine{TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine}, Metadata: model.ObjectMeta{Name: name, Namespace: *ns}, Spec: model.MachineSpec{Image: model.ImageSpec{Path: *image}, Resources: model.ResourceSpec{CPU: *cpu, Memory: *memory}, Runtime: model.RuntimeSpec{Backend: *backend}, Network: model.NetworkSpec{Mode: *network, NetNS: *netns}, PowerState: "Running"}}
 	out, err := kc.CreateMachine(ctx, *ns, m)
 	if err != nil {
 		fatal(err)
@@ -164,7 +150,7 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 }
 
 func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
-	ns, args := nsFlag("delete", args)
+	ns, args := nsFlag(args)
 	if len(args) != 1 {
 		fatal(fmt.Errorf("delete requires NAME"))
 	}
@@ -175,7 +161,7 @@ func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
 }
 
 func cmdPower(ctx context.Context, kc *kube.Client, args []string, state string) {
-	ns, args := nsFlag(strings.ToLower(state), args)
+	ns, args := nsFlag(args)
 	if len(args) != 1 {
 		fatal(fmt.Errorf("command requires NAME"))
 	}
@@ -185,33 +171,115 @@ func cmdPower(ctx context.Context, kc *kube.Client, args []string, state string)
 	fmt.Printf("machine/%s -> %s\n", args[0], state)
 }
 
-func cmdConsole(ctx context.Context, kc *kube.Client, args []string) {
-	ns, args := nsFlag("console", args)
-	if len(args) != 1 {
-		fatal(fmt.Errorf("console requires NAME"))
+func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl migrate MACHINE [--strategy auto|live|cold] [flags]"))
 	}
-	fluxURL := os.Getenv("KAIRON_FLUXVM_URL")
-	if fluxURL == "" {
-		fatal(fmt.Errorf("set KAIRON_FLUXVM_URL to the node-local FluxVM API (e.g. http://127.0.0.1:7788)"))
+	machine := args[0]
+	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	name := fs.String("name", "", "MachineMigration name")
+	strategy := fs.String("strategy", "auto", "auto|live|cold")
+	target := fs.String("target-node", "", "target Kubernetes node; empty lets the scheduler choose")
+	destination := fs.String("destination", "", "prepared incoming QEMU listener, tcp:host:port")
+	mode := fs.String("mode", "pre-copy", "pre-copy|post-copy")
+	bandwidth := fs.Uint64("bandwidth-mbps", 0, "FluxVM migration bandwidth limit")
+	downtime := fs.Uint64("max-downtime-ms", 0, "maximum requested downtime")
+	multifd := fs.Uint("multifd-channels", 0, "QEMU multifd channels (0 disables explicit setting)")
+	_ = fs.Parse(args[1:])
+	if *multifd > 255 {
+		fatal(fmt.Errorf("--multifd-channels must be <= 255"))
 	}
-	m, err := kc.GetMachine(ctx, ns, args[0])
+	if *name == "" {
+		*name = resourceName("migration-" + machine + "-" + time.Now().UTC().Format("20060102-150405"))
+	}
+	migration := model.MachineMigration{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineMigration},
+		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
+		Spec:     model.MachineMigrationSpec{MachineName: machine, Strategy: *strategy, TargetNode: *target, Destination: *destination, Mode: *mode, BandwidthMbps: *bandwidth, MaxDowntimeMs: *downtime, MultifdChannels: uint8(*multifd)},
+	}
+	out, err := kc.CreateMachineMigration(ctx, *ns, migration)
 	if err != nil {
 		fatal(err)
 	}
-	if m.Status.RuntimeID == "" {
-		fatal(fmt.Errorf("machine %s has no runtimeID yet", args[0]))
+	fmt.Printf("machinemigration/%s created\n", out.Metadata.Name)
+}
+
+func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl evacuate NODE [--strategy cold|auto]"))
 	}
-	fc := fluxvm.New(fluxURL, os.Getenv("KAIRON_FLUXVM_TOKEN"))
-	info, err := fc.Console(ctx, m.Status.RuntimeID)
+	node := args[0]
+	fs := flag.NewFlagSet("evacuate", flag.ExitOnError)
+	strategy := fs.String("strategy", "cold", "cold|auto; live evacuation requires per-VM destination listeners and should use migrate")
+	_ = fs.Parse(args[1:])
+	if *strategy != "cold" && *strategy != "auto" {
+		fatal(fmt.Errorf("evacuate supports --strategy cold|auto; use migrate for explicit live migration"))
+	}
+	machines, err := kc.ListMachines(ctx)
 	if err != nil {
-		fatal(fmt.Errorf("FluxVM console unavailable: %w", err))
+		fatal(err)
 	}
-	b, _ := json.MarshalIndent(info, "", "  ")
-	fmt.Println(string(b))
+	created := 0
+	stamp := time.Now().UTC().Format("20060102-150405")
+	for _, machine := range machines {
+		if machine.Spec.NodeName != node || machine.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		name := resourceName("evacuate-" + node + "-" + machine.Metadata.Name + "-" + stamp)
+		migration := model.MachineMigration{
+			TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineMigration},
+			Metadata: model.ObjectMeta{Name: name, Namespace: machine.Namespace()},
+			Spec:     model.MachineMigrationSpec{MachineName: machine.Metadata.Name, Strategy: *strategy},
+		}
+		if _, err := kc.CreateMachineMigration(ctx, machine.Namespace(), migration); err != nil {
+			fatal(fmt.Errorf("create migration for %s/%s: %w", machine.Namespace(), machine.Metadata.Name, err))
+		}
+		fmt.Printf("machinemigration/%s created for %s/%s\n", name, machine.Namespace(), machine.Metadata.Name)
+		created++
+	}
+	fmt.Printf("evacuation queued: %d machine(s) from %s\n", created, node)
+}
+
+func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS]"))
+	}
+	machine := args[0]
+	fs := flag.NewFlagSet("snapshot", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	name := fs.String("name", "", "MachineSnapshot name")
+	class := fs.String("class", "", "VolumeSnapshotClass name")
+	_ = fs.Parse(args[1:])
+	if *name == "" {
+		*name = resourceName(machine + "-" + time.Now().UTC().Format("20060102-150405"))
+	}
+	snapshot := model.MachineSnapshot{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshot},
+		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
+		Spec:     model.MachineSnapshotSpec{MachineName: machine, VolumeSnapshotClassName: *class},
+	}
+	out, err := kc.CreateMachineSnapshot(ctx, *ns, snapshot)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machinesnapshot/%s created\n", out.Metadata.Name)
+}
+
+var invalidResourceName = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func resourceName(s string) string {
+	s = strings.ToLower(s)
+	s = invalidResourceName.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 63 {
+		s = strings.TrimRight(s[:63], "-")
+	}
+	return s
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get|describe|create|delete|start|stop|console|version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots] | describe | create | delete | start | stop | migrate | evacuate | snapshot | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

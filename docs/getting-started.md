@@ -1,55 +1,48 @@
 # Getting started
 
-## Requirements
+## Prerequisites
 
-- Kubernetes cluster
-- Linux worker nodes with KVM available
-- FluxVM installed and listening on `127.0.0.1:7788` on each virtualization node
-- a host-local VM image path visible to FluxVM
+- Kubernetes cluster with at least one Kairon-capable node.
+- KVM and a reachable FluxVM service on each VM node.
+- VM image paths available under the node agent's configured `--image-root`.
+- For snapshots: CSI snapshot CRDs/controller and a capable CSI driver.
+- For DRA/VFIO: Kubernetes DRA plus administrator-approved PCI BDFs in `KAIRON_VFIO_ALLOWLIST`.
 
 ## Install
 
 ```bash
-kubectl label node worker-1 kairon.zyvor.dev/capable=true
 kubectl apply -f deploy/crd.yaml
 kubectl apply -f deploy/rbac.yaml
 kubectl apply -f deploy/controller.yaml
 kubectl apply -f deploy/node.yaml
+kubectl label node worker-1 kairon.zyvor.dev/capable=true
 ```
 
-Use immutable image tags rather than `latest` for production.
-
-## Verify
-
-```bash
-kubectl -n kairon-system get pods -o wide
-kubectl -n kairon-system logs deploy/kairon-controller
-kubectl get machines -A
-```
-
-## Run a machine
-
-Edit `examples/linux-machine.yaml` so `spec.image.path` exists on the selected host, then:
+## Create a Machine
 
 ```bash
 kubectl apply -f examples/linux-machine.yaml
-kubectl get machine ubuntu-dev -w
-kubectl describe machine ubuntu-dev
+kubectl get machines -A -w
 ```
 
-`status.conditions` (`Scheduled` / `Created` / `Ready`) and Kubernetes Events track placement and FluxVM lifecycle. Optional `spec.cloudInit` and `spec.image.digest` (`sha256:…`) are supported on create.
-
-## Stop/start
+## Migrate
 
 ```bash
-kubectl patch machine ubuntu-dev --type merge -p '{"spec":{"powerState":"Stopped"}}'
-kubectl patch machine ubuntu-dev --type merge -p '{"spec":{"powerState":"Running"}}'
+kaironctl migrate demo --strategy cold --target-node worker-2
 ```
 
-## Delete
+For live migration, prepare a compatible incoming QEMU target first, then supply its address:
 
 ```bash
-kubectl delete machine ubuntu-dev
+kaironctl migrate demo --strategy live --target-node worker-2 \
+  --destination tcp:10.0.0.12:4444 --mode pre-copy
 ```
 
-The finalizer makes the owning node agent delete the FluxVM runtime before Kubernetes removes the Machine object.
+## Snapshot
+
+See `examples/snapshot-machine.yaml`, then:
+
+```bash
+kaironctl snapshot database --name database-before-upgrade --class csi-snapclass
+kaironctl get snapshots
+```

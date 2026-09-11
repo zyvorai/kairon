@@ -26,6 +26,24 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("kubernetes %s %s: HTTP %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
+}
+
+func IsNotFound(err error) bool {
+	if e, ok := err.(*APIError); ok {
+		return e.StatusCode == http.StatusNotFound
+	}
+	return false
+}
+
 func FromEnvironment() (*Client, error) {
 	if base := os.Getenv("KAIRON_KUBE_URL"); base != "" {
 		return New(base, os.Getenv("KAIRON_KUBE_TOKEN"), os.Getenv("KAIRON_KUBE_CA"), os.Getenv("KAIRON_KUBE_INSECURE") == "true")
@@ -87,7 +105,7 @@ func (c *Client) request(ctx context.Context, method, path string, body any, out
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("kubernetes %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+		return &APIError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -95,6 +113,14 @@ func (c *Client) request(ctx context.Context, method, path string, body any, out
 		}
 	}
 	return nil
+}
+
+func namespacePath(ns, resource string) string {
+	return fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/%s", url.PathEscape(ns), resource)
+}
+
+func namespacedObjectPath(ns, resource, name string) string {
+	return namespacePath(ns, resource) + "/" + url.PathEscape(name)
 }
 
 func (c *Client) ListMachines(ctx context.Context) ([]model.Machine, error) {
@@ -105,120 +131,107 @@ func (c *Client) ListMachines(ctx context.Context) ([]model.Machine, error) {
 
 func (c *Client) ListMachinesNamespace(ctx context.Context, ns string) ([]model.Machine, error) {
 	var list model.MachineList
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines", url.PathEscape(ns))
-	err := c.request(ctx, http.MethodGet, path, nil, &list, "")
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machines"), nil, &list, "")
 	return list.Items, err
 }
 
 func (c *Client) GetMachine(ctx context.Context, ns, name string) (model.Machine, error) {
 	var m model.Machine
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines/%s", url.PathEscape(ns), url.PathEscape(name))
-	err := c.request(ctx, http.MethodGet, path, nil, &m, "")
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machines", name), nil, &m, "")
 	return m, err
 }
 
 func (c *Client) CreateMachine(ctx context.Context, ns string, m model.Machine) (model.Machine, error) {
 	var out model.Machine
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines", url.PathEscape(ns))
-	err := c.request(ctx, http.MethodPost, path, m, &out, "")
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machines"), m, &out, "")
 	return out, err
 }
 
 func (c *Client) DeleteMachine(ctx context.Context, ns, name string) error {
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines/%s", url.PathEscape(ns), url.PathEscape(name))
-	return c.request(ctx, http.MethodDelete, path, map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machines", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
 func (c *Client) PatchMachine(ctx context.Context, ns, name string, patch map[string]any) error {
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines/%s", url.PathEscape(ns), url.PathEscape(name))
-	return c.request(ctx, http.MethodPatch, path, patch, nil, "application/merge-patch+json")
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machines", name), patch, nil, "application/merge-patch+json")
 }
 
 func (c *Client) PatchMachineStatus(ctx context.Context, ns, name string, status model.MachineStatus) error {
-	path := fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/machines/%s/status", url.PathEscape(ns), url.PathEscape(name))
-	return c.request(ctx, http.MethodPatch, path, map[string]any{"status": status}, nil, "application/merge-patch+json")
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machines", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineMigrations(ctx context.Context) ([]model.MachineMigration, error) {
+	var list model.MachineMigrationList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineMigrationsNamespace(ctx context.Context, ns string) ([]model.MachineMigration, error) {
+	var list model.MachineMigrationList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinemigrations"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineMigration(ctx context.Context, ns, name string) (model.MachineMigration, error) {
+	var m model.MachineMigration
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinemigrations", name), nil, &m, "")
+	return m, err
+}
+
+func (c *Client) CreateMachineMigration(ctx context.Context, ns string, m model.MachineMigration) (model.MachineMigration, error) {
+	var out model.MachineMigration
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinemigrations"), m, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineMigrationStatus(ctx context.Context, ns, name string, status model.MachineMigrationStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinemigrations", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineSnapshots(ctx context.Context) ([]model.MachineSnapshot, error) {
+	var list model.MachineSnapshotList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineSnapshotsNamespace(ctx context.Context, ns string) ([]model.MachineSnapshot, error) {
+	var list model.MachineSnapshotList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinesnapshots"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) CreateMachineSnapshot(ctx context.Context, ns string, s model.MachineSnapshot) (model.MachineSnapshot, error) {
+	var out model.MachineSnapshot
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinesnapshots"), s, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineSnapshotStatus(ctx context.Context, ns, name string, status model.MachineSnapshotStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) GetResourceClaim(ctx context.Context, ns, name string) (model.ResourceClaim, error) {
+	var claim model.ResourceClaim
+	path := fmt.Sprintf("/apis/resource.k8s.io/v1/namespaces/%s/resourceclaims/%s", url.PathEscape(ns), url.PathEscape(name))
+	err := c.request(ctx, http.MethodGet, path, nil, &claim, "")
+	return claim, err
+}
+
+func (c *Client) GetVolumeSnapshot(ctx context.Context, ns, name string) (model.VolumeSnapshot, error) {
+	var snap model.VolumeSnapshot
+	path := fmt.Sprintf("/apis/snapshot.storage.k8s.io/v1/namespaces/%s/volumesnapshots/%s", url.PathEscape(ns), url.PathEscape(name))
+	err := c.request(ctx, http.MethodGet, path, nil, &snap, "")
+	return snap, err
+}
+
+func (c *Client) CreateVolumeSnapshot(ctx context.Context, ns string, snap model.VolumeSnapshot) (model.VolumeSnapshot, error) {
+	var out model.VolumeSnapshot
+	path := fmt.Sprintf("/apis/snapshot.storage.k8s.io/v1/namespaces/%s/volumesnapshots", url.PathEscape(ns))
+	err := c.request(ctx, http.MethodPost, path, snap, &out, "")
+	return out, err
 }
 
 func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	var list model.NodeList
 	err := c.request(ctx, http.MethodGet, "/api/v1/nodes", nil, &list, "")
 	return list.Items, err
-}
-
-// Event is a subset of core/v1 Event used for Machine lifecycle signals.
-type Event struct {
-	APIVersion     string            `json:"apiVersion"`
-	Kind           string            `json:"kind"`
-	Metadata       model.ObjectMeta  `json:"metadata"`
-	InvolvedObject map[string]string `json:"involvedObject"`
-	Reason         string            `json:"reason,omitempty"`
-	Message        string            `json:"message,omitempty"`
-	Type           string            `json:"type,omitempty"`
-	Source         map[string]string `json:"source,omitempty"`
-	Count          int               `json:"count,omitempty"`
-	FirstTimestamp time.Time         `json:"firstTimestamp,omitempty"`
-	LastTimestamp  time.Time         `json:"lastTimestamp,omitempty"`
-}
-
-type EventList struct {
-	Items []Event `json:"items"`
-}
-
-func (c *Client) CreateEvent(ctx context.Context, ns string, ev Event) error {
-	if ev.APIVersion == "" {
-		ev.APIVersion = "v1"
-	}
-	if ev.Kind == "" {
-		ev.Kind = "Event"
-	}
-	if ev.Metadata.Namespace == "" {
-		ev.Metadata.Namespace = ns
-	}
-	if ev.Count == 0 {
-		ev.Count = 1
-	}
-	now := time.Now().UTC()
-	if ev.FirstTimestamp.IsZero() {
-		ev.FirstTimestamp = now
-	}
-	if ev.LastTimestamp.IsZero() {
-		ev.LastTimestamp = now
-	}
-	path := fmt.Sprintf("/api/v1/namespaces/%s/events", url.PathEscape(ns))
-	return c.request(ctx, http.MethodPost, path, ev, nil, "")
-}
-
-// Eventf records a namespaced Event referencing a Machine. Failures are ignored by callers that use `_ =`.
-func (c *Client) Eventf(ctx context.Context, m model.Machine, eventType, reason, message, component string) error {
-	now := time.Now().UTC()
-	name := fmt.Sprintf("%s.%x", m.Metadata.Name, now.UnixNano())
-	ev := Event{
-		Metadata: model.ObjectMeta{Name: name, Namespace: m.Namespace()},
-		InvolvedObject: map[string]string{
-			"apiVersion":      model.APIVersion,
-			"kind":            model.KindMachine,
-			"name":            m.Metadata.Name,
-			"namespace":       m.Namespace(),
-			"uid":             m.Metadata.UID,
-			"resourceVersion": m.Metadata.ResourceVersion,
-		},
-		Reason:         reason,
-		Message:        message,
-		Type:           eventType,
-		Source:         map[string]string{"component": component},
-		Count:          1,
-		FirstTimestamp: now,
-		LastTimestamp:  now,
-	}
-	return c.CreateEvent(ctx, m.Namespace(), ev)
-}
-
-func (c *Client) ListEventsForMachine(ctx context.Context, ns, name string) ([]Event, error) {
-	field := fmt.Sprintf("involvedObject.name=%s,involvedObject.kind=Machine,involvedObject.apiVersion=%s", name, model.APIVersion)
-	path := fmt.Sprintf("/api/v1/namespaces/%s/events?fieldSelector=%s", url.PathEscape(ns), url.QueryEscape(field))
-	var list EventList
-	if err := c.request(ctx, http.MethodGet, path, nil, &list, ""); err != nil {
-		return nil, err
-	}
-	return list.Items, nil
 }

@@ -35,51 +35,36 @@ func (r Record) ID() string {
 	return r.UUID
 }
 
-type CloudInitPayload struct {
-	Hostname          string             `json:"hostname,omitempty"`
-	User              string             `json:"user,omitempty"`
-	SSHAuthorizedKeys []string           `json:"ssh_authorized_keys,omitempty"`
-	Packages          []string           `json:"packages,omitempty"`
-	RunCmd            []string           `json:"runcmd,omitempty"`
-	WriteFiles        []CloudInitFilePay `json:"write_files,omitempty"`
-}
-
-type CloudInitFilePay struct {
-	Path        string `json:"path"`
-	Content     string `json:"content"`
-	Permissions string `json:"permissions,omitempty"`
-}
-
-type SharedFolderPay struct {
-	HostPath  string `json:"host_path"`
-	GuestPath string `json:"guest_path"`
-	ReadOnly  bool   `json:"read_only,omitempty"`
-}
-
-// CreateRequest mirrors FluxVM CreateVmRequest JSON contract.
 type CreateRequest struct {
-	Name          string            `json:"name"`
-	Tenant        string            `json:"tenant,omitempty"`
-	Backend       string            `json:"backend"`
-	Image         string            `json:"image"`
-	Kernel        string            `json:"kernel,omitempty"`
-	VCPUs         uint32            `json:"vcpus"`
-	MemoryMiB     uint64            `json:"memory_mib"`
-	DiskSizeGiB   *uint64           `json:"disk_size_gib,omitempty"`
-	Network       map[string]any    `json:"network,omitempty"`
-	TTLSeconds    int64             `json:"ttl_seconds,omitempty"`
-	CloudInit     *CloudInitPayload `json:"cloud_init,omitempty"`
-	Storage       string            `json:"storage,omitempty"`
-	SharedFolders []SharedFolderPay `json:"shared_folders,omitempty"`
-	SecureBoot    bool              `json:"secure_boot,omitempty"`
-	TPM           bool              `json:"tpm,omitempty"`
+	Name        string         `json:"name"`
+	Tenant      string         `json:"tenant,omitempty"`
+	Backend     string         `json:"backend"`
+	Image       string         `json:"image"`
+	Kernel      string         `json:"kernel,omitempty"`
+	VCPUs       uint32         `json:"vcpus"`
+	MemoryMiB   uint64         `json:"memory_mib"`
+	Network     map[string]any `json:"network,omitempty"`
+	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
+	VFIODevices []string       `json:"vfio_devices,omitempty"`
 }
 
-type ConsoleInfo struct {
-	URL    string `json:"url,omitempty"`
-	Type   string `json:"type,omitempty"`
-	Serial string `json:"serial,omitempty"`
-	VNC    string `json:"vnc,omitempty"`
+type MigrationStartRequest struct {
+	Destination     string `json:"destination"`
+	Mode            string `json:"mode,omitempty"`
+	BandwidthMbps   uint64 `json:"bandwidth_mbps,omitempty"`
+	MaxDowntimeMs   uint64 `json:"max_downtime_ms,omitempty"`
+	MultifdChannels uint8  `json:"multifd_channels,omitempty"`
+}
+
+type MigrationStatus struct {
+	Phase          string  `json:"phase"`
+	Status         string  `json:"status,omitempty"`
+	RAMTransferred *uint64 `json:"ram_transferred,omitempty"`
+	RAMRemaining   *uint64 `json:"ram_remaining,omitempty"`
+	RAMTotal       *uint64 `json:"ram_total,omitempty"`
+	TotalTimeMs    *uint64 `json:"total_time_ms,omitempty"`
+	DowntimeMs     *uint64 `json:"downtime_ms,omitempty"`
+	Error          string  `json:"error,omitempty"`
 }
 
 func New(baseURL, token string) *Client {
@@ -169,31 +154,11 @@ func (c *Client) Get(ctx context.Context, id string) (*Record, error) {
 	return &r, nil
 }
 
-func buildCloudInit(ci model.CloudInitSpec) *CloudInitPayload {
-	if ci.Hostname == "" && ci.User == "" && len(ci.SSHPublicKeys) == 0 && len(ci.Packages) == 0 && len(ci.RunCmd) == 0 && len(ci.WriteFiles) == 0 && ci.UserData == "" {
-		return nil
-	}
-	out := &CloudInitPayload{
-		Hostname:          ci.Hostname,
-		User:              ci.User,
-		SSHAuthorizedKeys: append([]string{}, ci.SSHPublicKeys...),
-		Packages:          append([]string{}, ci.Packages...),
-		RunCmd:            append([]string{}, ci.RunCmd...),
-	}
-	for _, f := range ci.WriteFiles {
-		out.WriteFiles = append(out.WriteFiles, CloudInitFilePay{Path: f.Path, Content: f.Content, Permissions: f.Permissions})
-	}
-	if ci.UserData != "" {
-		out.WriteFiles = append(out.WriteFiles, CloudInitFilePay{
-			Path:        "/var/lib/kairon/user-data",
-			Content:     ci.UserData,
-			Permissions: "0644",
-		})
-	}
-	return out
+func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
+	return c.CreateWithVFIO(ctx, m, defaultBackend, nil)
 }
 
-func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
+func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string) (*Record, error) {
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
 		return nil, err
@@ -209,6 +174,7 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	if backend == "" {
 		backend = "qemu"
 	}
+	tenant := m.Namespace()
 	network := map[string]any{}
 	if mode := m.Spec.Network.Mode; mode != "" {
 		network["mode"] = mode
@@ -227,34 +193,7 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 	if m.Spec.Network.MAC != "" {
 		network["mac"] = m.Spec.Network.MAC
 	}
-	storage := m.Spec.Storage
-	if storage == "" {
-		storage = "default"
-	}
-	payload := CreateRequest{
-		Name:       m.RuntimeName(),
-		Tenant:     m.Namespace(),
-		Backend:    backend,
-		Image:      m.Spec.Image.Path,
-		Kernel:     m.Spec.Runtime.Kernel,
-		VCPUs:      cpu,
-		MemoryMiB:  mem,
-		Network:    network,
-		TTLSeconds: m.Spec.TTLSeconds,
-		CloudInit:  buildCloudInit(m.Spec.CloudInit),
-		Storage:    storage,
-		SecureBoot: m.Spec.Security.SecureBoot,
-		TPM:        m.Spec.Security.TPM,
-	}
-	if m.Spec.DiskSizeGiB > 0 {
-		v := uint64(m.Spec.DiskSizeGiB)
-		payload.DiskSizeGiB = &v
-	}
-	for _, sf := range m.Spec.SharedFolders {
-		payload.SharedFolders = append(payload.SharedFolders, SharedFolderPay{
-			HostPath: sf.HostPath, GuestPath: sf.GuestPath, ReadOnly: sf.ReadOnly,
-		})
-	}
+	payload := CreateRequest{Name: m.RuntimeName(), Tenant: tenant, Backend: backend, Image: m.Spec.Image.Path, Kernel: m.Spec.Runtime.Kernel, VCPUs: cpu, MemoryMiB: mem, Network: network, TTLSeconds: m.Spec.TTLSeconds, VFIODevices: vfioDevices}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {
 		return nil, err
@@ -264,78 +203,6 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 		return nil, fmt.Errorf("decode FluxVM create: %w", err)
 	}
 	return &rec, nil
-}
-
-func (c *Client) Console(ctx context.Context, id string) (*ConsoleInfo, error) {
-	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/console", nil)
-	if err != nil {
-		return nil, err
-	}
-	var info ConsoleInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		return nil, fmt.Errorf("decode FluxVM console: %w", err)
-	}
-	return &info, nil
-}
-
-func (c *Client) Snapshot(ctx context.Context, id, tag string) error {
-	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/snapshot", map[string]string{"tag": tag})
-	return err
-}
-
-func (c *Client) StartFromSnapshot(ctx context.Context, id, tag string) error {
-	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/start-from-snapshot", map[string]string{"tag": tag})
-	return err
-}
-
-type MigrationStartRequest struct {
-	Destination     string  `json:"destination"`
-	Mode            string  `json:"mode,omitempty"`
-	BandwidthMbps   *uint64 `json:"bandwidth_mbps,omitempty"`
-	MaxDowntimeMs   *uint64 `json:"max_downtime_ms,omitempty"`
-	MultifdChannels *uint8  `json:"multifd_channels,omitempty"`
-}
-
-type MigrationStatus struct {
-	Phase  string `json:"phase,omitempty"`
-	Status string `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
-
-func (c *Client) StartMigration(ctx context.Context, id string, req MigrationStartRequest) (*MigrationStatus, error) {
-	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/start", req)
-	if err != nil {
-		return nil, err
-	}
-	var st MigrationStatus
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, err
-	}
-	return &st, nil
-}
-
-func (c *Client) MigrationStatus(ctx context.Context, id string) (*MigrationStatus, error) {
-	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/migration/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	var st MigrationStatus
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, err
-	}
-	return &st, nil
-}
-
-func (c *Client) CancelMigration(ctx context.Context, id string) (*MigrationStatus, error) {
-	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/cancel", map[string]any{})
-	if err != nil {
-		return nil, err
-	}
-	var st MigrationStatus
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, err
-	}
-	return &st, nil
 }
 
 func (c *Client) Delete(ctx context.Context, id string) error {
@@ -359,4 +226,43 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("fluxvm DELETE /v1/vms/%s: HTTP %d: %s", id, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
+}
+
+func (c *Client) StartMigration(ctx context.Context, id string, req MigrationStartRequest) (MigrationStatus, error) {
+	var out MigrationStatus
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/start", req)
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return out, fmt.Errorf("decode FluxVM migration start: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) MigrationStatus(ctx context.Context, id string) (MigrationStatus, error) {
+	var out MigrationStatus
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/migration/status", nil)
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return out, fmt.Errorf("decode FluxVM migration status: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) CancelMigration(ctx context.Context, id string) (MigrationStatus, error) {
+	var out MigrationStatus
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/migration/cancel", map[string]any{})
+	if err != nil {
+		return out, err
+	}
+	if len(data) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return out, fmt.Errorf("decode FluxVM migration cancel: %w", err)
+	}
+	return out, nil
 }

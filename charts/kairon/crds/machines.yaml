@@ -9,407 +9,185 @@ spec:
     plural: machines
     singular: machine
     kind: Machine
-    shortNames: [km, kvmachine]
+    shortNames:
+    - km
+    - kvmachine
   versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources:
-        status: {}
-      additionalPrinterColumns:
-        - name: Node
-          type: string
-          jsonPath: .spec.nodeName
-        - name: Phase
-          type: string
-          jsonPath: .status.phase
-        - name: Ready
-          type: string
-          jsonPath: .status.conditions[?(@.type=="Ready")].status
-        - name: CPU
-          type: string
-          jsonPath: .spec.resources.cpu
-        - name: Memory
-          type: string
-          jsonPath: .spec.resources.memory
-        - name: IP
-          type: string
-          jsonPath: .status.guestIP
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [image, resources]
-              properties:
-                nodeName:
-                  type: string
-                image:
-                  type: object
-                  properties:
-                    path: {type: string}
-                    digest: {type: string}
-                    machineImageName: {type: string}
-                    virtualDiskName: {type: string}
-                resources:
-                  type: object
-                  required: [cpu, memory]
-                  properties:
-                    cpu: {type: string, minLength: 1}
-                    memory: {type: string, minLength: 1}
-                runtime:
-                  type: object
-                  properties:
-                    backend:
-                      type: string
-                      enum: [auto, qemu, cloud-hypervisor, firecracker, flux-vm]
-                      default: auto
-                    kernel:
-                      type: string
-                network:
-                  type: object
-                  properties:
-                    mode:
-                      type: string
-                      enum: [user, tap, macvtap]
-                      default: user
-                    netns: {type: boolean, default: false}
-                    bridge: {type: string}
-                    parent: {type: string}
-                    mac: {type: string}
-                powerState:
-                  type: string
-                  enum: [Running, Stopped]
-                  default: Running
-                ttlSeconds: {type: integer, format: int64, minimum: 0}
-                placement:
-                  type: object
-                  properties:
-                    architecture: {type: string}
-                    nodeSelector:
-                      type: object
-                      additionalProperties: {type: string}
-                    tolerations:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          key: {type: string}
-                          operator: {type: string}
-                          value: {type: string}
-                          effect: {type: string}
-                    affinity:
-                      type: object
-                      properties:
-                        nodeAffinity:
-                          type: object
-                          properties:
-                            requiredDuringSchedulingIgnoredDuringExecution:
-                              type: object
-                              properties:
-                                nodeSelectorTerms:
-                                  type: array
-                                  items:
-                                    type: object
-                                    properties:
-                                      matchExpressions:
-                                        type: array
-                                        items:
-                                          type: object
-                                          required: [key, operator]
-                                          properties:
-                                            key: {type: string}
-                                            operator: {type: string}
-                                            values:
-                                              type: array
-                                              items: {type: string}
-                diskSizeGiB: {type: integer, format: int64, minimum: 0}
-                storage:
-                  type: string
-                  enum: [default, lvm-thin, nbd, ceph-rbd]
-                  default: default
-                sharedFolders:
-                  type: array
-                  items:
+  - name: v1alpha1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Node
+      type: string
+      jsonPath: .spec.nodeName
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: CPU
+      type: string
+      jsonPath: .spec.resources.cpu
+    - name: Memory
+      type: string
+      jsonPath: .spec.resources.memory
+    - name: IP
+      type: string
+      jsonPath: .status.guestIP
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - image
+            - resources
+            properties:
+              nodeName:
+                type: string
+              image:
+                type: object
+                required:
+                - path
+                properties:
+                  path:
+                    type: string
+                    minLength: 1
+                  digest:
+                    type: string
+              resources:
+                type: object
+                required:
+                - cpu
+                - memory
+                properties:
+                  cpu:
+                    type: string
+                    minLength: 1
+                  memory:
+                    type: string
+                    minLength: 1
+              runtime:
+                type: object
+                properties:
+                  backend:
+                    type: string
+                    enum:
+                    - auto
+                    - qemu
+                    - cloud-hypervisor
+                    - firecracker
+                    - flux-vm
+                    default: auto
+                  kernel:
+                    type: string
+              network:
+                type: object
+                properties:
+                  mode:
+                    type: string
+                    enum:
+                    - user
+                    - tap
+                    - macvtap
+                    default: user
+                  netns:
+                    type: boolean
+                    default: false
+                  bridge:
+                    type: string
+                  parent:
+                    type: string
+                  mac:
+                    type: string
+              powerState:
+                type: string
+                enum:
+                - Running
+                - Stopped
+                default: Running
+              tenant:
+                type: string
+              ttlSeconds:
+                type: integer
+                format: int64
+                minimum: 0
+              placement:
+                type: object
+                properties:
+                  architecture:
+                    type: string
+                  nodeSelector:
                     type: object
-                    required: [hostPath, guestPath]
-                    properties:
-                      hostPath: {type: string}
-                      guestPath: {type: string}
-                      readOnly: {type: boolean}
-                cloudInit:
+                    additionalProperties:
+                      type: string
+              security:
+                type: object
+                properties:
+                  secureBoot:
+                    type: boolean
+                  tpm:
+                    type: boolean
+              volumes:
+                type: array
+                items:
                   type: object
+                  required:
+                  - name
+                  - claimName
                   properties:
-                    hostname: {type: string}
-                    user: {type: string}
-                    userData: {type: string}
-                    sshPublicKeys:
-                      type: array
-                      items: {type: string}
-                    packages:
-                      type: array
-                      items: {type: string}
-                    runcmd:
-                      type: array
-                      items: {type: string}
-                    writeFiles:
-                      type: array
-                      items:
-                        type: object
-                        required: [path, content]
-                        properties:
-                          path: {type: string}
-                          content: {type: string}
-                          permissions: {type: string}
-                security:
+                    name:
+                      type: string
+                      minLength: 1
+                    claimName:
+                      type: string
+                      minLength: 1
+              deviceClaims:
+                type: array
+                items:
                   type: object
+                  required:
+                  - name
                   properties:
-                    secureBoot: {type: boolean}
-                    tpm: {type: boolean}
-            status:
-              type: object
-              properties:
-                phase: {type: string}
-                nodeName: {type: string}
-                runtimeID: {type: string}
-                guestIP: {type: string}
-                observedGeneration: {type: integer, format: int64}
-                message: {type: string}
-                conditions:
-                  type: array
-                  items:
-                    type: object
-                    required: [type, status, lastTransitionTime]
-                    properties:
-                      type: {type: string}
-                      status: {type: string}
-                      reason: {type: string}
-                      message: {type: string}
-                      lastTransitionTime: {type: string, format: date-time}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: machineimages.kairon.zyvor.dev
-spec:
-  group: kairon.zyvor.dev
-  scope: Namespaced
-  names:
-    plural: machineimages
-    singular: machineimage
-    kind: MachineImage
-    shortNames: [mi, kmimage]
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources: {status: {}}
-      additionalPrinterColumns:
-        - {name: Phase, type: string, jsonPath: .status.phase}
-        - {name: Path, type: string, jsonPath: .status.resolvedPath}
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [source]
-              properties:
-                source:
+                    name:
+                      type: string
+                      minLength: 1
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+              nodeName:
+                type: string
+              runtimeID:
+                type: string
+              guestIP:
+                type: string
+              observedGeneration:
+                type: integer
+                format: int64
+              message:
+                type: string
+              conditions:
+                type: array
+                items:
                   type: object
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
                   properties:
-                    path: {type: string}
-                    oci: {type: string}
-                digest: {type: string}
-            status:
-              type: object
-              properties:
-                phase: {type: string}
-                resolvedPath: {type: string}
-                message: {type: string}
-                observedGeneration: {type: integer, format: int64}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: virtualdisks.kairon.zyvor.dev
-spec:
-  group: kairon.zyvor.dev
-  scope: Namespaced
-  names:
-    plural: virtualdisks
-    singular: virtualdisk
-    kind: VirtualDisk
-    shortNames: [vd, kvdisk]
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources: {status: {}}
-      additionalPrinterColumns:
-        - {name: Phase, type: string, jsonPath: .status.phase}
-        - {name: Path, type: string, jsonPath: .status.path}
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [source]
-              properties:
-                size: {type: string}
-                storage:
-                  type: string
-                  enum: [default, lvm-thin, nbd, ceph-rbd]
-                accessMode: {type: string}
-                cloneFromDisk: {type: string}
-                cloneFromSnapshot: {type: string}
-                source:
-                  type: object
-                  properties:
-                    hostPath: {type: string}
-                    persistentVolumeClaim:
-                      type: object
-                      properties:
-                        claimName: {type: string}
-            status:
-              type: object
-              properties:
-                phase: {type: string}
-                path: {type: string}
-                volumeName: {type: string}
-                message: {type: string}
-                observedGeneration: {type: integer, format: int64}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: machinesnapshots.kairon.zyvor.dev
-spec:
-  group: kairon.zyvor.dev
-  scope: Namespaced
-  names:
-    plural: machinesnapshots
-    singular: machinesnapshot
-    kind: MachineSnapshot
-    shortNames: [msnap]
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources: {status: {}}
-      additionalPrinterColumns:
-        - {name: Phase, type: string, jsonPath: .status.phase}
-        - {name: Tag, type: string, jsonPath: .status.tag}
-        - {name: Machine, type: string, jsonPath: .spec.machineName}
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [machineName]
-              properties:
-                machineName: {type: string, minLength: 1}
-                tag: {type: string}
-            status:
-              type: object
-              properties:
-                phase: {type: string}
-                tag: {type: string}
-                nodeName: {type: string}
-                runtimeID: {type: string}
-                message: {type: string}
-                observedGeneration: {type: integer, format: int64}
-
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: machinedisruptionbudgets.kairon.zyvor.dev
-spec:
-  group: kairon.zyvor.dev
-  scope: Namespaced
-  names:
-    plural: machinedisruptionbudgets
-    singular: machinedisruptionbudget
-    kind: MachineDisruptionBudget
-    shortNames: [mdb]
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources: {status: {}}
-      additionalPrinterColumns:
-        - {name: Allowed, type: integer, jsonPath: .status.disruptionsAllowed}
-        - {name: Healthy, type: integer, jsonPath: .status.currentHealthy}
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [maxUnavailable]
-              properties:
-                maxUnavailable: {type: integer, minimum: 0}
-                selector:
-                  type: object
-                  additionalProperties: {type: string}
-            status:
-              type: object
-              properties:
-                currentHealthy: {type: integer}
-                desiredHealthy: {type: integer}
-                disruptionsAllowed: {type: integer}
-                observedGeneration: {type: integer, format: int64}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: machinemigrations.kairon.zyvor.dev
-spec:
-  group: kairon.zyvor.dev
-  scope: Namespaced
-  names:
-    plural: machinemigrations
-    singular: machinemigration
-    kind: MachineMigration
-    shortNames: [mmig]
-  versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources: {status: {}}
-      additionalPrinterColumns:
-        - {name: Phase, type: string, jsonPath: .status.phase}
-        - {name: Machine, type: string, jsonPath: .spec.machineName}
-        - {name: Dest, type: string, jsonPath: .spec.destination}
-      schema:
-        openAPIV3Schema:
-          type: object
-          required: [spec]
-          properties:
-            spec:
-              type: object
-              required: [machineName, destination]
-              properties:
-                machineName: {type: string, minLength: 1}
-                destination: {type: string, minLength: 1}
-                mode: {type: string}
-                bandwidthMbps: {type: integer, format: int64, minimum: 0}
-                maxDowntimeMs: {type: integer, format: int64, minimum: 0}
-                targetNodeName: {type: string}
-            status:
-              type: object
-              properties:
-                phase: {type: string}
-                message: {type: string}
-                sourceNode: {type: string}
-                runtimeID: {type: string}
-                observedGeneration: {type: integer, format: int64}
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time

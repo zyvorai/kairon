@@ -16,12 +16,9 @@ spec:
         - name: controller
           image: ghcr.io/zyvorai/kairon-controller:latest
           imagePullPolicy: IfNotPresent
-          args: ["--interval=5s", "--require-capable-label=true", "--fence-grace=60s"]
+          args: ["--interval=5s", "--require-capable-label=true"]
           ports:
             - {name: health, containerPort: 8080}
-          resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {cpu: 500m, memory: 256Mi}
           readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 10}
           securityContext:
