@@ -35,7 +35,7 @@ func (d NetworkAwareDestination) Commit(ctx context.Context, session Session) er
 	if err := d.Inner.Commit(ctx, session); err != nil {
 		return err
 	}
-	if d.Flux == nil || session.RuntimeID == "" {
+	if d.Flux == nil || len(session.NetworkSnapshot) == 0 || session.RuntimeID == "" {
 		return nil
 	}
 	if err := d.Flux.NetworkMigrationResume(ctx, session.RuntimeID); err != nil {
