@@ -41,4 +41,32 @@ migration:
   # upgraded to support it (see ROADMAP v0.4). Requires adapterHostPath, so
   # the host-level adapter systemd unit can read the same cert material this
   # chart already gives kairon-node via tlsSecretName.
+  #
+  # IMPORTANT: this Helm value only controls whether cert material is
+  # *staged* onto adapterHostPath -- the actual -migration-data-tls
+  # enforcement flag lives in each node's kairon-migration-adapter-fluxvm
+  # systemd unit ExecStart, entirely outside Helm's control. Flipping this
+  # alone does NOT turn encryption on cluster-wide. Before flipping it (or
+  # the systemd units), verify every currently-active live migration already
+  # reports status.dataPlaneEncrypted=true (also exposed as the
+  # kairon_migration_dataplane_encrypted metric) -- see
+  # docs/runbook-migration-failures.md#unencrypted-migration-data-plane.
   dataplaneTls: false
+  # Admission quota: caps concurrent non-terminal migrations touching one
+  # node, and optionally cluster-wide. Rejected into the existing Blocked
+  # phase, same mechanism as an unschedulable target. 0 = unlimited (today's
+  # behavior). This is the "rate limiting" control for migration storms
+  # (e.g. a bulk `kaironctl evacuate` draining many Machines from one node
+  # at once). A capacity-Blocked migration is transient (unlike a real
+  # misconfiguration) but nothing auto-retries it yet -- re-trigger it via
+  # `kaironctl evacuate`/recreating the MachineMigration (which already
+  # generates a fresh, timestamped name each time).
+  maxConcurrentPerNode: 0
+  maxConcurrentCluster: 0
+metrics:
+  # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,
+  # for clusters running prometheus-operator. Off by default since not every
+  # cluster has the PrometheusRule CRD installed; otherwise, copy
+  # alerts.yaml's rule group into your own Prometheus rule_files config.
+  prometheusRule:
+    enabled: false

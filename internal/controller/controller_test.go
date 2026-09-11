@@ -746,3 +746,71 @@ func TestSnapshotPendingWhenNotYetReady(t *testing.T) {
 		t.Fatalf("phase=%q message=%q readyToUse=%v", phase, message, readyToUse)
 	}
 }
+
+// runConcurrencyQuotaCheck seeds one already-active migration (touching
+// activeSourceNode/activeTargetNode) plus a Pending migration for "db" on
+// worker-1, then reconciles with the given concurrency limits and returns
+// the Pending migration's resulting phase/message.
+func runConcurrencyQuotaCheck(t *testing.T, maxPerNode, maxCluster int, activeSourceNode, activeTargetNode string) (phase, message string) {
+	t.Helper()
+	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
+	active := model.MachineMigration{Metadata: model.ObjectMeta{Name: "active-mig", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "other"}, Status: model.MachineMigrationStatus{Phase: "Running", SourceNode: activeSourceNode, TargetNode: activeTargetNode, EffectiveStrategy: "live"}}
+	pending := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1"), readyCapableNode("worker-2")}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{active, pending}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			phase, message = p.Status.Phase, p.Status.Message
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/active-mig/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxConcurrentPerNode: maxPerNode, MaxConcurrentCluster: maxCluster}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return phase, message
+}
+
+func TestMigrationBlockedWhenPerNodeConcurrencyLimitReached(t *testing.T) {
+	// The active migration's source node is worker-1, same as "db"'s node --
+	// with a per-node limit of 1, the new Pending migration must be blocked.
+	phase, message := runConcurrencyQuotaCheck(t, 1, 0, "worker-1", "worker-2")
+	if phase != "Blocked" || !strings.Contains(message, "concurrent migration limit") {
+		t.Fatalf("phase=%q message=%q", phase, message)
+	}
+}
+
+func TestMigrationBlockedWhenClusterConcurrencyLimitReached(t *testing.T) {
+	// The active migration touches unrelated nodes, but a cluster-wide
+	// limit of 1 must still block admitting a second migration.
+	phase, message := runConcurrencyQuotaCheck(t, 0, 1, "worker-3", "worker-4")
+	if phase != "Blocked" || !strings.Contains(message, "cluster migration concurrency limit") {
+		t.Fatalf("phase=%q message=%q", phase, message)
+	}
+}
+
+func TestMigrationAdmittedWhenUnderConcurrencyLimit(t *testing.T) {
+	// Same active migration, but limits are high enough to admit the second.
+	phase, _ := runConcurrencyQuotaCheck(t, 5, 5, "worker-1", "worker-2")
+	if phase != "Starting" {
+		t.Fatalf("phase=%q, want Starting", phase)
+	}
+}

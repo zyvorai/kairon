@@ -102,6 +102,7 @@ func (s *Server) prepare(w http.ResponseWriter, r *http.Request) {
 	session.Endpoint = result.Endpoint
 	session.Backend = result.Backend
 	session.Reason = result.Reason
+	session.DataPlaneEncrypted = result.DataPlaneEncrypted
 	if result.TransferSupported {
 		session.Phase = "Prepared"
 	} else {
@@ -211,7 +212,7 @@ func (s *Server) diagnosis(w http.ResponseWriter, r *http.Request) {
 }
 
 func response(session Session) PrepareResponse {
-	return PrepareResponse{SessionID: session.ID, Phase: session.Phase, TransferSupported: session.TransferSupported, Endpoint: session.Endpoint, Backend: session.Backend, Reason: session.Reason}
+	return PrepareResponse{SessionID: session.ID, Phase: session.Phase, TransferSupported: session.TransferSupported, Endpoint: session.Endpoint, Backend: session.Backend, Reason: session.Reason, DataPlaneEncrypted: session.DataPlaneEncrypted}
 }
 
 func ensureEOF(dec *json.Decoder) error {

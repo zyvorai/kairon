@@ -1,0 +1,85 @@
+# Runbook: migration failures and NeedsRecovery
+
+## When you land here
+
+You were paged by `KaironMigrationNeedsRecoveryStuck` or `KaironMigrationFailureRateHigh` (see `charts/kairon/alerts.yaml`), or you noticed `phase: NeedsRecovery` while inspecting a `MachineMigration` directly:
+
+```
+kubectl get machinemigration -A
+```
+
+## Why `NeedsRecovery` exists
+
+Kairon never auto-resolves an ambiguous commit. From `internal/agent/agent.go`'s `reconcileNeedsRecovery`:
+
+> `reconcileNeedsRecovery` never auto-resolves a NeedsRecovery migration -- every tick it only refreshes a live diagnosis of what's actually known (`status.Recovery`'s diagnosis fields), and acts *only* when the operator has set `spec.recovery` with an `AcknowledgedDiagnosis` that matches the requested `Action` and a non-empty `Reason`.
+
+This happens when the source's transfer completed but the commit RPC to the destination failed or timed out -- Kairon genuinely cannot tell, on its own, whether the destination ended up running the guest or not. Guessing wrong risks either two live copies of the same guest, or none. See `docs/architecture.md` and `SECURITY.md` for the full invariant.
+
+## Diagnose
+
+```
+kubectl get machinemigration -n NAMESPACE NAME -o yaml
+```
+
+Read `status.recovery` -- refreshed by the source node's agent every reconcile tick, no action needed to force an update:
+
+- `sourceRuntimeStatus` -- the source FluxVM runtime's current status (queried directly).
+- `destinationSessionPhase` -- the destination's own durable session-store phase (`Prepared`/`Committed`/...). **Not proof on its own** that the destination didn't commit -- see the caveat below.
+- `destinationRuntimeFound` / `destinationRuntimeStatus` -- ground truth from a live lookup of the destination's FluxVM runtime by its deterministic name.
+- `diagnosedAt` -- when this snapshot was last refreshed.
+
+These are the exact same fields `kaironctl recover NAME` prints before prompting you for `--action`/`--diagnosis`/`--reason` -- you can just run that command to see them without any `kubectl` YAML-wrangling.
+
+**Caveat**: `destinationSessionPhase == "Prepared"` is *not* proof the destination never committed. The destination's session store only advances to `"Committed"` after both the inner adapter commit *and* a subsequent network-migration-resume step both succeed -- if the adapter-level commit actually succeeded but the network step failed afterward, the destination guest can be genuinely running while the store still says `"Prepared"`. Always cross-check `destinationRuntimeFound`/`destinationRuntimeStatus`, not just `destinationSessionPhase`, before choosing an action.
+
+## Decision tree
+
+| What you observed | Action | Acknowledged diagnosis |
+|---|---|---|
+| `destinationRuntimeFound: true` and `destinationRuntimeStatus` looks healthy/running | `ConfirmDestinationCommitted` | `DestinationCommitted` |
+| `destinationRuntimeFound: false`, or clearly never provisioned | `ConfirmDestinationNotCommitted` | `DestinationNotCommitted` |
+| Signals contradictory, or you had to inspect the host directly (QMP/FluxVM API) to be sure | `ForceAbort` | `Unknown` |
+
+`reconcileNeedsRecovery` rejects the action outright (no state change, `status.message` explains why) unless `AcknowledgedDiagnosis` matches `Action` exactly and `Reason` is non-empty -- it will not accept a guess. `Reason` must be a real description of what you observed, not a placeholder.
+
+## Command reference
+
+```
+kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON [-n NAMESPACE]
+```
+
+- `ACTION`: `ConfirmDestinationCommitted` | `ConfirmDestinationNotCommitted` | `ForceAbort`
+- `DIAGNOSIS`: `DestinationCommitted` | `DestinationNotCommitted` | `Unknown`
+
+Effects:
+- `ConfirmDestinationCommitted` / `ConfirmDestinationNotCommitted` (after a successful retried commit): the source runtime is deleted, migration proceeds to `Cutover` and on through the normal state machine.
+- `ConfirmDestinationNotCommitted` (if the retried commit fails again): migration lands `Failed`; the source runtime is **not** deleted -- inspect it manually before reuse.
+- `ForceAbort`: the destination session is aborted (a 409 here is expected/harmless if it secretly did commit); migration lands `Failed`. The source runtime is **deliberately never touched** in this path -- when ground truth is unknown, destroying the only possibly-live copy of the guest is out of bounds. Verify the source host's actual VM state manually before reusing the Machine.
+
+## Verify recovery took effect
+
+```
+kubectl get machinemigration -n NAMESPACE NAME -o yaml
+```
+
+Confirm `status.recovery.appliedAction`/`appliedReason`/`appliedAcknowledgedDiagnosis`/`appliedAt` are populated (a permanent audit record, independent of later `spec.recovery` edits), and that `status.phase` progressed to `Cutover`/.../`Succeeded` or `Failed` as expected.
+
+## Unencrypted migration data-plane
+
+`KaironMigrationDataPlaneUnencrypted` fires when `status.dataPlaneEncrypted` is `false` for an in-flight live migration -- the QEMU RAM/state stream is crossing the network in cleartext (the control-plane RPCs between kairon-node peers are always mTLS-encrypted regardless; this is specifically about the guest memory transfer itself). This is `info`-severity, not necessarily an incident: `migration.dataplaneTls` defaults to `false` in this chart.
+
+To actually turn encryption on, two things must both be true simultaneously across the fleet:
+1. `migration.dataplaneTls: true` in Helm (stages cert material onto every node's `adapterHostPath`).
+2. Every node's `kairon-migration-adapter-fluxvm` systemd unit passes `-migration-data-tls=true` with valid `-migration-ca/-migration-cert/-migration-key` -- this is **outside Helm's control**, set directly in the unit's `ExecStart`.
+
+Before flipping either, query whether every currently-active live migration already reports `dataPlaneEncrypted: true` (or watch the `kairon_migration_dataplane_encrypted` metric go to 1 across the board) -- that's the actual signal that every node's adapter is upgraded and configured, not just a guess based on when you think the rollout finished.
+
+## Escalation
+
+- A single `NeedsRecovery` migration, diagnosable and resolvable via the decision tree above: handle it yourself, no escalation needed.
+- `KaironMigrationFailureRateHigh` (more than 3 failures in 30 minutes) or multiple simultaneous `NeedsRecovery` migrations: likely a systemic issue (network partition between nodes, a broken adapter deploy, FluxVM instability) rather than isolated bad luck -- escalate and investigate the shared cause before recovering each migration individually.
+
+## Related
+
+- Real multi-host testing and a live `NeedsRecovery` drill (deliberately forcing this state on demand to rehearse the above) are covered separately in `docs/runbook-multi-host-migration-test.md` and `docs/runbook-recovery-drill.md` -- not duplicated here.

@@ -194,6 +194,15 @@ type MachineMigrationStatus struct {
 	RAMTotal          uint64 `json:"ramTotal,omitempty"`
 	TotalTimeMs       uint64 `json:"totalTimeMs,omitempty"`
 	DowntimeMs        uint64 `json:"downtimeMs,omitempty"`
+	// DataPlaneEncrypted reports whether the destination adapter had TLS
+	// configured (-migration-data-tls) when this migration's receiver was
+	// prepared -- the QEMU RAM/state stream itself, not the always-on mTLS
+	// control-plane RPCs. Set once, at Starting, from the adapter's own
+	// prepare() response (see internal/migration.PrepareResult); an older
+	// adapter that predates this field simply omits it from JSON, which
+	// decodes to false -- the safe, conservative assumption (unencrypted),
+	// not fail-open.
+	DataPlaneEncrypted bool `json:"dataPlaneEncrypted,omitempty"`
 	// Recovery is populated only while Phase == NeedsRecovery: a live
 	// diagnosis snapshot refreshed every reconcile tick, plus a permanent
 	// record of whatever recovery action was actually applied (if any) --

@@ -69,7 +69,14 @@ spec:
         - name: controller
           image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
-          args: ["--interval={{ .Values.controller.interval }}"]
+          args:
+            - "--interval={{ .Values.controller.interval }}"
+{{ if .Values.migration.maxConcurrentPerNode }}
+            - "--migration-max-concurrent-per-node={{ .Values.migration.maxConcurrentPerNode }}"
+{{ end }}
+{{ if .Values.migration.maxConcurrentCluster }}
+            - "--migration-max-concurrent-cluster={{ .Values.migration.maxConcurrentCluster }}"
+{{ end }}
           ports: [{name: health, containerPort: 8080}]
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}

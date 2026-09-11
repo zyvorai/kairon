@@ -160,6 +160,14 @@ spec:
               backend:
                 type: string
                 description: Migration adapter backend selected by the target node.
+              dataPlaneEncrypted:
+                type: boolean
+                description: Whether the QEMU RAM/state transfer itself is
+                  TLS-encrypted (distinct from the always-on mTLS control-plane
+                  RPCs). Set once at Starting from the destination adapter's
+                  prepare() response; false (including on an older adapter that
+                  predates this field) means the transfer crossed the network
+                  in cleartext.
               recovery:
                 type: object
                 description: Populated only while phase == NeedsRecovery -- a live

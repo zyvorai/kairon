@@ -363,6 +363,10 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 		status.RuntimeID = rec.ID()
 		status.Backend = prepared.Backend
 		status.TransferPhase = prepared.Phase
+		status.DataPlaneEncrypted = prepared.DataPlaneEncrypted
+		if !prepared.DataPlaneEncrypted {
+			a.Log.Warn("live migration data-plane is not encrypted", "migration", item.Metadata.Name, "namespace", item.Namespace())
+		}
 		if !prepared.TransferSupported {
 			message := prepared.Reason
 			if message == "" {

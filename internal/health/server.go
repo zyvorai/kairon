@@ -11,7 +11,13 @@ import (
 	"time"
 )
 
-type Server struct{ ready atomic.Bool }
+type Server struct {
+	ready atomic.Bool
+	// Metrics, when set, is served at /metrics -- lets kairon-controller
+	// expose Prometheus metrics on this same health port instead of opening
+	// a second container port.
+	Metrics http.Handler
+}
 
 func (s *Server) SetReady(v bool) { s.ready.Store(v) }
 func (s *Server) Handler() http.Handler {
@@ -25,6 +31,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ready": s.ready.Load()})
 	})
+	if s.Metrics != nil {
+		mux.Handle("/metrics", s.Metrics)
+	}
 	return mux
 }
 func (s *Server) Run(ctx context.Context, addr string) error {

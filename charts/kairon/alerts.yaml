@@ -1,0 +1,55 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example Prometheus alert rules for kairon-controller's migration metrics
+# (see internal/metrics, exposed at /metrics on the controller's health
+# port). This is a plain, documented rules file -- not wired into the Helm
+# chart automatically, since not every cluster runs prometheus-operator.
+# If yours does, charts/kairon/templates/prometheusrule.yaml (gated behind
+# `metrics.prometheusRule.enabled`) wraps this same rule group as a real
+# PrometheusRule custom resource; otherwise, copy this group into your own
+# Prometheus rule_files config.
+groups:
+  - name: kairon-migrations
+    rules:
+      - alert: KaironMigrationNeedsRecoveryStuck
+        expr: kairon_migration_phase_age_seconds{phase="NeedsRecovery"} > 900
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "MachineMigration {{ $labels.namespace }}/{{ $labels.name }} has needed operator recovery for over 15 minutes"
+          description: >-
+            This migration's commit outcome was ambiguous and Kairon has
+            deliberately stopped reconciling it, by design, until an
+            operator resolves it via `kaironctl recover`.
+          runbook: "docs/runbook-migration-failures.md"
+
+      - alert: KaironMigrationFailureRateHigh
+        expr: increase(kairon_migration_completed_total{result="failed"}[30m]) > 3
+        labels:
+          severity: warn
+        annotations:
+          summary: "More than 3 MachineMigrations failed in the last 30 minutes"
+          runbook: "docs/runbook-migration-failures.md"
+
+      - alert: KaironMigrationStuckInFlight
+        expr: kairon_migration_phase_age_seconds{phase=~"Starting|Running|Cutover|Adopting"} > 1800
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "MachineMigration {{ $labels.namespace }}/{{ $labels.name }} has been in phase {{ $labels.phase }} for over 30 minutes"
+          runbook: "docs/runbook-migration-failures.md"
+
+      - alert: KaironMigrationDataPlaneUnencrypted
+        expr: kairon_migration_dataplane_encrypted{phase=~"Starting|Running"} == 0
+        labels:
+          severity: info
+        annotations:
+          summary: "Live migration data-plane TLS is off for an in-flight migration"
+          description: >-
+            The QEMU RAM/state stream for {{ $labels.namespace }}/{{ $labels.name }}
+            is crossing the network in cleartext. See
+            docs/runbook-migration-failures.md#unencrypted-migration-data-plane.
+          runbook: "docs/runbook-migration-failures.md#unencrypted-migration-data-plane"

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
 )
@@ -20,6 +21,67 @@ type Controller struct {
 	Kube      *kube.Client
 	Scheduler scheduler.Scheduler
 	Log       *slog.Logger
+	// Metrics, when set, observes every MachineMigration once per
+	// reconcile tick. Optional -- nil-checked, same convention as
+	// Agent.MigrationPeer.
+	Metrics *metrics.Recorder
+	// MaxConcurrentPerNode/MaxConcurrentCluster cap how many non-terminal
+	// migrations may touch a single node / run cluster-wide at once. 0 (the
+	// default) is unlimited -- today's unchanged behavior. A migration that
+	// would exceed either limit is rejected into the existing Blocked phase
+	// (see isActiveMigrationPhase/migrationLoad), the same mechanism used
+	// for an unschedulable Machine or an ineligible target.
+	MaxConcurrentPerNode int
+	MaxConcurrentCluster int
+}
+
+// isActiveMigrationPhase reports whether a migration in this phase is
+// currently consuming node resources -- true for everything except the
+// not-yet-admitted "" / Pending and the terminal phases.
+func isActiveMigrationPhase(phase string) bool {
+	switch phase {
+	case "Starting", "Running", "Cutover", "Adopting", "Stopping", "Restarting", "NeedsRecovery":
+		return true
+	}
+	return false
+}
+
+// migrationLoad is a snapshot of how many active migrations currently touch
+// each node / the cluster as a whole, computed once per Reconcile tick.
+type migrationLoad struct {
+	byNode map[string]int
+	total  int
+}
+
+func newMigrationLoad(migrations []model.MachineMigration) *migrationLoad {
+	l := &migrationLoad{byNode: map[string]int{}}
+	for _, m := range migrations {
+		if !isActiveMigrationPhase(m.Status.Phase) {
+			continue
+		}
+		l.total++
+		if m.Status.SourceNode != "" {
+			l.byNode[m.Status.SourceNode]++
+		}
+		if m.Status.TargetNode != "" && m.Status.TargetNode != m.Status.SourceNode {
+			l.byNode[m.Status.TargetNode]++
+		}
+	}
+	return l
+}
+
+// admit records a newly-admitted migration against the load snapshot, so a
+// burst of Pending migrations processed in the same tick (e.g. one
+// `kaironctl evacuate` creating several at once) can't all pass a stale
+// pre-tick count.
+func (l *migrationLoad) admit(sourceNode, targetNode string) {
+	l.total++
+	if sourceNode != "" {
+		l.byNode[sourceNode]++
+	}
+	if targetNode != "" && targetNode != sourceNode {
+		l.byNode[targetNode]++
+	}
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
@@ -38,8 +100,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil && !kube.IsNotFound(err) {
 		return err
 	}
+	if c.Metrics != nil {
+		c.Metrics.ObserveMigrations(migrations)
+	}
+	load := newMigrationLoad(migrations)
 	for _, migration := range migrations {
-		if err := c.reconcileMigration(ctx, migration, machineIndex, nodes, assigned); err != nil {
+		if err := c.reconcileMigration(ctx, migration, machineIndex, nodes, assigned, load); err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
@@ -102,7 +168,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 	return out
 }
 
-func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, nodes []model.Node, assigned map[string]int) error {
+func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad) error {
 	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" {
 		return nil
 	}
@@ -123,9 +189,18 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if machine.Spec.NodeName == "" {
 			return c.blockMigration(ctx, migration, "Machine has not been scheduled yet")
 		}
+		if c.MaxConcurrentCluster > 0 && load.total >= c.MaxConcurrentCluster {
+			return c.blockMigration(ctx, migration, fmt.Sprintf("cluster migration concurrency limit reached (%d active, max %d)", load.total, c.MaxConcurrentCluster))
+		}
+		if c.MaxConcurrentPerNode > 0 && load.byNode[machine.Spec.NodeName] >= c.MaxConcurrentPerNode {
+			return c.blockMigration(ctx, migration, fmt.Sprintf("source node %s has reached its concurrent migration limit (%d active, max %d)", machine.Spec.NodeName, load.byNode[machine.Spec.NodeName], c.MaxConcurrentPerNode))
+		}
 		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, nodes, assigned)
 		if err != nil {
 			return c.blockMigration(ctx, migration, err.Error())
+		}
+		if c.MaxConcurrentPerNode > 0 && load.byNode[target] >= c.MaxConcurrentPerNode {
+			return c.blockMigration(ctx, migration, fmt.Sprintf("target node %s has reached its concurrent migration limit (%d active, max %d)", target, load.byNode[target], c.MaxConcurrentPerNode))
 		}
 		strategy, err := effectiveStrategy(machine, migration)
 		if err != nil {
@@ -135,6 +210,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		status.TargetNode = target
 		status.EffectiveStrategy = strategy
 		status.Message = ""
+		load.admit(status.SourceNode, status.TargetNode)
 		if strategy == "live" {
 			status.Phase = "Starting"
 			status.Message = "source node agent will securely prepare the target before touching the source runtime"

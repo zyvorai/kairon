@@ -21,19 +21,22 @@ var (
 var ErrUnsupported = errors.New("live migration backend unsupported")
 
 type Session struct {
-	ID                string          `json:"id"`
-	Namespace         string          `json:"namespace"`
-	Machine           string          `json:"machine"`
-	SourceNode        string          `json:"sourceNode"`
-	TargetNode        string          `json:"targetNode"`
-	RuntimeID         string          `json:"runtimeID,omitempty"`
-	Phase             string          `json:"phase"`
-	Backend           string          `json:"backend,omitempty"`
-	Endpoint          string          `json:"endpoint,omitempty"`
-	TransferSupported bool            `json:"transferSupported"`
-	Reason            string          `json:"reason,omitempty"`
-	TransferID        string          `json:"transferID,omitempty"`
-	NetworkSnapshot   json.RawMessage `json:"networkSnapshot,omitempty"`
+	ID                string `json:"id"`
+	Namespace         string `json:"namespace"`
+	Machine           string `json:"machine"`
+	SourceNode        string `json:"sourceNode"`
+	TargetNode        string `json:"targetNode"`
+	RuntimeID         string `json:"runtimeID,omitempty"`
+	Phase             string `json:"phase"`
+	Backend           string `json:"backend,omitempty"`
+	Endpoint          string `json:"endpoint,omitempty"`
+	TransferSupported bool   `json:"transferSupported"`
+	Reason            string `json:"reason,omitempty"`
+	TransferID        string `json:"transferID,omitempty"`
+	// DataPlaneEncrypted mirrors PrepareResult.DataPlaneEncrypted -- set once
+	// from the destination driver's Prepare response.
+	DataPlaneEncrypted bool            `json:"dataPlaneEncrypted,omitempty"`
+	NetworkSnapshot    json.RawMessage `json:"networkSnapshot,omitempty"`
 	// DiskPath, MAC, VCPUs and MemoryMiB describe the source runtime's
 	// current, live configuration -- not just the Machine's original spec
 	// -- so a real hypervisor-level adapter has enough information to
@@ -94,15 +97,21 @@ type PrepareResult struct {
 	Endpoint          string `json:"endpoint,omitempty"`
 	Backend           string `json:"backend,omitempty"`
 	Reason            string `json:"reason,omitempty"`
+	// DataPlaneEncrypted reports whether the destination adapter has TLS
+	// configured for the QEMU migration data stream (distinct from this
+	// RPC's own always-on mTLS). See model.MachineMigrationStatus's field
+	// of the same name for the full contract.
+	DataPlaneEncrypted bool `json:"dataPlaneEncrypted,omitempty"`
 }
 
 type PrepareResponse struct {
-	SessionID         string `json:"sessionID"`
-	Phase             string `json:"phase"`
-	TransferSupported bool   `json:"transferSupported"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	Backend           string `json:"backend,omitempty"`
-	Reason            string `json:"reason,omitempty"`
+	SessionID          string `json:"sessionID"`
+	Phase              string `json:"phase"`
+	TransferSupported  bool   `json:"transferSupported"`
+	Endpoint           string `json:"endpoint,omitempty"`
+	Backend            string `json:"backend,omitempty"`
+	Reason             string `json:"reason,omitempty"`
+	DataPlaneEncrypted bool   `json:"dataPlaneEncrypted,omitempty"`
 }
 
 type DestinationDriver interface {

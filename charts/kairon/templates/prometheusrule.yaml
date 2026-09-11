@@ -1,0 +1,8 @@
+{{ if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: kairon-migrations, namespace: {{ .Release.Namespace }}}
+spec:
+  groups:
+    {{- (.Files.Get "alerts.yaml" | fromYaml).groups | toYaml | nindent 4 }}
+{{ end }}

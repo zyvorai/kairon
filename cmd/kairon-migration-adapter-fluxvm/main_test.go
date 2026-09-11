@@ -134,7 +134,10 @@ func TestPrepareWithoutTLSConfiguredSendsNoTls(t *testing.T) {
 		}
 		writeJSON(w, http.StatusOK, receiverInfo{ID: "recv-1", Status: "Receiving", Port: 45001, ExpiresAt: time.Now().Format(time.RFC3339)})
 	}, nil)
-	doPrepare(t, a, prepareSession())
+	result := doPrepare(t, a, prepareSession())
+	if result.DataPlaneEncrypted {
+		t.Error("expected DataPlaneEncrypted=false when no TLS is configured")
+	}
 }
 
 func TestPrepareWithTLSConfiguredSendsCertPathsAndNoHostname(t *testing.T) {
@@ -152,7 +155,10 @@ func TestPrepareWithTLSConfiguredSendsCertPathsAndNoHostname(t *testing.T) {
 		}
 		writeJSON(w, http.StatusOK, receiverInfo{ID: "recv-1", Status: "Receiving", Port: 45001, ExpiresAt: time.Now().Format(time.RFC3339)})
 	})
-	doPrepare(t, a, prepareSession())
+	result := doPrepare(t, a, prepareSession())
+	if !result.DataPlaneEncrypted {
+		t.Error("expected DataPlaneEncrypted=true when TLS is configured")
+	}
 }
 
 func TestSourceStartWithTLSConfiguredSendsCertPathsAndParsedHostname(t *testing.T) {

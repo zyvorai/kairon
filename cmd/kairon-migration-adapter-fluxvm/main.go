@@ -294,9 +294,10 @@ func (a *adapter) prepare(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	a.log.Info("fluxvm: receiver created", "session", session.ID, "receiverID", info.ID, "port", info.Port, "migrationNetwork", session.MigrationNetwork)
 	writeJSON(w, http.StatusOK, migration.PrepareResult{
-		TransferSupported: true,
-		Endpoint:          fmt.Sprintf("tcp:%s:%d", advertiseHost, info.Port),
-		Backend:           backend,
+		TransferSupported:  true,
+		Endpoint:           fmt.Sprintf("tcp:%s:%d", advertiseHost, info.Port),
+		Backend:            backend,
+		DataPlaneEncrypted: a.tlsCA != "",
 	})
 }
 
@@ -484,6 +485,9 @@ func run() int {
 		// v0.4's ordering: flip clusters over once every node's adapter
 		// and FluxVM binary is upgraded, not implicitly).
 		*tlsCA, *tlsCert, *tlsKey = "", "", ""
+		log.Warn("migration data-plane TLS is DISABLED: QEMU RAM/state transfer will cross the network in CLEARTEXT " +
+			"(this is separate from kairon-node's own control-plane RPCs, which are always mTLS-encrypted); " +
+			"set -migration-data-tls plus -migration-ca/-migration-cert/-migration-key to enable it")
 	}
 
 	flux := newFluxClient(*fluxURL, *fluxToken)
