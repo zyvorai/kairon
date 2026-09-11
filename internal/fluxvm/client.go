@@ -30,6 +30,24 @@ type Record struct {
 	Status  string `json:"status,omitempty"`
 	GuestIP string `json:"guest_ip,omitempty"`
 	TapName string `json:"tap_name,omitempty"`
+	// Disk is the real qcow2/raw path FluxVM currently has open for this
+	// VM -- distinct from the Machine's original spec.image.path, which
+	// only names the base image a create() request provisioned from. A
+	// real migration adapter needs this exact, live path (storage
+	// contract v1: shared storage, no disk copy) to build a
+	// MigrationReceiverRequest on the target FluxVM.
+	Disk string `json:"disk,omitempty"`
+	// Request mirrors just the fields of FluxVM's own CreateVmRequest a
+	// real migration adapter needs to reconstruct a topology-matching
+	// receiver spec -- not the full request shape, which Kairon has no
+	// other use for.
+	Request struct {
+		VCPUs     uint32 `json:"vcpus,omitempty"`
+		MemoryMiB uint64 `json:"memory_mib,omitempty"`
+		Network   struct {
+			MAC string `json:"mac,omitempty"`
+		} `json:"network,omitempty"`
+	} `json:"request,omitempty"`
 }
 
 func (r Record) ID() string {

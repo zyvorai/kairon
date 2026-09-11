@@ -34,8 +34,24 @@ type Session struct {
 	Reason            string          `json:"reason,omitempty"`
 	TransferID        string          `json:"transferID,omitempty"`
 	NetworkSnapshot   json.RawMessage `json:"networkSnapshot,omitempty"`
-	CreatedAt         time.Time       `json:"createdAt"`
-	UpdatedAt         time.Time       `json:"updatedAt"`
+	// DiskPath, MAC, VCPUs and MemoryMiB describe the source runtime's
+	// current, live configuration -- not just the Machine's original spec
+	// -- so a real hypervisor-level adapter has enough information to
+	// provision a topology-matching receiver on the target (storage
+	// contract v1: shared storage, no disk copy, so DiskPath must name the
+	// exact file the target will also open; MAC must be identical on both
+	// sides since the destination device config must match the source's
+	// migrated device state exactly). Populated by the source node's
+	// agent from its own FluxVM record, not from the Machine spec, since
+	// FluxVM may have resolved defaults (e.g. an auto-generated MAC) the
+	// original spec never pinned down. Additive/optional: a stub or
+	// protocol-only adapter that doesn't need them simply ignores them.
+	DiskPath  string    `json:"diskPath,omitempty"`
+	MAC       string    `json:"mac,omitempty"`
+	VCPUs     uint32    `json:"vcpus,omitempty"`
+	MemoryMiB uint64    `json:"memoryMiB,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 func (s Session) Validate() error {
