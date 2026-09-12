@@ -158,6 +158,19 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		for _, s := range items {
 			fmt.Printf("%s\t%s\t%s\t%t\n", s.Metadata.Name, s.Spec.MachineName, dash(s.Status.Phase), s.Status.ReadyToUse)
 		}
+	case "quota", "quotas", "machinequotas":
+		items, err := kc.ListMachineQuotasNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tMAXMACHINES\tMAXCPU\tMAXMEMORY\tUSEDMACHINES\tUSEDCPU\tUSEDMEMORYMIB\n")
+		for _, q := range items {
+			maxMachines := "-"
+			if q.Spec.MaxMachines != nil {
+				maxMachines = strconv.Itoa(*q.Spec.MaxMachines)
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\t%d\t%d\t%d\n", q.Metadata.Name, maxMachines, dash(q.Spec.MaxTotalCPU), dash(q.Spec.MaxTotalMemory), q.Status.UsedMachines, q.Status.UsedTotalCPUCores, q.Status.UsedTotalMemoryMiB)
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}

@@ -103,6 +103,62 @@ func TestReconcileRespectsAntiAffinityAcrossRealMachines(t *testing.T) {
 	}
 }
 
+func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
+	existing := model.Machine{
+		Metadata: model.ObjectMeta{Name: "existing", Namespace: "prod"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	pending := model.Machine{
+		Metadata: model.ObjectMeta{Name: "pending", Namespace: "prod"},
+		Spec:     model.MachineSpec{PowerState: "Running", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "prod-quota", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxMachines: intPtr(1)},
+	}
+	var pendingStatus model.MachineStatus
+	var quotaStatusPatched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{existing, pending}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			var n model.Node
+			n.Metadata.Name = "worker-1"
+			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
+			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pending/status":
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			pendingStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+			quotaStatusPatched = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pendingStatus.Phase != "Pending" || !strings.Contains(pendingStatus.Message, "MachineQuota") {
+		t.Fatalf("expected the second machine blocked by quota with a clear message, got %+v", pendingStatus)
+	}
+	if !quotaStatusPatched {
+		t.Fatal("expected MachineQuota.status to be patched with observed usage")
+	}
+}
+
 func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running", RuntimeID: "vm-1"}}
 	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: "Cutover", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live", RuntimeID: "vm-1"}}

@@ -265,6 +265,22 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, ns string, snap model
 	return out, err
 }
 
+func (c *Client) ListMachineQuotas(ctx context.Context) ([]model.MachineQuota, error) {
+	var list model.MachineQuotaList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinequotas", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineQuotasNamespace(ctx context.Context, ns string) ([]model.MachineQuota, error) {
+	var list model.MachineQuotaList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinequotas"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) PatchMachineQuotaStatus(ctx context.Context, ns, name string, status model.MachineQuotaStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinequotas", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")

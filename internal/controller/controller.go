@@ -133,6 +133,15 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	quotas, err := c.Kube.ListMachineQuotas(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	quotaTrackers, err := buildQuotaTrackers(quotas, machines)
+	if err != nil {
+		return err
+	}
+
 	for _, m := range machines {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
 			continue
@@ -147,11 +156,32 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
+		// Quota is checked (and spent) only once a node is otherwise
+		// eligible -- checking it earlier would falsely reserve capacity
+		// for a Machine that turns out to have no eligible node anyway,
+		// starving a later Machine in this same pass that could have fit.
+		if blocker := admitQuota(quotaTrackers, m); blocker != "" {
+			status := m.Status
+			status.Phase = "Pending"
+			status.Message = blocker
+			if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
+			}
+			continue
+		}
 		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": node}}); err != nil {
 			return err
 		}
 		assigned[node]++
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
+	}
+
+	for _, list := range quotaTrackers {
+		for _, t := range list {
+			if statusErr := c.Kube.PatchMachineQuotaStatus(ctx, t.quota.Namespace(), t.quota.Metadata.Name, t.used); statusErr != nil {
+				c.Log.Error("machine quota status patch failed", "namespace", t.quota.Namespace(), "quota", t.quota.Metadata.Name, "error", statusErr)
+			}
+		}
 	}
 	return nil
 }

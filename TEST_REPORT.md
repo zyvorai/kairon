@@ -1,3 +1,32 @@
+# Unreleased: MachineQuota test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.6%, threshold 50%; `scripts/validate.py` updated for the new `MachineQuota` CRD, same "must expose v1alpha1 + status" convention as every other Kairon CRD). `helm lint` and `helm template --include-crds` green. New unit tests in `internal/controller`: `buildQuotaTrackers`/`admitQuota` (blocks once `maxMachines` reached, allows-and-spends within one reconcile pass so a burst can't all slip through, enforces `maxTotalCpu`/`maxTotalMemory`, ignores namespaces with no quota, doesn't count unscheduled/Stopped Machines as used, rejects malformed quantities) plus a full-`Reconcile` integration test proving the controller leaves a real over-quota Machine `Pending` with a clear message and patches the `MachineQuota`'s status.
+
+## What shipped
+
+`MachineQuota` (namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory`) is enforced entirely inside `kairon-controller`'s existing scheduling loop -- no admission webhook, matching the project's "no vendored operator framework, no webhook cert-management infra" posture and directly reusing the same "block into Pending, don't reject at the API" pattern the migration concurrency quota already established. Scoped by Kubernetes namespace rather than `Machine.spec.tenant`, which turned out to be completely unused in Go code (only ever forwarded to FluxVM's own `tenant` field as `m.Namespace()` anyway) -- a real finding from reading the code before committing to a scoping design, not an assumption. `kairon-controller`'s ClusterRole gained `get/list/watch/patch` on `machinequotas`/`machinequotas/status`. New `kaironctl get quotas` for observability parity with `get machines|migrations|snapshots`.
+
+## A real ordering bug caught before it shipped
+
+The first implementation checked quota *before* calling `Scheduler.Choose`. That's wrong: if a Machine passed the quota check but then had no eligible node (placement/affinity constraints), its quota "spend" was never rolled back -- falsely reserving capacity for the rest of that reconcile pass and starving a later Machine in the same tick that could actually have been scheduled. Caught during implementation review (not by a failing test -- the existing test suite's single-Machine-per-tick tests wouldn't have exposed a multi-Machine-per-pass ordering bug), fixed by moving the quota check to only run once `Choose` has already found an eligible node.
+
+## Real verification (beyond source-level gates)
+
+Deployed to the same real lab k3s host used throughout this project's verification:
+
+- Applied the updated CRD (`machinequotas.kairon.zyvor.dev`, newly created) and RBAC, restarted `kairon-controller`.
+- Created a real `MachineQuota` (`maxMachines: 1`) and two real Machines. The first reached `Running` on the real node; the second was correctly left `Pending` with `MachineQuota default/quota-test: maxMachines 1 reached` -- and the `MachineQuota`'s own `status` was patched with `usedMachines: 1, usedTotalCpuCores: 1, usedTotalMemoryMiB: 512`, matching the one real Machine that actually got scheduled.
+- Confirmed `kairon-node`'s own service account correctly gets a real `403 Forbidden` reading `machinequotas` (it was deliberately not granted that RBAC -- only `kairon-controller` needs it), then used a purpose-built operator identity (matching how a real human operator's kubeconfig would be scoped) to run `kaironctl get quotas` against the live cluster and confirmed it printed the real quota and usage.
+- Cleaned up all test Machines/quota/RBAC afterward.
+
+## Coverage
+
+```text
+total (internal/...): 68.6% (threshold 50%)
+```
+
 # Unreleased: Machine affinity/anti-affinity + MachineDisruptionBudget test report
 
 ## Result
