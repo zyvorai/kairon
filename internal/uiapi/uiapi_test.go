@@ -6,6 +6,7 @@ package uiapi
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -205,6 +206,36 @@ func TestAuthRejectsMissingOrWrongToken(t *testing.T) {
 	// Health probes must never require the token -- Kubernetes never sends one.
 	if rr := doJSON(t, h, http.MethodGet, "/healthz", "", nil); rr.Code != http.StatusOK {
 		t.Fatalf("healthz: expected 200 without token, got %d", rr.Code)
+	}
+}
+
+func TestAuditLogsMutatingRequestsNotReads(t *testing.T) {
+	var logBuf bytes.Buffer
+	fk := newFakeKube()
+	fk.machines["db"] = model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "default"}}
+	srv := httptest.NewServer(fk.handler())
+	t.Cleanup(srv.Close)
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	s := &Server{Kube: kc, Log: slog.New(slog.NewTextHandler(&logBuf, nil))}
+	h := s.Handler()
+
+	// A read (GET) must not be audited.
+	doJSON(t, h, http.MethodGet, "/api/v1/machines", "", nil)
+	if logBuf.Len() != 0 {
+		t.Fatalf("expected no audit log for a GET request, got: %s", logBuf.String())
+	}
+
+	// A mutating request must be audited, including its resulting status.
+	doJSON(t, h, http.MethodPost, "/api/v1/machines/default/db/stop", "", nil)
+	logged := logBuf.String()
+	if !strings.Contains(logged, "uiapi request") ||
+		!strings.Contains(logged, "method=POST") ||
+		!strings.Contains(logged, "path=/api/v1/machines/default/db/stop") ||
+		!strings.Contains(logged, "status=204") {
+		t.Fatalf("expected an audit log line with method/path/status, got: %s", logged)
 	}
 }
 

@@ -109,8 +109,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
-			_ = c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
 			c.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+			if statusErr := c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("migration status patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", statusErr)
+			}
 		}
 	}
 
@@ -124,8 +126,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status.Phase = "Failed"
 			status.ReadyToUse = false
 			status.Message = err.Error()
-			_ = c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
 			c.Log.Error("snapshot reconcile failed", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "error", err)
+			if statusErr := c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("snapshot status patch failed", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "error", statusErr)
+			}
 		}
 	}
 
@@ -138,7 +142,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = err.Error()
-			_ = c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+			if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
+			}
 			continue
 		}
 		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": node}}); err != nil {

@@ -54,7 +54,9 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 			status.NodeName = a.NodeName
 			status.Message = err.Error()
 			status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "ReconcileFailed", Message: err.Error(), LastTransitionTime: time.Now().UTC()}}
-			_ = a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+			if statusErr := a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
+				a.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
+			}
 		}
 	}
 	if err := a.reconcileNetworkResources(ctx); err != nil {
@@ -76,8 +78,10 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
-			_ = a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
 			a.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+			if statusErr := a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); statusErr != nil {
+				a.Log.Error("migration status patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", statusErr)
+			}
 		}
 	}
 	return nil

@@ -22,7 +22,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status"]
-    verbs: ["get", "list", "watch", "patch", "update"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list", "watch", "create"]
@@ -43,7 +43,7 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status"]
-    verbs: ["get", "list", "watch", "patch", "update"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["resource.k8s.io"]
     resources: ["resourceclaims"]
     verbs: ["get"]
@@ -81,6 +81,8 @@ spec:
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+          resources:
+{{ toYaml .Values.controller.resources | indent 12 }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -149,6 +151,8 @@ spec:
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+          resources:
+{{ toYaml .Values.node.resources | indent 12 }}
 {{ if .Values.migration.enabled }}
           volumeMounts:
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
@@ -179,8 +183,8 @@ spec:
 {{ end }}
 {{ end }}
 {{ if .Values.ui.enabled }}
-{{ if and (not .Values.ui.allowUnauthenticated) (not .Values.ui.token) }}
-{{ fail "kairon-ui requires ui.token (or ui.allowUnauthenticated=true, local development only)" }}
+{{ if and (not .Values.ui.allowUnauthenticated) (not .Values.ui.token) (not .Values.ui.existingSecret) }}
+{{ fail "kairon-ui requires ui.token, or ui.existingSecret pointing at a pre-created Secret, or ui.allowUnauthenticated=true (local development only)" }}
 {{ end }}
 ---
 apiVersion: v1
@@ -213,6 +217,7 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kairon-u
 subjects:
   - {kind: ServiceAccount, name: kairon-ui, namespace: {{ .Release.Namespace }}}
 ---
+{{ if not .Values.ui.existingSecret }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -222,6 +227,7 @@ type: Opaque
 stringData:
   token: {{ .Values.ui.token | quote }}
 ---
+{{ end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: kairon-ui, namespace: {{ .Release.Namespace }}}
@@ -241,11 +247,13 @@ spec:
             - "-allow-unauthenticated={{ .Values.ui.allowUnauthenticated }}"
           env:
             - name: KAIRON_UI_TOKEN
-              valueFrom: {secretKeyRef: {name: kairon-ui-token, key: token}}
+              valueFrom: {secretKeyRef: {name: {{ .Values.ui.existingSecret | default "kairon-ui-token" }}, key: {{ .Values.ui.existingSecretKey | default "token" }}}}
           ports: [{name: http, containerPort: 8082}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}
           livenessProbe: {httpGet: {path: /healthz, port: http}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+          resources:
+{{ toYaml .Values.ui.resources | indent 12 }}
 ---
 apiVersion: v1
 kind: Service

@@ -7,12 +7,24 @@ controller:
     tag: latest
     pullPolicy: IfNotPresent
   interval: 5s
+  # A single reconciler cluster-wide; lightweight by design (see
+  # internal/controller: no in-memory cache, every tick re-lists from the
+  # API). Raise for very large fleets if reconcile ticks start lagging
+  # -- there's no data yet on the real breaking point (see ROADMAP.md).
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 128Mi}
 node:
   image:
     repository: ghcr.io/zyvorai/kairon-node
     tag: latest
     pullPolicy: IfNotPresent
   interval: 3s
+  # One kairon-node per capable node (DaemonSet); same lightweight,
+  # cache-free reconcile design as the controller.
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 128Mi}
   fluxvmURL: http://127.0.0.1:7788
   defaultBackend: qemu
   imageRoot: /var/lib/fluxvm/images
@@ -84,6 +96,15 @@ ui:
   # wide open by accident (both here, via {{ fail }}, and independently in
   # the Go binary itself -- see cmd/kairon-ui/main.go).
   token: ""
+  # Reference a pre-created Secret instead of ui.token, so the token never
+  # has to pass through `helm --set`/stored release values (which land in
+  # `helm get values` output and shell history) -- same escape hatch
+  # operators already need for migration.tlsSecretName. When set, ui.token
+  # above is ignored and this chart does not create a Secret at all.
+  existingSecret: ""
+  # Key within existingSecret holding the token. Ignored unless
+  # existingSecret is set.
+  existingSecretKey: "token"
   # Local development only. Never set this in a real cluster.
   allowUnauthenticated: false
   service:
@@ -94,3 +115,7 @@ ui:
     className: ""
     host: ""
     annotations: {}
+  # A single REST backend serving a small SPA -- lighter than controller/node.
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}

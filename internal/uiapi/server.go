@@ -74,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 
-	top.Handle("/api/v1/", s.withAuth(api))
+	top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))
 	// The SPA route is intentionally unauthenticated (same as netra's own
 	// serveWeb registration) -- it serves static JS/CSS/HTML, not data;
 	// every actual data fetch the page makes goes through the auth-gated
@@ -116,6 +116,39 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.ServeFile(w, r, p)
+}
+
+// withAudit logs every mutating request (anything but GET) that reaches
+// /api/v1/... -- method, path, remote address, and the resulting status
+// code, including auth failures (it wraps outside withAuth deliberately,
+// so a rejected token attempt against a destructive route is itself part
+// of the trail). This is a partial fix for kairon-ui having no audit
+// trail at all: it does not attribute an action to an individual operator
+// (auth today is one shared bearer token -- see cmd/kairon-ui/main.go),
+// but "some trail" is a real improvement over "none," and doing better
+// than that needs a real per-operator auth model, a separate decision.
+func (s *Server) withAudit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || s.Log == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.Log.Info("uiapi request", "method", r.Method, "path", r.URL.Path, "remoteAddr", r.RemoteAddr, "status", rec.status)
+	})
+}
+
+// statusRecorder captures the status code a handler actually wrote, since
+// http.ResponseWriter itself doesn't expose it after the fact.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
