@@ -47,7 +47,6 @@ spec:
           spec:
             type: object
             required:
-            - image
             - resources
             properties:
               nodeName:

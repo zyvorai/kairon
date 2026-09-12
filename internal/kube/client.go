@@ -265,6 +265,20 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, ns string, snap model
 	return out, err
 }
 
+func (c *Client) GetPersistentVolumeClaim(ctx context.Context, ns, name string) (model.PersistentVolumeClaim, error) {
+	var pvc model.PersistentVolumeClaim
+	path := fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims/%s", url.PathEscape(ns), url.PathEscape(name))
+	err := c.request(ctx, http.MethodGet, path, nil, &pvc, "")
+	return pvc, err
+}
+
+func (c *Client) GetPersistentVolume(ctx context.Context, name string) (model.PersistentVolume, error) {
+	var pv model.PersistentVolume
+	path := "/api/v1/persistentvolumes/" + url.PathEscape(name)
+	err := c.request(ctx, http.MethodGet, path, nil, &pv, "")
+	return pv, err
+}
+
 func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	var list model.NodeList
 	err := c.request(ctx, http.MethodGet, "/api/v1/nodes", nil, &list, "")

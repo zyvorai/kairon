@@ -43,7 +43,7 @@ Not originally scoped for a specific version, but small enough to land alongside
 
 ## v0.5+
 
-- PVC -> FluxVM block-device lifecycle
+- [x] PVC -> FluxVM disk lifecycle (first cut): `spec.volumes[0]` boots from a Bound PVC's `hostPath`/`local` PersistentVolume — see `docs/guides/machine-storage.md`. Still open: network-block CSI volumes (no CSI node-plugin integration), multiple volumes per Machine, snapshot restore/clone-from-snapshot into a new Machine, CPU/memory hotplug.
 - DRA topology-aware scheduler scoring
 - SR-IOV/GPU migration capability checks
 - guest quiesce hooks for snapshots

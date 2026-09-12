@@ -1,3 +1,29 @@
+# Unreleased: PVC-backed boot disk test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.1%, threshold 50%). `helm lint` and `helm template` green. New unit tests cover `resolveBootDiskPath`/`hostDirForPV` (fallback to `spec.image.path`, missing `claimName`, unbound PVC, `Block` volumeMode rejection, unsupported volume source rejection, `hostPath`/`local` resolution) plus a full-reconcile integration test proving a Machine with only `spec.volumes` set (no `spec.image.path`) reaches FluxVM's create call with the PVC-resolved image path, and that the resolved path is exempt from the `--image-root` allowlist.
+
+## What shipped
+
+`spec.volumes[0]` now actually does something: `kairon-node` resolves the named `PersistentVolumeClaim` (must be `Bound`) to its `PersistentVolume`, accepts only `Filesystem`-mode volumes backed by `hostPath` or `local` sources, and boots the Machine from `<that directory>/disk.img` instead of requiring `spec.image.path`. New `internal/kube.Client.GetPersistentVolumeClaim`/`GetPersistentVolume`; new RBAC (`get` on `persistentvolumeclaims`/`persistentvolumes`) on `kairon-node`'s ClusterRole in both the Helm chart and raw `deploy/rbac.yaml`. The `Machine` CRD's `spec.image` field is no longer schema-required (`deploy/crd.yaml`, `charts/kairon/crds/machines.yaml`) — a Machine can now be created with only `spec.volumes`, validated at the Go level instead (`spec.image.path or spec.volumes[0] is required`).
+
+## Real verification (beyond source-level gates)
+
+Deployed the updated `kairon-node` binary to the same real lab host (`212.8.248.187`, a real k3s cluster) used throughout this project's other real-deployment verification, and ran the feature against **actual dynamic provisioning**, not a hand-crafted PV:
+
+1. Created a real `PersistentVolumeClaim` against the cluster's real default `local-path` StorageClass (Rancher's `local-path-provisioner`, already installed). Its `VolumeBindingMode: WaitForFirstConsumer` meant the PVC stayed `Pending` until a consumer was scheduled — used a disposable trigger Pod (whose own image pull failed, irrelevant -- scheduling alone was enough) to force provisioning, then deleted it.
+2. **Real, unscripted discovery**: the provisioned `PersistentVolume` used `spec.local.path`, not `spec.hostPath.path` — confirming the decision to support both sources (not just `hostPath`) in `hostDirForPV` was correct, not a hypothetical.
+3. Copied a real qcow2 base image to `<PV path>/disk.img`, applied the updated RBAC and CRD (schema-required `image` removed) to the live cluster, and created a `Machine` with **only `spec.volumes`, no `spec.image.path` at all**.
+4. The Machine reached `status.phase: Running` with a real `runtimeID`. Queried FluxVM's own API directly for that VM and confirmed its create-request `image` field was exactly `/data/k3s/storage/pvc-<uid>_default_kairon-storage-test-pvc/disk.img` — the literal PVC-resolved path, not a coincidence — and `status: running`.
+5. Cleaned up (`kubectl delete machine`, `kubectl delete pvc`) and confirmed the PV was reclaimed (`Delete` policy) shortly after.
+
+## Coverage
+
+```text
+total (internal/...): 68.1% (threshold 50%)
+```
+
 # Unreleased: login lockout, console audit/TLS, deploy-remote.sh console support test report
 
 ## Result

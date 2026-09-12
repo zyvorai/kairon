@@ -100,12 +100,24 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
-	if m.Spec.Image.Path == "" {
-		return fmt.Errorf("spec.image.path is required")
-	}
-	if err := a.validateImagePath(m); err != nil {
+	bootDisk, err := a.resolveBootDiskPath(ctx, m)
+	if err != nil {
 		return err
 	}
+	if bootDisk == "" {
+		return fmt.Errorf("spec.image.path or spec.volumes[0] is required")
+	}
+	if len(m.Spec.Volumes) == 0 {
+		// Only fence plain spec.image.path against ImageRoot -- a
+		// PVC-resolved path already went through a stronger gate (the PVC
+		// had to exist and be Bound, not just be a string any Machine
+		// author could type in) so the same node-local directory allowlist
+		// doesn't apply to it.
+		if err := a.validateImagePath(m); err != nil {
+			return err
+		}
+	}
+	m.Spec.Image.Path = bootDisk
 
 	rec, err := a.current(ctx, m)
 	if err != nil {
