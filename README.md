@@ -6,6 +6,8 @@
 
 **Kubernetes declares. Kairon orchestrates. FluxVM executes.**
 
+<img src="docs/assets/social-preview.png" alt="Kairon — Kubernetes-native VMs without KubeVirt" width="720">
+
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
 [![Release](https://img.shields.io/badge/version-v0.4.0-blue)](VERSION)
@@ -13,7 +15,7 @@
 [![Helm chart](https://img.shields.io/badge/Helm-0.4.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
 [![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#dashboard)
 
-[Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Recovery runbook](docs/runbook-migration-failures.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev)
+[Why Kairon](#why-kairon) · [Who this is for](#who-this-is-for) · [Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Recovery runbook](docs/runbook-migration-failures.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
 
 </div>
 
@@ -22,6 +24,7 @@
 ## Contents
 
 - [Why Kairon](#why-kairon)
+- [Who this is for](#who-this-is-for)
 - [What you get in v0.4](#what-you-get-in-v04)
 - [Quick start](#quick-start)
 - [Architecture](#architecture)
@@ -55,6 +58,17 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 - **Kubernetes stays the source of truth.** A `Machine` object is the only place desired state lives. Kairon never invents a second store, and neither does its optional dashboard (`kairon-ui`) — it's just another thin API client, the same standing as `kaironctl`.
 - **Ambiguity gets a name, not a guess.** `NeedsRecovery` exists because a genuinely uncertain migration commit is a real state, not a bug to paper over — Kairon parks it and waits for an operator's attested decision rather than risking split-brain. See [Relocate a Machine](#relocate-a-machine).
 - **Honest about maturity.** The [Status](#status) section below lists real, currently-open gaps, not a marketing gloss. v0.3 and v0.4 both shipped with their own boundaries stated plainly.
+
+---
+
+## Who this is for
+
+| Persona | What they care about | Where Kairon fits |
+|---------|----------------------|--------------------|
+| **Platform engineer replacing KubeVirt** | Running real VMs on Kubernetes without adopting virt-launcher Pods, a libvirt dependency, or a large operator surface | A `Machine` CRD, a Go-stdlib-only controller/agent, and FluxVM doing the actual KVM work — see the comparison table above |
+| **SRE running a Machine fleet at scale** | Draining a node without taking out more capacity than the budget allows, capping how much a namespace can consume | `MachineDisruptionBudget` gates `kaironctl evacuate`; `MachineQuota` caps `maxMachines`/`maxTotalCpu`/`maxTotalMemory` per namespace — see [docs/guides/machine-disruption-budgets.md](docs/guides/machine-disruption-budgets.md) and [docs/guides/machine-quotas.md](docs/guides/machine-quotas.md) |
+| **Operator responsible for live migration safety** | What happens when a migration commit is ambiguous — silent split-brain risk is not acceptable | `NeedsRecovery` names that state explicitly and parks it for an attested operator decision instead of guessing — see [Relocate a Machine](#relocate-a-machine) |
+| **Economic buyer evaluating build-vs-adopt** | Whether the maturity level matches the use case, and whether open gaps are disclosed or hidden | Apache-2.0, actively developed; read [Status](#status) and its [Production gaps](#production-gaps) honestly before committing — this is not a KubeVirt-parity claim |
 
 ---
 
