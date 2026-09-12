@@ -107,6 +107,15 @@ entirely on kairon-ui's operator auth, a single-use connection ticket, and
 a shared token between kairon-ui and every kairon-node -- appropriate for a
 trusted operator team, not a hostile-network or multi-tenant deployment.
 
+**Prerequisite confirmed against a real deployment**: FluxVM creates
+`vnc.sock` root-owned with no `other` write bit, and `kairon-node` runs as
+an unprivileged, deliberately capability-less user -- without OS-level
+access to that socket, the console fails with a clear 502
+(`dial vnc socket: ... permission denied`), not a silent hang. Grant
+`kairon-node`'s user read/write access to FluxVM's per-VM socket files
+(a POSIX ACL, or a shared group between the FluxVM and kairon-node service
+users) before expecting `console.enabled` to actually work end-to-end.
+
 Bare-metal alternative:
 
 ```bash

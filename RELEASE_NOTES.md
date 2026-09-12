@@ -19,6 +19,7 @@ A batch of fixes from a code-level production-readiness audit -- each backed by 
 - `controller.go`/`agent.go` no longer silently swallow a *secondary* status-patch failure (the follow-up write that records a reconcile error) -- both the primary and secondary failures are now logged.
 - `go.mod` gained `golang.org/x/crypto` (bcrypt password hashing for `kairon-ui`'s new login) and `github.com/coder/websocket` (the VNC console relay; stdlib `net/http` has no WebSocket support) -- otherwise still a dependency-light module (Prometheus client + stdlib + these two additions).
 - `web/package.json` gained `@novnc/novnc` (the browser VNC/RFB client the new Console view renders into a `<canvas>`).
+- `kairon-node`'s VNC console listener no longer takes the whole node agent down if it can't bind its port (e.g. a port collision on a shared host) -- found via a real deployment, where this silently stopped all Machine reconciliation, not just the optional console feature. Fixed by checking the bind synchronously and logging-and-skipping on failure instead of canceling the process.
 
 # Kairon v0.4.0
 

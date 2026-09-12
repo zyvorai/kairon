@@ -104,7 +104,7 @@ func run() int {
 		return 2
 	}
 
-	configureConsole(ctx, log, cancel, fc, *consoleAddr, *consoleToken)
+	configureConsole(ctx, log, fc, *consoleAddr, *consoleToken)
 
 	a := &agent.Agent{
 		NodeName:       node,
@@ -194,13 +194,24 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 // internal/consoleproxy) unless consoleToken is empty, in which case the
 // feature is simply off -- same opt-in-via-configuration posture as
 // migration, no separate --console-enabled flag needed.
-func configureConsole(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, fc *fluxvm.Client, addr, token string) {
+//
+// Unlike the migration listener (a startup-time fail-closed check, since
+// misconfigured mTLS material should stop the node before it reconciles
+// anything), a console bind failure must NOT take the whole node agent
+// down with it -- console is a purely optional, add-on capability, and
+// e.g. a port already in use on a shared host should just mean "no
+// console today," not "no Machine reconciliation either."
+func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, addr, token string) {
 	if strings.TrimSpace(token) == "" {
 		log.Warn("VNC console relay disabled; set --console-token/$KAIRON_NODE_CONSOLE_TOKEN to enable")
 		return
 	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Error("VNC console relay disabled: failed to bind", "address", addr, "error", err)
+		return
+	}
 	server := &http.Server{
-		Addr:              addr,
 		Handler:           (&consoleproxy.Server{Flux: fc, Token: token}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		// No WriteTimeout/IdleTimeout: a VNC session is a long-lived
@@ -214,9 +225,8 @@ func configureConsole(ctx context.Context, log *slog.Logger, cancel context.Canc
 	}()
 	go func() {
 		log.Info("VNC console relay listening", "address", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("console relay server stopped", "error", err)
-			cancel()
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Error("VNC console relay stopped", "error", err)
 		}
 	}()
 }
