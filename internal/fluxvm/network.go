@@ -92,6 +92,59 @@ type ServiceSpec struct {
 	Backends []ServiceBackend `json:"backends,omitempty"`
 }
 
+// QgaIPAddress and QgaNetworkInterface mirror FluxVM's GET
+// /v1/vms/{id}/qga/network-interfaces response -- the real
+// qemu-guest-agent's own reported interfaces/IPs, straight from the
+// guest's kernel, not a host-side DHCP lease guess.
+type QgaIPAddress struct {
+	IPAddress     string `json:"ip-address"`
+	IPAddressType string `json:"ip-address-type"`
+	Prefix        uint8  `json:"prefix"`
+}
+
+type QgaNetworkInterface struct {
+	Name            string         `json:"name"`
+	HardwareAddress string         `json:"hardware-address,omitempty"`
+	IPAddresses     []QgaIPAddress `json:"ip-addresses,omitempty"`
+}
+
+// QGANetworkInterfaces calls FluxVM's real qemu-guest-agent
+// guest-network-get-interfaces. Only meaningful for a VM created with
+// spec.guestAgent.enabled -- FluxVM returns a clear error otherwise
+// ("QGA not enabled for this VM").
+func (c *Client) QGANetworkInterfaces(ctx context.Context, id string) ([]QgaNetworkInterface, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/qga/network-interfaces", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []QgaNetworkInterface
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode qga network-interfaces: %w", err)
+	}
+	return out, nil
+}
+
+// BestGuestIP picks a single, sensible IPv4 address to report as
+// status.guestIP from a real guest-network-get-interfaces response: the
+// first IPv4 address on the first non-loopback interface. Kairon has no
+// concept of a Machine having more than one reportable address today (the
+// same single-address assumption status.guestIP already makes for the
+// DHCP-lease path), so this deliberately doesn't try to rank multiple
+// candidates -- first found wins.
+func BestGuestIP(ifaces []QgaNetworkInterface) string {
+	for _, iface := range ifaces {
+		if iface.Name == "lo" {
+			continue
+		}
+		for _, addr := range iface.IPAddresses {
+			if addr.IPAddressType == "ipv4" {
+				return addr.IPAddress
+			}
+		}
+	}
+	return ""
+}
+
 func (c *Client) NetworkStatus(ctx context.Context, id string) (*DataplaneStatus, error) {
 	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/status", nil)
 	if err != nil {

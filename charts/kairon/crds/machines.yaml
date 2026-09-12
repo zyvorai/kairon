@@ -244,6 +244,11 @@ spec:
                     name:
                       type: string
                       minLength: 1
+              guestAgent:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
               serviceFabric:
                 type: object
                 properties:

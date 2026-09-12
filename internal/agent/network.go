@@ -157,7 +157,24 @@ func policySelectsMachine(p model.MachineNetworkPolicy, m model.Machine) bool {
 func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *fluxvm.Record, status *model.MachineStatus) error {
 	guestIP := rec.GuestIP
 	if guestIP == "" {
-		guestIP = status.GuestIP
+		// Preserve whatever was already resolved on a prior tick -- m.Status
+		// is this reconcile's untouched snapshot of the last-persisted
+		// status, unlike *status, which the caller already overwrote with
+		// this tick's (possibly empty) rec.GuestIP before calling here.
+		guestIP = m.Status.GuestIP
+	}
+	if guestIP == "" && m.Spec.GuestAgent.Enabled {
+		// No DHCP lease to read (spec.network.mode: user in particular has
+		// none at all) -- ask the real qemu-guest-agent instead, if the
+		// Machine opted in. A failure here (agent not booted yet, or never
+		// installed despite being enabled) is expected and transient early
+		// in a VM's life, not a reconcile error -- just leave guestIP empty
+		// for this tick and try again next time.
+		if resolved, err := a.Flux.QGANetworkInterfaces(ctx, rec.ID()); err != nil {
+			a.Log.Debug("qga guest IP resolution failed, will retry next tick", "machine", m.Metadata.Name, "error", err)
+		} else if ip := fluxvm.BestGuestIP(resolved); ip != "" {
+			guestIP = ip
+		}
 	}
 	status.GuestIP = guestIP
 	netStatus := &model.MachineNetworkStatus{GuestIP: guestIP, TapName: rec.TapName}

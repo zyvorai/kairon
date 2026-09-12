@@ -17,6 +17,86 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+func TestProjectNetworkStatusFallsBackToQGAWhenNoLeaseIP(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/network/status":
+			http.Error(w, "not found", http.StatusNotFound)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces":
+			_, _ = w.Write([]byte(`[{"name":"enp0s7","ip-addresses":[{"ip-address":"10.0.2.15","ip-address-type":"ipv4"}]}]`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Enabled: true}},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1"} // GuestIP empty -- no DHCP lease (user-mode networking)
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus: %v", err)
+	}
+	if status.GuestIP != "10.0.2.15" {
+		t.Fatalf("got GuestIP %q, want 10.0.2.15 (resolved via qga)", status.GuestIP)
+	}
+}
+
+func TestProjectNetworkStatusPreservesLastKnownGoodIPWithoutCallingQGA(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces" {
+			t.Fatal("qga should not be called when a guest IP is already known")
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Enabled: true}},
+		Status:   model.MachineStatus{GuestIP: "10.0.0.9"},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1"}
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus: %v", err)
+	}
+	if status.GuestIP != "10.0.0.9" {
+		t.Fatalf("got GuestIP %q, want the preserved 10.0.0.9", status.GuestIP)
+	}
+}
+
+func TestProjectNetworkStatusSkipsQGAWhenNotEnabled(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces" {
+			t.Fatal("qga should not be called when spec.guestAgent.enabled is false")
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}}
+	rec := &fluxvm.Record{UUID: "vm-1"}
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus: %v", err)
+	}
+	if status.GuestIP != "" {
+		t.Fatalf("got GuestIP %q, want empty", status.GuestIP)
+	}
+}
+
 func TestReconcileMachineNetworkPolicy(t *testing.T) {
 	machine := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web"}, Finalizers: []string{model.Finalizer}},

@@ -61,6 +61,18 @@ type MachineSpec struct {
 	Security      SecuritySpec           `json:"security,omitempty"`
 	Volumes       []MachineVolume        `json:"volumes,omitempty"`
 	DeviceClaims  []DeviceClaimReference `json:"deviceClaims,omitempty"`
+	GuestAgent    GuestAgentSpec         `json:"guestAgent,omitempty"`
+}
+
+// GuestAgentSpec opts a Machine into FluxVM's real qemu-guest-agent
+// (virtio-serial) channel -- off by default, since it requires the guest
+// image to actually run qemu-guest-agent (e.g. via
+// spec.cloudInit.packages) to be useful. Once enabled, kairon-node uses it
+// to resolve status.guestIP for network modes with no DHCP lease file to
+// parse (spec.network.mode: user/SLIRP in particular) -- see
+// docs/guides/machine-guest-agent.md.
+type GuestAgentSpec struct {
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // CloudInitSpec injects operator-supplied guest customization at first boot,

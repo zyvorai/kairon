@@ -87,6 +87,14 @@ type CreateRequest struct {
 	PodUID      string         `json:"pod_uid,omitempty"`
 	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
 	VFIODevices []string       `json:"vfio_devices,omitempty"`
+	Qga         *QgaSpec       `json:"qga,omitempty"`
+}
+
+// QgaSpec mirrors FluxVM's own qemu-guest-agent (virtio-serial) opt-in --
+// adds the channel to the VM's QEMU command line so kairon-node can later
+// call FluxVM's /qga/* endpoints against it.
+type QgaSpec struct {
+	Enabled bool `json:"enabled"`
 }
 
 func New(baseURL, token string) *Client {
@@ -210,6 +218,9 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		TTLSeconds:  m.Spec.TTLSeconds,
 		VFIODevices: vfioDevices,
 		PodUID:      m.Spec.Network.PodUID,
+	}
+	if m.Spec.GuestAgent.Enabled {
+		payload.Qga = &QgaSpec{Enabled: true}
 	}
 	ci := m.Spec.CloudInit
 	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 {

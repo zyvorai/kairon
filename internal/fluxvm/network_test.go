@@ -137,6 +137,55 @@ func TestNetworkMigrationResume(t *testing.T) {
 	}
 }
 
+func TestBestGuestIPPicksFirstIPv4OnFirstNonLoopbackInterface(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},
+		{Name: "enp0s7", IPAddresses: []QgaIPAddress{
+			{IPAddress: "fe80::1", IPAddressType: "ipv6"},
+			{IPAddress: "10.0.2.15", IPAddressType: "ipv4"},
+		}},
+	}
+	if got := BestGuestIP(ifaces); got != "10.0.2.15" {
+		t.Fatalf("got %q, want 10.0.2.15", got)
+	}
+}
+
+func TestBestGuestIPReturnsEmptyWhenNoIPv4Anywhere(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},
+		{Name: "enp0s7", IPAddresses: []QgaIPAddress{{IPAddress: "fe80::1", IPAddressType: "ipv6"}}},
+	}
+	if got := BestGuestIP(ifaces); got != "" {
+		t.Fatalf("got %q, want empty (no non-loopback ipv4 address present)", got)
+	}
+}
+
+func TestBestGuestIPHandlesNoInterfaces(t *testing.T) {
+	if got := BestGuestIP(nil); got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestQGANetworkInterfacesDecodesRealResponseShape(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/vms/vm-1/qga/network-interfaces" {
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"name":"enp0s7","hardware-address":"52:54:00:12:34:56","ip-addresses":[{"ip-address":"10.0.2.15","ip-address-type":"ipv4","prefix":24}]}]`))
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	ifaces, err := c.QGANetworkInterfaces(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatalf("QGANetworkInterfaces: %v", err)
+	}
+	if len(ifaces) != 1 || ifaces[0].Name != "enp0s7" || BestGuestIP(ifaces) != "10.0.2.15" {
+		t.Fatalf("unexpected result: %+v", ifaces)
+	}
+}
+
 func TestNetworkMigrationQuiesceErrorPropagates(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "quiesce failed", http.StatusInternalServerError)

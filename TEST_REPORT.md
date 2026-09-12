@@ -1,3 +1,28 @@
+# Unreleased: guest-agent real guest-IP reporting test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.1%, threshold 50%). `helm lint` green after fixing a real YAML indentation bug the CRD schema edit introduced (a stray `minLength: 1` line from the pre-existing `deviceClaims` block got orphaned under the new `guestAgent` block by an imprecise edit boundary) -- caught immediately by re-running the gauntlet, not shipped. New unit tests: `fluxvm.BestGuestIP` (picks the first IPv4 on the first non-loopback interface, skips loopback/IPv6-only interfaces, handles no interfaces), `fluxvm.QGANetworkInterfaces` decoding a real response shape, and `internal/agent.projectNetworkStatus`'s three guest-IP-resolution cases (falls back to QGA when no lease IP and guest agent enabled; preserves an already-known IP without calling QGA at all; skips QGA entirely when not enabled).
+
+## What shipped
+
+`spec.guestAgent.enabled` opts a Machine into FluxVM's real `qemu-guest-agent` (virtio-serial) channel; `kairon-node` then resolves `status.guestIP` via FluxVM's `guest-network-get-interfaces` whenever the existing DHCP-lease path comes up empty -- which is *every* network mode except `tap` with `netns: true`, `user`/SLIRP (Kairon's own default) included. This needed a real FluxVM-side addition first: `GET /v1/vms/{id}/qga/network-interfaces`, shipped upstream as [zyvorai/fluxvm#63](https://github.com/zyvorai/fluxvm/pull/63) (merged) after confirming FluxVM already had the full host-side QGA client/REST for `ping`/`exec`/`powershell`/firewall rules, just not this one verb. A related premise was checked and found false before any code was written: FluxVM's `stop`/`delete` already performs a graceful ACPI `system_powerdown` with a wait-then-force-kill fallback for *every* VM regardless of guest-agent presence, so no separate Kairon-side "guest-agent shutdown" wiring was needed at all -- avoided building a redundant mechanism by checking the real behavior first instead of assuming the original gap description was accurate.
+
+## Real verification (beyond source-level gates)
+
+- FluxVM's new endpoint was verified against a real running VM before any Kairon-side code existed: `network.mode: user` (no lease file), a real `qemu-guest-agent` installed via cloud-init, confirmed responsive via `qga/ping`, then `qga/network-interfaces` correctly reported the guest's real SLIRP-assigned address (`10.0.2.15`).
+- Upgraded the production `fluxvm` service on the real lab host a second time (to the build containing both merged PRs, #62 and #63) -- confirmed existing VMs survived, same pattern as the hotplug round.
+- Deployed the updated `kairon-node` binary and `Machine` CRD schema to the same real cluster.
+- Created a real Machine with `spec.guestAgent.enabled: true`, default `user`-mode networking, and `spec.cloudInit.packages: [qemu-guest-agent]`. `status.guestIP` was correctly empty immediately after creation (the guest agent hadn't installed/started yet), then correctly resolved to `10.0.2.15` a couple of reconcile ticks later once it had.
+- Independently confirmed via a direct call to FluxVM's own `qga/network-interfaces` endpoint (bypassing Kairon's cached `status.guestIP` entirely) that the guest genuinely reports that address -- the real end-to-end chain, not just Kairon trusting its own prior read.
+- Cleaned up the test Machine and all temporary build artifacts on the host afterward.
+
+## Coverage
+
+```text
+total (internal/...): 68.1% (threshold 50%)
+```
+
 # Unreleased: CPU/memory hotplug test report
 
 ## Result
