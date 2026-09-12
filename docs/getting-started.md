@@ -1,4 +1,8 @@
-# Getting started
+---
+hero:
+  eyebrow: GETTING STARTED
+  title: Getting started
+---
 
 ## Prerequisites
 
@@ -107,7 +111,7 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=
 Adds a "Console" button per Machine in the dashboard -- a real graphical
 VNC session in the browser, for QEMU-backend Machines only (the button
 hides itself for ineligible Machines, or entirely when `console.enabled`
-is off). Read [SECURITY.md](../SECURITY.md)'s "VNC console" section first:
+is off). Read [SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md)'s "VNC console" section first:
 FluxVM's own VNC socket has no auth of its own, so this feature's security
 rests on kairon-ui's operator auth, a single-use connection ticket bound
 to the requesting username (every session is audit-logged), and a shared

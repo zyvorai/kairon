@@ -1,0 +1,66 @@
+site_name: Kairon
+site_description: Kubernetes-native VMs — without KubeVirt, without libvirt, without a virt-launcher Pod.
+site_url: https://zyvorai.github.io/kairon/
+repo_url: https://github.com/zyvorai/kairon
+repo_name: zyvorai/kairon
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+theme:
+  name: material
+  logo: assets/readme/zyvor-logo.svg
+  favicon: assets/readme/zyvor-logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle: {icon: material/brightness-7, name: Switch to dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle: {icon: material/brightness-4, name: Switch to light mode}
+  features: [navigation.tabs, navigation.sections, navigation.top, navigation.footer, content.code.copy, search.suggest, search.highlight, toc.follow]
+plugins: [search]
+hooks:
+  - docs/overrides/hooks.py
+extra_css:
+  - stylesheets/apple-glass.css
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - {name: mermaid, class: mermaid, format: !!python/name:pymdownx.superfences.fence_code_format }
+  - pymdownx.tabbed: {alternate_style: true}
+  - pymdownx.tasklist: {custom_checkbox: true}
+  - tables
+  - toc: {permalink: true}
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Architecture: architecture.md
+  - Guides:
+      - Machine disruption budgets: guides/machine-disruption-budgets.md
+      - Machine guest agent: guides/machine-guest-agent.md
+      - Machine hotplug: guides/machine-hotplug.md
+      - Machine network: guides/machine-network.md
+      - Machine placement: guides/machine-placement.md
+      - Machine quotas: guides/machine-quotas.md
+      - Machine snapshot & restore: guides/machine-snapshot-restore.md
+      - Machine storage: guides/machine-storage.md
+      - Network policy: guides/network-policy.md
+  - Network Fabric: network-fabric.md
+  - Migration adapter: migration-adapter.md
+  - Runbooks:
+      - Migration failures: runbook-migration-failures.md
+      - Multi-host migration test: runbook-multi-host-migration-test.md
+      - Recovery drill: runbook-recovery-drill.md
+  - Tutorials:
+      - Network Fabric tutorial: tutorials/network-fabric.md
+extra:
+  social:
+    - {icon: fontawesome/brands/github, link: https://github.com/zyvorai/kairon}

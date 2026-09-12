@@ -1,4 +1,8 @@
-# Network Fabric (Kairon ↔ FluxVM ↔ Fabric)
+---
+hero:
+  eyebrow: NETWORK FABRIC
+  title: Network Fabric (Kairon ↔ FluxVM ↔ Fabric)
+---
 
 Kairon declares Kubernetes desired state for VM-edge networking. **FluxVM** owns
 TAP/netns, TC/eBPF attach, maps, CNP compile, and Service Fabric VIPs.
@@ -56,7 +60,7 @@ flowchart TB
 
 ## Examples
 
-See [`examples/network-fabric-machine.yaml`](../examples/network-fabric-machine.yaml).
+See [`examples/network-fabric-machine.yaml`](https://github.com/zyvorai/kairon/blob/main/examples/network-fabric-machine.yaml).
 
 ## Docs
 

@@ -1,4 +1,8 @@
-# Runbook: live `NeedsRecovery` drill
+---
+hero:
+  eyebrow: RUNBOOK RECOVERY DRILL
+  title: 'Runbook: live `NeedsRecovery` drill'
+---
 
 `docs/runbook-migration-failures.md` explains how to *respond* to
 `NeedsRecovery`. This runbook is about *deliberately causing* it on a real

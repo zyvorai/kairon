@@ -1,4 +1,8 @@
-# User guide: guest agent (real guest IP reporting)
+---
+hero:
+  eyebrow: GUIDES
+  title: 'User guide: guest agent (real guest IP reporting)'
+---
 
 How to opt a Machine into FluxVM's real `qemu-guest-agent` channel, and why
 you'd want to.

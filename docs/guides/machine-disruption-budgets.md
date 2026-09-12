@@ -1,4 +1,8 @@
-# User guide: MachineDisruptionBudget
+---
+hero:
+  eyebrow: GUIDES
+  title: 'User guide: MachineDisruptionBudget'
+---
 
 Caps how many Machines `kaironctl evacuate` is willing to disrupt at once.
 

@@ -1,0 +1,15 @@
+{% macro footnotes(items) %}
+{% if items %}
+<div class="apple-footnotes">
+  <ol>
+    {% for f in items %}
+    <li id="fn-{{ f.marker }}">
+      {{ f.text }}
+      {% if f.href %}<a href="{{ f.href }}">{{ f.href_label | default('See source.') }}</a>{% endif %}
+      <a href="#fnref-{{ f.marker }}" aria-label="Back to reference {{ f.marker }}">&#8617;</a>
+    </li>
+    {% endfor %}
+  </ol>
+</div>
+{% endif %}
+{% endmacro %}

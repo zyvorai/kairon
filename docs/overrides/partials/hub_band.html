@@ -1,0 +1,17 @@
+{% macro hub_band(bands) %}
+{% set capped = bands[:6] %}
+<ul class="hub-band-list">
+  {% for b in capped %}
+  <li>
+    <a class="hub-band" data-tone="{{ b.tone }}" href="{{ b.href }}">
+      <span class="hub-band-icon" aria-hidden="true">{{ b.icon | default('→') }}</span>
+      <span>
+        <p class="hub-band-title">{{ b.title }}</p>
+        <p class="hub-band-desc">{{ b.description }}</p>
+      </span>
+      <span class="hub-band-arrow" aria-hidden="true">&rarr;</span>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}

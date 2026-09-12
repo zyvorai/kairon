@@ -1,0 +1,24 @@
+{% macro hero(eyebrow, title, lead, tone='sky', swatches=[], actions=[], highlights_html='') %}
+<section class="tahoe-hero apple-editorial-hero" data-tone="{{ tone }}">
+  <div class="hero-head">
+    {% if eyebrow %}<p class="text-eyebrow">{{ eyebrow }}</p>{% endif %}
+    <h1 class="hero-display">{{ title }}</h1>
+    {% if lead %}<p class="hero-lead">{{ lead }}</p>{% endif %}
+    {% if swatches %}
+    <div class="hero-swatch-row">
+      {% for s in swatches %}
+      <span class="hero-swatch" data-tone="{{ s.tone }}">
+        <span class="hero-swatch-dot" aria-hidden="true"></span>{{ s.label }}
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% if actions %}
+  <div class="hero-actions">
+    {% for a in actions %}<a class="btn-{{ a.variant | default('primary') }}" href="{{ a.href }}">{{ a.label }}</a>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{{ highlights_html | safe }}
+{% endmacro %}

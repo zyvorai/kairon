@@ -1,4 +1,8 @@
-# User guide: Machine placement
+---
+hero:
+  eyebrow: GUIDES
+  title: 'User guide: Machine placement'
+---
 
 How `spec.placement` steers which node a Machine lands on, and what today's
 real limits are.

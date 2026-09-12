@@ -1,0 +1,18 @@
+{% macro highlights(items, tone='sky', kicker='Get the highlights.') %}
+{% set capped = items[:5] %}
+{% if capped %}
+<div class="apple-chapter-dark marketplace-chapter-ink" data-tone="{{ tone }}">
+  <div class="apple-highlights-row">
+    {% if kicker %}<p class="apple-highlights-kicker">{{ kicker }}</p>{% endif %}
+    <ul class="apple-highlights-grid">
+      {% for item in capped %}
+      <li class="apple-highlight-item">
+        <div class="apple-highlight-value">{{ item.value }}{% if item.footnote %}<a class="hero-footnote" href="#fn-{{ item.footnote }}" id="fnref-{{ item.footnote }}">{{ item.footnote }}</a>{% endif %}</div>
+        <div class="apple-highlight-label">{{ item.label }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}

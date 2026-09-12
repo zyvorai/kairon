@@ -1,4 +1,8 @@
-# Runbook: real two-host live-migration test
+---
+hero:
+  eyebrow: RUNBOOK MULTI HOST MIGRATION TEST
+  title: 'Runbook: real two-host live-migration test'
+---
 
 Everything Kairon's own test suite (`internal/agent`, `internal/controller`,
 and the new `internal/integration`, see `docs/runbook-migration-failures.md`)

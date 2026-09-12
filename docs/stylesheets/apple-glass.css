@@ -1,0 +1,514 @@
+/* Copyright 2026 ZyvorAI Labs Private Limited */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/*
+  Real apple.com-style page system for this docs site.
+
+  Earlier versions of this file reused the React dashboard's "macOS 26
+  glass" UI-chrome language (translucent blurred cards, ambient colored
+  wash blobs, a 7-tone rainbow accent). That is the right look for app
+  chrome, not for an apple.com marketing/product page -- apple.com/
+  macbook-pro has no glassmorphism at all: content sits directly on a
+  solid full-bleed section background, sections alternate light/dark,
+  and color is restrained to a single accent. This file rebuilds the
+  docs site on that basis.
+
+  Dark mode keys off mkdocs-material's own [data-md-color-scheme="slate"]
+  attribute (set by the built-in palette toggle). Every color value below
+  is a CSS custom property; this file is the only place raw hex/rgb
+  literals may appear — see docs/scripts/check_no_hex_surfaces.py.
+*/
+
+:root {
+  --font-hero: "SF Pro Display", "Archivo", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: "SF Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --background: #ffffff;
+  --surface: #f5f5f7;
+  --surface-elevated: #ffffff;
+  --foreground: #1d1d1f;
+  --muted-foreground: #6e6e73;
+  --border: #d2d2d7;
+
+  --primary: #0071e3;
+  --primary-hover: #0077ed;
+  --primary-foreground: #ffffff;
+  --accent-tint: #e8f2fd;
+
+  /* Structural dark chapter — an alternating full-bleed band (like
+     apple.com's own dark comparison sections). Fixed, not theme-toggled:
+     apple.com's dark chapters don't respond to a site-wide light/dark
+     switch, they're just a dark section. */
+  --chapter-dark-bg: #1d1d1f;
+  --chapter-dark-fg: #f5f5f7;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-pill: 980px;
+
+  --section-gap: 5rem;
+  --hero-pad-block: clamp(3rem, 8vw, 6rem);
+  --content-max-width: 1180px;
+
+  --tracking-eyebrow: 0.08em;
+  --tracking-display: -0.035em;
+  --tracking-hero: -0.045em;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not([data-md-color-scheme]) {
+    --background: #000000;
+    --surface: #1d1d1f;
+    --surface-elevated: #2c2c2e;
+    --foreground: #f5f5f7;
+    --muted-foreground: #a1a1a6;
+    --primary: #0a84ff;
+    --primary-hover: #409cff;
+    --primary-foreground: #1d1d1f;
+    --border: rgba(255, 255, 255, 0.14);
+    --accent-tint: rgba(10, 132, 255, 0.18);
+    color-scheme: dark;
+  }
+}
+
+[data-md-color-scheme="slate"] {
+  --background: #000000;
+  --surface: #1d1d1f;
+  --surface-elevated: #2c2c2e;
+  --foreground: #f5f5f7;
+  --muted-foreground: #a1a1a6;
+  --primary: #0a84ff;
+  --primary-hover: #409cff;
+  --primary-foreground: #1d1d1f;
+  --border: rgba(255, 255, 255, 0.14);
+  --accent-tint: rgba(10, 132, 255, 0.18);
+  color-scheme: dark;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Material variable reassignment — nudge Material's own tokens onto ours */
+/* ---------------------------------------------------------------------- */
+
+:root {
+  --md-primary-fg-color: var(--primary);
+  --md-primary-fg-color--light: var(--primary);
+  --md-primary-fg-color--dark: var(--primary-hover);
+  --md-accent-fg-color: var(--primary);
+  --md-default-bg-color: var(--background);
+  --md-default-fg-color: var(--foreground);
+  --md-default-fg-color--light: var(--muted-foreground);
+  --md-typeset-a-color: var(--primary);
+  --md-code-bg-color: var(--surface);
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: var(--background);
+  --md-default-fg-color: var(--foreground);
+  --md-default-fg-color--light: var(--muted-foreground);
+  --md-code-bg-color: var(--surface);
+}
+
+/* Full-width bands — the hero and the dark highlights band span the whole
+   content column edge-to-edge with a solid background instead of sitting
+   in an inset rounded card, mirroring apple.com's flat alternating
+   sections. True 100vw viewport bleed isn't attempted: mkdocs-material's
+   grid keeps a persistent right-hand TOC sidebar next to .md-content, so
+   that column is not centered in the viewport (there's no matching left
+   sidebar once navigation.tabs is on) -- a negative-margin 100vw breakout
+   computed against .md-content would misalign and clip the centered hero
+   text on wide screens, which real apple.com pages never have to account
+   for since they carry no such sidebar. */
+.tahoe-hero,
+.apple-chapter-dark,
+.marketplace-chapter-ink {
+  width: 100%;
+  padding-inline: 1.5rem;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Hero — full-bleed, centered, no card                                   */
+/* ---------------------------------------------------------------------- */
+
+.tahoe-hero {
+  background: var(--background);
+  padding-block: var(--hero-pad-block);
+  text-align: center;
+}
+
+.hero-head {
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+.text-eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--primary);
+  letter-spacing: var(--tracking-eyebrow);
+  margin: 0 0 0.75rem;
+}
+
+.hero-display {
+  font-family: var(--font-hero);
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: var(--tracking-hero);
+  color: var(--foreground);
+  margin: 0 0 1rem;
+}
+
+.hero-lead {
+  font-size: clamp(1.125rem, 1.4vw, 1.375rem);
+  line-height: 1.47;
+  color: var(--muted-foreground);
+  max-width: 42rem;
+  margin: 0 auto 1.5rem;
+}
+
+.hero-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  padding-top: 0.25rem;
+}
+.hero-swatch {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.9rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  text-decoration: none;
+}
+.hero-swatch-dot {
+  display: none;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.hero-actions .btn-primary,
+.hero-actions .btn-secondary {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  padding: 0.5rem 1.25rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+.hero-actions .btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: 1px solid var(--primary);
+}
+.hero-actions .btn-primary:hover { background: var(--primary-hover); }
+.hero-actions .btn-secondary {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+.hero-actions .btn-secondary:hover { background: var(--accent-tint); }
+
+/* ---------------------------------------------------------------------- */
+/* Highlights — "Get the highlights." full-bleed dark band, own section   */
+/* ---------------------------------------------------------------------- */
+
+.apple-chapter-dark,
+.marketplace-chapter-ink {
+  background: var(--chapter-dark-bg);
+  color: var(--chapter-dark-fg);
+  padding-block: clamp(3rem, 6vw, 5rem);
+  text-align: center;
+}
+.apple-chapter-dark .text-eyebrow,
+.marketplace-chapter-ink .text-eyebrow {
+  color: var(--chapter-dark-fg);
+  opacity: 0.7;
+}
+
+.apple-highlights-row { text-align: center; width: 100%; }
+.apple-highlights-kicker {
+  margin: 0 0 2rem;
+  font-family: var(--font-hero);
+  font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+.md-typeset .apple-highlights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 2rem 2.5rem;
+  max-width: 980px;
+  margin: 0 auto;
+  list-style: none;
+  padding: 0;
+}
+.md-typeset .apple-highlights-grid li {
+  list-style: none;
+  margin: 0;
+}
+.apple-highlight-value {
+  font-family: var(--font-hero);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+.apple-highlight-label {
+  margin-top: 0.35rem;
+  font-size: 14px;
+  opacity: 0.72;
+}
+.hero-footnote {
+  font-size: 0.625rem;
+  vertical-align: super;
+  margin-left: 2px;
+  text-decoration: none;
+  opacity: 0.85;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Hub band — a plain divided list, like Apple's own destination lists    */
+/* ---------------------------------------------------------------------- */
+
+.md-typeset .hub-band-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: var(--section-gap) 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+.md-typeset .hub-band-list li { list-style: none; margin: 0; }
+.hub-band {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.5rem 0;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+.hub-band-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  color: var(--foreground);
+  font-size: 1.25rem;
+}
+.hub-band-title {
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 0 0 0.25rem;
+}
+.hub-band-desc {
+  color: var(--muted-foreground);
+  margin: 0;
+  font-size: 0.9375rem;
+}
+.hub-band-arrow {
+  margin-left: auto;
+  color: var(--primary);
+  transition: transform 0.18s ease;
+  flex-shrink: 0;
+}
+.hub-band:hover .hub-band-arrow { transform: translateX(3px); }
+
+/* ---------------------------------------------------------------------- */
+/* Sitewide chrome — every page                                          */
+/* ---------------------------------------------------------------------- */
+
+.md-header {
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  color: var(--foreground);
+  box-shadow: none;
+  border-bottom: 1px solid var(--border);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .md-header {
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+  }
+}
+.md-header__title,
+.md-header__button {
+  color: var(--foreground);
+}
+.md-tabs {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+.md-tabs__link {
+  color: var(--muted-foreground);
+}
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  color: var(--foreground);
+}
+.md-nav {
+  background: transparent;
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-family: var(--font-hero);
+  letter-spacing: var(--tracking-display);
+  color: var(--foreground);
+}
+.md-typeset h2 {
+  margin-top: var(--section-gap);
+  padding-top: 2rem;
+  border-top: 1px solid var(--border);
+}
+.md-typeset h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.md-typeset table:not([class]) {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.md-typeset table:not([class]) th {
+  background: var(--surface);
+  color: var(--foreground);
+}
+
+.md-typeset code {
+  background: var(--surface);
+  border-radius: 4px;
+}
+.md-typeset pre > code {
+  background: var(--surface-elevated);
+}
+
+.md-footer {
+  background: transparent;
+}
+.md-footer-meta {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+/* ---------------------------------------------------------------------- */
+/* "Take a closer look" — plain underline segmented tabs, no pill/blur    */
+/* ---------------------------------------------------------------------- */
+
+.md-typeset .tabbed-set {
+  margin: 2rem 0;
+}
+.md-typeset .tabbed-labels {
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  gap: 1.75rem;
+}
+.md-typeset .tabbed-labels > label {
+  padding: 0.75rem 0;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border-radius: 0;
+}
+.md-typeset .tabbed-content {
+  background: transparent;
+  padding-block: 1.75rem;
+  margin-top: 0;
+  box-shadow: none;
+}
+
+/* "Keep exploring" — plain bordered columns, no card shadow */
+.md-typeset .compare-cards ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0;
+  list-style: none;
+  padding: 0;
+  margin: 2rem 0;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+.md-typeset .compare-cards li {
+  background: transparent;
+  padding: 1.75rem;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.md-typeset .compare-cards li > strong:first-child {
+  font-size: 1.125rem;
+  line-height: 2;
+  color: var(--foreground);
+}
+
+/* Security-style icon list — plain inline row, no pill background */
+.md-typeset .icon-badge-list ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0;
+}
+.md-typeset .icon-badge-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  padding: 0;
+  font-size: 0.9375rem;
+  color: var(--foreground);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Footnotes — small print at the bottom, ties every stat to its source   */
+/* ---------------------------------------------------------------------- */
+
+.apple-footnotes {
+  margin-top: var(--section-gap);
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+.apple-footnotes ol {
+  padding-left: 1.25rem;
+  margin: 0;
+}
+.apple-footnotes li {
+  margin-bottom: 0.5rem;
+}
+.apple-footnotes a {
+  color: var(--muted-foreground);
+  text-decoration: underline;
+}
