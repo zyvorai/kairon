@@ -133,6 +133,22 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	restores, err := c.Kube.ListMachineSnapshotRestores(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	for _, restore := range restores {
+		if err := c.reconcileSnapshotRestore(ctx, restore); err != nil {
+			status := restore.Status
+			status.Phase = "Failed"
+			status.Message = err.Error()
+			c.Log.Error("snapshot restore reconcile failed", "namespace", restore.Namespace(), "restore", restore.Metadata.Name, "error", err)
+			if statusErr := c.Kube.PatchMachineSnapshotRestoreStatus(ctx, restore.Namespace(), restore.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("snapshot restore status patch failed", "namespace", restore.Namespace(), "restore", restore.Metadata.Name, "error", statusErr)
+			}
+		}
+	}
+
 	quotas, err := c.Kube.ListMachineQuotas(ctx)
 	if err != nil && !kube.IsNotFound(err) {
 		return err

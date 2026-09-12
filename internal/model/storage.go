@@ -17,6 +17,25 @@ type PersistentVolumeClaimSpec struct {
 	// VolumeName is set by the Kubernetes binder once the claim is Bound --
 	// the name of the PersistentVolume backing it.
 	VolumeName string `json:"volumeName,omitempty"`
+	// The remaining fields are only meaningful when Kairon is the one
+	// creating the PVC (restoring a MachineSnapshot into a new PVC) rather
+	// than just reading one to resolve a Machine's boot disk.
+	AccessModes      []string                        `json:"accessModes,omitempty"`
+	Resources        *PersistentVolumeClaimResources `json:"resources,omitempty"`
+	DataSource       *TypedLocalObjectReference      `json:"dataSource,omitempty"`
+	StorageClassName *string                         `json:"storageClassName,omitempty"`
+}
+
+type PersistentVolumeClaimResources struct {
+	Requests map[string]string `json:"requests,omitempty"`
+}
+
+// TypedLocalObjectReference points a new PVC's spec.dataSource at the
+// VolumeSnapshot to restore from -- same shape Kubernetes itself uses.
+type TypedLocalObjectReference struct {
+	APIGroup string `json:"apiGroup,omitempty"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
 }
 
 type PersistentVolumeClaimStatus struct {

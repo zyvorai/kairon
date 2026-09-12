@@ -1,3 +1,32 @@
+# Unreleased: MachineSnapshotRestore test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.2%, threshold 50%; `scripts/validate.py` updated for the new `MachineSnapshotRestore` CRD). `helm lint` and `helm template --include-crds` green, confirming the new CRD and `kairon-controller`'s new `persistentvolumeclaims` `get`/`create` RBAC both render. New unit tests in `internal/controller`: `selectSnapshotVolume` (auto-picks the only volume, requires a name when ambiguous, rejects an unknown name) and `reconcileSnapshotRestore` against a fake Kubernetes server (rejects a not-yet-ready `MachineSnapshot`, creates a real-shaped PVC with `spec.dataSource` pointing at the right `VolumeSnapshot` and sized from its `status.restoreSize` when not overridden, reports `Pending` until the PVC is `Bound` then `Succeeded`, is idempotent against an already-existing PVC, is a no-op once already terminal).
+
+## What shipped
+
+`MachineSnapshotRestore` restores one volume of a `Succeeded` `MachineSnapshot` into a brand-new `PersistentVolumeClaim` via the standard CSI `spec.dataSource` flow. A real, load-bearing design finding drove the scope: **there is no such thing as an in-place PVC restore in Kubernetes** -- a bound PVC's `dataSource` can't be changed after the fact, so "restore" always means "create a new PVC," which makes it identical to "clone-from-snapshot." Combined with `Machine.spec.volumes` already being creation-time-only (same as `spec.image`/`spec.resources`), restoring into an *existing* Machine isn't possible either -- so this deliberately restores into a new PVC only, and documents pointing a new `Machine` at it as the second, already-solved step (`docs/guides/machine-storage.md`), rather than duplicating Machine-spec-templating logic inside this CRD. This also means it keeps working in the actual disaster-recovery case that matters (the original Machine is gone), which a design that copied the original Machine's spec wouldn't. New `kaironctl restore SNAPSHOT --target-claim NAME` / `kaironctl get restores`; `kairon-controller`'s ClusterRole gained `get`/`create` on `persistentvolumeclaims`.
+
+## Real verification (beyond source-level gates), and a real environmental limit found along the way
+
+Deployed to the same real lab k3s host used throughout this project's verification, and hit a genuine, useful finding in the process: **this cluster's default StorageClass (Rancher's `local-path-provisioner`) is not a real CSI driver and cannot support VolumeSnapshots at all** -- a real `VolumeSnapshot` created directly against it failed with `cannot find CSI PersistentVolumeSource` / `snapshotting non-CSI volumes is not supported`. This is a pre-existing limitation of that storage class, not a Kairon bug, and it means the success path (an actually-completed snapshot restored for real) can't be exercised on this particular lab environment -- documented plainly in `docs/guides/machine-snapshot-restore.md` and `README.md` rather than glossed over.
+
+What **was** verified for real, end to end through genuine Kubernetes API round-trips:
+- Applied the new CRD and RBAC to the live cluster; both took effect immediately (`kubectl get crd` confirmed).
+- Created a real `Machine` + `MachineSnapshot` against a real (non-CSI) PVC; `kairon-controller` correctly reconciled the `MachineSnapshot` to `Failed` with the real underlying CSI error.
+- Created a real `MachineSnapshotRestore` referencing that failed snapshot; `kairon-controller` correctly reconciled it to `Failed` with `MachineSnapshot default/... is not ready to restore from yet (phase="Failed")` -- the exact real error path this feature is supposed to surface clearly rather than hang or silently retry forever.
+- Confirmed `kaironctl restore` and `kaironctl get restores` both work correctly against the live API server under a purpose-built operator identity (same RBAC-boundary-verification pattern as the disruption-budget and quota rounds).
+- Cleanup hit one more real, useful finding: the source PVC got stuck `Terminating` behind a `snapshot.storage.kubernetes.io/pvc-as-source-protection` finalizer left orphaned by the failed (non-CSI) snapshot attempt -- confirmed no `VolumeSnapshot`/`VolumeSnapshotContent` objects still referenced it, then removed the finalizer directly, a standard, safe remediation for exactly this class of stuck finalizer.
+
+The success path (real `Succeeded` snapshot restored into a real `Bound` PVC) is covered by the fake-Kubernetes-server unit tests instead, consistent with this project's established practice of being explicit about what's verified on real hardware versus in tests when real hardware genuinely can't exercise a path (e.g. TEST_REPORT.md's v0.3.0 note about no real KVM/multi-host environment in CI).
+
+## Coverage
+
+```text
+total (internal/...): 68.2% (threshold 50%)
+```
+
 # Unreleased: MachineQuota test report
 
 ## Result

@@ -103,6 +103,8 @@ func run() int {
 		cmdRecover(ctx, kc, os.Args[2:])
 	case "snapshot":
 		cmdSnapshot(ctx, kc, os.Args[2:])
+	case "restore":
+		cmdRestore(ctx, kc, os.Args[2:])
 	default:
 		usage()
 		return 2
@@ -157,6 +159,15 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		fmt.Printf("NAME\tMACHINE\tPHASE\tREADY\n")
 		for _, s := range items {
 			fmt.Printf("%s\t%s\t%s\t%t\n", s.Metadata.Name, s.Spec.MachineName, dash(s.Status.Phase), s.Status.ReadyToUse)
+		}
+	case "restore", "restores", "machinesnapshotrestores":
+		items, err := kc.ListMachineSnapshotRestoresNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tSNAPSHOT\tCLAIM\tPHASE\n")
+		for _, r := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\n", r.Metadata.Name, r.Spec.SnapshotName, dash(r.Status.RestoredClaimName), dash(r.Status.Phase))
 		}
 	case "quota", "quotas", "machinequotas":
 		items, err := kc.ListMachineQuotasNamespace(ctx, ns)
@@ -514,6 +525,44 @@ func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	fmt.Printf("machinesnapshot/%s created\n", out.Metadata.Name)
 }
 
+func cmdRestore(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl restore SNAPSHOT --target-claim NAME [--volume NAME] [flags]"))
+	}
+	snapshot := args[0]
+	fs := flag.NewFlagSet("restore", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	name := fs.String("name", "", "MachineSnapshotRestore name")
+	volume := fs.String("volume", "", "which snapshotted volume to restore; required when the snapshot covers more than one")
+	targetClaim := fs.String("target-claim", "", "name for the new PersistentVolumeClaim (required)")
+	storageClass := fs.String("storage-class", "", "StorageClass for the new PVC; empty uses the cluster default")
+	storageSize := fs.String("storage-size", "", "size for the new PVC; empty defaults to the VolumeSnapshot's own reported restoreSize")
+	_ = fs.Parse(args[1:])
+	if *targetClaim == "" {
+		fatal(fmt.Errorf("--target-claim is required"))
+	}
+	if *name == "" {
+		*name = resourceName(snapshot + "-restore-" + time.Now().UTC().Format("20060102-150405"))
+	}
+	restore := model.MachineSnapshotRestore{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshotRestore},
+		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
+		Spec: model.MachineSnapshotRestoreSpec{
+			SnapshotName:     snapshot,
+			VolumeName:       *volume,
+			TargetClaimName:  *targetClaim,
+			StorageClassName: *storageClass,
+			StorageSize:      *storageSize,
+		},
+	}
+	out, err := kc.CreateMachineSnapshotRestore(ctx, *ns, restore)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machinesnapshotrestore/%s created\n", out.Metadata.Name)
+	fmt.Printf("once Succeeded, point a new Machine's spec.volumes[0].claimName at %q\n", *targetClaim)
+}
+
 var invalidResourceName = regexp.MustCompile(`[^a-z0-9-]+`)
 
 func resourceName(s string) string {
@@ -527,7 +576,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots] | describe | create | delete | start | stop | migrate | evacuate | recover | snapshot | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | migrate | evacuate | recover | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

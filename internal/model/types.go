@@ -351,6 +351,11 @@ type VolumeSnapshotSource struct {
 type VolumeSnapshotStatus struct {
 	ReadyToUse *bool                `json:"readyToUse,omitempty"`
 	Error      *VolumeSnapshotError `json:"error,omitempty"`
+	// RestoreSize is the minimum size a PVC restored from this snapshot
+	// must request -- set by the real CSI driver, read by
+	// MachineSnapshotRestore to size the new PVC when the request doesn't
+	// override it explicitly.
+	RestoreSize *string `json:"restoreSize,omitempty"`
 }
 
 type VolumeSnapshotError struct {

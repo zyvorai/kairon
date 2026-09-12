@@ -206,6 +206,12 @@ func (c *Client) ListMachineSnapshotsNamespace(ctx context.Context, ns string) (
 	return list.Items, err
 }
 
+func (c *Client) GetMachineSnapshot(ctx context.Context, ns, name string) (model.MachineSnapshot, error) {
+	var s model.MachineSnapshot
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinesnapshots", name), nil, &s, "")
+	return s, err
+}
+
 func (c *Client) CreateMachineSnapshot(ctx context.Context, ns string, s model.MachineSnapshot) (model.MachineSnapshot, error) {
 	var out model.MachineSnapshot
 	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinesnapshots"), s, &out, "")
@@ -214,6 +220,28 @@ func (c *Client) CreateMachineSnapshot(ctx context.Context, ns string, s model.M
 
 func (c *Client) PatchMachineSnapshotStatus(ctx context.Context, ns, name string, status model.MachineSnapshotStatus) error {
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineSnapshotRestores(ctx context.Context) ([]model.MachineSnapshotRestore, error) {
+	var list model.MachineSnapshotRestoreList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotrestores", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineSnapshotRestoresNamespace(ctx context.Context, ns string) ([]model.MachineSnapshotRestore, error) {
+	var list model.MachineSnapshotRestoreList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinesnapshotrestores"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) CreateMachineSnapshotRestore(ctx context.Context, ns string, r model.MachineSnapshotRestore) (model.MachineSnapshotRestore, error) {
+	var out model.MachineSnapshotRestore
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinesnapshotrestores"), r, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineSnapshotRestoreStatus(ctx context.Context, ns, name string, status model.MachineSnapshotRestoreStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotrestores", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
 func (c *Client) ListMachineNetworkPolicies(ctx context.Context) ([]model.MachineNetworkPolicy, error) {
@@ -285,6 +313,12 @@ func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.Mach
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")
 	return list.Items, err
+}
+
+func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, ns string, pvc model.PersistentVolumeClaim) (model.PersistentVolumeClaim, error) {
+	var out model.PersistentVolumeClaim
+	err := c.request(ctx, http.MethodPost, fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims", url.PathEscape(ns)), pvc, &out, "")
+	return out, err
 }
 
 func (c *Client) GetPersistentVolumeClaim(ctx context.Context, ns, name string) (model.PersistentVolumeClaim, error) {
