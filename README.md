@@ -62,6 +62,7 @@ No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in 
 
 **Core Machine lifecycle**
 - **Machine CRD** — CPU, memory, image, network, power, volumes, DRA device claims
+- **PVC-backed boot disk** — `spec.volumes[0]` resolves through a Bound `PersistentVolumeClaim` to a real host directory (hostPath/local `PersistentVolume`s today) instead of requiring a hand-placed image file — see [docs/guides/machine-storage.md](docs/guides/machine-storage.md)
 - **Placement** — Ready, capable-labeled nodes; least-loaded with deterministic tie-break
 - **Network Fabric** — rich `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge (see [docs/network-fabric.md](docs/network-fabric.md))
 - **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates standard snapshot objects
@@ -352,7 +353,7 @@ npm --prefix web run build
 
 ### Production gaps
 
-Pre-GA gaps include storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI.
+Pre-GA gaps include storage/network migration preflight, automatic fencing, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI. PVC-backed boot disks (above) are a first cut: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, and only `hostPath`/`local` sources — Kairon doesn't run a CSI node plugin itself, so a network-block volume (Ceph RBD, EBS, etc.) needs to already be attached/mounted on the node by something else before Kairon can use it; snapshot **restore**/clone-from-snapshot and CPU/memory hotplug are still not implemented at all.
 
 A code-level audit also surfaced gaps not on that list: `kairon-ui` now supports real per-operator username/password login (`ui.auth.users`, bcrypt-hashed, signed session tokens, audit-attributed) alongside the legacy shared bearer token, with rate limiting/lockout on repeated failed attempts (5 failures → 5-minute lockout, per requested username) — but there's still no password-reset flow beyond regenerating a hash and redeploying, and its session-logout/default-admin-password/lockout state lives on a single replica (the chart runs exactly one). OIDC/SSO is a bigger, separate decision and isn't implemented. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
 
@@ -364,6 +365,14 @@ Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md
 
 ## License
 
-Copyright 2026 [Zyvor](https://zyvor.dev).
+### Open source (Apache-2.0)
 
-Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).
+This repository is licensed under the [Apache License, Version 2.0](LICENSE).
+You may use, modify, and run it for personal, lab, and commercial production
+use at no charge, subject to Apache-2.0 (preserve notices / NOTICE where required).
+See [NOTICE](NOTICE).
+
+### Enterprise
+
+Production support, SLAs, and Zyvor Enterprise products are licensed separately.
+Contact [sales@zyvor.dev](mailto:sales@zyvor.dev) or see [zyvor.dev](https://zyvor.dev).
