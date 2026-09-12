@@ -20,6 +20,7 @@ A batch of fixes from a code-level production-readiness audit -- each backed by 
 - `go.mod` gained `golang.org/x/crypto` (bcrypt password hashing for `kairon-ui`'s new login) and `github.com/coder/websocket` (the VNC console relay; stdlib `net/http` has no WebSocket support) -- otherwise still a dependency-light module (Prometheus client + stdlib + these two additions).
 - `web/package.json` gained `@novnc/novnc` (the browser VNC/RFB client the new Console view renders into a `<canvas>`).
 - `kairon-node`'s VNC console listener no longer takes the whole node agent down if it can't bind its port (e.g. a port collision on a shared host) -- found via a real deployment, where this silently stopped all Machine reconciliation, not just the optional console feature. Fixed by checking the bind synchronously and logging-and-skipping on failure instead of canceling the process.
+- Every listen port the Helm chart's workloads use is now a `values.yaml` setting, not a compiled-in default: `controller.healthPort` (8080) and `node.healthPort` (8081) join the already-configurable `migration.port`/`console.port`, and `ui.service.port` now also drives the container's actual internal `-listen` port, not just the Kubernetes Service. Prompted directly by a real port collision (`console.port`'s default 8090 was already in use by an unrelated Docker container on a real host).
 
 # Kairon v0.4.0
 

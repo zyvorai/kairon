@@ -71,13 +71,14 @@ spec:
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           args:
             - "--interval={{ .Values.controller.interval }}"
+            - "--health-addr=:{{ .Values.controller.healthPort }}"
 {{ if .Values.migration.maxConcurrentPerNode }}
             - "--migration-max-concurrent-per-node={{ .Values.migration.maxConcurrentPerNode }}"
 {{ end }}
 {{ if .Values.migration.maxConcurrentCluster }}
             - "--migration-max-concurrent-cluster={{ .Values.migration.maxConcurrentCluster }}"
 {{ end }}
-          ports: [{name: health, containerPort: 8080}]
+          ports: [{name: health, containerPort: {{ .Values.controller.healthPort }}}]
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
@@ -142,6 +143,7 @@ spec:
           imagePullPolicy: {{ .Values.node.image.pullPolicy }}
           args:
             - "--interval={{ .Values.node.interval }}"
+            - "--health-addr=:{{ .Values.node.healthPort }}"
             - "--fluxvm-url={{ .Values.node.fluxvmURL }}"
             - "--default-backend={{ .Values.node.defaultBackend }}"
             - "--image-root={{ .Values.node.imageRoot }}"
@@ -169,7 +171,7 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.console.existingSecret | default "kairon-console-token" }}, key: {{ .Values.console.existingSecretKey | default "token" }}}}
 {{ end }}
           ports:
-            - {name: health, containerPort: 8081}
+            - {name: health, containerPort: {{ .Values.node.healthPort }}}
 {{ if .Values.migration.enabled }}
             - {name: migration, containerPort: {{ .Values.migration.port }}, protocol: TCP}
 {{ end }}
@@ -314,7 +316,7 @@ spec:
           image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           args:
-            - "-listen=:8082"
+            - "-listen=:{{ .Values.ui.service.port }}"
             - "-allow-unauthenticated={{ .Values.ui.allowUnauthenticated }}"
           env:
             - name: KAIRON_UI_TOKEN
@@ -335,7 +337,7 @@ spec:
             - name: KAIRON_NODE_CONSOLE_PORT
               value: {{ .Values.console.port | quote }}
 {{ end }}
-          ports: [{name: http, containerPort: 8082}]
+          ports: [{name: http, containerPort: {{ .Values.ui.service.port }}}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}
           livenessProbe: {httpGet: {path: /healthz, port: http}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}

@@ -7,6 +7,10 @@ controller:
     tag: latest
     pullPolicy: IfNotPresent
   interval: 5s
+  # /healthz /readyz port. Change if it collides with something else
+  # already running on a node sharing this container's network namespace
+  # (found the hard way once already -- see console.port below).
+  healthPort: 8080
   # A single reconciler cluster-wide; lightweight by design (see
   # internal/controller: no in-memory cache, every tick re-lists from the
   # API). Raise for very large fleets if reconcile ticks start lagging
@@ -20,6 +24,11 @@ node:
     tag: latest
     pullPolicy: IfNotPresent
   interval: 3s
+  # /healthz /readyz port -- runs with hostNetwork: true (see below), so
+  # this shares the node's real port space, not just this container's.
+  # Confirmed against a real host: the default console.port (8090)
+  # collided with an unrelated Docker container already using it there.
+  healthPort: 8081
   # One kairon-node per capable node (DaemonSet); same lightweight,
   # cache-free reconcile design as the controller.
   resources:
@@ -83,6 +92,10 @@ console:
   # enabling this on a shared cluster.
   enabled: false
   # Port kairon-node's console relay listens on and kairon-ui connects to.
+  # kairon-node runs with hostNetwork: true, so this is a real node-wide
+  # port, not just this container's -- change it if 8090 collides with
+  # something else already running on your nodes (this default did, on a
+  # real host, with an unrelated Docker container).
   port: 8090
   # existingSecret: a pre-created Secret with a "token" key instead of the
   # one the chart generates and persists automatically (same
@@ -142,6 +155,9 @@ ui:
     existingSessionSecretKey: "sessionSecret"
   service:
     type: ClusterIP
+    # Also the container's actual internal listen port (-listen=:port) --
+    # one value drives both, since a dashboard-with-one-backend has no
+    # real reason to decouple them.
     port: 8082
   ingress:
     enabled: false
