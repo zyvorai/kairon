@@ -146,6 +146,29 @@ spec:
                   dataplaneRequired:
                     type: boolean
                     default: false
+              cloudInit:
+                type: object
+                description: Operator-supplied guest customization forwarded to
+                  FluxVM's own cloud-init NoCloud seed image. Only applied when
+                  the FluxVM runtime is first created -- editing it on an existing
+                  Machine has no effect, same as network.forwards and resources.
+                properties:
+                  hostname:
+                    type: string
+                  user:
+                    type: string
+                  sshAuthorizedKeys:
+                    type: array
+                    items:
+                      type: string
+                  packages:
+                    type: array
+                    items:
+                      type: string
+                  runCmd:
+                    type: array
+                    items:
+                      type: string
               powerState:
                 type: string
                 enum:

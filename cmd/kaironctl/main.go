@@ -10,12 +10,52 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
+
+// stringSliceFlag collects a repeatable flag (e.g. --ssh-key a --ssh-key b)
+// into an ordered slice, since the standard flag package has no built-in
+// repeatable-flag type.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string { return strings.Join(*s, ",") }
+func (s *stringSliceFlag) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// parseForwards parses "hostPort:guestPort[/proto]" specs, matching FluxVM's
+// SLIRP hostfwd syntax (protocol defaults to tcp).
+func parseForwards(specs []string) ([]model.PortForward, error) {
+	var out []model.PortForward
+	for _, s := range specs {
+		orig := s
+		proto := "tcp"
+		if idx := strings.LastIndex(s, "/"); idx >= 0 {
+			proto = s[idx+1:]
+			s = s[:idx]
+		}
+		hostStr, guestStr, ok := strings.Cut(s, ":")
+		if !ok {
+			return nil, fmt.Errorf("invalid --forward %q: want hostPort:guestPort[/proto]", orig)
+		}
+		hostPort, err := strconv.ParseUint(hostStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --forward %q: bad host port: %w", orig, err)
+		}
+		guestPort, err := strconv.ParseUint(guestStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --forward %q: bad guest port: %w", orig, err)
+		}
+		out = append(out, model.PortForward{HostPort: uint16(hostPort), GuestPort: uint16(guestPort), Protocol: proto})
+	}
+	return out, nil
+}
 
 var version = "dev"
 
@@ -149,11 +189,42 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	backend := fs.String("backend", "qemu", "qemu|cloud-hypervisor|firecracker|flux-vm|auto")
 	network := fs.String("network", "user", "user|tap|macvtap")
 	netns := fs.Bool("netns", false, "use per-VM network namespace for TAP")
+	var forwards stringSliceFlag
+	fs.Var(&forwards, "forward", "host port forward hostPort:guestPort[/proto], e.g. 2222:22 (repeatable; mode=user only)")
+	hostname := fs.String("hostname", "", "guest hostname to set via cloud-init")
+	guestUser := fs.String("user", "", "guest username to configure via cloud-init")
+	var sshKeys stringSliceFlag
+	fs.Var(&sshKeys, "ssh-key", "SSH public key to authorize in the guest via cloud-init (repeatable)")
+	var packages stringSliceFlag
+	fs.Var(&packages, "package", "package to install via cloud-init at first boot (repeatable)")
+	var runcmd stringSliceFlag
+	fs.Var(&runcmd, "runcmd", "shell command to run via cloud-init at first boot (repeatable)")
 	_ = fs.Parse(args[1:])
 	if *image == "" {
 		fatal(fmt.Errorf("--image PATH is required"))
 	}
-	m := model.Machine{TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine}, Metadata: model.ObjectMeta{Name: name, Namespace: *ns}, Spec: model.MachineSpec{Image: model.ImageSpec{Path: *image}, Resources: model.ResourceSpec{CPU: *cpu, Memory: *memory}, Runtime: model.RuntimeSpec{Backend: *backend}, Network: model.NetworkSpec{Mode: *network, NetNS: *netns}, PowerState: "Running"}}
+	pf, err := parseForwards(forwards)
+	if err != nil {
+		fatal(err)
+	}
+	m := model.Machine{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: *image},
+			Resources: model.ResourceSpec{CPU: *cpu, Memory: *memory},
+			Runtime:   model.RuntimeSpec{Backend: *backend},
+			Network:   model.NetworkSpec{Mode: *network, NetNS: *netns, Forwards: pf},
+			CloudInit: model.CloudInitSpec{
+				Hostname:          *hostname,
+				User:              *guestUser,
+				SSHAuthorizedKeys: sshKeys,
+				Packages:          packages,
+				RunCmd:            runcmd,
+			},
+			PowerState: "Running",
+		},
+	}
 	out, err := kc.CreateMachine(ctx, *ns, m)
 	if err != nil {
 		fatal(err)

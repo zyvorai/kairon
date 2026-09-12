@@ -11,9 +11,23 @@ interface CreateForm {
   backend: string;
   network: string;
   netns: boolean;
+  hostname: string;
+  sshAuthorizedKey: string;
+  forward: string;
 }
 
-const EMPTY_FORM: CreateForm = { name: '', image: '', cpu: '2', memory: '2Gi', backend: 'qemu', network: 'user', netns: false };
+const EMPTY_FORM: CreateForm = {
+  name: '',
+  image: '',
+  cpu: '2',
+  memory: '2Gi',
+  backend: 'qemu',
+  network: 'user',
+  netns: false,
+  hostname: '',
+  sshAuthorizedKey: '',
+  forward: '',
+};
 
 export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machine: string) => void; onSnapshot: (machine: string) => void }) {
   const [items, setItems] = useState<Machine[]>([]);
@@ -35,7 +49,16 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     setBusy(true);
     setMsg('');
     try {
-      await apiJSON('/api/v1/machines', 'POST', form);
+      const { hostname, sshAuthorizedKey, forward, ...base } = form;
+      const body: Record<string, unknown> = { ...base };
+      if (hostname) body.hostname = hostname;
+      if (sshAuthorizedKey) body.sshAuthorizedKeys = [sshAuthorizedKey];
+      if (forward) {
+        const [hostPort, guestPort] = forward.split(':').map((p) => Number(p.trim()));
+        if (!hostPort || !guestPort) throw new Error('Port forward must be hostPort:guestPort, e.g. 2222:22');
+        body.forwards = [{ hostPort, guestPort }];
+      }
+      await apiJSON('/api/v1/machines', 'POST', body);
       setForm(EMPTY_FORM);
       await refresh();
     } catch (err) {
@@ -111,6 +134,18 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
               <input type="checkbox" id="netns" checked={form.netns} onChange={(e) => setForm({ ...form, netns: e.target.checked })} />
               <label htmlFor="netns">Per-VM network namespace</label>
             </div>
+            <label>
+              Port forward (host:guest)
+              <input value={form.forward} onChange={(e) => setForm({ ...form, forward: e.target.value })} placeholder="2222:22 (network=user only)" />
+            </label>
+            <label>
+              Hostname
+              <input value={form.hostname} onChange={(e) => setForm({ ...form, hostname: e.target.value })} placeholder="set via cloud-init" />
+            </label>
+            <label>
+              SSH public key
+              <input value={form.sshAuthorizedKey} onChange={(e) => setForm({ ...form, sshAuthorizedKey: e.target.value })} placeholder="ssh-ed25519 AAAA... (authorized via cloud-init)" />
+            </label>
           </div>
           <div className="formactions">
             <button className="primary" type="submit" disabled={busy}>

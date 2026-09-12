@@ -1,9 +1,12 @@
 # Unreleased
 
-A batch of fixes from a code-level production-readiness audit -- each backed by a specific file:line finding, not a guess. See the "Production gaps" section of README.md for what's still open (most notably: `kairon-ui`'s auth is still one shared, non-expiring token with no per-operator attribution -- a real auth-model redesign, out of scope for this batch).
+A batch of fixes from a code-level production-readiness audit -- each backed by a specific file:line finding, not a guess -- plus real day-2 VM operations (cloud-init, SSH forwards) and a real per-operator login for `kairon-ui`. See the "Production gaps" section of README.md for what's still open.
 
 ## Added
 
+- `kairon-ui` real username/password login: bcrypt-hashed accounts (`ui.auth.users`, or a pre-created Secret via `ui.auth.existingSecret`), a two-step "Apple ID style" sign-in screen, signed 12-hour session tokens, a working `POST /api/v1/auth/logout`, and per-operator attribution in the audit log -- closing this project's longest-standing known auth gap. A fresh `helm install` with no `ui.*` values now seeds one default `admin` account with a random, generated-once password (see NOTES after install/upgrade) instead of failing or coming up unauthenticated. New `kairon-ui -hash-password PASSWORD` mode generates a hash for `ui.auth.users`. The legacy shared `ui.token` keeps working unchanged, accepted alongside the new login.
+- `spec.cloudInit` (`hostname`, `user`, `sshAuthorizedKeys`, `packages`, `runCmd`): forwards operator-supplied guest customization into FluxVM's own cloud-init seed image, previously entirely unreachable through Kairon (only `staticNetwork` was exposed). New `kaironctl create --hostname/--user/--ssh-key/--package/--runcmd` flags and matching dashboard create-form fields. Only applied at Machine creation -- see `docs/guides/machine-network.md`.
+- `kaironctl create --forward=hostPort:guestPort[/proto]` (repeatable) and a dashboard create-form field for `spec.network.forwards` -- the SLIRP port-forward mechanism already worked end-to-end, it just had no way to set it besides hand-writing a Machine manifest.
 - `kairon-ui` now logs every mutating `/api/v1/...` request (method, path, remote address, resulting status), including rejected-auth attempts against destructive routes -- a partial fix for having had no audit trail at all.
 - `ui.existingSecret` / `ui.existingSecretKey`: reference a pre-created Secret for the dashboard token instead of passing it through `helm --set`/stored release values, mirroring the escape hatch `migration.tlsSecretName` already requires.
 - CPU/memory `resources:` requests and limits on all three workloads (`controller.resources`/`node.resources`/`ui.resources` in `values.yaml`), in both the Helm chart and the raw `deploy/*.yaml` manifests.
@@ -13,6 +16,7 @@ A batch of fixes from a code-level production-readiness audit -- each backed by 
 
 - `kairon-controller`/`kairon-node` ClusterRoles no longer grant the `update` verb on Kairon CRDs -- `internal/kube.Client` only ever issues `PATCH`, never a full-object `PUT`.
 - `controller.go`/`agent.go` no longer silently swallow a *secondary* status-patch failure (the follow-up write that records a reconcile error) -- both the primary and secondary failures are now logged.
+- `go.mod` gained `golang.org/x/crypto` (bcrypt password hashing for `kairon-ui`'s new login) -- otherwise still a dependency-light module (Prometheus client + stdlib + this one addition).
 
 # Kairon v0.4.0
 

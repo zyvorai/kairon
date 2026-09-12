@@ -107,6 +107,25 @@ ui:
   existingSecretKey: "token"
   # Local development only. Never set this in a real cluster.
   allowUnauthenticated: false
+  auth:
+    # Real per-operator username/password login (docs/getting-started.md),
+    # alongside -- not instead of -- the legacy shared ui.token above.
+    # Generate each entry's passwordHash with: kairon-ui -hash-password 'the password'
+    # When empty (the default) and nothing above is set either, the chart
+    # seeds one default "admin" account instead, with a random password it
+    # generates once (see NOTES.txt after install/upgrade) -- so a fresh
+    # `helm install` with no ui.* values still gets a real, safe login.
+    users: []
+    # existingSecret: a pre-created Secret with a users.json key (a JSON
+    # array of {username, passwordHash}) instead of ui.auth.users above.
+    existingSecret: ""
+    existingSecretKey: "users.json"
+    # existingSessionSecret: a pre-created Secret holding the session-token
+    # signing key, instead of the one the chart generates and persists
+    # automatically. Needed once there's ever more than one kairon-ui
+    # replica (today's chart runs exactly one).
+    existingSessionSecret: ""
+    existingSessionSecretKey: "sessionSecret"
   service:
     type: ClusterIP
     port: 8082

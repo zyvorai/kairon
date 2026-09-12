@@ -62,6 +62,22 @@ Destination sessions are persisted as mode `0600` JSON files using write -> fsyn
 
 `Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` `ResourceClaim` objects. The node agent requires an allocation, resolves a PCI BDF, normalizes it and checks a node-local allowlist. Namespace users cannot bypass the host PCI authorization boundary by editing annotations.
 
+## Day-2 operations on a running Machine
+
+`spec.cloudInit` (SSH keys, hostname, packages, first-boot commands) and
+`spec.network.forwards` (inbound SSH/etc. via SLIRP hostfwd) are both read
+only once, inside the FluxVM create call in `internal/agent.reconcileMachine`
+-- editing either field, or `spec.resources`, on an already-running Machine
+is a silent no-op: no error, no status signal, no drift correction. Apply
+the change at creation, or delete and recreate. See
+[guides/machine-network.md](guides/machine-network.md) for `cloudInit`/
+`forwards` usage.
+
+Kairon has no text/graphical console, no guest-exec (QEMU guest agent), and
+no live resize today, even though FluxVM itself exposes all three
+(`GET /v1/vms/{id}/console`, `/qga/*`, `POST /v1/vms/{id}/resources`) --
+wrapping them is tracked as future work, not yet implemented.
+
 ## Operational visibility
 
 `kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane; each links to [`runbook-migration-failures.md`](runbook-migration-failures.md).

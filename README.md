@@ -214,15 +214,27 @@ If a commit's outcome is genuinely ambiguous, the migration lands in `NeedsRecov
 | **Snapshots** | List + create form (mirrors `kaironctl snapshot`) |
 
 ```bash
-helm upgrade --install kairon ./charts/kairon -n kairon-system \
-  --set ui.enabled=true \
-  --set ui.token="$(openssl rand -hex 24)"
+helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=true
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 ```
 
-Open `http://127.0.0.1:8082` and paste the token into the "API token" field. `ui.token` is required unless you explicitly set `ui.allowUnauthenticated=true` (local development only) — the chart refuses to render without one, and the binary independently refuses to start without one. To avoid the token passing through `helm --set`/stored release values at all, set `ui.existingSecret` (+ `ui.existingSecretKey`, default `token`) to reference a Secret you create yourself instead.
+Real per-operator username/password login, Apple-ID-style (username, then password on a second screen). With no `ui.*` auth values set, the chart seeds one default `admin` account with a random, generated-once password:
 
-Every mutating request (create/delete/start/stop/migrate/evacuate/recover) is logged with method, path, remote address, and status — but auth today is one shared token for every operator, so that log can tell you *that* an action happened, not *who* did it. Treat this the same way you'd treat a shared root password: fine for a small trusted team, not a substitute for real per-operator identity.
+```bash
+kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
+```
+
+Open `http://127.0.0.1:8082` and sign in as `admin` with that password. For real, named accounts instead, generate a bcrypt hash and set `ui.auth.users`:
+
+```bash
+kairon-ui -hash-password 'a real password'
+helm upgrade --install kairon ./charts/kairon -n kairon-system \
+  --set ui.enabled=true \
+  --set ui.auth.users[0].username=alice \
+  --set ui.auth.users[0].passwordHash='$2a$10$...'
+```
+
+Every mutating request (create/delete/start/stop/migrate/evacuate/recover) is logged with method, path, remote address, and status — now including the signed-in username for session-token logins, closing the "who did it" gap the legacy mode still has. The legacy single shared token (`ui.token`/`ui.existingSecret`, or `ui.allowUnauthenticated=true` for local development) still works unchanged and is accepted alongside `ui.auth.users` — treat it like a shared root password if you're still using it.
 
 Bare-metal alternative, no Kubernetes-hosted deployment needed:
 
@@ -267,6 +279,8 @@ Examples: [`examples/`](examples/).
 kaironctl get [machines|migrations|snapshots] [-n NS]
 kaironctl describe NAME
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
+                 [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
+                 [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # last five repeatable/cloud-init; see docs/guides/machine-network.md
 kaironctl start|stop|delete NAME
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto]
@@ -338,7 +352,7 @@ npm --prefix web run build
 
 Pre-GA gaps include storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI.
 
-A code-level audit also surfaced gaps not on that list: `kairon-ui` authenticates every operator with one shared, non-expiring bearer token — mutating requests are now logged (method/path/remote address/status), but a destructive action still can't be attributed to a specific person, only "someone with the token." Real per-operator auth (separate tokens, or OIDC) is a real redesign, not done yet. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
+A code-level audit also surfaced gaps not on that list: `kairon-ui` now supports real per-operator username/password login (`ui.auth.users`, bcrypt-hashed, signed session tokens, audit-attributed) alongside the legacy shared bearer token — but the login mode has no rate limiting/lockout on repeated failed attempts, no password-reset flow beyond regenerating a hash and redeploying, and its session-logout/default-admin-password state lives on a single replica (the chart runs exactly one). OIDC/SSO is a bigger, separate decision and isn't implemented. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 

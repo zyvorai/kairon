@@ -10,17 +10,24 @@ import (
 )
 
 // createMachineRequest mirrors cmd/kaironctl's cmdCreate flags exactly
-// (image/cpu/memory/backend/network/netns), not the full MachineSpec --
-// the UI's create form offers the same surface kaironctl create does, not
-// every field a Machine manifest could theoretically set.
+// (image/cpu/memory/backend/network/netns/forward/hostname/user/ssh-key/
+// package/runcmd), not the full MachineSpec -- the UI's create form offers
+// the same surface kaironctl create does, not every field a Machine
+// manifest could theoretically set.
 type createMachineRequest struct {
-	Name    string `json:"name"`
-	CPU     string `json:"cpu"`
-	Memory  string `json:"memory"`
-	Image   string `json:"image"`
-	Backend string `json:"backend"`
-	Network string `json:"network"`
-	NetNS   bool   `json:"netns"`
+	Name              string              `json:"name"`
+	CPU               string              `json:"cpu"`
+	Memory            string              `json:"memory"`
+	Image             string              `json:"image"`
+	Backend           string              `json:"backend"`
+	Network           string              `json:"network"`
+	NetNS             bool                `json:"netns"`
+	Forwards          []model.PortForward `json:"forwards,omitempty"`
+	Hostname          string              `json:"hostname,omitempty"`
+	GuestUser         string              `json:"guestUser,omitempty"`
+	SSHAuthorizedKeys []string            `json:"sshAuthorizedKeys,omitempty"`
+	Packages          []string            `json:"packages,omitempty"`
+	RunCmd            []string            `json:"runCmd,omitempty"`
 }
 
 func (s *Server) handleListMachines(w http.ResponseWriter, r *http.Request) {
@@ -68,10 +75,17 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
 		Metadata: model.ObjectMeta{Name: req.Name, Namespace: ns},
 		Spec: model.MachineSpec{
-			Image:      model.ImageSpec{Path: req.Image},
-			Resources:  model.ResourceSpec{CPU: req.CPU, Memory: req.Memory},
-			Runtime:    model.RuntimeSpec{Backend: req.Backend},
-			Network:    model.NetworkSpec{Mode: req.Network, NetNS: req.NetNS},
+			Image:     model.ImageSpec{Path: req.Image},
+			Resources: model.ResourceSpec{CPU: req.CPU, Memory: req.Memory},
+			Runtime:   model.RuntimeSpec{Backend: req.Backend},
+			Network:   model.NetworkSpec{Mode: req.Network, NetNS: req.NetNS, Forwards: req.Forwards},
+			CloudInit: model.CloudInitSpec{
+				Hostname:          req.Hostname,
+				User:              req.GuestUser,
+				SSHAuthorizedKeys: req.SSHAuthorizedKeys,
+				Packages:          req.Packages,
+				RunCmd:            req.RunCmd,
+			},
 			PowerState: "Running",
 		},
 	}

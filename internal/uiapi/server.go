@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/zyvorai/kairon/internal/kube"
 )
@@ -35,6 +36,16 @@ type Server struct {
 	// that doesn't match an /api/v1/... route -- KAIRON_UI_WEB_DIR, not
 	// go:embed, so `go build`/the dep-free Go CI job never needs Node.
 	WebDir string
+	// Users, when non-empty, enables real per-operator username/password
+	// login (see auth.go) alongside (not instead of) the legacy Token
+	// above -- either credential is accepted.
+	Users []User
+	// SessionSecret signs/verifies session tokens issued by
+	// POST /api/v1/auth/login. Required whenever Users is non-empty.
+	SessionSecret []byte
+	// revoked backs POST /api/v1/auth/logout; zero value (an empty
+	// sync.Map) is ready to use.
+	revoked sync.Map
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -75,6 +86,13 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 
 	top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))
+
+	// Unauthenticated by necessity: login must be reachable without a
+	// token to be useful at all; config/logout follow the same
+	// unauthenticated convention as /healthz above.
+	top.HandleFunc("GET /api/v1/auth/config", s.handleAuthConfig)
+	top.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	top.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	// The SPA route is intentionally unauthenticated (same as netra's own
 	// serveWeb registration) -- it serves static JS/CSS/HTML, not data;
 	// every actual data fetch the page makes goes through the auth-gated
@@ -133,9 +151,18 @@ func (s *Server) withAudit(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// withUsernameHolder lets withAuth, deep inside next, report back
+		// which operator authenticated (session-token auth only -- the
+		// legacy shared token has no identity to report) so this log line
+		// can attribute the action, not just record that it happened.
+		r, holder := withUsernameHolder(r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		s.Log.Info("uiapi request", "method", r.Method, "path", r.URL.Path, "remoteAddr", r.RemoteAddr, "status", rec.status)
+		fields := []any{"method", r.Method, "path", r.URL.Path, "remoteAddr", r.RemoteAddr, "status", rec.status}
+		if *holder != "" {
+			fields = append(fields, "user", *holder)
+		}
+		s.Log.Info("uiapi request", fields...)
 	})
 }
 
@@ -151,17 +178,32 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
+// withAuth accepts either credential: the legacy shared static token
+// (constant-time compared, as before) or a signed, unexpired, unrevoked
+// session token from POST /api/v1/auth/login -- whichever Server has
+// configured (Token, Users, or both). Neither configured means
+// unauthenticated dev mode, unchanged from before.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Token != "" {
-			got := r.Header.Get("Authorization")
-			want := "Bearer " + s.Token
-			if len(got) != len(want) || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-				writeError(w, http.StatusUnauthorized, "invalid or missing bearer token")
+		if s.Token == "" && len(s.Users) == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		tok := bearerToken(r)
+		if tok != "" {
+			if s.Token != "" && len(tok) == len(s.Token) && subtle.ConstantTimeCompare([]byte(tok), []byte(s.Token)) == 1 {
+				next.ServeHTTP(w, r)
 				return
 			}
+			if len(s.Users) > 0 {
+				if username, _, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) {
+					setContextUsername(r.Context(), username)
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
 		}
-		next.ServeHTTP(w, r)
+		writeError(w, http.StatusUnauthorized, "invalid or missing bearer token")
 	})
 }
 

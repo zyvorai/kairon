@@ -1,15 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Nav, { Page } from './components/Nav';
 import Overview from './pages/Overview';
 import Machines from './pages/Machines';
 import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
-import { setToken, token } from './api';
+import Login from './pages/Login';
+import { logout, token, UNAUTHORIZED_EVENT, username } from './api';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
-  const [tok, setTok] = useState(token());
+  const [signedIn, setSignedIn] = useState(!!token());
   const [prefillMachine, setPrefillMachine] = useState('');
+
+  useEffect(() => {
+    // Fired by api.ts on any 401, from anywhere in the app -- a stale or
+    // revoked session bounces straight back to the login screen instead of
+    // leaving the dashboard up with every action silently failing.
+    const onUnauthorized = () => setSignedIn(false);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
 
   function goMigrate(machine: string) {
     setPrefillMachine(machine);
@@ -18,6 +28,15 @@ export default function App() {
   function goSnapshot(machine: string) {
     setPrefillMachine(machine);
     setPage('snapshots');
+  }
+
+  async function signOut() {
+    await logout().catch(() => {});
+    setSignedIn(false);
+  }
+
+  if (!signedIn) {
+    return <Login onSignedIn={() => setSignedIn(true)} />;
   }
 
   const body = {
@@ -29,7 +48,7 @@ export default function App() {
 
   return (
     <>
-      <Nav page={page} setPage={setPage} />
+      <Nav page={page} setPage={setPage} username={username()} onSignOut={signOut} />
       <main>
         <header className="hero">
           <div>
@@ -37,18 +56,6 @@ export default function App() {
             <h1>Run, migrate, and snapshot VMs on FluxVM.</h1>
             <p>Kairon orchestrates FluxVM hosts as Kubernetes-native Machines, with secure peer live migration and operator-attested recovery.</p>
           </div>
-          <label className="tokenbox">
-            API token
-            <input
-              type="password"
-              value={tok}
-              placeholder="required unless the server allows unauthenticated access"
-              onChange={(e) => {
-                setTok(e.target.value);
-                setToken(e.target.value);
-              }}
-            />
-          </label>
         </header>
         {body}
       </main>

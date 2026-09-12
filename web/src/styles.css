@@ -106,7 +106,10 @@ button.danger:hover {
   display: block;
   border-radius: 6px;
 }
+.navright { display: flex; align-items: center; gap: 16px; }
 .navlinks { display: flex; gap: 6px; }
+.navuser { display: flex; align-items: center; gap: 8px; border-left: 1px solid var(--apple-border); padding-left: 16px; }
+.navusername { font-size: 13px; color: #777; }
 .nav button {
   border: 0;
   background: transparent;
@@ -151,8 +154,6 @@ main {
   font-weight: 800;
   color: var(--zyvor-orange) !important;
 }
-.tokenbox { font-size: 12px; color: #777; min-width: 240px; }
-.tokenbox input,
 .toolbar input,
 .filters input,
 .filters select {
@@ -321,6 +322,35 @@ table.datatable .rowactions button {
 .msg { font-size: 13px; color: #666; margin-top: 10px; }
 .msg.error { color: #b42318; }
 
+.linklike {
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  color: var(--apple-blue) !important;
+  font-size: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.linklike:hover { text-decoration: underline; background: none !important; }
+.linklike:active { transform: none; }
+
+.loginwrap {
+  min-height: calc(100vh - 0px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.logincard {
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+.logincard h3 { margin-top: 4px; }
+.logincard .formgrid { grid-template-columns: 1fr; text-align: left; }
+.logincard .formactions { justify-content: center; }
+
 .recovery-block {
   border: 1px solid #ffd8ba;
   background: #fff9f2;
@@ -336,8 +366,8 @@ table.datatable .rowactions button {
 @media (max-width: 900px) {
   .nav { align-items: flex-start; gap: 12px; overflow: auto; }
   .navlinks { min-width: max-content; }
+  .navright { flex-wrap: wrap; }
   .hero { display: block; }
-  .tokenbox { display: block; margin-top: 20px; }
   .grid { grid-template-columns: 1fr; }
   .span2,
   .span3,

@@ -57,8 +57,16 @@ func (r Record) ID() string {
 	return r.UUID
 }
 
+// CloudInitSpec mirrors FluxVM's own cloud-init NoCloud datasource fields
+// (fluxvm-core/src/model.rs CloudInitSpec) that Kairon currently exposes.
+// FluxVM also has a write_files field; not yet surfaced here.
 type CloudInitSpec struct {
-	StaticNetwork bool `json:"static_network,omitempty"`
+	Hostname          string   `json:"hostname,omitempty"`
+	User              string   `json:"user,omitempty"`
+	SSHAuthorizedKeys []string `json:"ssh_authorized_keys,omitempty"`
+	Packages          []string `json:"packages,omitempty"`
+	RunCmd            []string `json:"runcmd,omitempty"`
+	StaticNetwork     bool     `json:"static_network,omitempty"`
 }
 
 type CreateRequest struct {
@@ -198,8 +206,16 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		VFIODevices: vfioDevices,
 		PodUID:      m.Spec.Network.PodUID,
 	}
-	if m.Spec.Network.StaticNetwork {
-		payload.CloudInit = &CloudInitSpec{StaticNetwork: true}
+	ci := m.Spec.CloudInit
+	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 {
+		payload.CloudInit = &CloudInitSpec{
+			Hostname:          ci.Hostname,
+			User:              ci.User,
+			SSHAuthorizedKeys: ci.SSHAuthorizedKeys,
+			Packages:          ci.Packages,
+			RunCmd:            ci.RunCmd,
+			StaticNetwork:     m.Spec.Network.StaticNetwork,
+		}
 	}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {

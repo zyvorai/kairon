@@ -1,0 +1,17 @@
+Kairon is installed in namespace {{ .Release.Namespace }}.
+{{- if .Values.ui.enabled }}
+
+kairon-ui (dashboard): {{ .Values.ui.service.type }} port {{ .Values.ui.service.port }}
+{{- if ne (include "kairon.ui.anyAuthConfigured" .) "true" }}
+
+No ui.token / ui.auth.users / ui.allowUnauthenticated was set, so a default
+"admin" account was generated for you. Retrieve its password with:
+
+  kubectl -n {{ .Release.Namespace }} get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
+
+Set ui.auth.users (see docs/getting-started.md) to replace this with real,
+named per-operator accounts -- generate each passwordHash with:
+
+  kairon-ui -hash-password 'the password'
+{{- end }}
+{{- end }}

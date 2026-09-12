@@ -52,6 +52,7 @@ type MachineSpec struct {
 	Resources     ResourceSpec           `json:"resources"`
 	Runtime       RuntimeSpec            `json:"runtime,omitempty"`
 	Network       NetworkSpec            `json:"network,omitempty"`
+	CloudInit     CloudInitSpec          `json:"cloudInit,omitempty"`
 	ServiceFabric ServiceFabricSpec      `json:"serviceFabric,omitempty"`
 	PowerState    string                 `json:"powerState,omitempty"`
 	Tenant        string                 `json:"tenant,omitempty"`
@@ -60,6 +61,20 @@ type MachineSpec struct {
 	Security      SecuritySpec           `json:"security,omitempty"`
 	Volumes       []MachineVolume        `json:"volumes,omitempty"`
 	DeviceClaims  []DeviceClaimReference `json:"deviceClaims,omitempty"`
+}
+
+// CloudInitSpec injects operator-supplied guest customization at first boot,
+// forwarded verbatim into FluxVM's own cloud-init NoCloud seed image
+// (github.com/zyvorai/fluxvm crates/fluxvm-core/src/model.rs CloudInitSpec).
+// Only applied when a Machine's FluxVM runtime is first created
+// (internal/agent.reconcileMachine) -- editing it on an existing Machine has
+// no effect, same as spec.network.forwards and spec.resources.
+type CloudInitSpec struct {
+	Hostname          string   `json:"hostname,omitempty"`
+	User              string   `json:"user,omitempty"`
+	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
+	Packages          []string `json:"packages,omitempty"`
+	RunCmd            []string `json:"runCmd,omitempty"`
 }
 
 type ImageSpec struct {
