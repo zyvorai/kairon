@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: MachineNetworkPolicy and NetworkSecurityGroup'
----
+# User guide: MachineNetworkPolicy and NetworkSecurityGroup
 
 Declarative VM-edge policy for Machines. The node agent applies objects only
 for Machines scheduled on its node. Enforcement runs in FluxVM (TC/eBPF), not

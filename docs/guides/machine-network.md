@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: Machine networking'
----
+# User guide: Machine networking
 
 How to configure `Machine.spec.network` and related status fields. Kairon maps
 these into FluxVM create/status APIs; it does not run Multus or own BPF
@@ -151,6 +147,6 @@ adapter for memory transfer; see [migration-adapter.md](../migration-adapter.md)
 
 ## Examples
 
-- Minimal TAP: [`examples/linux-machine.yaml`](https://github.com/zyvorai/kairon/blob/main/examples/linux-machine.yaml)
-- Full fabric stack: [`examples/network-fabric-machine.yaml`](https://github.com/zyvorai/kairon/blob/main/examples/network-fabric-machine.yaml)
+- Minimal TAP: [`examples/linux-machine.yaml`](../../examples/linux-machine.yaml)
+- Full fabric stack: [`examples/network-fabric-machine.yaml`](../../examples/network-fabric-machine.yaml)
 - Hands-on: [tutorials/network-fabric.md](../tutorials/network-fabric.md)

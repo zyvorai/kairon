@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: RUNBOOK MIGRATION FAILURES
-  title: 'Runbook: migration failures and NeedsRecovery'
----
+# Runbook: migration failures and NeedsRecovery
 
 ## When you land here
 

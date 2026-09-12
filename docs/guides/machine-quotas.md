@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: MachineQuota'
----
+# User guide: MachineQuota
 
 Caps how many Machines, and how much total CPU/memory, a namespace may have
 scheduled at once -- Kairon's namespace-scoped equivalent of a Kubernetes

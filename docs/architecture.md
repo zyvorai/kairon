@@ -1,17 +1,4 @@
----
-hero:
-  eyebrow: ARCHITECTURE
-  title: Architecture
-  lead: >-
-    Kubernetes is the source of truth; FluxVM owns normal VMM lifecycle.
-    Live-transfer mechanics sit behind a backend-neutral migration adapter
-    rather than assumed FluxVM/QMP endpoints.
-  highlights:
-    - {value: "6", label: "Components: controller, node agent, migration peer, migration adapter, kaironctl, kairon-ui"}
-    - {value: "4", label: "States in cold migration: Pending, Stopping, Restarting, Succeeded"}
-    - {value: "6", label: "States in live migration: Pending through Succeeded, with a NeedsRecovery failure path"}
-    - {value: "TLS 1.3", label: "Mandatory mutual-TLS on the migration peer, with a local atomic session journal"}
----
+# Architecture
 
 Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the source of truth; FluxVM owns normal VMM lifecycle. Live-transfer mechanics are behind a backend-neutral migration adapter rather than assumed FluxVM/QMP endpoints.
 
@@ -24,46 +11,44 @@ Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the s
 - `kaironctl`: thin Kubernetes API client; it never bypasses the controllers.
 - `kairon-ui` (optional): a web dashboard (`internal/uiapi` Go backend + `web/` React SPA) that is itself just another Kubernetes API client, same standing as `kaironctl` -- no privileged side channel, no second source of truth.
 
-## Take a closer look
+## Cold migration
 
-=== "Cold migration"
+```text
+Pending -> Stopping -> Restarting -> Succeeded
+             |             |
+      verify source    assign target
+         stopped       and restart
+```
 
-    ```text
-    Pending -> Stopping -> Restarting -> Succeeded
-                 |             |
-          verify source    assign target
-             stopped       and restart
-    ```
+This state is represented in Kubernetes and is restart-safe. Kairon does not copy host-local disk content.
 
-    This state is represented in Kubernetes and is restart-safe. Kairon does not copy host-local disk content.
+## Live migration
 
-=== "Live migration"
+```text
+Pending
+  -> Starting
+     source peer authenticates target over mTLS
+     target adapter prepares destination
+     target journals Prepared session
+  -> Running
+     source adapter transfers VM state to opaque endpoint
+  -> Cutover
+     transfer completed AND target commit succeeded
+  -> Adopting
+     Machine.nodeName=target
+     kairon.zyvor.dev/adopt-only=true
+  -> Succeeded
+     target discovers incoming runtime and reports Running
+```
 
-    ```text
-    Pending
-      -> Starting
-         source peer authenticates target over mTLS
-         target adapter prepares destination
-         target journals Prepared session
-      -> Running
-         source adapter transfers VM state to opaque endpoint
-      -> Cutover
-         transfer completed AND target commit succeeded
-      -> Adopting
-         Machine.nodeName=target
-         kairon.zyvor.dev/adopt-only=true
-      -> Succeeded
-         target discovers incoming runtime and reports Running
-    ```
+Failure rules:
 
-    Failure rules:
+- Target unsupported: `Blocked`; source is untouched.
+- Source start/transfer failure: target is aborted; no cutover.
+- Source transfer succeeds but target commit fails: `NeedsRecovery`; no automatic cutover or restart.
+- Target runtime missing after commit: adopt-only guard blocks duplicate creation.
 
-    - Target unsupported: `Blocked`; source is untouched.
-    - Source start/transfer failure: target is aborted; no cutover.
-    - Source transfer succeeds but target commit fails: `NeedsRecovery`; no automatic cutover or restart.
-    - Target runtime missing after commit: adopt-only guard blocks duplicate creation.
-
-    No raw destination URI is accepted from users. A peer endpoint is derived from the selected target node `InternalIP`; TLS validates the configured migration server identity.
+No raw destination URI is accepted from users. A peer endpoint is derived from the selected target node `InternalIP`; TLS validates the configured migration server identity.
 
 ## Session durability
 

@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: MIGRATION ADAPTER
-  title: Kairon migration adapter contract
----
+# Kairon migration adapter contract
 
 The adapter isolates hypervisor-specific migration mechanics from Kairon's Kubernetes API. It is a local HTTP service on a root/admin-controlled Unix socket. Kairon never exposes this socket to workload Pods.
 

@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: restoring a MachineSnapshot'
----
+# User guide: restoring a MachineSnapshot
 
 How to get a usable disk back out of a `MachineSnapshot`, and why this is a
 two-step flow rather than one "restore my VM" button.

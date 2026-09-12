@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: CPU/memory hotplug'
----
+# User guide: CPU/memory hotplug
 
 How growing `spec.resources` on a running Machine works, and what today's
 real limits are.

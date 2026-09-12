@@ -7,5 +7,3 @@ coverage.out
 .DS_Store
 .claude/
 .deploy-last
-__pycache__/
-site/

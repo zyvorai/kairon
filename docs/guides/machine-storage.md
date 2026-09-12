@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: GUIDES
-  title: 'User guide: Machine storage'
----
+# User guide: Machine storage
 
 How to boot a Machine's disk from a `PersistentVolumeClaim` instead of a
 hand-placed image file on the node, and what today's real limits are.

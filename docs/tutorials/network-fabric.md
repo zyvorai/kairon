@@ -1,8 +1,4 @@
----
-hero:
-  eyebrow: TUTORIALS
-  title: 'Tutorial: Network Fabric on a Machine'
----
+# Tutorial: Network Fabric on a Machine
 
 This walkthrough creates a TAP+netns Machine, applies a security group and
 edge policy, and checks dataplane status. FluxVM must be running with Network
