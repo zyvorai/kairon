@@ -1,3 +1,30 @@
+# Unreleased: CPU/memory hotplug test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.0%, threshold 50%). `helm lint` green; the `Machine` CRD's status schema updated (`appliedVCPUs`/`appliedMemoryMiB`) after confirming it's structural and would otherwise silently prune the new status fields on a real cluster -- caught before shipping, not after. New unit tests in `internal/agent`: a table test for the three cases `reconcileHotplug` must never call FluxVM for (freshly created seeds the baseline, no recorded baseline assumes already-realized, a shrink request is ignored), a growth test asserting the exact delta sent to FluxVM, a failure test proving `status.applied*` doesn't advance on error (so the same delta retries next tick), and a full-`Reconcile` integration test against a fake Kubernetes+FluxVM server pair.
+
+## What shipped
+
+This item needed a real FluxVM-side capability that didn't exist: FluxVM had already reserved CPU/memory hotplug headroom at every VM's boot (`-smp maxcpus=`, `-m slots=/maxmem=`) since `max_vcpus`/`max_memory_mib` were added, but nothing in that repo ever issued the actual `device_add`/`object-add` QMP calls to use it -- confirmed by reading the code rather than assuming, since the obvious-looking `/v1/vms/{id}/resources` endpoint turned out to be host-side cgroup throttling only, not guest-visible hotplug at all. Added real QMP hotplug to FluxVM (`POST /v1/vms/{id}/hotplug/cpu|memory`), shipped as [zyvorai/fluxvm#62](https://github.com/zyvorai/fluxvm/pull/62) (merged), then wired Kairon up to it: `kairon-node` computes the delta between `spec.resources` and the newly added `status.appliedVCPUs`/`appliedMemoryMiB`, calling FluxVM's hotplug endpoints for just that delta. `status.applied*` is the only source of truth for what's been realized, because FluxVM itself has no query endpoint for current live vcpus/memory -- hotplugged state is pure QMP-runtime, never persisted back into FluxVM's own VM record.
+
+## Real verification (beyond source-level gates)
+
+The FluxVM side was independently verified against real KVM before this Kairon-side work even started (see the FluxVM PR's own test report: a real second vCPU thread and a real DIMM, both confirmed via raw QMP queries bypassing the new code's own success reporting). For the Kairon integration specifically:
+
+- Upgraded the **production** `fluxvm` service on the real lab host (built fresh from FluxVM's merged `main`) -- a real, live-infrastructure upgrade, not an isolated side instance this time, done only after confirming already-running QEMU VMs survive a control-plane restart (they do -- hotplug's own verification round had already shown this) and after explicit confirmation given the host runs more than just Kairon.
+- Deployed the updated `kairon-node` binary and the updated `Machine` CRD schema to the same real cluster.
+- Created a real Machine (`cpu: "1", memory: 512Mi`); confirmed `status.appliedVCPUs=1`/`appliedMemoryMiB=512` seeded correctly at creation, with zero FluxVM hotplug calls made (this is the baseline, not a hotplug event).
+- Patched `spec.resources` to `cpu: "2", memory: 768Mi`; `kairon-node`'s next reconcile tick correctly called FluxVM's hotplug endpoints for just the delta (+1 vCPU, +256Mi), and `status.appliedVCPUs=2`/`appliedMemoryMiB=768` reflected the new reality.
+- Independently confirmed via a raw QMP query directly against the VM's own `qmp.sock` (bypassing both Kairon's and FluxVM's own status reporting entirely): a genuine second vCPU thread (`qom-path: /machine/peripheral/cpu-hotplug-1`) and a genuine 256MiB DIMM (`dimm-hotplug-0`, `hotplugged: true`) -- the genuine end-to-end chain, not just two systems agreeing with each other.
+- Cleaned up the test Machine and all temporary build artifacts on the host afterward.
+
+## Coverage
+
+```text
+total (internal/...): 68.0% (threshold 50%)
+```
+
 # Unreleased: MachineSnapshotRestore test report
 
 ## Result

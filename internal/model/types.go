@@ -139,6 +139,16 @@ type MachineStatus struct {
 	ObservedGeneration int64                 `json:"observedGeneration,omitempty"`
 	Message            string                `json:"message,omitempty"`
 	Conditions         []Condition           `json:"conditions,omitempty"`
+	// AppliedVCPUs/AppliedMemoryMiB track what Kairon has actually hotplugged
+	// into the live FluxVM runtime so far -- FluxVM has no query endpoint for
+	// "current live vcpus/memory" (hotplugged CPUs/DIMMs are pure QMP-time
+	// state, never persisted back into its own VM record), so Kairon is the
+	// only source of truth for how much of spec.resources has been realized.
+	// Seeded from spec.resources at creation time; reset whenever the FluxVM
+	// runtime is recreated (a stop/start cycle loses every hotplugged
+	// resource, since they're not part of the boot-time -smp/-m args).
+	AppliedVCPUs     uint32 `json:"appliedVCPUs,omitempty"`
+	AppliedMemoryMiB uint64 `json:"appliedMemoryMiB,omitempty"`
 }
 
 type Condition struct {

@@ -131,7 +131,8 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "IncomingRuntimeMissing", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
 		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 	}
-	if rec == nil {
+	freshlyCreated := rec == nil
+	if freshlyCreated {
 		vfioDevices, err := a.resolveVFIODevices(ctx, m)
 		if err != nil {
 			return err
@@ -148,6 +149,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	status.RuntimeID = rec.ID()
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
+	appliedVCPUs, appliedMemoryMiB, hotplugErr := a.reconcileHotplug(ctx, m, rec, freshlyCreated)
+	status.AppliedVCPUs = appliedVCPUs
+	status.AppliedMemoryMiB = appliedMemoryMiB
+	if hotplugErr != nil {
+		a.Log.Error("hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", hotplugErr)
+		status.Message = hotplugErr.Error()
+	}
 	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
 		return err
 	}

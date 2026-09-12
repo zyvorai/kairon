@@ -282,6 +282,11 @@ spec:
                 format: int64
               message:
                 type: string
+              appliedVCPUs:
+                type: integer
+              appliedMemoryMiB:
+                type: integer
+                format: int64
               conditions:
                 type: array
                 items:

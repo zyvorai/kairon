@@ -233,6 +233,40 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	return &rec, nil
 }
 
+// HotplugCPU adds addVCPUs to a running VM's vCPU count without a reboot,
+// returning the realized total. QEMU-only on FluxVM's side; fails clearly
+// (not silently) once the VM's max_vcpus headroom is exhausted.
+func (c *Client) HotplugCPU(ctx context.Context, id string, addVCPUs uint32) (uint32, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/hotplug/cpu", map[string]any{"add_vcpus": addVCPUs})
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		VCPUs uint32 `json:"vcpus"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, fmt.Errorf("decode hotplug cpu response: %w", err)
+	}
+	return out.VCPUs, nil
+}
+
+// HotplugMemory adds addMemoryMiB to a running VM's live memory without a
+// reboot, returning the new total (boot-time memory plus every hot-added
+// DIMM so far, not just what this call added).
+func (c *Client) HotplugMemory(ctx context.Context, id string, addMemoryMiB uint64) (uint64, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/hotplug/memory", map[string]any{"add_memory_mib": addMemoryMiB})
+	if err != nil {
+		return 0, err
+	}
+	var out struct {
+		MemoryMiB uint64 `json:"memory_mib"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, fmt.Errorf("decode hotplug memory response: %w", err)
+	}
+	return out.MemoryMiB, nil
+}
+
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/vms/"+url.PathEscape(id), nil)
 	if err != nil {
