@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zyvorai/kairon/internal/agent"
+	"github.com/zyvorai/kairon/internal/consoleproxy"
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -47,6 +48,8 @@ func run() int {
 	migrationStateDir := flag.String("migration-state-dir", env("KAIRON_MIGRATION_STATE_DIR", "/var/run/kairon/migrations"), "destination migration session journal")
 	migrationAdapterSocket := flag.String("migration-adapter-socket", env("KAIRON_MIGRATION_ADAPTER_SOCKET", ""), "optional Kairon migration adapter Unix socket")
 	migrationPort := flag.Int("migration-port", 9443, "peer migration TCP port advertised through node InternalIP")
+	consoleAddr := flag.String("console-addr", env("KAIRON_NODE_CONSOLE_ADDR", ":8090"), "VNC console relay listen address")
+	consoleToken := flag.String("console-token", os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"), "shared bearer token kairon-ui must present for VNC console relay (default: $KAIRON_NODE_CONSOLE_TOKEN); empty disables the console listener")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -100,6 +103,8 @@ func run() int {
 		log.Error("migration control plane", "error", err)
 		return 2
 	}
+
+	configureConsole(ctx, log, cancel, fc, *consoleAddr, *consoleToken)
 
 	a := &agent.Agent{
 		NodeName:       node,
@@ -183,6 +188,37 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 
 	httpClient := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLS}, Timeout: 20 * time.Second}
 	return migration.NewClient(httpClient), source, nil
+}
+
+// configureConsole starts the VNC console relay listener (see
+// internal/consoleproxy) unless consoleToken is empty, in which case the
+// feature is simply off -- same opt-in-via-configuration posture as
+// migration, no separate --console-enabled flag needed.
+func configureConsole(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, fc *fluxvm.Client, addr, token string) {
+	if strings.TrimSpace(token) == "" {
+		log.Warn("VNC console relay disabled; set --console-token/$KAIRON_NODE_CONSOLE_TOKEN to enable")
+		return
+	}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           (&consoleproxy.Server{Flux: fc, Token: token}).Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		// No WriteTimeout/IdleTimeout: a VNC session is a long-lived
+		// streaming connection, not a short request/response cycle.
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	go func() {
+		log.Info("VNC console relay listening", "address", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("console relay server stopped", "error", err)
+			cancel()
+		}
+	}()
 }
 
 func env(k, d string) string {

@@ -1,3 +1,26 @@
+# Unreleased: VNC console + login redesign test report
+
+## Result
+
+**PASS.** `make all` green (coverage 67.4%, up from 66.1%, with the new `internal/consoleproxy` package and `internal/uiapi/console.go` tests). `helm lint` green plus `helm template --set console.enabled=true` confirming the new Secret/env/port wiring, and confirming zero console-related output when `console.enabled` is left at its default `false`. `npm run typecheck && test && build` green with the new `@novnc/novnc` dependency.
+
+## What shipped
+
+- Graphical VNC console (`console.enabled`, off by default): `browser (noVNC) -> kairon-ui -> a new kairon-node listener (internal/consoleproxy) -> the VM's local QEMU VNC socket`. New Go dependency `github.com/coder/websocket` (stdlib has no WebSocket support); new frontend dependency `@novnc/novnc`. Gated by kairon-ui's existing operator auth, a single-use ~30s connection ticket (a browser WebSocket can't carry an Authorization header), and a shared bearer token between kairon-ui and kairon-node (Helm-generated, same `lookup`+`randAlphaNum` pattern as `kairon-ui-session`).
+- Login screen visual redesign: a two-column split layout (brand/tagline/animated-gradient-orb panel + card), a per-step CSS transition, a first-letter avatar on the password step, a loading spinner, and a proper error banner. No backend changes.
+
+## Real verification (beyond source-level gates)
+
+- **A real RFB protocol test, not just byte-echoing**: the Go-level integration test (`internal/uiapi/console_test.go`'s `TestHandleConsoleFullRelay`) proves bytes survive the full double-hop relay, but to verify actual noVNC/browser compatibility, a minimal-but-genuine RFB 3.8 server was hand-written (ProtocolVersion handshake, Security(None), ServerInit, and a real `FramebufferUpdate` response with a generated pixel pattern) and wired up behind a real kairon-node + kairon-ui + fake-Kubernetes-API stack. Opening the Console button in a real Chrome browser against this stack rendered the actual generated gradient pattern in the noVNC canvas with a "Connected" status -- proof the whole chain (ticket issuance, WS-to-WS relay, RFB framing) is genuinely compatible with a real VNC client, not just internally consistent.
+- Live-browser-verified the login redesign at the same time: the two-column layout, the animated orb, the avatar (first letter of the typed username), and the step transition all render correctly against a freshly built `web/dist`.
+- `helm template` diffed with and without `console.enabled` to confirm the feature is entirely absent (zero rendered lines matching "console", case-insensitive) when left at its default off state.
+
+## Coverage
+
+```text
+total (internal/...): 67.4% (threshold 50%)
+```
+
 # Unreleased: VM day-2 ops + kairon-ui login test report
 
 ## Result

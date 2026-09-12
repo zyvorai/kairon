@@ -209,7 +209,7 @@ If a commit's outcome is genuinely ambiguous, the migration lands in `NeedsRecov
 | Page | What it shows |
 |---|---|
 | **Overview** | Fleet tiles: Machine/Migration counts by phase, a prominent warning tile whenever anything is parked in `NeedsRecovery` |
-| **Machines** | Table + create form (mirrors `kaironctl create`'s flags) + row actions: Start / Stop / Migrate / Snapshot / Delete |
+| **Machines** | Table + create form (mirrors `kaironctl create`'s flags) + row actions: Start / Stop / Console / Migrate / Snapshot / Delete |
 | **Migrations** | List with phase badges, a "New Migration" form (mirrors `kaironctl migrate`), an "Evacuate Node" action, per-migration RAM/downtime detail, `status.dataPlaneEncrypted` badge, and the recovery workflow described above |
 | **Snapshots** | List + create form (mirrors `kaironctl snapshot`) |
 
@@ -235,6 +235,8 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system \
 ```
 
 Every mutating request (create/delete/start/stop/migrate/evacuate/recover) is logged with method, path, remote address, and status — now including the signed-in username for session-token logins, closing the "who did it" gap the legacy mode still has. The legacy single shared token (`ui.token`/`ui.existingSecret`, or `ui.allowUnauthenticated=true` for local development) still works unchanged and is accepted alongside `ui.auth.users` — treat it like a shared root password if you're still using it.
+
+**VNC console** (`--set console.enabled=true`, off by default): a real graphical VNC session in the browser for QEMU-backend Machines, relayed `kairon-ui -> kairon-node -> the VM's local socket`. Read [SECURITY.md](SECURITY.md)'s "VNC console" section first — FluxVM's own VNC socket has no auth of its own, so this trades convenience for a trust chain appropriate for a trusted operator team, not a hostile-network deployment.
 
 Bare-metal alternative, no Kubernetes-hosted deployment needed:
 
@@ -353,6 +355,8 @@ npm --prefix web run build
 Pre-GA gaps include storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI.
 
 A code-level audit also surfaced gaps not on that list: `kairon-ui` now supports real per-operator username/password login (`ui.auth.users`, bcrypt-hashed, signed session tokens, audit-attributed) alongside the legacy shared bearer token — but the login mode has no rate limiting/lockout on repeated failed attempts, no password-reset flow beyond regenerating a hash and redeploying, and its session-logout/default-admin-password state lives on a single replica (the chart runs exactly one). OIDC/SSO is a bigger, separate decision and isn't implemented. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
+
+The new VNC console (`console.enabled`) inherits FluxVM's own unauthenticated VNC socket as-is — Kairon can't add auth/encryption FluxVM itself doesn't have — so its security rests entirely on kairon-ui's operator auth, a single-use ticket, and a shared cluster-wide token to kairon-node, sent over plain HTTP (no TLS on that hop yet). See [SECURITY.md](SECURITY.md).
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 

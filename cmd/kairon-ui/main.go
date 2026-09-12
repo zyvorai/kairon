@@ -79,7 +79,19 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	srv := &uiapi.Server{Kube: kc, Log: log, Token: *token, WebDir: *webDir, Users: users, SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET"))}
+	srv := &uiapi.Server{
+		Kube:          kc,
+		Log:           log,
+		Token:         *token,
+		WebDir:        *webDir,
+		Users:         users,
+		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		// ConsoleToken/ConsolePort must match the value every kairon-node
+		// is configured with (KAIRON_NODE_CONSOLE_TOKEN/-console-addr);
+		// either empty disables the VNC console feature (see console.go).
+		ConsoleToken: os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"),
+		ConsolePort:  env("KAIRON_NODE_CONSOLE_PORT", "8090"),
+	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
 		Handler:           srv.Handler(),

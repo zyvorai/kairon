@@ -83,6 +83,24 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.controller.resources | indent 12 }}
+{{ if .Values.console.enabled }}
+{{- $existingConsoleSecret := lookup "v1" "Secret" .Release.Namespace "kairon-console-token" }}
+{{- $consoleTokenValue := randAlphaNum 32 }}
+{{- if and $existingConsoleSecret $existingConsoleSecret.data (index $existingConsoleSecret.data "token") }}
+{{- $consoleTokenValue = index $existingConsoleSecret.data "token" | b64dec }}
+{{- end }}
+{{ if not .Values.console.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kairon-console-token
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  token: {{ $consoleTokenValue | quote }}
+{{ end }}
+{{ end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -140,13 +158,23 @@ spec:
             - "--migration-adapter-socket={{ .Values.migration.adapterSocket }}"
 {{ end }}
 {{ end }}
+{{ if .Values.console.enabled }}
+            - "--console-addr=:{{ .Values.console.port }}"
+{{ end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+{{ if .Values.console.enabled }}
+            - name: KAIRON_NODE_CONSOLE_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ .Values.console.existingSecret | default "kairon-console-token" }}, key: {{ .Values.console.existingSecretKey | default "token" }}}}
+{{ end }}
           ports:
             - {name: health, containerPort: 8081}
 {{ if .Values.migration.enabled }}
             - {name: migration, containerPort: {{ .Values.migration.port }}, protocol: TCP}
+{{ end }}
+{{ if .Values.console.enabled }}
+            - {name: console, containerPort: {{ .Values.console.port }}, protocol: TCP}
 {{ end }}
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
@@ -300,6 +328,12 @@ spec:
 {{ if and $seedDefaultAdmin (not .Values.ui.auth.existingSessionSecret) }}
             - name: KAIRON_UI_DEFAULT_ADMIN_PASSWORD
               valueFrom: {secretKeyRef: {name: kairon-ui-session, key: defaultAdminPassword}}
+{{ end }}
+{{ if .Values.console.enabled }}
+            - name: KAIRON_NODE_CONSOLE_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ .Values.console.existingSecret | default "kairon-console-token" }}, key: {{ .Values.console.existingSecretKey | default "token" }}}}
+            - name: KAIRON_NODE_CONSOLE_PORT
+              value: {{ .Values.console.port | quote }}
 {{ end }}
           ports: [{name: http, containerPort: 8082}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}

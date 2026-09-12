@@ -1,24 +1,36 @@
 import { useEffect, useState } from 'react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { AuthConfig, getAuthConfig, login, setToken } from '../api';
 
 type Step = 'username' | 'password';
 
+function Avatar({ user }: { user: string }) {
+  return <div className="loginavatar">{user.charAt(0).toUpperCase() || '?'}</div>;
+}
+
 function LoginChrome({ children }: { children: React.ReactNode }) {
   return (
     <div className="loginwrap">
-      <div className="loginbrand">
-        <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={28} height={28} />
-        <div>
-          <div className="loginbrand-name">
-            KAIRON <small>by Zyvor</small>
+      <div className="loginsplit">
+        <div className="loginsplit-left">
+          <div className="loginorb" aria-hidden />
+          <div className="loginbrand">
+            <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={28} height={28} />
+            <div>
+              <div className="loginbrand-name">
+                KAIRON <small>by Zyvor</small>
+              </div>
+              <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+            </div>
           </div>
-          <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+        </div>
+        <div className="loginsplit-right">
+          <div className="card logincard">{children}</div>
+          <p className="loginhost">
+            Connecting to <code>{window.location.host}</code>
+          </p>
         </div>
       </div>
-      <div className="card logincard">{children}</div>
-      <p className="loginhost">
-        Connecting to <code>{window.location.host}</code>
-      </p>
     </div>
   );
 }
@@ -107,41 +119,54 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     <LoginChrome>
       <span className="eyebrow">SIGN IN</span>
       {step === 'username' ? (
-        <form onSubmit={continueToPassword}>
-          <h3>Sign in to Kairon</h3>
-          <div className="formgrid">
-            <label>
-              Username
-              <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
-            </label>
-          </div>
-          <div className="formactions">
-            <button className="primary" type="submit" disabled={!user}>
-              Continue
-            </button>
-          </div>
-        </form>
+        <div key="username" className="loginstep">
+          <form onSubmit={continueToPassword}>
+            <h3>Sign in to Kairon</h3>
+            <div className="formgrid">
+              <label>
+                Username
+                <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
+              </label>
+            </div>
+            <div className="formactions">
+              <button className="primary" type="submit" disabled={!user}>
+                Continue
+              </button>
+            </div>
+          </form>
+        </div>
       ) : (
-        <form onSubmit={signIn}>
-          <h3>
-            Hi, {user}.{' '}
-            <button type="button" className="linklike" onClick={() => setStep('username')}>
-              Not you?
-            </button>
-          </h3>
-          <div className="formgrid">
-            <label>
-              Password
-              <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </label>
-          </div>
-          <div className="formactions">
-            <button className="primary" type="submit" disabled={busy || !password}>
-              {busy ? 'Signing in...' : 'Sign In'}
-            </button>
-            {msg && <span className="msg error">{msg}</span>}
-          </div>
-        </form>
+        <div key="password" className="loginstep">
+          <form onSubmit={signIn}>
+            <h3 className="loginwho">
+              <Avatar user={user} />
+              <span>
+                Hi, {user}.{' '}
+                <button type="button" className="linklike" onClick={() => setStep('username')}>
+                  Not you?
+                </button>
+              </span>
+            </h3>
+            <div className="formgrid">
+              <label>
+                Password
+                <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              </label>
+            </div>
+            <div className="formactions">
+              <button className="primary" type="submit" disabled={busy || !password}>
+                {busy && <Loader2 size={15} className="spin" />}
+                {busy ? 'Signing in...' : 'Sign In'}
+              </button>
+            </div>
+            {msg && (
+              <div className="loginerror">
+                <AlertCircle size={16} />
+                <span>{msg}</span>
+              </div>
+            )}
+          </form>
+        </div>
       )}
     </LoginChrome>
   );

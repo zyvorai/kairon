@@ -76,3 +76,14 @@ export async function logout(): Promise<void> {
     setSession('', '');
   }
 }
+
+// getConsoleWebSocketURL fetches a short-lived, single-use ticket (a
+// normal authenticated fetch()) and builds the VNC console WebSocket URL
+// from it -- a native browser WebSocket can't carry an Authorization
+// header, so the real session token never appears in this URL, only the
+// disposable ticket does (see internal/uiapi/console.go).
+export async function getConsoleWebSocketURL(namespace: string, name: string): Promise<string> {
+  const out = await api<{ ticket: string }>(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console/ticket`, { method: 'POST' });
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console?ticket=${encodeURIComponent(out.ticket)}`;
+}

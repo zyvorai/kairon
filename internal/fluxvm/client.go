@@ -37,6 +37,11 @@ type Record struct {
 	// contract v1: shared storage, no disk copy) to build a
 	// MigrationReceiverRequest on the target FluxVM.
 	Disk string `json:"disk,omitempty"`
+	// Workspace is the per-VM directory FluxVM allocates on the VM host --
+	// e.g. its VNC socket lives at Workspace+"/vnc.sock" (see
+	// internal/consoleproxy). Already present on FluxVM's own VmRecord and
+	// returned by GET /v1/vms/{id}; Kairon just wasn't capturing it before.
+	Workspace string `json:"workspace,omitempty"`
 	// Request mirrors just the fields of FluxVM's own CreateVmRequest a
 	// real migration adapter needs to reconstruct a topology-matching
 	// receiver spec -- not the full request shape, which Kairon has no

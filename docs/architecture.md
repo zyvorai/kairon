@@ -5,7 +5,7 @@ Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the s
 ## Components
 
 - `kairon-controller`: Machine placement, `MachineMigration` state and `MachineSnapshot` -> CSI `VolumeSnapshot` orchestration. Exposes Prometheus metrics and a migration concurrency quota (see Operational visibility below).
-- `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, and exposes the mTLS migration peer API.
+- `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, exposes the mTLS migration peer API, and optionally (`console.enabled`) a shared-token-gated VNC relay to each VM's local QEMU socket.
 - migration peer: TLS 1.3, mandatory client certificate, target prepare/commit/abort and a local atomic session journal.
 - migration adapter: optional HTTP-over-Unix-socket component that implements VMM-specific target/source migration operations.
 - `kaironctl`: thin Kubernetes API client; it never bypasses the controllers.
@@ -73,10 +73,14 @@ the change at creation, or delete and recreate. See
 [guides/machine-network.md](guides/machine-network.md) for `cloudInit`/
 `forwards` usage.
 
-Kairon has no text/graphical console, no guest-exec (QEMU guest agent), and
-no live resize today, even though FluxVM itself exposes all three
-(`GET /v1/vms/{id}/console`, `/qga/*`, `POST /v1/vms/{id}/resources`) --
-wrapping them is tracked as future work, not yet implemented.
+A graphical VNC console is available (`console.enabled`, off by default):
+`kairon-ui` relays a browser WebSocket through `kairon-node` to the VM's
+local, otherwise-unreachable QEMU VNC socket (`<workspace>/vnc.sock`,
+QEMU-backend only) -- see SECURITY.md's "VNC console" section for the
+trust model before enabling it. Text console (FluxVM's own vsock-based
+`GET /v1/vms/{id}/console` shell) and guest-exec (`/qga/*`) are a
+different transport entirely and remain unwrapped, as does live resize
+(`POST /v1/vms/{id}/resources`) -- tracked as future work.
 
 ## Operational visibility
 

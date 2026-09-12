@@ -93,6 +93,20 @@ The legacy single shared token (`ui.token`, or `ui.allowUnauthenticated=true`
 for local development) still works unchanged for existing deployments, and
 is accepted alongside `ui.auth.users` if both are set.
 
+### VNC console
+
+```bash
+helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=true --set console.enabled=true
+```
+
+Adds a "Console" button per Machine in the dashboard -- a real graphical
+VNC session in the browser, for QEMU-backend Machines only. Read
+[SECURITY.md](../SECURITY.md)'s "VNC console" section first: FluxVM's own
+VNC socket has no auth of its own, so this feature's security rests
+entirely on kairon-ui's operator auth, a single-use connection ticket, and
+a shared token between kairon-ui and every kairon-node -- appropriate for a
+trusted operator team, not a hostile-network or multi-tenant deployment.
+
 Bare-metal alternative:
 
 ```bash

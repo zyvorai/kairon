@@ -3,6 +3,7 @@ module github.com/zyvorai/kairon
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/prometheus/client_golang v1.24.1
 	golang.org/x/crypto v0.57.0
 )

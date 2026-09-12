@@ -46,6 +46,16 @@ type Server struct {
 	// revoked backs POST /api/v1/auth/logout; zero value (an empty
 	// sync.Map) is ready to use.
 	revoked sync.Map
+	// ConsoleToken/ConsolePort configure the VNC console relay (see
+	// console.go): the shared bearer token kairon-ui presents to a
+	// kairon-node's console listener, and the port that listener runs on.
+	// Either empty disables the console feature entirely (handleConsole
+	// returns 501).
+	ConsoleToken string
+	ConsolePort  string
+	// consoleTickets backs the console feature's single-use WebSocket
+	// tickets; zero value is ready to use.
+	consoleTickets sync.Map
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -73,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/machines/{namespace}/{name}", s.handleDeleteMachine)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/start", s.handlePowerMachine("Running"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/stop", s.handlePowerMachine("Stopped"))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.handleConsoleTicket)
 
 	api.HandleFunc("GET /api/v1/migrations", s.handleListMigrations)
 	api.HandleFunc("POST /api/v1/migrations", s.handleCreateMigration)
@@ -93,6 +104,11 @@ func (s *Server) Handler() http.Handler {
 	top.HandleFunc("GET /api/v1/auth/config", s.handleAuthConfig)
 	top.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	top.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	// Also unauthenticated at this layer by necessity: a browser's native
+	// WebSocket API can't send an Authorization header, so this route is
+	// gated by the single-use ticket handleConsoleTicket issues instead
+	// (that ticket-issuing call *is* behind the normal auth above).
+	top.HandleFunc("GET /api/v1/machines/{namespace}/{name}/console", s.handleConsole)
 	// The SPA route is intentionally unauthenticated (same as netra's own
 	// serveWeb registration) -- it serves static JS/CSS/HTML, not data;
 	// every actual data fetch the page makes goes through the auth-gated

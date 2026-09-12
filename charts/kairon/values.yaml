@@ -75,6 +75,20 @@ migration:
   # generates a fresh, timestamped name each time).
   maxConcurrentPerNode: 0
   maxConcurrentCluster: 0
+console:
+  # Graphical VNC console relay (browser -> kairon-ui -> kairon-node ->
+  # the VM's local QEMU VNC socket). Off by default -- opt in once
+  # ui.enabled is also true, same posture as migration.enabled. See
+  # SECURITY.md's "VNC console" section for the trust model before
+  # enabling this on a shared cluster.
+  enabled: false
+  # Port kairon-node's console relay listens on and kairon-ui connects to.
+  port: 8090
+  # existingSecret: a pre-created Secret with a "token" key instead of the
+  # one the chart generates and persists automatically (same
+  # lookup+randAlphaNum pattern as kairon-ui-session).
+  existingSecret: ""
+  existingSecretKey: "token"
 metrics:
   # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,
   # for clusters running prometheus-operator. Off by default since not every
