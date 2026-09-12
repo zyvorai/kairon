@@ -3,6 +3,26 @@ import { AuthConfig, getAuthConfig, login, setToken } from '../api';
 
 type Step = 'username' | 'password';
 
+function LoginChrome({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="loginwrap">
+      <div className="loginbrand">
+        <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={28} height={28} />
+        <div>
+          <div className="loginbrand-name">
+            KAIRON <small>by Zyvor</small>
+          </div>
+          <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+        </div>
+      </div>
+      <div className="card logincard">{children}</div>
+      <p className="loginhost">
+        Connecting to <code>{window.location.host}</code>
+      </p>
+    </div>
+  );
+}
+
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [step, setStep] = useState<Step>('username');
@@ -49,84 +69,80 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
 
   if (!config) {
     return (
-      <div className="loginwrap">
-        <div className="card logincard" />
-      </div>
+      <LoginChrome>
+        <div className="loginskeleton" />
+      </LoginChrome>
     );
   }
 
   if (!config.loginEnabled) {
     return (
-      <div className="loginwrap">
-        <div className="card logincard">
-          <span className="eyebrow">KAIRON</span>
-          <h3>API token</h3>
-          <form onSubmit={useToken}>
-            <div className="formgrid">
-              <label>
-                Token
-                <input
-                  type="password"
-                  autoFocus
-                  value={rawToken}
-                  placeholder="required unless the server allows unauthenticated access"
-                  onChange={(e) => setRawToken(e.target.value)}
-                />
-              </label>
-            </div>
-            <div className="formactions">
-              <button className="primary" type="submit">
-                Continue
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+      <LoginChrome>
+        <span className="eyebrow">SIGN IN</span>
+        <h3>API token</h3>
+        <form onSubmit={useToken}>
+          <div className="formgrid">
+            <label>
+              Token
+              <input
+                type="password"
+                autoFocus
+                value={rawToken}
+                placeholder="required unless the server allows unauthenticated access"
+                onChange={(e) => setRawToken(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="formactions">
+            <button className="primary" type="submit">
+              Continue
+            </button>
+          </div>
+        </form>
+      </LoginChrome>
     );
   }
 
   return (
-    <div className="loginwrap">
-      <div className="card logincard">
-        <span className="eyebrow">KAIRON</span>
-        {step === 'username' ? (
-          <form onSubmit={continueToPassword}>
-            <h3>Sign in to Kairon</h3>
-            <div className="formgrid">
-              <label>
-                Username
-                <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
-              </label>
-            </div>
-            <div className="formactions">
-              <button className="primary" type="submit" disabled={!user}>
-                Continue
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form onSubmit={signIn}>
-            <h3>
-              Hi, {user}.{' '}
-              <button type="button" className="linklike" onClick={() => setStep('username')}>
-                Not you?
-              </button>
-            </h3>
-            <div className="formgrid">
-              <label>
-                Password
-                <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              </label>
-            </div>
-            <div className="formactions">
-              <button className="primary" type="submit" disabled={busy || !password}>
-                {busy ? 'Signing in...' : 'Sign In'}
-              </button>
-              {msg && <span className="msg error">{msg}</span>}
-            </div>
-          </form>
-        )}
-      </div>
-    </div>
+    <LoginChrome>
+      <span className="eyebrow">SIGN IN</span>
+      {step === 'username' ? (
+        <form onSubmit={continueToPassword}>
+          <h3>Sign in to Kairon</h3>
+          <div className="formgrid">
+            <label>
+              Username
+              <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
+            </label>
+          </div>
+          <div className="formactions">
+            <button className="primary" type="submit" disabled={!user}>
+              Continue
+            </button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={signIn}>
+          <h3>
+            Hi, {user}.{' '}
+            <button type="button" className="linklike" onClick={() => setStep('username')}>
+              Not you?
+            </button>
+          </h3>
+          <div className="formgrid">
+            <label>
+              Password
+              <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+          </div>
+          <div className="formactions">
+            <button className="primary" type="submit" disabled={busy || !password}>
+              {busy ? 'Signing in...' : 'Sign In'}
+            </button>
+            {msg && <span className="msg error">{msg}</span>}
+          </div>
+        </form>
+      )}
+    </LoginChrome>
   );
 }
