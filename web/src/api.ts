@@ -77,6 +77,18 @@ export async function logout(): Promise<void> {
   }
 }
 
+export interface Config {
+  consoleEnabled: boolean;
+}
+
+// getConfig reports small feature toggles (currently just consoleEnabled)
+// so the UI can decide what to render -- e.g. hiding the "Console" button
+// entirely when the deployment doesn't have it configured, rather than
+// showing it and only failing after a click.
+export function getConfig(): Promise<Config> {
+  return api<Config>('/api/v1/config');
+}
+
 // getConsoleWebSocketURL fetches a short-lived, single-use ticket (a
 // normal authenticated fetch()) and builds the VNC console WebSocket URL
 // from it -- a native browser WebSocket can't carry an Authorization

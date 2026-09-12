@@ -162,6 +162,10 @@ spec:
 {{ end }}
 {{ if .Values.console.enabled }}
             - "--console-addr=:{{ .Values.console.port }}"
+{{ if .Values.console.tls.enabled }}
+            - "--console-tls-cert=/etc/kairon/console-tls/tls.crt"
+            - "--console-tls-key=/etc/kairon/console-tls/tls.key"
+{{ end }}
 {{ end }}
           env:
             - name: NODE_NAME
@@ -183,16 +187,22 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.node.resources | indent 12 }}
-{{ if .Values.migration.enabled }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) }}
           volumeMounts:
+{{ if .Values.migration.enabled }}
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
             - {name: migration-state, mountPath: {{ .Values.migration.stateDir | quote }}}
 {{ if .Values.migration.adapterHostPath }}
             - {name: migration-adapter, mountPath: {{ .Values.migration.adapterHostPath | quote }}}
 {{ end }}
 {{ end }}
-{{ if .Values.migration.enabled }}
+{{ if and .Values.console.enabled .Values.console.tls.enabled }}
+            - {name: console-tls, mountPath: /etc/kairon/console-tls, readOnly: true}
+{{ end }}
+{{ end }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) }}
       volumes:
+{{ if .Values.migration.enabled }}
         - name: migration-tls
           secret:
             secretName: {{ .Values.migration.tlsSecretName }}
@@ -210,6 +220,13 @@ spec:
           hostPath:
             path: {{ .Values.migration.adapterHostPath | quote }}
             type: Directory
+{{ end }}
+{{ end }}
+{{ if and .Values.console.enabled .Values.console.tls.enabled }}
+        - name: console-tls
+          secret:
+            secretName: {{ .Values.console.tls.secretName }}
+            defaultMode: 0440
 {{ end }}
 {{ end }}
 {{ if .Values.ui.enabled }}
@@ -336,6 +353,10 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.console.existingSecret | default "kairon-console-token" }}, key: {{ .Values.console.existingSecretKey | default "token" }}}}
             - name: KAIRON_NODE_CONSOLE_PORT
               value: {{ .Values.console.port | quote }}
+{{ if .Values.console.tls.enabled }}
+            - name: KAIRON_NODE_CONSOLE_CA
+              value: /etc/kairon/console-tls/ca.crt
+{{ end }}
 {{ end }}
           ports: [{name: http, containerPort: {{ .Values.ui.service.port }}}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}
@@ -343,6 +364,17 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.ui.resources | indent 12 }}
+{{ if and .Values.console.enabled .Values.console.tls.enabled }}
+          volumeMounts:
+            - {name: console-tls, mountPath: /etc/kairon/console-tls, readOnly: true}
+{{ end }}
+{{ if and .Values.console.enabled .Values.console.tls.enabled }}
+      volumes:
+        - name: console-tls
+          secret:
+            secretName: {{ .Values.console.tls.secretName }}
+            defaultMode: 0440
+{{ end }}
 ---
 apiVersion: v1
 kind: Service

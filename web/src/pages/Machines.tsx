@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
-import { api, apiJSON } from '../api';
+import { api, apiJSON, getConfig } from '../api';
 import { Machine } from '../types';
 import { badgeClass } from '../lib/phase';
 import Console from './Console';
+
+// QEMU is the only backend FluxVM gives a VNC display to at all (Cloud
+// Hypervisor/Firecracker have no display device) -- an empty/"auto"
+// backend defaults to qemu server-side, so both count as eligible too.
+function consoleEligible(m: Machine): boolean {
+  const backend = m.spec.runtime?.backend;
+  return m.status?.phase === 'Running' && (!backend || backend === 'qemu' || backend === 'auto');
+}
 
 interface CreateForm {
   name: string;
@@ -36,6 +44,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [consoleFor, setConsoleFor] = useState<string | null>(null);
+  const [consoleEnabled, setConsoleEnabled] = useState(false);
 
   const refresh = () =>
     api<Machine[]>('/api/v1/machines').then(setItems).catch((e) => setMsg(String(e)));
@@ -43,6 +52,9 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   useEffect(() => {
     refresh();
     const t = setInterval(refresh, 5000);
+    getConfig()
+      .then((cfg) => setConsoleEnabled(cfg.consoleEnabled))
+      .catch(() => setConsoleEnabled(false));
     return () => clearInterval(t);
   }, []);
 
@@ -187,7 +199,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                   <div className="rowactions">
                     <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
                     <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
-                    <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>
+                    {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
                     <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>

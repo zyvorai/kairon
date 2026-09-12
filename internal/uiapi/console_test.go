@@ -5,6 +5,8 @@ package uiapi
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -46,32 +48,36 @@ func dialWS(ctx context.Context, u string, opts *websocket.DialOptions) (*websoc
 
 func TestConsoleTicketIsSingleUse(t *testing.T) {
 	s := &Server{}
-	ticket := s.issueConsoleTicket()
-	if !s.consumeConsoleTicket(ticket) {
+	ticket := s.issueConsoleTicket("alice")
+	username, ok := s.consumeConsoleTicket(ticket)
+	if !ok {
 		t.Fatal("expected a freshly issued ticket to be valid")
 	}
-	if s.consumeConsoleTicket(ticket) {
+	if username != "alice" {
+		t.Fatalf("expected ticket to be bound to alice, got %q", username)
+	}
+	if _, ok := s.consumeConsoleTicket(ticket); ok {
 		t.Fatal("expected a ticket to be rejected the second time it's presented")
 	}
 }
 
 func TestConsoleTicketRejectsExpired(t *testing.T) {
 	s := &Server{}
-	ticket := s.issueConsoleTicket()
+	ticket := s.issueConsoleTicket("alice")
 	// Overwrite with an already-expired timestamp rather than sleeping
 	// past the real (30s) TTL.
-	s.consoleTickets.Store(ticket, time.Now().Add(-time.Second))
-	if s.consumeConsoleTicket(ticket) {
+	s.consoleTickets.Store(ticket, consoleTicketState{username: "alice", expires: time.Now().Add(-time.Second)})
+	if _, ok := s.consumeConsoleTicket(ticket); ok {
 		t.Fatal("expected an expired ticket to be rejected")
 	}
 }
 
 func TestConsoleTicketRejectsUnknownOrEmpty(t *testing.T) {
 	s := &Server{}
-	if s.consumeConsoleTicket("") {
+	if _, ok := s.consumeConsoleTicket(""); ok {
 		t.Fatal("expected an empty ticket to be rejected")
 	}
-	if s.consumeConsoleTicket("never-issued") {
+	if _, ok := s.consumeConsoleTicket("never-issued"); ok {
 		t.Fatal("expected an unissued ticket to be rejected")
 	}
 }
@@ -138,8 +144,68 @@ func TestHandleConsoleTicketIssuesAUsableTicket(t *testing.T) {
 	if out.Ticket == "" {
 		t.Fatal("expected a non-empty ticket")
 	}
-	if !s.consumeConsoleTicket(out.Ticket) {
+	if _, ok := s.consumeConsoleTicket(out.Ticket); !ok {
 		t.Fatal("expected the issued ticket to be consumable")
+	}
+}
+
+func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
+	s := &Server{
+		Kube:          mustKubeClientAt(t, "http://127.0.0.1:0"),
+		Users:         []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}},
+		SessionSecret: []byte("test-session-secret"),
+	}
+	h := s.Handler()
+
+	loginRR := login(t, h, "alice", "correct-horse")
+	var loginOut struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(loginRR.Body.Bytes(), &loginOut); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/console/ticket", loginOut.Token, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var ticketOut struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &ticketOut); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	username, ok := s.consumeConsoleTicket(ticketOut.Ticket)
+	if !ok {
+		t.Fatal("expected the issued ticket to be consumable")
+	}
+	if username != "alice" {
+		t.Fatalf("expected the ticket to be bound to the authenticated user alice, got %q", username)
+	}
+}
+
+func TestHandleConfigReflectsConsoleState(t *testing.T) {
+	s := &Server{Kube: mustKubeClientAt(t, "http://127.0.0.1:0")}
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodGet, "/api/v1/config", "", nil)
+	var cfg struct {
+		ConsoleEnabled bool `json:"consoleEnabled"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if cfg.ConsoleEnabled {
+		t.Fatal("expected consoleEnabled=false when ConsoleToken/ConsolePort aren't set")
+	}
+
+	s.ConsoleToken, s.ConsolePort = "x", "8090"
+	rr = doJSON(t, h, http.MethodGet, "/api/v1/config", "", nil)
+	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !cfg.ConsoleEnabled {
+		t.Fatal("expected consoleEnabled=true once ConsoleToken/ConsolePort are set")
 	}
 }
 
@@ -187,7 +253,7 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket()
+	ticket := s.issueConsoleTicket("tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -209,6 +275,151 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	}
 }
 
+// TestHandleConsoleFullRelayOverTLS is TestHandleConsoleFullRelay's TLS
+// twin: proves kairon-ui's ConsoleTLS config (built from a CA in
+// cmd/kairon-ui's consoleTLSConfig) actually verifies and interoperates
+// with a real TLS-serving consoleproxy.Server, not just that both sides
+// compile.
+func TestHandleConsoleFullRelayOverTLS(t *testing.T) {
+	workspace := shortTempDir(t)
+	listenEchoVNCSocket(t, workspace)
+
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "runtime-1", "status": "Running", "workspace": workspace})
+	}))
+	defer fluxSrv.Close()
+
+	const consoleToken = "shared-node-console-token"
+	nodeConsole := &consoleproxy.Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: consoleToken}
+	nodeSrv := httptest.NewUnstartedServer(nodeConsole.Handler())
+	nodeSrv.StartTLS()
+	defer nodeSrv.Close()
+
+	pool := x509.NewCertPool()
+	pool.AddCert(nodeSrv.Certificate())
+
+	nodeURL, err := url.Parse(nodeSrv.URL)
+	if err != nil {
+		t.Fatalf("parse node server URL: %v", err)
+	}
+	nodeHost, nodePort, err := net.SplitHostPort(nodeURL.Host)
+	if err != nil {
+		t.Fatalf("split node server host/port: %v", err)
+	}
+
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Spec:     model.MachineSpec{Runtime: model.RuntimeSpec{Backend: "qemu"}},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+	}
+	fk.nodes = []model.Node{{
+		Metadata: model.ObjectMeta{Name: "worker-1"},
+		Status: struct {
+			Conditions []model.NodeCondition `json:"conditions,omitempty"`
+			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
+		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+	}}
+
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	kc := mustKubeClientAt(t, kubeSrv.URL)
+
+	s := &Server{
+		Kube:         kc,
+		ConsoleToken: consoleToken,
+		ConsolePort:  nodePort,
+		ConsoleTLS:   &tls.Config{RootCAs: pool},
+	}
+	uiSrv := httptest.NewServer(s.Handler())
+	defer uiSrv.Close()
+
+	ticket := s.issueConsoleTicket("tester")
+	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
+	conn, err := dialWS(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial console: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("RFB 003.008\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(data) != "RFB 003.008\n" {
+		t.Fatalf("expected the byte round trip through the TLS relay hop, got %q", data)
+	}
+}
+
+// TestHandleConsoleTLSRejectsUntrustedCert confirms kairon-ui actually
+// verifies kairon-node's certificate rather than just speaking TLS to
+// whatever's on the other end -- an empty CertPool must not trust a real,
+// otherwise-valid server certificate.
+func TestHandleConsoleTLSRejectsUntrustedCert(t *testing.T) {
+	workspace := shortTempDir(t)
+	listenEchoVNCSocket(t, workspace)
+
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "runtime-1", "status": "Running", "workspace": workspace})
+	}))
+	defer fluxSrv.Close()
+
+	const consoleToken = "shared-node-console-token"
+	nodeConsole := &consoleproxy.Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: consoleToken}
+	nodeSrv := httptest.NewUnstartedServer(nodeConsole.Handler())
+	nodeSrv.StartTLS()
+	defer nodeSrv.Close()
+
+	nodeURL, err := url.Parse(nodeSrv.URL)
+	if err != nil {
+		t.Fatalf("parse node server URL: %v", err)
+	}
+	nodeHost, nodePort, err := net.SplitHostPort(nodeURL.Host)
+	if err != nil {
+		t.Fatalf("split node server host/port: %v", err)
+	}
+
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Spec:     model.MachineSpec{Runtime: model.RuntimeSpec{Backend: "qemu"}},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+	}
+	fk.nodes = []model.Node{{
+		Metadata: model.ObjectMeta{Name: "worker-1"},
+		Status: struct {
+			Conditions []model.NodeCondition `json:"conditions,omitempty"`
+			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
+		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+	}}
+
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	kc := mustKubeClientAt(t, kubeSrv.URL)
+
+	// An empty pool trusts nothing -- the dial from kairon-ui to
+	// kairon-node must fail closed, not fall back to plaintext.
+	s := &Server{
+		Kube:         kc,
+		ConsoleToken: consoleToken,
+		ConsolePort:  nodePort,
+		ConsoleTLS:   &tls.Config{RootCAs: x509.NewCertPool()},
+	}
+	uiSrv := httptest.NewServer(s.Handler())
+	defer uiSrv.Close()
+
+	ticket := s.issueConsoleTicket("tester")
+	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
+	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
+		t.Fatal("expected the dial to fail when kairon-node's certificate isn't trusted")
+	}
+}
+
 func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	fk := newFakeKube()
 	fk.machines["vm1"] = model.Machine{
@@ -223,7 +434,7 @@ func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket()
+	ticket := s.issueConsoleTicket("tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-Running machine to fail")
@@ -244,7 +455,7 @@ func TestHandleConsoleDisabledWhenNotConfigured(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket()
+	ticket := s.issueConsoleTicket("tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console to be refused when ConsoleToken/ConsolePort aren't configured")
@@ -266,7 +477,7 @@ func TestHandleConsoleRejectsNonQemuBackend(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket()
+	ticket := s.issueConsoleTicket("tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-qemu backend to fail")

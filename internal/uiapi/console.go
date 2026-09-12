@@ -24,33 +24,55 @@ import (
 // custom headers on a native WebSocket upgrade).
 const consoleTicketTTL = 30 * time.Second
 
+// consoleTicketState binds a ticket to the operator it was issued to, so
+// handleConsole's audit log can attribute a console session to a person,
+// not just "someone who had a valid ticket."
+type consoleTicketState struct {
+	username string
+	expires  time.Time
+}
+
 // issueConsoleTicket mints a single-use ticket for handleConsole, so the
 // real session/token credential never has to appear in a URL or access
 // log -- only this short-lived, narrow-purpose value does.
-func (s *Server) issueConsoleTicket() string {
+func (s *Server) issueConsoleTicket(username string) string {
 	buf := make([]byte, 20)
 	_, _ = rand.Read(buf)
 	ticket := hex.EncodeToString(buf)
-	s.consoleTickets.Store(ticket, time.Now().Add(consoleTicketTTL))
+	s.consoleTickets.Store(ticket, consoleTicketState{username: username, expires: time.Now().Add(consoleTicketTTL)})
 	return ticket
 }
 
 // consumeConsoleTicket validates and immediately deletes a ticket --
-// presenting the same ticket twice always fails the second time.
-func (s *Server) consumeConsoleTicket(ticket string) bool {
+// presenting the same ticket twice always fails the second time -- and
+// returns the username it was issued to.
+func (s *Server) consumeConsoleTicket(ticket string) (username string, ok bool) {
 	if ticket == "" {
-		return false
+		return "", false
 	}
-	v, ok := s.consoleTickets.LoadAndDelete(ticket)
-	if !ok {
-		return false
+	v, found := s.consoleTickets.LoadAndDelete(ticket)
+	if !found {
+		return "", false
 	}
-	expires, _ := v.(time.Time)
-	return time.Now().Before(expires)
+	st, _ := v.(consoleTicketState)
+	if time.Now().After(st.expires) {
+		return "", false
+	}
+	return st.username, true
 }
 
 func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket()})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(usernameFromContext(r.Context()))})
+}
+
+// handleConfig reports small, non-sensitive feature toggles the frontend
+// needs to decide what to render before the user acts -- e.g. whether to
+// show a Machine's "Console" button at all, rather than showing it
+// unconditionally and only failing after a click.
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"consoleEnabled": s.ConsoleToken != "" && s.ConsolePort != "",
+	})
 }
 
 // handleConsole relays a browser WebSocket to the target Machine's VNC
@@ -58,7 +80,8 @@ func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 // local, unix-socket-only QEMU VNC server. See docs/architecture.md for
 // the full chain and its trust boundary.
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
-	if !s.consumeConsoleTicket(r.URL.Query().Get("ticket")) {
+	username, ok := s.consumeConsoleTicket(r.URL.Query().Get("ticket"))
+	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid or expired console ticket")
 		return
 	}
@@ -66,7 +89,8 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "console is not enabled on this deployment")
 		return
 	}
-	m, err := s.Kube.GetMachine(r.Context(), r.PathValue("namespace"), r.PathValue("name"))
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	m, err := s.Kube.GetMachine(r.Context(), namespace, name)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -89,11 +113,15 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstreamURL := fmt.Sprintf("ws://%s:%s/console/%s", nodeAddr, s.ConsolePort, m.Status.RuntimeID)
+	scheme := "ws"
+	dialOpts := &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + s.ConsoleToken}}}
+	if s.ConsoleTLS != nil {
+		scheme = "wss"
+		dialOpts.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: s.ConsoleTLS}}
+	}
+	upstreamURL := fmt.Sprintf("%s://%s:%s/console/%s", scheme, nodeAddr, s.ConsolePort, m.Status.RuntimeID)
 	dialCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	upstream, resp, err := websocket.Dial(dialCtx, upstreamURL, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + s.ConsoleToken}},
-	})
+	upstream, resp, err := websocket.Dial(dialCtx, upstreamURL, dialOpts)
 	cancel()
 	if resp != nil && resp.Body != nil {
 		defer func() { _ = resp.Body.Close() }()
@@ -110,11 +138,18 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = downstream.CloseNow() }()
 
+	if s.Log != nil {
+		s.Log.Info("uiapi console opened", "username", username, "namespace", namespace, "name", name, "remoteAddr", r.RemoteAddr)
+	}
+	start := time.Now()
 	ctx := r.Context()
 	relay(
 		websocket.NetConn(ctx, downstream, websocket.MessageBinary),
 		websocket.NetConn(ctx, upstream, websocket.MessageBinary),
 	)
+	if s.Log != nil {
+		s.Log.Info("uiapi console closed", "username", username, "namespace", namespace, "name", name, "duration", time.Since(start).Round(time.Second).String())
+	}
 	_ = downstream.Close(websocket.StatusNormalClosure, "")
 }
 

@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -76,6 +78,12 @@ func run() int {
 		return 1
 	}
 
+	consoleTLS, err := consoleTLSConfig(os.Getenv("KAIRON_NODE_CONSOLE_CA"))
+	if err != nil {
+		log.Error("console TLS", "error", err)
+		return 1
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
@@ -91,6 +99,7 @@ func run() int {
 		// either empty disables the VNC console feature (see console.go).
 		ConsoleToken: os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"),
 		ConsolePort:  env("KAIRON_NODE_CONSOLE_PORT", "8090"),
+		ConsoleTLS:   consoleTLS,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
@@ -111,6 +120,28 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+// consoleTLSConfig builds the TLS config kairon-ui uses to verify a
+// kairon-node's console-relay server certificate, from a CA PEM file path
+// ($KAIRON_NODE_CONSOLE_CA). Empty caPath means every kairon-node's
+// console listener is plaintext (ws://) -- the default, backward-compatible
+// posture. One-way TLS only: the shared KAIRON_NODE_CONSOLE_TOKEN already
+// authenticates kairon-ui to kairon-node, so no client certificate is
+// needed here.
+func consoleTLSConfig(caPath string) (*tls.Config, error) {
+	if caPath == "" {
+		return nil, nil
+	}
+	caPEM, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read console CA %s: %w", caPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("console CA %s contains no certificates", caPath)
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}, nil
 }
 
 func env(k, d string) string {

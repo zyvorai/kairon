@@ -102,6 +102,19 @@ console:
   # lookup+randAlphaNum pattern as kairon-ui-session).
   existingSecret: ""
   existingSecretKey: "token"
+  tls:
+    # Opt-in one-way TLS on the kairon-ui -> kairon-node console hop
+    # (plaintext HTTP with the shared token otherwise -- see SECURITY.md's
+    # "VNC console" section). Not mutual TLS: the shared console token
+    # above already authenticates kairon-ui to kairon-node, so kairon-node
+    # only needs a server certificate, not a client-cert-verifying one.
+    enabled: false
+    # secretName: a pre-created Secret with tls.crt/tls.key (kairon-node's
+    # server certificate/key) and ca.crt (the CA kairon-ui verifies it
+    # against) -- required when tls.enabled is true. No chart-generated
+    # default; unlike the console token, a real CA/cert pair isn't
+    # something Helm should be minting for you.
+    secretName: ""
 metrics:
   # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,
   # for clusters running prometheus-operator. Off by default since not every

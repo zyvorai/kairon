@@ -5,10 +5,19 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -82,5 +91,66 @@ func TestHashPasswordRequiresExactlyOneArg(t *testing.T) {
 	}
 	if code := hashPassword([]string{"a", "b"}); code != 2 {
 		t.Fatalf("expected usage error (2) for too many args, got %d", code)
+	}
+}
+
+// writeSelfSignedCAPEM generates a throwaway self-signed certificate and
+// writes it PEM-encoded to a temp file, purely to give consoleTLSConfig a
+// real, parseable CA to load -- not a working TLS identity.
+func writeSelfSignedCAPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "kairon-test-ca"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+	return path
+}
+
+func TestConsoleTLSConfigEmptyPathMeansNoTLS(t *testing.T) {
+	cfg, err := consoleTLSConfig("")
+	if err != nil {
+		t.Fatalf("expected no error for an empty path, got %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("expected a nil TLS config when no CA is configured")
+	}
+}
+
+func TestConsoleTLSConfigLoadsARealCA(t *testing.T) {
+	path := writeSelfSignedCAPEM(t)
+	cfg, err := consoleTLSConfig(path)
+	if err != nil {
+		t.Fatalf("consoleTLSConfig: %v", err)
+	}
+	if cfg == nil || cfg.RootCAs == nil {
+		t.Fatal("expected a non-nil TLS config with a populated RootCAs pool")
+	}
+}
+
+func TestConsoleTLSConfigRejectsMissingOrInvalidFile(t *testing.T) {
+	if _, err := consoleTLSConfig("/nonexistent/ca.pem"); err == nil {
+		t.Fatal("expected an error for a nonexistent CA file")
+	}
+	garbage := filepath.Join(t.TempDir(), "garbage.pem")
+	if err := os.WriteFile(garbage, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write garbage file: %v", err)
+	}
+	if _, err := consoleTLSConfig(garbage); err == nil {
+		t.Fatal("expected an error for a CA file with no real certificates")
 	}
 }

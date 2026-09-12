@@ -74,6 +74,18 @@ Flags:
                           open to anyone who can reach the port).
   --ui-port=N             kairon-ui listen port (default 8082), same
                           auto-fallback-if-busy behavior as --node-port.
+  --with-console          Also enable the graphical VNC console relay
+                          (kairon-ui's "Console" button per Machine).
+                          Requires --with-ui (the browser only ever talks
+                          to kairon-node through kairon-ui's relay). A
+                          shared token is auto-generated and wired into
+                          both kairon-node.env and kairon-ui.env -- unlike
+                          --ui-token, it's never typed by a human, so
+                          there's no --console-token override. Read
+                          SECURITY.md's "VNC console" section first:
+                          FluxVM's own VNC socket has no auth of its own.
+  --console-port=N        kairon-node's console relay port (default 8090),
+                          same auto-fallback-if-busy behavior as --node-port.
   --no-start              Install files but do not enable/start the service(s).
   --sync-only             Copy binaries + unit files to the remote host only;
                           skip user/dir/config/unit install and service start.
@@ -136,6 +148,7 @@ Examples:
   $SCRIPT_NAME 80.79.5.173 sus
   $SCRIPT_NAME sus@80.79.5.173 --kube-url=https://10.0.0.5:6443 --kube-insecure
   $SCRIPT_NAME sus@80.79.5.173 --with-controller --with-ui
+  $SCRIPT_NAME sus@80.79.5.173 --with-ui --with-console
   $SCRIPT_NAME status sus@80.79.5.173
   $SCRIPT_NAME --uninstall sus@80.79.5.173
 EOF
@@ -150,6 +163,10 @@ UI_PORT="8082"
 UI_PORT_EXPLICIT=0
 RESOLVED_UI_TOKEN=""
 RESOLVED_UI_TOKEN_SOURCE="none"
+WITH_CONSOLE=0
+CONSOLE_PORT="8090"
+CONSOLE_PORT_EXPLICIT=0
+RESOLVED_CONSOLE_TOKEN=""
 NO_START=0
 SYNC_ONLY=0
 DRY_RUN=0
@@ -207,6 +224,8 @@ while [[ $# -gt 0 ]]; do
     --ui-token=*) UI_TOKEN="${1#*=}" ;;
     --ui-allow-unauthenticated) UI_ALLOW_UNAUTHENTICATED=1 ;;
     --ui-port=*) UI_PORT="${1#*=}"; UI_PORT_EXPLICIT=1 ;;
+    --with-console) WITH_CONSOLE=1 ;;
+    --console-port=*) CONSOLE_PORT="${1#*=}"; CONSOLE_PORT_EXPLICIT=1 ;;
     --no-start) NO_START=1 ;;
     --sync-only) SYNC_ONLY=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -257,6 +276,9 @@ if [[ "$migration_paths_given" -eq 3 ]]; then
 fi
 if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" && "$MIGRATION_CONFIGURED" != "1" ]]; then
   die "--with-migration-adapter-stub requires --migration-ca/-cert/-key (the stub is only useful once migration mTLS is configured)"
+fi
+if [[ "$WITH_CONSOLE" == "1" && "$WITH_UI" != "1" ]]; then
+  die "--with-console requires --with-ui (the browser only ever talks to kairon-node's console relay through kairon-ui)"
 fi
 
 if [[ ${#POSITIONAL[@]} -ge 1 ]]; then
@@ -390,6 +412,8 @@ Node health port:         ${NODE_PORT}$([[ "$NODE_PORT_EXPLICIT" != "1" ]] && ec
 $([[ "$WITH_CONTROLLER" == "1" ]] && echo "Controller health port:  ${CONTROLLER_PORT}$([[ "$CONTROLLER_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
 $([[ "$WITH_UI" == "1" ]] && echo "UI port:                 ${UI_PORT}$([[ "$UI_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
 $([[ "$WITH_UI" == "1" ]] && echo "Dashboard token:          $(if [[ -n "$UI_TOKEN" ]]; then echo "provided via --ui-token"; elif [[ "$UI_ALLOW_UNAUTHENTICATED" == "1" ]]; then echo "none (--ui-allow-unauthenticated -- open dashboard, local/dev only)"; else echo "will be auto-generated at deploy time (openssl rand -hex 24) and printed once at the end"; fi)")
+$([[ "$WITH_CONSOLE" == "1" ]] && echo "Console relay port:       ${CONSOLE_PORT}$([[ "$CONSOLE_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
+$([[ "$WITH_CONSOLE" == "1" ]] && echo "Console relay token:      will be auto-generated at deploy time (openssl rand -hex 32), shared between kairon-node and kairon-ui only -- never shown to an operator")
 Start after install:      $([[ "$NO_START" == "1" ]] && echo "no (--no-start)" || echo "yes")
 
 Remote paths:
@@ -421,6 +445,11 @@ run_status() {
     if systemctl list-unit-files kairon-ui.service >/dev/null 2>&1; then
       echo "---"
       systemctl status kairon-ui.service --no-pager -l || true
+      cp=$(grep -oE -- "--console-addr=:[0-9]+" /etc/systemd/system/kairon-node.service 2>/dev/null | cut -d: -f2)
+      if [[ -n "$cp" ]]; then
+        echo "---"
+        curl -s -o /dev/null -w "console relay port $cp: %{http_code} (401 is expected without a bearer token -- it means the listener is up)\n" "http://127.0.0.1:${cp}/console/nonexistent" 2>/dev/null
+      fi
     fi
   ' || true
 }
@@ -516,6 +545,14 @@ run_deploy() {
       warn "auto-generated a dashboard token (shown once at the end of this run) -- pass --ui-token=... to pin it across redeploys"
     fi
   fi
+  if [[ "$WITH_CONSOLE" == "1" ]]; then
+    # Unlike UI_TOKEN, this is never typed by a human -- it only ever
+    # travels between kairon-node and kairon-ui on the same deploy, so
+    # there's no --console-token override flag; it's just regenerated
+    # (and re-applied, if the env files are fresh) on every deploy.
+    command -v openssl >/dev/null 2>&1 || die "--with-console needs a token: install 'openssl' (used to auto-generate one)"
+    RESOLVED_CONSOLE_TOKEN="$(openssl rand -hex 32)"
+  fi
 
   info "connecting to ${USER_ARG}@${HOST_ARG}..."
   local remote_hostname
@@ -585,6 +622,10 @@ run_deploy() {
     printf 'UI_TOKEN=%q\n' "$RESOLVED_UI_TOKEN"
     printf 'UI_PORT=%q\n' "$UI_PORT"
     printf 'UI_PORT_EXPLICIT=%q\n' "$UI_PORT_EXPLICIT"
+    printf 'WITH_CONSOLE=%q\n' "$WITH_CONSOLE"
+    printf 'CONSOLE_TOKEN=%q\n' "$RESOLVED_CONSOLE_TOKEN"
+    printf 'CONSOLE_PORT=%q\n' "$CONSOLE_PORT"
+    printf 'CONSOLE_PORT_EXPLICIT=%q\n' "$CONSOLE_PORT_EXPLICIT"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -598,6 +639,40 @@ info() { printf '[*] %s\n' "$*"; }
 ok()   { printf '[+] %s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 
+port_in_use() {
+  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"
+}
+
+# Resolves the port to actually use for a health/relay server: if the
+# caller explicitly asked for a port, that port is used as-is (a busy
+# explicit port is a hard failure, not silently overridden). Otherwise, if
+# the default is busy (common: some unrelated service already on it), a
+# random free port in the ephemeral range is picked automatically.
+resolve_port() {
+  local desired="$1" explicit="$2" name="$3"
+  if ! port_in_use "$desired"; then
+    echo "$desired"
+    return 0
+  fi
+  if [[ "$explicit" == "1" ]]; then
+    echo "ERROR: --$name-port=$desired is already in use on this host" >&2
+    return 1
+  fi
+  warn "default port $desired for $name is already in use on this host -- picking a random free port"
+  local tries=0 candidate
+  while [[ $tries -lt 50 ]]; do
+    candidate=$(( (RANDOM % 20000) + 20000 ))
+    if ! port_in_use "$candidate"; then
+      warn "$name port auto-selected: $candidate (pass --$name-port=$candidate to pin it on future deploys)"
+      echo "$candidate"
+      return 0
+    fi
+    tries=$((tries + 1))
+  done
+  echo "ERROR: could not find a free port for $name after 50 attempts" >&2
+  return 1
+}
+
 if ! getent group kairon >/dev/null 2>&1; then
   groupadd --system kairon
 fi
@@ -607,6 +682,15 @@ if ! id kairon >/dev/null 2>&1; then
 fi
 
 install -d -m 0750 -o root -g kairon /etc/kairon
+
+# Resolved early (before any config files reference it) so kairon-node.env
+# and kairon-ui.env can both be seeded with the SAME actually-applied
+# port, not just the caller's desired one -- an auto-fallback pick made
+# separately by each file's seeding step could otherwise disagree.
+RESOLVED_CONSOLE_PORT=""
+if [[ "$WITH_CONSOLE" == "1" ]]; then
+  RESOLVED_CONSOLE_PORT="$(resolve_port "$CONSOLE_PORT" "$CONSOLE_PORT_EXPLICIT" "console")" || exit 1
+fi
 
 install -m 0755 -o root -g root ./kairon-node /usr/bin/kairon-node
 install -m 0755 -o root -g root ./kaironctl /usr/bin/kaironctl
@@ -644,6 +728,11 @@ if [[ ! -f /etc/kairon/kairon-node.env ]]; then
       echo "#KAIRON_MIGRATION_CERT="
       echo "#KAIRON_MIGRATION_KEY="
     fi
+    if [[ "$WITH_CONSOLE" == "1" ]]; then
+      echo "KAIRON_NODE_CONSOLE_TOKEN=$CONSOLE_TOKEN"
+    else
+      echo "#KAIRON_NODE_CONSOLE_TOKEN="
+    fi
   } > /etc/kairon/kairon-node.env
   chmod 0640 /etc/kairon/kairon-node.env
   chown root:kairon /etc/kairon/kairon-node.env
@@ -656,6 +745,10 @@ else
   fi
   if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
     warn "--migration-* flags were given but ignored because the env file already exists"
+  fi
+  if [[ "$WITH_CONSOLE" == "1" ]]; then
+    warn "--with-console was given but KAIRON_NODE_CONSOLE_TOKEN was NOT applied because the env file already exists"
+    warn "edit /etc/kairon/kairon-node.env by hand (KAIRON_NODE_CONSOLE_TOKEN must match kairon-ui.env's), then: systemctl restart kairon-node"
   fi
 fi
 
@@ -686,6 +779,13 @@ if [[ "$WITH_UI" == "1" ]]; then
       if [[ -n "$KUBE_TOKEN" ]]; then echo "KAIRON_KUBE_TOKEN=$KUBE_TOKEN"; else echo "#KAIRON_KUBE_TOKEN="; fi
       if [[ -n "$KUBE_CA" ]]; then echo "KAIRON_KUBE_CA=$KUBE_CA"; else echo "#KAIRON_KUBE_CA="; fi
       if [[ "$KUBE_INSECURE" == "1" ]]; then echo "KAIRON_KUBE_INSECURE=true"; else echo "#KAIRON_KUBE_INSECURE=false"; fi
+      if [[ "$WITH_CONSOLE" == "1" ]]; then
+        echo "KAIRON_NODE_CONSOLE_TOKEN=$CONSOLE_TOKEN"
+        echo "KAIRON_NODE_CONSOLE_PORT=$RESOLVED_CONSOLE_PORT"
+      else
+        echo "#KAIRON_NODE_CONSOLE_TOKEN="
+        echo "#KAIRON_NODE_CONSOLE_PORT="
+      fi
     } > /etc/kairon/kairon-ui.env
     chmod 0640 /etc/kairon/kairon-ui.env
     chown root:kairon /etc/kairon/kairon-ui.env
@@ -695,6 +795,10 @@ if [[ "$WITH_UI" == "1" ]]; then
     if [[ -n "$UI_TOKEN$KUBE_URL$KUBE_TOKEN$KUBE_CA" || "$UI_ALLOW_UNAUTHENTICATED" == "1" || "$KUBE_INSECURE" == "1" ]]; then
       warn "--ui-token/--ui-allow-unauthenticated/--kube-* flags were given but ignored because the env file already exists"
       warn "edit /etc/kairon/kairon-ui.env by hand, then: systemctl restart kairon-ui"
+    fi
+    if [[ "$WITH_CONSOLE" == "1" ]]; then
+      warn "--with-console was given but KAIRON_NODE_CONSOLE_TOKEN/_PORT were NOT applied because the env file already exists"
+      warn "edit /etc/kairon/kairon-ui.env by hand (KAIRON_NODE_CONSOLE_TOKEN must match kairon-node.env's), then: systemctl restart kairon-ui"
     fi
   fi
 fi
@@ -706,45 +810,14 @@ if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
   ok "installed kairon-migration-adapter-stub (TEST DOUBLE -- simulates transfers, does not move real VM memory)"
 fi
 
-port_in_use() {
-  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"
-}
-
-# Resolves the port to actually use for a health server: if the caller
-# explicitly asked for a port, that port is used as-is (a busy explicit
-# port is a hard failure, not silently overridden). Otherwise, if the
-# default is busy (common: some unrelated service already on 8080/8081),
-# a random free port in the ephemeral range is picked automatically.
-resolve_port() {
-  local desired="$1" explicit="$2" name="$3"
-  if ! port_in_use "$desired"; then
-    echo "$desired"
-    return 0
-  fi
-  if [[ "$explicit" == "1" ]]; then
-    echo "ERROR: --$name-port=$desired is already in use on this host" >&2
-    return 1
-  fi
-  warn "default port $desired for $name is already in use on this host -- picking a random free port"
-  local tries=0 candidate
-  while [[ $tries -lt 50 ]]; do
-    candidate=$(( (RANDOM % 20000) + 20000 ))
-    if ! port_in_use "$candidate"; then
-      warn "$name health port auto-selected: $candidate (pass --$name-port=$candidate to pin it on future deploys)"
-      echo "$candidate"
-      return 0
-    fi
-    tries=$((tries + 1))
-  done
-  echo "ERROR: could not find a free port for $name after 50 attempts" >&2
-  return 1
-}
-
 RESOLVED_NODE_PORT="$(resolve_port "$NODE_PORT" "$NODE_PORT_EXPLICIT" "node")" || exit 1
 NODE_EXEC_ARGS="--interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT"
 if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
   RESOLVED_MIGRATION_PORT="$(resolve_port "$MIGRATION_PORT" "$MIGRATION_PORT_EXPLICIT" "migration")" || exit 1
   NODE_EXEC_ARGS="$NODE_EXEC_ARGS --migration-addr=:$RESOLVED_MIGRATION_PORT"
+fi
+if [[ "$WITH_CONSOLE" == "1" ]]; then
+  NODE_EXEC_ARGS="$NODE_EXEC_ARGS --console-addr=:$RESOLVED_CONSOLE_PORT"
 fi
 install -m 0644 -o root -g root ./kairon-node.service /etc/systemd/system/kairon-node.service
 sed -i "s#^ExecStart=.*#ExecStart=/usr/bin/kairon-node $NODE_EXEC_ARGS#" /etc/systemd/system/kairon-node.service
@@ -922,6 +995,18 @@ INSTALL_EOF
         tip "dashboard token: unchanged (--ui-allow-unauthenticated, or an existing env file was left as-is) -- ssh in and 'sudo cat /etc/kairon/kairon-ui.env' to see the active config"
         ;;
     esac
+
+    if [[ "$WITH_CONSOLE" == "1" ]]; then
+      # /etc/kairon/kairon-node.env is root:kairon 0640, same as
+      # kairon-ui.env above -- same sudo-required check, same reason.
+      if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_NODE_CONSOLE_TOKEN=$RESOLVED_CONSOLE_TOKEN\$' /etc/kairon/kairon-node.env" >/dev/null 2>&1 \
+        && ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_NODE_CONSOLE_TOKEN=$RESOLVED_CONSOLE_TOKEN\$' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
+        ok "VNC console: enabled (port $RESOLVED_CONSOLE_PORT, shared token applied to both kairon-node.env and kairon-ui.env)"
+        tip "read SECURITY.md's \"VNC console\" section before relying on this on a shared/untrusted network -- FluxVM's own VNC socket has no auth of its own"
+      else
+        tip "--with-console was given but at least one of kairon-node.env/kairon-ui.env already existed -- the auto-generated token was NOT applied to both; ssh in and compare 'sudo cat /etc/kairon/kairon-node.env /etc/kairon/kairon-ui.env'"
+      fi
+    fi
   fi
 
   echo

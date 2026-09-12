@@ -206,6 +206,80 @@ func TestWithAuthAcceptsEitherStaticTokenOrSession(t *testing.T) {
 	}
 }
 
+func TestLoginLocksOutAfterRepeatedFailures(t *testing.T) {
+	s := newUserTestServer(t, []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}}, "test-session-secret")
+	h := s.Handler()
+
+	for i := 0; i < maxLoginAttempts; i++ {
+		if rr := login(t, h, "alice", "wrong"); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: expected 401, got %d", i, rr.Code)
+		}
+	}
+	// One more attempt -- even with the CORRECT password -- must now be
+	// rate-limited, not silently let through.
+	rr := login(t, h, "alice", "correct-horse")
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 after %d failed attempts, got %d: %s", maxLoginAttempts, rr.Code, rr.Body.String())
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("expected a Retry-After header on a rate-limited response")
+	}
+}
+
+func TestLoginLockoutIsPerUsernameNotGlobal(t *testing.T) {
+	s := newUserTestServer(t, []User{
+		{Username: "alice", PasswordHash: hashFor(t, "alice-pw")},
+		{Username: "bob", PasswordHash: hashFor(t, "bob-pw")},
+	}, "test-session-secret")
+	h := s.Handler()
+
+	for i := 0; i < maxLoginAttempts; i++ {
+		login(t, h, "alice", "wrong")
+	}
+	if rr := login(t, h, "alice", "alice-pw"); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected alice to be locked out, got %d", rr.Code)
+	}
+	// bob must be unaffected by alice's lockout.
+	if rr := login(t, h, "bob", "bob-pw"); rr.Code != http.StatusOK {
+		t.Fatalf("expected bob's login to be unaffected by alice's lockout, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLoginLockoutAppliesToUnknownUsernamesToo(t *testing.T) {
+	// If lockout only ever applied to real accounts, its *absence* would
+	// itself leak whether a username exists -- so an unknown username
+	// must lock out on exactly the same schedule as a real one.
+	s := newUserTestServer(t, []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}}, "test-session-secret")
+	h := s.Handler()
+
+	for i := 0; i < maxLoginAttempts; i++ {
+		login(t, h, "no-such-user", "whatever")
+	}
+	if rr := login(t, h, "no-such-user", "whatever"); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected an unknown username to also lock out, got %d", rr.Code)
+	}
+}
+
+func TestLoginSuccessClearsLockoutCounter(t *testing.T) {
+	s := newUserTestServer(t, []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}}, "test-session-secret")
+	h := s.Handler()
+
+	for i := 0; i < maxLoginAttempts-1; i++ {
+		login(t, h, "alice", "wrong")
+	}
+	if rr := login(t, h, "alice", "correct-horse"); rr.Code != http.StatusOK {
+		t.Fatalf("expected the correct password to still succeed just under the lockout threshold, got %d", rr.Code)
+	}
+	// A successful login should reset the counter -- a fresh run of
+	// almost-but-not-quite maxLoginAttempts failures should not lock out.
+	for i := 0; i < maxLoginAttempts-1; i++ {
+		login(t, h, "alice", "wrong")
+	}
+	if rr := login(t, h, "alice", "correct-horse"); rr.Code != http.StatusOK {
+		t.Fatalf("expected success to have reset the failure counter, got %d", rr.Code)
+	}
+}
+
 func TestAuditLogAttributesSessionAuthenticatedRequests(t *testing.T) {
 	var logBuf bytes.Buffer
 	fk := newFakeKube()

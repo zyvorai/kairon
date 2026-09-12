@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -60,6 +62,18 @@ func setContextUsername(ctx context.Context, username string) {
 	if holder, ok := ctx.Value(usernameHolderKey).(*string); ok {
 		*holder = username
 	}
+}
+
+// usernameFromContext reads back what withAuth (or a handler downstream of
+// it) recorded via setContextUsername -- e.g. handleConsoleTicket uses
+// this to bind an issued ticket to the operator who requested it, so the
+// console's own audit log can attribute a session to a person, not just
+// "someone with a valid ticket."
+func usernameFromContext(ctx context.Context) string {
+	if holder, ok := ctx.Value(usernameHolderKey).(*string); ok {
+		return *holder
+	}
+	return ""
 }
 
 // sessionPayload is the signed, base64url-encoded JSON body of a session
@@ -151,6 +165,61 @@ func (s *Server) findUser(username string) (User, bool) {
 	return User{}, false
 }
 
+// loginAttemptState tracks failed logins for one requested username.
+// Keyed on the raw username the caller supplied, not whether it resolves
+// to a real account -- otherwise a nonexistent username never locking out
+// would itself leak which usernames exist, the same anti-enumeration
+// concern handleLogin's constant-time dummy-hash compare already guards.
+type loginAttemptState struct {
+	mu          sync.Mutex
+	count       int
+	lockedUntil time.Time
+}
+
+const (
+	maxLoginAttempts = 5
+	loginLockoutFor  = 5 * time.Minute
+)
+
+func (s *Server) loginState(username string) *loginAttemptState {
+	v, _ := s.loginAttempts.LoadOrStore(username, &loginAttemptState{})
+	return v.(*loginAttemptState)
+}
+
+// loginLockedFor returns how much longer username is locked out, or 0 if
+// it may attempt a login now.
+func (s *Server) loginLockedFor(username string) time.Duration {
+	st := s.loginState(username)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if remaining := time.Until(st.lockedUntil); remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
+// recordLoginResult clears a username's failure count on success, or
+// increments it on failure -- locking the username out for
+// loginLockoutFor once maxLoginAttempts consecutive failures accumulate.
+// This is in-memory and per-replica, the same documented limitation as
+// session revocation (see revokeSession) -- kairon-ui runs one replica by
+// default.
+func (s *Server) recordLoginResult(username string, success bool) {
+	st := s.loginState(username)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if success {
+		st.count = 0
+		st.lockedUntil = time.Time{}
+		return
+	}
+	st.count++
+	if st.count >= maxLoginAttempts {
+		st.lockedUntil = time.Now().Add(loginLockoutFor)
+		st.count = 0
+	}
+}
+
 func bearerToken(r *http.Request) string {
 	const prefix = "Bearer "
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, prefix) {
@@ -184,6 +253,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	if remaining := s.loginLockedFor(req.Username); remaining > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+		if s.Log != nil {
+			s.Log.Warn("uiapi login rate-limited", "username", req.Username, "remoteAddr", r.RemoteAddr, "retryAfter", remaining.Round(time.Second).String())
+		}
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts; try again later")
+		return
+	}
 	user, found := s.findUser(req.Username)
 	hash := dummyHash
 	if found {
@@ -193,6 +270,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// "no such user" response takes the same time as a "wrong password"
 	// one -- avoids leaking valid usernames via response timing.
 	credentialsOK := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil
+	s.recordLoginResult(req.Username, found && credentialsOK)
 	if !found || !credentialsOK {
 		if s.Log != nil {
 			s.Log.Warn("uiapi login failed", "username", req.Username, "remoteAddr", r.RemoteAddr)

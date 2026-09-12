@@ -1,3 +1,37 @@
+# Unreleased: login lockout, console audit/TLS, deploy-remote.sh console support test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.1%, threshold 50%). `helm lint` green plus `helm template --set console.enabled=true --set console.tls.enabled=true --set console.tls.secretName=my-console-tls` confirming the new TLS Secret/volume/env wiring on both the kairon-node DaemonSet and the kairon-ui Deployment, and confirming zero console-TLS output when `console.tls.enabled` is left at its default `false`. `npm run typecheck && build` green. `bash -n scripts/deploy-remote.sh` clean.
+
+## What shipped
+
+This closes out the five-item gap list from the previous VNC console report, minus two items deliberately scoped out as bigger, separate architecture decisions (self-service password reset — would require `kairon-ui` to gain Kubernetes Secret-write RBAC it doesn't have; OIDC/SSO — already a documented exclusion):
+
+- Login rate limiting/lockout: 5 failed attempts against one username lock it out for 5 minutes (`429` with `Retry-After`), tracked per raw requested username (including unknown ones) so the lockout itself can't be used to enumerate valid accounts. A success clears the counter.
+- Console tickets are now bound to the authenticated username at issuance (`issueConsoleTicket`/`consumeConsoleTicket`), and every console session logs a `uiapi console opened`/`uiapi console closed` audit line (username, namespace, name, remote address, duration) — previously only ticket *issuance* was logged, with no record of who actually used a console or for how long.
+- The dashboard's "Console" button now hides itself when `console.enabled` is off or the Machine isn't `Running` on a `qemu`/unset/`auto` backend, via a new `GET /api/v1/config` endpoint, instead of only failing with an error after the click.
+- One-way TLS on the kairon-ui↔kairon-node console relay hop (`console.tls.enabled`/`console.tls.secretName`, a pre-created Secret with `tls.crt`/`tls.key`/`ca.crt`) — opt-in, mirroring `migration.dataplaneTls`; not mutual TLS, since the existing shared bearer token already authenticates kairon-ui to kairon-node.
+- `scripts/deploy-remote.sh --with-console` (`--console-port` to override the auto-picked port): generates and wires `KAIRON_NODE_CONSOLE_TOKEN`/`KAIRON_NODE_CONSOLE_PORT` through both systemd env files, passes `--console-addr` to `kairon-node`, validates `--with-console` requires `--with-ui`, and reports console listener health in `run_status()`/the post-deploy summary.
+
+## A real bug found and fixed along the way
+
+`withAudit` only set up the request-context username holder when `s.Log != nil` — conflating "should this request be logged" with "should downstream handlers see the authenticated username." This meant `handleConsoleTicket` would silently bind tickets to an empty username whenever logging was disabled. Found via `TestHandleConsoleTicketBindsToTheAuthenticatedUsername` failing with `got ""` instead of the expected username; fixed by always attaching the holder in `withAudit` and only skipping the logging work (not holder setup) for GET requests or a nil `Log`.
+
+## Real verification (beyond source-level gates)
+
+- Two new TLS-interop tests (`TestHandleConsoleFullRelayOverTLS`, `TestHandleConsoleTLSRejectsUntrustedCert`) use `httptest.NewUnstartedServer().StartTLS()` for a real, interoperable self-signed certificate — confirming genuine TLS negotiation succeeds with the right CA and fails (`tls: bad certificate`) against an untrusted one, not just that a `tls.Config` field got set.
+- **Deployed to the same real lab host used for the original VNC console verification** and driven against a freshly created real QEMU VM end to end: issued a real console ticket through the deployed `kairon-ui`, opened the WebSocket relay through the deployed `kairon-node`, and received the genuine `RFB 003.008\n` protocol banner from the VM's actual QEMU VNC socket — proof the ticket-binding, relay, and (TLS-disabled, this host's configuration) plaintext hop all work together against real infrastructure, not just in-process fakes. The `uiapi console opened`/`uiapi console closed` audit lines were confirmed written for that session.
+- **Real login rate-limiter verified in production**: 5 wrong-password attempts against a real account returned `429` with `Retry-After: 5m0s`, and a 6th attempt with the *correct* password still returned `429` — confirming the lockout blocks correct credentials too, not just wrong ones, for the full window.
+- **A real port-collision auto-recovery, observed live**: on this shared host, `--console-port`'s default `8090` was already in use (an unrelated Docker container) and the node's own health port also collided (a restart-race self-collision); `deploy-remote.sh`'s `resolve_port()` correctly fell back to a free port (`31315`) and the script's own post-deploy check correctly flagged that the pre-existing env files hadn't picked up the new token/port automatically, requiring (and receiving) a manual `KAIRON_NODE_CONSOLE_PORT` reconciliation — exactly the operator workflow the script's warning describes.
+- A real `permission denied` dialing a freshly created VM's `vnc.sock` was hit again on this pass (same root-owned-socket/unprivileged-`kairon`-user prerequisite documented in the previous report) and resolved the same documented way (`setfacl -m u:kairon:rw <path>/vnc.sock`), reconfirming the documented prerequisite still holds rather than having been silently fixed elsewhere.
+
+## Coverage
+
+```text
+total (internal/...): 68.1% (threshold 50%)
+```
+
 # Unreleased: VNC console + login redesign test report
 
 ## Result

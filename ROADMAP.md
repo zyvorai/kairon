@@ -35,9 +35,9 @@ Not originally scoped for a specific version, but small enough to land alongside
 
 - Prometheus metrics + example alert rules (`internal/metrics`, `charts/kairon/alerts.yaml`)
 - `kairon-ui` web dashboard (`cmd/kairon-ui`, `internal/uiapi`, `web/`)
-- `kairon-ui` real per-operator username/password login (bcrypt accounts, signed sessions, audit attribution, Helm-generated default admin) — closes what was the dashboard's longest-standing known auth gap; see SECURITY.md
+- `kairon-ui` real per-operator username/password login (bcrypt accounts, signed sessions, audit attribution, Helm-generated default admin, rate-limited/lockout on repeated failed attempts) — closes what was the dashboard's longest-standing known auth gap; see SECURITY.md
 - `spec.cloudInit` and `spec.network.forwards` ergonomics (`kaironctl create --hostname/--ssh-key/--forward/...`, matching dashboard fields) — see `docs/guides/machine-network.md`
-- Graphical VNC console (`console.enabled`): `kairon-ui` → `kairon-node` → the VM's local QEMU VNC socket, rendered in-browser via noVNC — FluxVM exposes no remote VNC endpoint of its own, so this is a real relay Kairon built, not a wrapper; see SECURITY.md's "VNC console" section
+- Graphical VNC console (`console.enabled`): `kairon-ui` → `kairon-node` → the VM's local QEMU VNC socket, rendered in-browser via noVNC — FluxVM exposes no remote VNC endpoint of its own, so this is a real relay Kairon built, not a wrapper. Tickets are bound to the requesting username with a full open/close audit trail, the button hides itself when ineligible, the kairon-ui↔kairon-node hop optionally runs over one-way TLS (`console.tls.enabled`), and `scripts/deploy-remote.sh --with-console` covers the bare-metal install path — see SECURITY.md's "VNC console" section
 - `internal/integration`: a CI-runnable controller+agent pipeline test
 - multi-host migration test and `NeedsRecovery` drill runbooks (`docs/runbook-multi-host-migration-test.md`, `docs/runbook-recovery-drill.md`) — documented and scripted, not yet run against real hardware in this repo's own CI
 

@@ -50,6 +50,8 @@ func run() int {
 	migrationPort := flag.Int("migration-port", 9443, "peer migration TCP port advertised through node InternalIP")
 	consoleAddr := flag.String("console-addr", env("KAIRON_NODE_CONSOLE_ADDR", ":8090"), "VNC console relay listen address")
 	consoleToken := flag.String("console-token", os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"), "shared bearer token kairon-ui must present for VNC console relay (default: $KAIRON_NODE_CONSOLE_TOKEN); empty disables the console listener")
+	consoleTLSCert := flag.String("console-tls-cert", env("KAIRON_NODE_CONSOLE_TLS_CERT", ""), "optional TLS certificate PEM for the console relay listener (server-only TLS -- the shared token already authenticates the caller, so no client cert is needed); must be set together with --console-tls-key")
+	consoleTLSKey := flag.String("console-tls-key", env("KAIRON_NODE_CONSOLE_TLS_KEY", ""), "optional TLS private key PEM for the console relay listener; must be set together with --console-tls-cert")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -104,7 +106,7 @@ func run() int {
 		return 2
 	}
 
-	configureConsole(ctx, log, fc, *consoleAddr, *consoleToken)
+	configureConsole(ctx, log, fc, *consoleAddr, *consoleToken, *consoleTLSCert, *consoleTLSKey)
 
 	a := &agent.Agent{
 		NodeName:       node,
@@ -201,10 +203,24 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 // down with it -- console is a purely optional, add-on capability, and
 // e.g. a port already in use on a shared host should just mean "no
 // console today," not "no Machine reconciliation either."
-func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, addr, token string) {
+func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, addr, token, tlsCertPath, tlsKeyPath string) {
 	if strings.TrimSpace(token) == "" {
 		log.Warn("VNC console relay disabled; set --console-token/$KAIRON_NODE_CONSOLE_TOKEN to enable")
 		return
+	}
+	var tlsConfig *tls.Config
+	certSet, keySet := strings.TrimSpace(tlsCertPath) != "", strings.TrimSpace(tlsKeyPath) != ""
+	switch {
+	case certSet != keySet:
+		log.Error("VNC console relay disabled: --console-tls-cert and --console-tls-key must be set together")
+		return
+	case certSet && keySet:
+		cert, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath)
+		if err != nil {
+			log.Error("VNC console relay disabled: failed to load TLS keypair", "error", err)
+			return
+		}
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -213,6 +229,7 @@ func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, 
 	}
 	server := &http.Server{
 		Handler:           (&consoleproxy.Server{Flux: fc, Token: token}).Handler(),
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 5 * time.Second,
 		// No WriteTimeout/IdleTimeout: a VNC session is a long-lived
 		// streaming connection, not a short request/response cycle.
@@ -224,9 +241,17 @@ func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, 
 		_ = server.Shutdown(shutdownCtx)
 	}()
 	go func() {
-		log.Info("VNC console relay listening", "address", addr)
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			log.Error("VNC console relay stopped", "error", err)
+		log.Info("VNC console relay listening", "address", addr, "tls", tlsConfig != nil)
+		var serveErr error
+		if tlsConfig != nil {
+			// certFile/keyFile are intentionally empty: the certificate is
+			// already loaded into server.TLSConfig above.
+			serveErr = server.ServeTLS(listener, "", "")
+		} else {
+			serveErr = server.Serve(listener)
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Error("VNC console relay stopped", "error", serveErr)
 		}
 	}()
 }

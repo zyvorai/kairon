@@ -13,6 +13,7 @@ package uiapi
 
 import (
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"log/slog"
 	"mime"
@@ -46,6 +47,9 @@ type Server struct {
 	// revoked backs POST /api/v1/auth/logout; zero value (an empty
 	// sync.Map) is ready to use.
 	revoked sync.Map
+	// loginAttempts backs handleLogin's per-username rate limiting; zero
+	// value is ready to use.
+	loginAttempts sync.Map
 	// ConsoleToken/ConsolePort configure the VNC console relay (see
 	// console.go): the shared bearer token kairon-ui presents to a
 	// kairon-node's console listener, and the port that listener runs on.
@@ -53,6 +57,12 @@ type Server struct {
 	// returns 501).
 	ConsoleToken string
 	ConsolePort  string
+	// ConsoleTLS, when set, dials kairon-node's console relay over
+	// wss:// with this TLS config (verifying its server certificate)
+	// instead of plaintext ws://. One-way TLS is enough here -- the
+	// shared ConsoleToken already authenticates kairon-ui to kairon-node,
+	// so a client certificate would be redundant.
+	ConsoleTLS *tls.Config
 	// consoleTickets backs the console feature's single-use WebSocket
 	// tickets; zero value is ready to use.
 	consoleTickets sync.Map
@@ -95,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)
 
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
+	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))
 
@@ -163,15 +174,18 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 // than that needs a real per-operator auth model, a separate decision.
 func (s *Server) withAudit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// withUsernameHolder lets withAuth, deep inside next, report back
+		// which operator authenticated (session-token auth only -- the
+		// legacy shared token has no identity to report). Always attached
+		// -- not just when this handler goes on to log -- since other
+		// handlers downstream (e.g. handleConsoleTicket, binding a ticket
+		// to its issuer) rely on reading it back via usernameFromContext
+		// regardless of method or whether a logger is configured.
+		r, holder := withUsernameHolder(r)
 		if r.Method == http.MethodGet || s.Log == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// withUsernameHolder lets withAuth, deep inside next, report back
-		// which operator authenticated (session-token auth only -- the
-		// legacy shared token has no identity to report) so this log line
-		// can attribute the action, not just record that it happened.
-		r, holder := withUsernameHolder(r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		fields := []any{"method", r.Method, "path", r.URL.Path, "remoteAddr", r.RemoteAddr, "status", rec.status}

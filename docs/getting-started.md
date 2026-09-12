@@ -93,6 +93,11 @@ The legacy single shared token (`ui.token`, or `ui.allowUnauthenticated=true`
 for local development) still works unchanged for existing deployments, and
 is accepted alongside `ui.auth.users` if both are set.
 
+Repeated failed logins against one username are rate-limited (5 failures
+locks that username out for 5 minutes, `429` with `Retry-After`) -- tracked
+per requested username, including unknown ones, so the lockout itself
+can't be used to enumerate valid accounts.
+
 ### VNC console
 
 ```bash
@@ -100,12 +105,16 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=
 ```
 
 Adds a "Console" button per Machine in the dashboard -- a real graphical
-VNC session in the browser, for QEMU-backend Machines only. Read
-[SECURITY.md](../SECURITY.md)'s "VNC console" section first: FluxVM's own
-VNC socket has no auth of its own, so this feature's security rests
-entirely on kairon-ui's operator auth, a single-use connection ticket, and
-a shared token between kairon-ui and every kairon-node -- appropriate for a
-trusted operator team, not a hostile-network or multi-tenant deployment.
+VNC session in the browser, for QEMU-backend Machines only (the button
+hides itself for ineligible Machines, or entirely when `console.enabled`
+is off). Read [SECURITY.md](../SECURITY.md)'s "VNC console" section first:
+FluxVM's own VNC socket has no auth of its own, so this feature's security
+rests on kairon-ui's operator auth, a single-use connection ticket bound
+to the requesting username (every session is audit-logged), and a shared
+token between kairon-ui and every kairon-node -- appropriate for a trusted
+operator team, not a hostile-network or multi-tenant deployment. That last
+hop can optionally run over one-way TLS instead of plaintext HTTP -- see
+`console.tls.enabled`/`console.tls.secretName` in `values.yaml`.
 
 **Prerequisite confirmed against a real deployment**: FluxVM creates
 `vnc.sock` root-owned with no `other` write bit, and `kairon-node` runs as
@@ -119,10 +128,10 @@ users) before expecting `console.enabled` to actually work end-to-end.
 Bare-metal alternative:
 
 ```bash
-scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui
+scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui --with-console
 ```
 
-Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js.
+Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js. `--with-console` (optionally `--console-port=N`, otherwise auto-picked if the default collides) generates the shared console token and wires it into both services' systemd env files -- TLS on that hop is still a manual step on this path (place cert/key/CA material yourself and pass `--console-tls-cert`/`--console-tls-key` to `kairon-node` and `KAIRON_NODE_CONSOLE_CA` to `kairon-ui`).
 
 ## Network Fabric (eBPF edge)
 
