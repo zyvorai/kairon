@@ -35,6 +35,8 @@ Not originally scoped for a specific version, but small enough to land alongside
 
 - Prometheus metrics + example alert rules (`internal/metrics`, `charts/kairon/alerts.yaml`)
 - `kairon-ui` web dashboard (`cmd/kairon-ui`, `internal/uiapi`, `web/`)
+- `kairon-ui` real per-operator username/password login (bcrypt accounts, signed sessions, audit attribution, Helm-generated default admin) — closes what was the dashboard's longest-standing known auth gap; see SECURITY.md
+- `spec.cloudInit` and `spec.network.forwards` ergonomics (`kaironctl create --hostname/--ssh-key/--forward/...`, matching dashboard fields) — see `docs/guides/machine-network.md`
 - `internal/integration`: a CI-runnable controller+agent pipeline test
 - multi-host migration test and `NeedsRecovery` drill runbooks (`docs/runbook-multi-host-migration-test.md`, `docs/runbook-recovery-drill.md`) — documented and scripted, not yet run against real hardware in this repo's own CI
 

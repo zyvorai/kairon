@@ -1,3 +1,26 @@
+# Unreleased: VM day-2 ops + kairon-ui login test report
+
+## Result
+
+**PASS.** `make all` (fmt/vet/lint/test-race/cover-check/build/validate/smoke) green on Go 1.27.1 -- coverage rose to 66.1% (from 64.4%) with the new `internal/uiapi/auth.go` and `cmd/kairon-ui` tests. `npm --prefix web run typecheck && test && build` green. `helm lint` green plus three `helm template` scenarios (no `ui.*` values / `ui.auth.users` configured / legacy `ui.token`) each asserting the correct Secret/env wiring. CI green on GitHub for every commit in this cycle, including a real CI failure this cycle caught and fixed (see below).
+
+## What shipped
+
+- `spec.cloudInit` (`hostname`/`user`/`sshAuthorizedKeys`/`packages`/`runCmd`) and `spec.network.forwards` ergonomics via `kaironctl create` flags and the dashboard create form -- both mechanisms already worked end-to-end in FluxVM, they just had no way to set them short of hand-writing a Machine manifest.
+- `kairon-ui` real per-operator username/password login: bcrypt accounts (`ui.auth.users`), a two-step "Apple ID style" sign-in screen (with a brand header, a one-line project tagline, and a "Connecting to `<host>`" indicator), signed 12-hour session tokens, working logout, per-operator audit attribution, and a Helm-generated default `admin` account (random password, generated once, persisted across upgrades) when nothing else is configured -- no hardcoded credentials anywhere. The legacy shared `ui.token` keeps working unchanged.
+
+## Real verification (beyond source-level gates)
+
+- **Live browser testing, three times over** (once per iteration of the login feature: initial implementation, the CI-driven behavior fix, and the visual redesign) against `kairon-ui` binaries built fresh from the exact commit being verified, not a stale build: real two-step login with a configured user, the Helm-simulated default-admin path, the legacy raw-token fallback, a deliberately wrong password (confirmed identical error text/timing path to an unknown username), sign-out actually invalidating the session (confirmed via a follow-up 401), and session persistence across a page reload.
+- **A real CI failure, caught and fixed in this cycle**: pushing the login feature broke `ci.yml`'s existing "Helm render -- kairon-ui" step, which asserted `helm template` must *fail* without `ui.token` -- exactly the old behavior this feature intentionally replaced with safe default-admin seeding. Fixed by replacing that assertion with three scenario checks (default seeding / configured users / legacy token), verified locally against the real `helm template` output before re-pushing, then confirmed green on GitHub.
+- `go build`/`bcrypt.CompareHashAndPassword` round-tripped through the real `kairon-ui -hash-password` CLI mode, not just unit-tested in isolation.
+
+## Coverage
+
+```text
+total (internal/...): 66.1% (threshold 50%)
+```
+
 # Kairon v0.4.0 test report
 
 ## Result
