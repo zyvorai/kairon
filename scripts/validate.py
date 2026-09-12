@@ -41,6 +41,7 @@ try:
         "machinesnapshots.kairon.zyvor.dev",
         "machinenetworkpolicies.kairon.zyvor.dev",
         "networksecuritygroups.kairon.zyvor.dev",
+        "machinedisruptionbudgets.kairon.zyvor.dev",
     }
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")

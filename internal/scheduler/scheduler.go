@@ -15,10 +15,10 @@ type Scheduler struct {
 	RequireCapableLabel bool
 }
 
-func (s Scheduler) Choose(m model.Machine, nodes []model.Node, assigned map[string]int) (string, error) {
+func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.Machine, assigned map[string]int) (string, error) {
 	var eligible []model.Node
 	for _, n := range nodes {
-		if s.eligible(m, n) {
+		if s.eligible(m, n, nodes, machines) {
 			eligible = append(eligible, n)
 		}
 	}
@@ -47,7 +47,7 @@ func (s Scheduler) Choose(m model.Machine, nodes []model.Node, assigned map[stri
 	return least[int(h.Sum32())%len(least)].Metadata.Name, nil
 }
 
-func (s Scheduler) eligible(m model.Machine, n model.Node) bool {
+func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine) bool {
 	if n.Spec.Unschedulable || !ready(n) {
 		return false
 	}
@@ -62,7 +62,51 @@ func (s Scheduler) eligible(m model.Machine, n model.Node) bool {
 			return false
 		}
 	}
+	for _, term := range m.Spec.Placement.Affinity {
+		if !termSatisfied(m, n, nodes, machines, term) {
+			return false
+		}
+	}
+	for _, term := range m.Spec.Placement.AntiAffinity {
+		if termSatisfied(m, n, nodes, machines, term) {
+			return false
+		}
+	}
 	return true
+}
+
+// termSatisfied reports whether at least one other Machine matching
+// term.LabelSelector currently sits on a node sharing the candidate node's
+// value for term.TopologyKey. Used as-is for Affinity (must be true) and
+// negated for AntiAffinity (must be false).
+func termSatisfied(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine, term model.MachineAffinityTerm) bool {
+	candidateValue, ok := n.Metadata.Labels[term.TopologyKey]
+	if !ok {
+		return false
+	}
+	for _, other := range machines {
+		if other.Namespace() == m.Namespace() && other.Metadata.Name == m.Metadata.Name {
+			continue
+		}
+		if other.Spec.NodeName == "" || !model.LabelsMatch(other.Metadata.Labels, term.LabelSelector) {
+			continue
+		}
+		otherValue, ok := nodeLabelValue(nodes, other.Spec.NodeName, term.TopologyKey)
+		if ok && otherValue == candidateValue {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeLabelValue(nodes []model.Node, nodeName, key string) (string, bool) {
+	for _, n := range nodes {
+		if n.Metadata.Name == nodeName {
+			v, ok := n.Metadata.Labels[key]
+			return v, ok
+		}
+	}
+	return "", false
 }
 
 func ready(n model.Node) bool {

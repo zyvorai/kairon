@@ -44,6 +44,8 @@ Not originally scoped for a specific version, but small enough to land alongside
 ## v0.5+
 
 - [x] PVC -> FluxVM disk lifecycle (first cut): `spec.volumes[0]` boots from a Bound PVC's `hostPath`/`local` PersistentVolume — see `docs/guides/machine-storage.md`. Still open: network-block CSI volumes (no CSI node-plugin integration), multiple volumes per Machine, snapshot restore/clone-from-snapshot into a new Machine, CPU/memory hotplug.
+- [x] Machine affinity/anti-affinity (first cut, required constraints only): `spec.placement.affinity`/`antiAffinity` gate scheduling against other Machines' current placement — see `docs/guides/machine-placement.md`. Still open: preferred/soft affinity and topology spread constraints (both need a weighted scoring system the scheduler doesn't have yet).
+- [x] `MachineDisruptionBudget` (first cut, `kaironctl`-side only): `evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of migrating an entire node at once — see `docs/guides/machine-disruption-budgets.md`. Still open: no automatic node-drain/eviction path exists at all yet (this only gates `kaironctl evacuate`, not a `MachineMigration` created any other way).
 - DRA topology-aware scheduler scoring
 - SR-IOV/GPU migration capability checks
 - guest quiesce hooks for snapshots

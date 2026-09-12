@@ -54,6 +54,55 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 	}
 }
 
+func TestReconcileRespectsAntiAffinityAcrossRealMachines(t *testing.T) {
+	primary := model.Machine{
+		Metadata: model.ObjectMeta{Name: "primary", Namespace: "prod", Labels: map[string]string{"role": "db-primary"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+	}
+	replica := model.Machine{
+		Metadata: model.ObjectMeta{Name: "replica", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			PowerState: "Running",
+			Placement: model.PlacementSpec{
+				AntiAffinity: []model.MachineAffinityTerm{{LabelSelector: map[string]string{"role": "db-primary"}, TopologyKey: "kubernetes.io/hostname"}},
+			},
+		},
+	}
+	var patchedNode string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{primary, replica}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			var w1, w2 model.Node
+			w1.Metadata.Name = "worker-1"
+			w1.Metadata.Labels = map[string]string{model.CapableLabel: "true", "kubernetes.io/hostname": "worker-1"}
+			w1.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
+			w2.Metadata.Name = "worker-2"
+			w2.Metadata.Labels = map[string]string{model.CapableLabel: "true", "kubernetes.io/hostname": "worker-2"}
+			w2.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{w1, w2}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/replica":
+			var p map[string]map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			patchedNode = p["spec"]["nodeName"]
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if patchedNode != "worker-2" {
+		t.Fatalf("scheduled replica onto %q, want worker-2 (worker-1 shares a hostname with the anti-affinity target)", patchedNode)
+	}
+}
+
 func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running", RuntimeID: "vm-1"}}
 	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: "Cutover", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live", RuntimeID: "vm-1"}}

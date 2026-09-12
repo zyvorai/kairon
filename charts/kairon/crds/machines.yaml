@@ -189,6 +189,30 @@ spec:
                     type: object
                     additionalProperties:
                       type: string
+                  affinity:
+                    type: array
+                    items:
+                      type: object
+                      required: ["labelSelector", "topologyKey"]
+                      properties:
+                        labelSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        topologyKey:
+                          type: string
+                  antiAffinity:
+                    type: array
+                    items:
+                      type: object
+                      required: ["labelSelector", "topologyKey"]
+                      properties:
+                        labelSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        topologyKey:
+                          type: string
               security:
                 type: object
                 properties:

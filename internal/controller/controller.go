@@ -105,7 +105,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	load := newMigrationLoad(migrations)
 	for _, migration := range migrations {
-		if err := c.reconcileMigration(ctx, migration, machineIndex, nodes, assigned, load); err != nil {
+		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, assigned, load); err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
@@ -137,7 +137,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
 			continue
 		}
-		node, err := c.Scheduler.Choose(m, nodes, assigned)
+		node, err := c.Scheduler.Choose(m, nodes, machines, assigned)
 		if err != nil {
 			status := m.Status
 			status.Phase = "Pending"
@@ -174,7 +174,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 	return out
 }
 
-func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad) error {
+func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad) error {
 	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" {
 		return nil
 	}
@@ -201,7 +201,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if c.MaxConcurrentPerNode > 0 && load.byNode[machine.Spec.NodeName] >= c.MaxConcurrentPerNode {
 			return c.blockMigration(ctx, migration, fmt.Sprintf("source node %s has reached its concurrent migration limit (%d active, max %d)", machine.Spec.NodeName, load.byNode[machine.Spec.NodeName], c.MaxConcurrentPerNode))
 		}
-		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, nodes, assigned)
+		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, nodes, machineList, assigned)
 		if err != nil {
 			return c.blockMigration(ctx, migration, err.Error())
 		}
@@ -321,7 +321,7 @@ func liveBackendEligible(backend string) bool {
 	return backend == "" || backend == "auto" || backend == "qemu"
 }
 
-func (c *Controller) migrationTarget(machine model.Machine, requested string, nodes []model.Node, assigned map[string]int) (string, error) {
+func (c *Controller) migrationTarget(machine model.Machine, requested string, nodes []model.Node, machineList []model.Machine, assigned map[string]int) (string, error) {
 	var candidates []model.Node
 	for _, n := range nodes {
 		if n.Metadata.Name == machine.Spec.NodeName {
@@ -335,7 +335,7 @@ func (c *Controller) migrationTarget(machine model.Machine, requested string, no
 	if requested != "" && len(candidates) == 0 {
 		return "", fmt.Errorf("target node %q does not exist or is the current source node", requested)
 	}
-	target, err := c.Scheduler.Choose(machine, candidates, assigned)
+	target, err := c.Scheduler.Choose(machine, candidates, machineList, assigned)
 	if err != nil {
 		if requested != "" {
 			return "", fmt.Errorf("target node %q is not eligible: %w", requested, err)

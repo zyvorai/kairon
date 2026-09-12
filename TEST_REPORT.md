@@ -1,3 +1,27 @@
+# Unreleased: Machine affinity/anti-affinity + MachineDisruptionBudget test report
+
+## Result
+
+**PASS.** `make all` green (coverage 68.4%, threshold 50%; `scripts/validate.py` updated for the new `MachineDisruptionBudget` CRD). `helm lint` and `helm template --include-crds` green, confirming the new CRD renders (Helm only renders `crds/` content with `--include-crds`, a real gotcha hit while verifying this). New unit tests: scheduler-level table test for affinity/anti-affinity (co-location required/satisfied, self-exclusion, "nothing matches" for both directions), a controller-level integration test proving `Reconcile` respects anti-affinity across two real `Machine` objects end-to-end, model-level tests for `ParseIntOrPercent`/`DesiredHealthy` (plain integer, percentage rounding-up, invalid input, both-or-neither-set rejection), and `kaironctl`-level tests for the budget-gating logic (allows-until-exhausted, in-flight migrations counted against `currentHealthy`, the stricter of multiple matching budgets wins, unmanaged Machines always allowed).
+
+## What shipped
+
+- `spec.placement.affinity`/`antiAffinity`: required (hard) constraints only, evaluated as scheduler filters against every other currently-scheduled Machine (`internal/scheduler.termSatisfied`). `Scheduler.Choose` and `Controller.migrationTarget` both gained a `machines []model.Machine` parameter to make this possible with no new API calls (the full Machine list is already fetched every reconcile tick).
+- `MachineDisruptionBudget` CRD + `kaironctl evacuate` gating: `internal/model.MachineDisruptionBudgetSpec.DesiredHealthy` (Kubernetes PDB-style `minAvailable`/`maxUnavailable` resolution), `kube.Client.ListMachineDisruptionBudgets`, and `cmd/kaironctl`'s `loadBudgetStates`/`admitDisruption` (per-budget allowance computed fresh on every `evacuate` invocation, spent across every budget a Machine matches, in-flight migrations counted as already-unavailable so they aren't double-spent).
+
+## Real verification (beyond source-level gates)
+
+Both features were deployed to the same real lab k3s host (`212.8.248.187`) used throughout this project's other real-deployment verification. The host is single-node, so genuine cross-node anti-affinity/evacuate-across-nodes outcomes can't be produced there -- exercised what's honestly exercisable on real infrastructure and said so:
+
+- **Affinity, same-node case, for real**: applied the updated CRD (schema previously didn't declare `placement.affinity`/`antiAffinity` at all -- a real, structural-schema-pruning risk caught before it could silently strip the fields on a real cluster) and the updated `kairon-controller` binary. Created a real anchor `Machine` and a real dependent `Machine` with an `affinity` term requiring co-location via `kubernetes.io/hostname`. The dependent Machine failed to schedule on the first reconcile tick (a real, observed timing window -- the anchor hadn't been assigned `spec.nodeName` yet in that tick's in-memory Machine list) and succeeded on the next tick once the anchor had a node, reaching `Running` with a real `runtimeID` -- this exact timing behavior is now documented in `docs/guides/machine-placement.md` because it was observed, not guessed.
+- **`MachineDisruptionBudget`, for real**: applied the new CRD (created cleanly; caught and fixed a `scripts/validate.py` failure -- the script enforces every CRD exposes a `status` subresource, which the new CRD didn't yet, since nothing reconciles it -- fixed by adding an unused `status: {}` subresource for schema consistency with every other Kairon CRD rather than special-casing the validator). Created a real `MachineDisruptionBudget` (`minAvailable: "2"`) and three real `tier: web` Machines, all reaching `Running`. Ran the updated `kaironctl evacuate` against the real node using a purpose-created `ServiceAccount`/`ClusterRole` (a realistic stand-in for an operator's own kubeconfig, since kairon-node's own service account is deliberately *not* granted read access to this new resource -- confirmed by a real `403 Forbidden` when first tried with that identity, proof the RBAC boundary is real). `evacuate` queued exactly 1 of 3 (a real `MachineMigration` object, confirmed via `kubectl get`), correctly skipped the other 2 with a clear per-machine reason, and exited `1`.
+
+## Coverage
+
+```text
+total (internal/...): 68.4% (threshold 50%)
+```
+
 # Unreleased: PVC-backed boot disk test report
 
 ## Result

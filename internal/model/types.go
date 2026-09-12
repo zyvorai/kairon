@@ -95,6 +95,25 @@ type RuntimeSpec struct {
 type PlacementSpec struct {
 	Architecture string            `json:"architecture,omitempty"`
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Affinity/AntiAffinity are required (hard) constraints only -- filters
+	// consulted by internal/scheduler.Scheduler.eligible against every other
+	// currently-scheduled Machine, not a weighted scoring pass. Preferred
+	// (soft) affinity and topology spread constraints need a real scoring
+	// system Kairon's "least-loaded, deterministic tie-break" scheduler
+	// doesn't have yet -- deliberately out of scope for this pass.
+	Affinity     []MachineAffinityTerm `json:"affinity,omitempty"`
+	AntiAffinity []MachineAffinityTerm `json:"antiAffinity,omitempty"`
+}
+
+// MachineAffinityTerm is satisfied when at least one (Affinity) / no
+// (AntiAffinity) other Machine matching LabelSelector currently sits on a
+// node sharing the candidate node's value for the TopologyKey label
+// (e.g. "kubernetes.io/hostname" for same/different-node, or a rack/zone
+// label). Mirrors the shape of Kubernetes Pod affinity terms closely enough
+// to be immediately familiar, deliberately not reinvented.
+type MachineAffinityTerm struct {
+	LabelSelector map[string]string `json:"labelSelector"`
+	TopologyKey   string            `json:"topologyKey"`
 }
 
 type SecuritySpec struct {

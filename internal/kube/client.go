@@ -265,6 +265,12 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, ns string, snap model
 	return out, err
 }
 
+func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
+	var list model.MachineDisruptionBudgetList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")
+	return list.Items, err
+}
+
 func (c *Client) GetPersistentVolumeClaim(ctx context.Context, ns, name string) (model.PersistentVolumeClaim, error) {
 	var pvc model.PersistentVolumeClaim
 	path := fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims/%s", url.PathEscape(ns), url.PathEscape(name))
