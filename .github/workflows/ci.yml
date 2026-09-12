@@ -131,6 +131,15 @@ jobs:
       - run: npm --prefix web test
       - run: npm --prefix web run build
 
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: website/package-lock.json}
+      - run: npm --prefix website ci
+      - run: npm --prefix website run build
+
   container:
     runs-on: ubuntu-latest
     needs: [test, lint, web]

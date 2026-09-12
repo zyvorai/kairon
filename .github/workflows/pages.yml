@@ -1,0 +1,33 @@
+# Requires GitHub Pages enabled with Source = "GitHub Actions" (repo Settings
+# > Pages), done once via `gh api repos/<org>/<repo>/pages -X POST -f
+# build_type=workflow` for this repo.
+name: Deploy Docs Site
+on:
+  push:
+    branches: [main]
+    paths: ['website/**', 'docs/**', '.github/workflows/pages.yml']
+  workflow_dispatch: {}
+concurrency:
+  group: pages
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with: {node-version: '22', cache: npm, cache-dependency-path: website/package-lock.json}
+    - run: npm --prefix website ci
+    - run: npm --prefix website run build
+    - uses: actions/upload-pages-artifact@v3
+      with: {path: website/build}
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: {name: github-pages, url: "${{ steps.deployment.outputs.page_url }}"}
+    permissions: {pages: write, id-token: write}
+    steps:
+    - id: deployment
+      uses: actions/deploy-pages@v4
