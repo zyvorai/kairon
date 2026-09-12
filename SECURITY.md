@@ -27,4 +27,12 @@ A `ResourceClaim` must be allocated before Kairon considers it. Resolved PCI BDF
 
 ## Images
 
-`--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. Signed-image policy is not yet implemented.
+`--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. Signed-image policy is not yet implemented. CI builds all three container images and runs `govulncheck` against the Go dependency graph on every push, but does not publish images and does not scan the built image layers themselves (no Trivy/Grype/cosign/SBOM) -- whatever process publishes to `ghcr.io/zyvorai/kairon-*` today is outside this repository's CI, and nothing here proves what bits actually land there.
+
+## `kairon-ui` (dashboard)
+
+Auth is a single static, non-expiring bearer token, compared in constant time (`crypto/subtle.ConstantTimeCompare`) -- fail-closed by default (both the Helm chart's `{{ fail }}` guard and the binary's own startup check refuse to run without a token unless `ui.allowUnauthenticated`/`-allow-unauthenticated` is explicitly set for local development). Every mutating request is logged (method, path, remote address, status), including rejected-auth attempts.
+
+**This token is shared by every operator.** There is no per-user identity, no session expiry, and no rotation short of a manual `helm upgrade --set ui.token=...` (or updating the Secret `ui.existingSecret` points at) followed by a redeploy. The request log above records *that* a destructive action (delete/evacuate/recover) happened, not *who* did it. Treat the token like a shared root password: distribute it only to operators you'd trust with direct `kubectl` access to Kairon's own CRDs, and rotate it if that trust set ever shrinks. Real per-operator attribution needs a different auth model (separate tokens or OIDC) and is not implemented.
+
+The dashboard's ClusterRole grants exactly the verbs its handlers use (`create`/`delete`/`patch` on Machines, `create`/`patch` on MachineMigrations, `get`/`list`/`watch` elsewhere) -- it cannot do anything through the Kubernetes API that isn't already reachable through `kaironctl` with the same privilege level.

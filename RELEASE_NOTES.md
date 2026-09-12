@@ -1,3 +1,19 @@
+# Unreleased
+
+A batch of fixes from a code-level production-readiness audit -- each backed by a specific file:line finding, not a guess. See the "Production gaps" section of README.md for what's still open (most notably: `kairon-ui`'s auth is still one shared, non-expiring token with no per-operator attribution -- a real auth-model redesign, out of scope for this batch).
+
+## Added
+
+- `kairon-ui` now logs every mutating `/api/v1/...` request (method, path, remote address, resulting status), including rejected-auth attempts against destructive routes -- a partial fix for having had no audit trail at all.
+- `ui.existingSecret` / `ui.existingSecretKey`: reference a pre-created Secret for the dashboard token instead of passing it through `helm --set`/stored release values, mirroring the escape hatch `migration.tlsSecretName` already requires.
+- CPU/memory `resources:` requests and limits on all three workloads (`controller.resources`/`node.resources`/`ui.resources` in `values.yaml`), in both the Helm chart and the raw `deploy/*.yaml` manifests.
+- `govulncheck` in CI's `lint` job.
+
+## Changed
+
+- `kairon-controller`/`kairon-node` ClusterRoles no longer grant the `update` verb on Kairon CRDs -- `internal/kube.Client` only ever issues `PATCH`, never a full-object `PUT`.
+- `controller.go`/`agent.go` no longer silently swallow a *secondary* status-patch failure (the follow-up write that records a reconcile error) -- both the primary and secondary failures are now logged.
+
 # Kairon v0.4.0
 
 Kairon v0.4.0 turns v0.3.0's secure migration *control plane* into a working live-migration *backend*, and adds the operational tooling (metrics, alerting, a concurrency quota, a web dashboard) needed to actually run it. No CRD version bump; every new field is additive.

@@ -220,7 +220,9 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system \
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 ```
 
-Open `http://127.0.0.1:8082` and paste the token into the "API token" field. `ui.token` is required unless you explicitly set `ui.allowUnauthenticated=true` (local development only) — the chart refuses to render without one, and the binary independently refuses to start without one.
+Open `http://127.0.0.1:8082` and paste the token into the "API token" field. `ui.token` is required unless you explicitly set `ui.allowUnauthenticated=true` (local development only) — the chart refuses to render without one, and the binary independently refuses to start without one. To avoid the token passing through `helm --set`/stored release values at all, set `ui.existingSecret` (+ `ui.existingSecretKey`, default `token`) to reference a Secret you create yourself instead.
+
+Every mutating request (create/delete/start/stop/migrate/evacuate/recover) is logged with method, path, remote address, and status — but auth today is one shared token for every operator, so that log can tell you *that* an action happened, not *who* did it. Treat this the same way you'd treat a shared root password: fine for a small trusted team, not a substitute for real per-operator identity.
 
 Bare-metal alternative, no Kubernetes-hosted deployment needed:
 
@@ -285,6 +287,8 @@ Point at a cluster with `KAIRON_KUBE_URL` (for example after `kubectl proxy`) or
 
 Real two-host testing and a live `NeedsRecovery` drill (rehearsing operator recovery on purpose) are documented as runbooks with helper scripts, since they need hardware this repository's own CI doesn't have: [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md), [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md).
 
+All three workloads (`kairon-controller`, `kairon-node`, `kairon-ui`) set CPU/memory `resources:` requests and limits by default (`values.yaml`'s `controller.resources`/`node.resources`/`ui.resources`), and CI runs `govulncheck` on every push. `kairon-ui` logs every mutating `/api/v1/...` request (method, path, remote address, resulting status) — see [Dashboard](#dashboard)'s note on what that trail can and can't tell you.
+
 ---
 
 ## Develop
@@ -333,6 +337,8 @@ npm --prefix web run build
 ### Production gaps
 
 Pre-GA gaps include storage/network migration preflight, automatic fencing, PVC-to-FluxVM disk attachment, DRA topology-aware placement, full multi-tenant admission policy (today's concurrency quota is a narrower, single-purpose control — see [Operability](#operability)), certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI.
+
+A code-level audit also surfaced gaps not on that list: `kairon-ui` authenticates every operator with one shared, non-expiring bearer token — mutating requests are now logged (method/path/remote address/status), but a destructive action still can't be attributed to a specific person, only "someone with the token." Real per-operator auth (separate tokens, or OIDC) is a real redesign, not done yet. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 
