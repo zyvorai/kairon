@@ -18,6 +18,7 @@ import (
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/ratelimit"
 )
 
 // fakeKube is a minimal in-memory Kubernetes API double, just enough to
@@ -288,6 +289,39 @@ func TestMetricsRouteAndRequestObservationAreOptIn(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "kairon_ui_request_duration_seconds") {
 		t.Errorf("missing kairon_ui_request_duration_seconds in:\n%s", body)
+	}
+}
+
+func TestRateLimitIsOptInAndThrottlesPerRemoteAddr(t *testing.T) {
+	fk := newFakeKube()
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	// Without RateLimit set, nothing throttles -- a burst of requests all
+	// succeed.
+	for range 5 {
+		rr := doJSON(t, h, http.MethodGet, "/api/v1/auth/config", "", nil)
+		if rr.Code == http.StatusTooManyRequests {
+			t.Fatal("expected no rate limiting without Server.RateLimit set")
+		}
+	}
+
+	s.RateLimit = ratelimit.New(1, 2) // 1 req/s, burst 2
+	h = s.Handler()
+
+	var got429 bool
+	for range 5 {
+		rr := doJSON(t, h, http.MethodGet, "/api/v1/auth/config", "", nil)
+		if rr.Code == http.StatusTooManyRequests {
+			got429 = true
+			if rr.Header().Get("Retry-After") == "" {
+				t.Error("expected a Retry-After header on a 429")
+			}
+			break
+		}
+	}
+	if !got429 {
+		t.Fatal("expected a burst of 5 requests against burst=2 to eventually hit 429")
 	}
 }
 

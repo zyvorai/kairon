@@ -17,16 +17,19 @@ import (
 	"encoding/json"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
+	"github.com/zyvorai/kairon/internal/ratelimit"
 )
 
 // Server wires a *kube.Client into the /api/v1/... route table and,
@@ -109,6 +112,15 @@ type Server struct {
 	// duration -- see withMetrics. Optional, nil-checked; without it
 	// nothing here changes.
 	Metrics *metrics.Recorder
+	// RateLimit, when set, bounds request volume per remote address across
+	// every route this Handler serves -- see withRateLimit. Distinct from,
+	// and in addition to, the per-username login lockout above (auth.go):
+	// that one only throttles repeated failed passwords against one
+	// username; this throttles request volume from one client address
+	// against anything, including a successfully-authenticated client
+	// hammering an unrelated route. Optional, nil-checked; without it
+	// nothing here changes.
+	RateLimit *ratelimit.Limiter
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -181,7 +193,47 @@ func (s *Server) Handler() http.Handler {
 	// every actual data fetch the page makes goes through the auth-gated
 	// /api/v1/... routes above.
 	top.HandleFunc("/", s.serveWeb)
-	return s.withMetrics(top)
+	return s.withMetrics(s.withRateLimit(top))
+}
+
+// withRateLimit rejects a request with 429 (Retry-After set, same
+// convention handleLogin's own per-username lockout already uses) once
+// its remote address has exceeded RateLimit's configured rate --
+// deliberately outermost (ahead of withAuth, even ahead of routing to
+// /healthz/readyz), the same reasoning withAudit/withMetrics already
+// document: request volume from one address against an unauthenticated or
+// rejected route is exactly what this needs to bound, not just successful
+// authenticated calls. No-op wrapper when RateLimit isn't configured, so
+// this changes nothing about behavior or performance without it.
+func (s *Server) withRateLimit(next http.Handler) http.Handler {
+	if s.RateLimit == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := remoteIP(r.RemoteAddr)
+		if allowed, retryAfter := s.RateLimit.Allow(key); !allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
+			if s.Log != nil {
+				s.Log.Warn("uiapi rate limited", "remoteAddr", r.RemoteAddr, "method", r.Method, "path", r.URL.Path)
+			}
+			writeError(w, http.StatusTooManyRequests, "too many requests; try again later")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// remoteIP strips the port from r.RemoteAddr (host:port) so the rate
+// limiter's per-key bucket is keyed by address alone -- falls back to the
+// raw value unchanged if it doesn't parse as host:port (defensive; Go's
+// own net/http always sets RemoteAddr in that shape for a real
+// connection).
+func remoteIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
 }
 
 // withMetrics wraps every route (auth-gated or not, including /healthz/

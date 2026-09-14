@@ -24,6 +24,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
+	"github.com/zyvorai/kairon/internal/ratelimit"
 	"github.com/zyvorai/kairon/internal/uiapi"
 )
 
@@ -50,6 +51,8 @@ func run() int {
 	webDir := flag.String("web-dir", env("KAIRON_UI_WEB_DIR", ""), "directory containing the built web/dist SPA; empty serves API-only")
 	token := flag.String("token", os.Getenv("KAIRON_UI_TOKEN"), "static bearer token required on every /api/v1/... request (default: $KAIRON_UI_TOKEN)")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", env("KAIRON_UI_ALLOW_UNAUTHENTICATED", "false") == "true", "start without a token -- local development only, refused by default")
+	rateLimitRPS := flag.Float64("rate-limit-rps", 20, "requests per second allowed per remote address across every route, sustained (0 disables rate limiting entirely) -- distinct from and in addition to the per-username login lockout, which only throttles repeated failed passwords")
+	rateLimitBurst := flag.Int("rate-limit-burst", 40, "requests a remote address may burst above -rate-limit-rps before throttling kicks in")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -117,6 +120,12 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
+	var rateLimiter *ratelimit.Limiter
+	if *rateLimitRPS > 0 {
+		rateLimiter = ratelimit.New(*rateLimitRPS, *rateLimitBurst)
+		go rateLimiter.Run(ctx, 5*time.Minute, 30*time.Minute)
+	}
+
 	var oidcAuth *uiapi.OIDCAuth
 	if oidcConfigured {
 		discoverCtx, discoverCancel := context.WithTimeout(ctx, 15*time.Second)
@@ -164,6 +173,7 @@ func run() int {
 		ConsolePort:  env("KAIRON_NODE_CONSOLE_PORT", "8090"),
 		ConsoleTLS:   consoleTLS,
 		Metrics:      rec,
+		RateLimit:    rateLimiter,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
