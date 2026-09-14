@@ -143,7 +143,8 @@ Live *memory* transfer needs a node-local [migration adapter](docs/migration-ada
 
 ```bash
 kaironctl migrate demo --strategy cold --target-node worker-2
-kaironctl evacuate worker-1   # batch cold/auto migrations off a node, budget-aware
+kaironctl evacuate worker-1          # batch cold/auto migrations off a node, budget-aware
+kaironctl evacuate worker-1 --wait   # ...and keep retrying until the node is actually empty, like kubectl drain
 ```
 
 **Live** — a secure peer handshake; you pick a *node*, never a raw destination:
@@ -288,7 +289,7 @@ kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…
                  [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # repeatable/cloud-init, see docs/guides/machine-network.md
 kaironctl start|stop|delete NAME
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
-kaironctl evacuate NODE [--strategy cold|auto]
+kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-interval 10s]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
 kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON
