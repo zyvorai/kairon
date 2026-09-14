@@ -279,6 +279,24 @@ func (c *Client) GetResourceClaim(ctx context.Context, ns, name string) (model.R
 	return claim, err
 }
 
+// ListResourceClaims and ListResourceSlices back
+// internal/controller's DRA topology-awareness scheduling hint (see
+// draPreferredNode) -- both are read-only, cluster-wide lists, called at
+// most once per reconcile tick and only when at least one Machine actually
+// has spec.deviceClaims set, so a cluster without the DRA API enabled at
+// all never pays for (or errors on) either call.
+func (c *Client) ListResourceClaims(ctx context.Context) ([]model.ResourceClaim, error) {
+	var list model.ResourceClaimList
+	err := c.request(ctx, http.MethodGet, "/apis/resource.k8s.io/v1/resourceclaims", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListResourceSlices(ctx context.Context) ([]model.ResourceSlice, error) {
+	var list model.ResourceSliceList
+	err := c.request(ctx, http.MethodGet, "/apis/resource.k8s.io/v1/resourceslices", nil, &list, "")
+	return list.Items, err
+}
+
 func (c *Client) GetVolumeSnapshot(ctx context.Context, ns, name string) (model.VolumeSnapshot, error) {
 	var snap model.VolumeSnapshot
 	path := fmt.Sprintf("/apis/snapshot.storage.k8s.io/v1/namespaces/%s/volumesnapshots/%s", url.PathEscape(ns), url.PathEscape(name))

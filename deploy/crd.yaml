@@ -213,6 +213,51 @@ spec:
                             type: string
                         topologyKey:
                           type: string
+                  preferredAffinity:
+                    type: array
+                    items:
+                      type: object
+                      required: ["weight", "labelSelector", "topologyKey"]
+                      properties:
+                        weight:
+                          type: integer
+                          format: int32
+                        labelSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        topologyKey:
+                          type: string
+                  preferredAntiAffinity:
+                    type: array
+                    items:
+                      type: object
+                      required: ["weight", "labelSelector", "topologyKey"]
+                      properties:
+                        weight:
+                          type: integer
+                          format: int32
+                        labelSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        topologyKey:
+                          type: string
+                  topologySpreadConstraints:
+                    type: array
+                    items:
+                      type: object
+                      required: ["topologyKey", "labelSelector"]
+                      properties:
+                        topologyKey:
+                          type: string
+                        labelSelector:
+                          type: object
+                          additionalProperties:
+                            type: string
+                        maxSkew:
+                          type: integer
+                          format: int32
               security:
                 type: object
                 properties:

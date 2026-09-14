@@ -157,12 +157,16 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	draHints, err := c.buildDRAHints(ctx, machines)
+	if err != nil {
+		return err
+	}
 
 	for _, m := range machines {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
 			continue
 		}
-		node, err := c.Scheduler.Choose(m, nodes, machines, assigned)
+		node, err := c.Scheduler.Choose(m, nodes, machines, assigned, draHints[m.Namespace()+"/"+m.Metadata.Name])
 		if err != nil {
 			status := m.Status
 			status.Phase = "Pending"
@@ -381,7 +385,12 @@ func (c *Controller) migrationTarget(machine model.Machine, requested string, no
 	if requested != "" && len(candidates) == 0 {
 		return "", fmt.Errorf("target node %q does not exist or is the current source node", requested)
 	}
-	target, err := c.Scheduler.Choose(machine, candidates, machineList, assigned)
+	// No DRA hint here: a Machine with deviceClaims migrating to a
+	// different node would leave its VFIO passthrough device behind on the
+	// source node anyway (device claims aren't re-resolved by a
+	// migration), so a DRA topology hint has nothing meaningful to nudge
+	// toward for target selection specifically.
+	target, err := c.Scheduler.Choose(machine, candidates, machineList, assigned, "")
 	if err != nil {
 		if requested != "" {
 			return "", fmt.Errorf("target node %q is not eligible: %w", requested, err)

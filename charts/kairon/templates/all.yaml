@@ -37,6 +37,13 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "create"]
+  - apiGroups: ["resource.k8s.io"]
+    # Read-only: backs the scheduler's DRA topology-awareness hint (see
+    # internal/controller/dra.go's buildDRAHints) -- kairon-controller only
+    # ever reads an allocation that already happened, it never allocates a
+    # device itself.
+    resources: ["resourceclaims", "resourceslices"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

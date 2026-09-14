@@ -41,7 +41,7 @@ Kubernetes is the only source of truth — there is no second database anywhere 
 
 1. A `Machine` object lands in the Kubernetes API (via `kubectl`, `kaironctl create`, `kairon-ui`, or GitOps — all identical from here on).
 2. If `webhook.enabled`, the API server calls `kairon-controller`'s admission webhook first: a `Machine` create that would immediately exceed a `MachineQuota` is rejected outright, before it's ever written.
-3. `kairon-controller`'s reconcile loop (on a fixed interval, not a watch — see the Go-stdlib-only note below) lists unscheduled Machines, picks an eligible Ready/capable-labeled node via least-loaded scheduling plus any affinity/anti-affinity constraints, and patches `spec.nodeName`.
+3. `kairon-controller`'s reconcile loop (on a fixed interval, not a watch — see the Go-stdlib-only note below) lists unscheduled Machines, filters nodes by required affinity/anti-affinity/architecture/selector, then scores the survivors (load balance, `preferredAffinity`/`preferredAntiAffinity`, `topologySpreadConstraints`, a best-effort DRA topology hint) and patches `spec.nodeName` to the winner — see [`docs/guides/machine-placement.md`](docs/guides/machine-placement.md).
 4. The `kairon-node` running on that node notices the assignment on its own next tick and reconciles it: resolves the boot disk (`spec.volumes[0]`'s PVC, or `spec.image.path`), resolves any DRA device claims to VFIO BDFs, and calls FluxVM's local REST API to actually create and start the VM.
 5. `kairon-node` patches `status.phase` back onto the `Machine` as it progresses — `kaironctl get machines` / the dashboard's Machines table are both just reading that same status field, not a separate poll of FluxVM.
 

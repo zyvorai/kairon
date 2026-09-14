@@ -5,17 +5,23 @@ real limits are.
 
 ## Fields
 
-| Field | What it does |
-|---|---|
-| `architecture` | Only consider nodes whose `kubernetes.io/arch` label matches |
-| `nodeSelector` | Only consider nodes matching every given label |
-| `affinity` | Require co-location with at least one other Machine matching a selector |
-| `antiAffinity` | Require separation from every other Machine matching a selector |
+| Field | What it does | Hard or soft |
+|---|---|---|
+| `architecture` | Only consider nodes whose `kubernetes.io/arch` label matches | Hard |
+| `nodeSelector` | Only consider nodes matching every given label | Hard |
+| `affinity` | Require co-location with at least one other Machine matching a selector | Hard |
+| `antiAffinity` | Require separation from every other Machine matching a selector | Hard |
+| `preferredAffinity` | Weighted preference to co-locate with a matching Machine | Soft |
+| `preferredAntiAffinity` | Weighted preference to separate from a matching Machine | Soft |
+| `topologySpreadConstraints` | Weighted preference to spread matching Machines evenly across a topology label's domains | Soft |
 
-All four are filters evaluated at scheduling time by `internal/scheduler`
-(`kairon-controller`'s least-loaded, deterministic-tie-break placement) --
-none of them influence an already-scheduled Machine (`spec.nodeName` is set
-once, at scheduling time, same as `spec.image`/`spec.resources`).
+The four hard fields are filters evaluated at scheduling time by
+`internal/scheduler`'s `eligible` check: a node failing one is never a
+candidate at all. The three soft fields never reject a node -- they only
+influence which *eligible* node wins, via a real weighted scoring pass
+(`internal/scheduler.score`). None of the seven influence an
+already-scheduled Machine (`spec.nodeName` is set once, at scheduling
+time, same as `spec.image`/`spec.resources`).
 
 ## Affinity and anti-affinity
 
@@ -50,18 +56,62 @@ Kubernetes Pod affinity terms, so it's immediately familiar:
   itself (relevant when re-evaluating an already-scheduled Machine, e.g. as
   a live-migration target search).
 
-## Real limits today (v1 of this feature)
+## Preferred (soft) affinity and topology spread
 
-- **Required (hard) constraints only.** There is no `preferred`/soft
-  affinity, and no weighted scoring -- a term that can't be satisfied makes
-  every node ineligible (the Machine goes `Pending` with a clear
-  `no Ready Kairon-capable nodes match placement constraints` message), it
-  doesn't just get deprioritized. Kairon's scheduler is "least-loaded with
-  a deterministic tie-break," not a weighted scorer, so a soft-preference
-  system doesn't exist to plug into yet.
-- **No topology spread constraints.** Spreading a fleet evenly across N
-  zones (Kubernetes' `topologySpreadConstraints`) needs the same kind of
-  scoring/counting system preferred affinity would -- not implemented.
+```yaml
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: cache
+spec:
+  placement:
+    preferredAffinity:
+      - weight: 20
+        labelSelector: {tier: web}
+        topologyKey: kubernetes.io/hostname
+    preferredAntiAffinity:
+      - weight: 10
+        labelSelector: {role: db-primary}
+        topologyKey: kubernetes.io/hostname
+    topologySpreadConstraints:
+      - topologyKey: topology.kubernetes.io/zone
+        labelSelector: {tier: web}
+```
+
+Each eligible node's score starts at `-(Machines already assigned to it)`
+(the whole of the old load-balancing behavior) and then:
+
+- `preferredAffinity`/`preferredAntiAffinity` add/subtract that term's
+  `weight` when satisfied (same `{labelSelector, topologyKey}` semantics
+  as the hard fields above, just non-rejecting).
+- `topologySpreadConstraints` subtracts however many other Machines
+  matching `labelSelector` are already in that node's `topologyKey`
+  domain -- more existing matches there, lower score, favoring the
+  emptier domain.
+- The highest-scoring eligible node wins; a Machine with none of these
+  three fields set schedules identically to before this scoring pass
+  existed (least-loaded, deterministic hash tie-break on exact ties).
+
+There's no fixed range for `weight` -- it's compared directly against the
+1-point-per-Machine load penalty, so pick it relative to how much load
+imbalance you want the preference to be able to outweigh (weight 20
+comfortably beats several Machines' worth of imbalance; weight 1 only
+matters when load is already tied).
+
+## Real limits today
+
+- **`topologySpreadConstraints.maxSkew` is accepted but not enforced.**
+  It's there for familiarity with the Kubernetes shape; the scheduler
+  currently just minimizes the matching-Machine count in each candidate's
+  domain, it doesn't hard-cap the skew between domains.
+- **DRA topology-awareness is a best-effort hint, not an allocation
+  decision.** `kairon-controller` has no role in DRA device allocation
+  itself -- for a Machine with `spec.deviceClaims`, it only reads back an
+  already-allocated `ResourceClaim`'s device pool and, if that pool maps to
+  a specific node via a `ResourceSlice`, adds a small fixed score bonus
+  toward that node. An unallocated claim, or a pool with no single owning
+  node (a network-attached device pool), contributes no hint at all --
+  scheduling falls back to the other signals.
 - **Evaluated against the reconcile-time Machine list, not a live watch.**
   A `Machine` scheduled in the same reconcile tick as the one it's meant to
   be co-located/separated from may not see that Machine's `spec.nodeName`

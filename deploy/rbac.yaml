@@ -29,12 +29,24 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # Read-only, and no /status subresource: the admission webhook only
+    # ever lists these to evaluate a MachineMigration create against, it
+    # never reconciles or writes to them -- kaironctl remains the only
+    # writer of MachineDisruptionBudget status (it has none).
+    resources: ["machinedisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list", "watch", "create"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "create"]
+  - apiGroups: ["resource.k8s.io"]
+    # Read-only: backs the scheduler's DRA topology-awareness hint (see
+    # internal/controller/dra.go's buildDRAHints).
+    resources: ["resourceclaims", "resourceslices"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

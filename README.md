@@ -104,7 +104,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 **Machine lifecycle & placement**
 - **Machine CRD** — CPU, memory, image, network, power state, volumes, DRA device claims
 - **PVC-backed boot disk** — `spec.volumes[0]` resolves through a Bound `PersistentVolumeClaim` to a real host directory (`hostPath`/`local` `PersistentVolume`s today) instead of a hand-placed image file — [guide](docs/guides/machine-storage.md)
-- **Placement** — least-loaded scheduling across Ready, capable-labeled nodes, deterministic tie-break, plus required (hard) `spec.placement.affinity`/`antiAffinity` — [guide](docs/guides/machine-placement.md)
+- **Placement** — least-loaded scheduling across Ready, capable-labeled nodes, deterministic tie-break, required (hard) `spec.placement.affinity`/`antiAffinity`, plus weighted soft scoring: `preferredAffinity`/`preferredAntiAffinity`, `topologySpreadConstraints`, and a best-effort DRA topology-awareness hint — [guide](docs/guides/machine-placement.md)
 - **DRA → VFIO** — an allocated `ResourceClaim`'s PCI BDF against the node's `vfio_devices` administrator allowlist, fail-closed (an empty allowlist denies all passthrough)
 - **CPU/memory hotplug** — grow a running Machine's `spec.resources` via FluxVM's real QMP `device_add`/`object-add`, no reboot — [guide](docs/guides/machine-hotplug.md)
 - **Guest agent** (`spec.guestAgent`) — real `qemu-guest-agent`-reported `status.guestIP`, including for `user`/SLIRP networking, which has no DHCP lease to parse at all — [guide](docs/guides/machine-guest-agent.md)
@@ -343,7 +343,8 @@ npm --prefix web run build
 Still genuinely open, and why:
 
 - **Automatic fencing, storage/network migration preflight** — need real multi-host cluster behavior this repo's CI doesn't have.
-- **DRA topology-aware placement scoring, preferred/soft affinity, topology spread constraints** — all three need a weighted scheduler-scoring system the scheduler doesn't have yet; it's currently least-loaded with a deterministic tie-break only.
+- **`topologySpreadConstraints.maxSkew` is accepted but not enforced** — the scheduler minimizes matching-Machine count per domain, it doesn't hard-cap skew between domains.
+- **DRA topology-awareness is a best-effort scoring hint, not an allocation decision** — `kairon-controller` has no role in DRA device allocation itself; see [`docs/guides/machine-placement.md`](docs/guides/machine-placement.md).
 - **Confidential-compute enforcement (SEV-SNP/TDX), large-scale hardware qualification** — hardware-dependent, not exercisable in CI.
 - **PVC-backed boot disks are a first cut**: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, `hostPath`/`local` sources only — Kairon runs no CSI node plugin of its own, so a network-block volume (Ceph RBD, EBS, …) needs to already be attached by something else first.
 - **`MachineSnapshotRestore` restores into a new PVC only**, deliberately not also a Machine (see its guide for why), and needs a real CSI snapshotter behind your StorageClass — Rancher's `local-path-provisioner`, a common default, doesn't have one.

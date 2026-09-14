@@ -107,14 +107,30 @@ type RuntimeSpec struct {
 type PlacementSpec struct {
 	Architecture string            `json:"architecture,omitempty"`
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
-	// Affinity/AntiAffinity are required (hard) constraints only -- filters
-	// consulted by internal/scheduler.Scheduler.eligible against every other
-	// currently-scheduled Machine, not a weighted scoring pass. Preferred
-	// (soft) affinity and topology spread constraints need a real scoring
-	// system Kairon's "least-loaded, deterministic tie-break" scheduler
-	// doesn't have yet -- deliberately out of scope for this pass.
+	// Affinity/AntiAffinity are required (hard) constraints -- filters
+	// consulted by internal/scheduler.Scheduler.eligible against every
+	// other currently-scheduled Machine; a node failing one of these is
+	// never a candidate at all. PreferredAffinity/PreferredAntiAffinity and
+	// TopologySpreadConstraints below are soft: they only ever influence
+	// which *eligible* node wins via internal/scheduler's weighted scoring,
+	// they can never reject a node outright.
 	Affinity     []MachineAffinityTerm `json:"affinity,omitempty"`
 	AntiAffinity []MachineAffinityTerm `json:"antiAffinity,omitempty"`
+	// PreferredAffinity/PreferredAntiAffinity add/subtract each term's
+	// Weight to a candidate node's score when satisfied -- see
+	// internal/scheduler.score. A Machine with none of these set schedules
+	// identically to before this field existed (least-loaded, deterministic
+	// hash tie-break): the scoring pass degenerates to exactly that when
+	// there's nothing to prefer.
+	PreferredAffinity     []WeightedAffinityTerm `json:"preferredAffinity,omitempty"`
+	PreferredAntiAffinity []WeightedAffinityTerm `json:"preferredAntiAffinity,omitempty"`
+	// TopologySpreadConstraints softly favors, for each constraint, whichever
+	// eligible node's TopologyKey-domain currently has the fewest other
+	// Machines matching LabelSelector -- a first cut: it influences scoring
+	// toward a more even spread, it does not hard-enforce MaxSkew (MaxSkew
+	// is accepted for forward-compatibility/familiarity with the
+	// Kubernetes shape but not yet read by the scheduler).
+	TopologySpreadConstraints []TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 }
 
 // MachineAffinityTerm is satisfied when at least one (Affinity) / no
@@ -126,6 +142,29 @@ type PlacementSpec struct {
 type MachineAffinityTerm struct {
 	LabelSelector map[string]string `json:"labelSelector"`
 	TopologyKey   string            `json:"topologyKey"`
+}
+
+// WeightedAffinityTerm is a MachineAffinityTerm plus a Weight (mirrors
+// Kubernetes' own PreferredSchedulingTerm shape): internal/scheduler.score
+// adds Weight to a candidate node's score when the term is satisfied (for
+// PreferredAffinity) or subtracts it (for PreferredAntiAffinity). Weight
+// has no fixed range -- it's compared directly against the scheduler's
+// load-balancing penalty (1 point per already-assigned Machine on that
+// node), so a Weight of, say, 20 comfortably outweighs a handful of
+// existing Machines' worth of load imbalance.
+type WeightedAffinityTerm struct {
+	Weight              int32 `json:"weight"`
+	MachineAffinityTerm `json:",inline"`
+}
+
+// TopologySpreadConstraint softly favors spreading Machines matching
+// LabelSelector evenly across the distinct values of the TopologyKey
+// label. MaxSkew mirrors the Kubernetes field for familiarity but is
+// currently informational only -- see PlacementSpec's doc comment.
+type TopologySpreadConstraint struct {
+	TopologyKey   string            `json:"topologyKey"`
+	LabelSelector map[string]string `json:"labelSelector"`
+	MaxSkew       int32             `json:"maxSkew,omitempty"`
 }
 
 type SecuritySpec struct {
@@ -335,10 +374,17 @@ func (s MachineSnapshot) Namespace() string {
 	return s.Metadata.Namespace
 }
 
-// Minimal Kubernetes ResourceClaim representation used by the node agent.
+// Minimal Kubernetes ResourceClaim representation used by the node agent
+// and, for the topology hint in internal/controller's scheduling pass, by
+// the controller too.
 type ResourceClaim struct {
 	Metadata ObjectMeta          `json:"metadata"`
 	Status   ResourceClaimStatus `json:"status,omitempty"`
+}
+
+type ResourceClaimList struct {
+	TypeMeta `json:",inline"`
+	Items    []ResourceClaim `json:"items"`
 }
 
 type ResourceClaimStatus struct {
@@ -358,6 +404,34 @@ type DeviceRequestAllocationResult struct {
 	Driver  string `json:"driver,omitempty"`
 	Pool    string `json:"pool,omitempty"`
 	Device  string `json:"device,omitempty"`
+}
+
+// ResourceSlice is a minimal resource.k8s.io/v1 ResourceSlice
+// representation: enough to answer "which node hosts {Driver, Pool}",
+// which is exactly what internal/controller needs to give the scheduler a
+// DRA topology-awareness hint -- see internal/controller's
+// draPreferredNode. Cluster-scoped, unlike ResourceClaim.
+type ResourceSlice struct {
+	Metadata ObjectMeta        `json:"metadata"`
+	Spec     ResourceSliceSpec `json:"spec"`
+}
+
+type ResourceSliceSpec struct {
+	Driver string                `json:"driver"`
+	Pool   ResourceSlicePoolInfo `json:"pool"`
+	// NodeName is empty for a pool not tied to a specific node (e.g. a
+	// network-attached device pool) -- draPreferredNode contributes no
+	// hint in that case, the same as if the claim isn't allocated yet.
+	NodeName string `json:"nodeName,omitempty"`
+}
+
+type ResourceSlicePoolInfo struct {
+	Name string `json:"name"`
+}
+
+type ResourceSliceList struct {
+	TypeMeta `json:",inline"`
+	Items    []ResourceSlice `json:"items"`
 }
 
 // Minimal CSI snapshot.storage.k8s.io/v1 representation.
