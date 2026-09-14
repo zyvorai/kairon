@@ -8,10 +8,13 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/admission"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/tlsreload"
 )
 
 // WebhookHandler returns the mux for kairon-controller's validating
@@ -39,8 +42,11 @@ func (c *Controller) WebhookHandler() http.Handler {
 // cmd/kairon-controller/main.go), the same "fail fast on a bad cert before
 // starting anything" posture as kairon-node's migration TLS setup, rather
 // than only discovering a bad cert/key pair on the first admission
-// request.
-func (c *Controller) RunWebhook(ctx context.Context, addr string, tlsConfig *tls.Config) error {
+// request. certWatcher (WebhookTLSConfig's other return value) is run
+// alongside the server so a renewed certificate is picked up without a
+// restart -- see internal/tlsreload.
+func (c *Controller) RunWebhook(ctx context.Context, addr string, tlsConfig *tls.Config, certWatcher *tlsreload.Watcher, tlsReloadInterval time.Duration) error {
+	go certWatcher.Run(ctx, tlsReloadInterval)
 	srv := &http.Server{Addr: addr, Handler: c.WebhookHandler(), TLSConfig: tlsConfig}
 	go func() {
 		<-ctx.Done()
@@ -146,14 +152,17 @@ func (c *Controller) validateMachineMigration(r *http.Request, req *admission.Re
 	return admission.Allow()
 }
 
-// WebhookTLSConfig loads the webhook's serving certificate. Called once by
+// WebhookTLSConfig loads the webhook's serving certificate into a
+// tlsreload.Watcher and builds a *tls.Config around it. Called once by
 // cmd/kairon-controller/main.go at startup, before RunWebhook, so a bad
 // cert/key pair is a startup failure, not a surprise on the first
-// admission request.
-func WebhookTLSConfig(certFile, keyFile string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+// admission request. The returned watcher must be passed to RunWebhook so
+// a renewed certificate is picked up without a restart -- see
+// internal/tlsreload.
+func WebhookTLSConfig(log *slog.Logger, certFile, keyFile string) (*tls.Config, *tlsreload.Watcher, error) {
+	watcher, err := tlsreload.New(log, certFile, keyFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}, nil
+	return &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: watcher.GetCertificate}, watcher, nil
 }

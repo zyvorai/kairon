@@ -23,9 +23,17 @@ import (
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/migration"
+	"github.com/zyvorai/kairon/internal/tlsreload"
 )
 
 var version = "dev"
+
+// tlsReloadInterval bounds how often every TLS hop this binary owns
+// (migration mTLS, the VNC console relay) polls its certificate/key files
+// for a change -- see internal/tlsreload. Frequent enough to notice a
+// rotation well within a typical short-lived certificate's remaining
+// lifetime, cheap enough (a stat() call) to not matter at this cadence.
+const tlsReloadInterval = 30 * time.Second
 
 func main() {
 	os.Exit(run())
@@ -141,11 +149,16 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 	if configured != 3 {
 		return nil, nil, fmt.Errorf("migration mTLS is fail-closed: --migration-ca, --migration-cert and --migration-key must be configured together")
 	}
-	serverTLS, err := migration.ServerTLSConfig(caPath, certPath, keyPath)
+	certWatcher, err := migration.NewCertWatcher(log, caPath, certPath, keyPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	clientTLS, err := migration.ClientTLSConfig(caPath, certPath, keyPath, serverName)
+	go certWatcher.Run(ctx, tlsReloadInterval)
+	serverTLS, err := migration.ServerTLSConfig(caPath, certWatcher)
+	if err != nil {
+		return nil, nil, err
+	}
+	clientTLS, err := migration.ClientTLSConfig(caPath, certWatcher, serverName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -215,12 +228,13 @@ func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, 
 		log.Error("VNC console relay disabled: --console-tls-cert and --console-tls-key must be set together")
 		return
 	case certSet && keySet:
-		cert, err := tls.LoadX509KeyPair(tlsCertPath, tlsKeyPath)
+		watcher, err := tlsreload.New(log, tlsCertPath, tlsKeyPath)
 		if err != nil {
 			log.Error("VNC console relay disabled: failed to load TLS keypair", "error", err)
 			return
 		}
-		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+		go watcher.Run(ctx, tlsReloadInterval)
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: watcher.GetCertificate}
 	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {

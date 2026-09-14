@@ -20,9 +20,14 @@ import (
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/scheduler"
+	"github.com/zyvorai/kairon/internal/tlsreload"
 )
 
 var version = "dev"
+
+// tlsReloadInterval bounds how often the webhook's TLS certificate/key
+// files are polled for a change -- see internal/tlsreload.
+const tlsReloadInterval = 30 * time.Second
 
 func main() {
 	os.Exit(run())
@@ -51,9 +56,10 @@ func run() int {
 		return 1
 	}
 	var webhookTLSConfig *tls.Config
+	var webhookCertWatcher *tlsreload.Watcher
 	if *webhookTLSCert != "" {
 		var err error
-		webhookTLSConfig, err = controller.WebhookTLSConfig(*webhookTLSCert, *webhookTLSKey)
+		webhookTLSConfig, webhookCertWatcher, err = controller.WebhookTLSConfig(log, *webhookTLSCert, *webhookTLSKey)
 		if err != nil {
 			log.Error("webhook TLS", "error", err)
 			return 1
@@ -83,7 +89,7 @@ func run() int {
 	}
 	if webhookTLSConfig != nil {
 		go func() {
-			if err := ctl.RunWebhook(ctx, *webhookAddr, webhookTLSConfig); err != nil && ctx.Err() == nil {
+			if err := ctl.RunWebhook(ctx, *webhookAddr, webhookTLSConfig, webhookCertWatcher, tlsReloadInterval); err != nil && ctx.Err() == nil {
 				log.Error("webhook server", "error", err)
 			}
 		}()

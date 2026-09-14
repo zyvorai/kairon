@@ -57,7 +57,7 @@ Not originally scoped for a specific version, but small enough to land alongside
 - DRA topology-aware scheduler scoring
 - SR-IOV/GPU migration capability checks
 - guest quiesce hooks for snapshots
-- per-node certificate automation/rotation and SPIFFE support
+- [x] TLS certificate hot-reload (`internal/tlsreload`): migration mTLS, the VNC console relay, and the admission webhook all now pick up a renewed leaf certificate/key (e.g. from cert-manager) within 30s, no restart. Only the leaf cert/key -- a CA bundle still loads once at startup. Automated issuance (ACME/cert-manager integration Kairon itself drives) and SPIFFE-style workload identity remain open.
 - confidential VM policy (SEV-SNP/TDX)
 - OIDC/SSO for `kairon-ui`
 - multi-replica `kairon-ui` (session/lockout state is deliberately single-replica today, see SECURITY.md)

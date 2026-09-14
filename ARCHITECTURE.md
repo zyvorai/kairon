@@ -62,6 +62,8 @@ Three optional TLS hops exist, each independently opt-in, each following the sam
 | `kairon-ui` → `kairon-node` (VNC console relay) | plaintext HTTP, opt-in TLS (`console.tls.enabled`) | A shared bearer token plus, optionally, one-way TLS on the relay hop |
 | Kubernetes API server → `kairon-controller` (admission webhook) | webhook itself is off by default; `failurePolicy: Fail` once on | Whether `Machine`/`MachineMigration` writes can bypass quota/budget checks |
 
+All three hop's leaf certificates hot-reload (`internal/tlsreload`, a stdlib-only polling watcher — no fsnotify): whatever renews the cert file on disk (cert-manager or anything else) takes effect within 30s, no restart. Only the leaf cert/key reload this way; a CA bundle used to build `ClientCAs`/`RootCAs` still loads once at startup.
+
 ## Why it's built this way
 
 Three constraints shape almost every design choice above — see the top-level [README](README.md#why-kairon-exists) for the full argument, summarized here for context:

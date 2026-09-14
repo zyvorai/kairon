@@ -344,7 +344,6 @@ Still genuinely open, and why:
 
 - **Automatic fencing, storage/network migration preflight** — need real multi-host cluster behavior this repo's CI doesn't have.
 - **DRA topology-aware placement scoring, preferred/soft affinity, topology spread constraints** — all three need a weighted scheduler-scoring system the scheduler doesn't have yet; it's currently least-loaded with a deterministic tie-break only.
-- **Certificate rotation** for migration/console/webhook TLS — today's model across all three is "you supply a certificate," rotation is a separate lifecycle feature none of them have.
 - **Confidential-compute enforcement (SEV-SNP/TDX), large-scale hardware qualification** — hardware-dependent, not exercisable in CI.
 - **PVC-backed boot disks are a first cut**: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, `hostPath`/`local` sources only — Kairon runs no CSI node plugin of its own, so a network-block volume (Ceph RBD, EBS, …) needs to already be attached by something else first.
 - **`MachineSnapshotRestore` restores into a new PVC only**, deliberately not also a Machine (see its guide for why), and needs a real CSI snapshotter behind your StorageClass — Rancher's `local-path-provisioner`, a common default, doesn't have one.

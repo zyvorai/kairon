@@ -11,6 +11,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -207,7 +209,11 @@ func TestFileStoreRoundTripAndRejectsTraversal(t *testing.T) {
 func TestServerTLSRequiresClientCertificate(t *testing.T) {
 	dir := t.TempDir()
 	ca, serverCert, serverKey, clientCert, clientKey := makeTLSFiles(t, dir)
-	tlsConfig, err := ServerTLSConfig(ca, serverCert, serverKey)
+	watcher, err := NewCertWatcher(slog.New(slog.NewTextHandler(io.Discard, nil)), ca, serverCert, serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsConfig, err := ServerTLSConfig(ca, watcher)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,17 +221,30 @@ func TestServerTLSRequiresClientCertificate(t *testing.T) {
 		t.Fatalf("unexpected tls config: min=%x auth=%v", tlsConfig.MinVersion, tlsConfig.ClientAuth)
 	}
 
+	// httptest.Server.StartTLS() auto-injects its own dummy certificate
+	// whenever tlsConfig.Certificates is empty -- true here since the
+	// production ServerTLSConfig now serves via the GetCertificate
+	// callback instead, same as internal/tlsreload's whole point. Wire up
+	// a real net.Listen + tls.NewListener server by hand instead, exactly
+	// the same construction cmd/kairon-node/main.go's configureMigration
+	// actually uses, so this test exercises the real GetCertificate path
+	// rather than httptest's unrelated auto-cert convenience behavior.
 	driver := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://ok"}}
-	ts := httptest.NewUnstartedServer((&Server{NodeName: "node-b", Store: NewFileStore(t.TempDir()), Driver: driver}).Handler())
-	ts.TLS = tlsConfig
-	ts.StartTLS()
-	defer ts.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: (&Server{NodeName: "node-b", Store: NewFileStore(t.TempDir()), Driver: driver}).Handler(), TLSConfig: tlsConfig}
+	tlsListener := tls.NewListener(listener, tlsConfig)
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
+	url := "https://" + listener.Addr().String()
 
 	pool := x509.NewCertPool()
 	pemData, _ := os.ReadFile(ca)
 	pool.AppendCertsFromPEM(pemData)
 	noCert := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSForTest(pool, nil)}}
-	if _, err := NewClient(noCert).Prepare(context.Background(), ts.URL, testSession()); err == nil {
+	if _, err := NewClient(noCert).Prepare(context.Background(), url, testSession()); err == nil {
 		t.Fatal("expected peer without client certificate to be rejected")
 	}
 	pair, err := tlsLoad(clientCert, clientKey)
@@ -233,7 +252,7 @@ func TestServerTLSRequiresClientCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	withCert := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSForTest(pool, &pair)}}
-	if _, err := NewClient(withCert).Prepare(context.Background(), ts.URL, testSession()); err != nil {
+	if _, err := NewClient(withCert).Prepare(context.Background(), url, testSession()); err != nil {
 		t.Fatalf("mTLS client failed: %v", err)
 	}
 }
