@@ -23,7 +23,14 @@ kubectl -n "$NS" logs deploy/kairon-controller --all-containers --tail=500 >"$OU
 kubectl -n "$NS" logs daemonset/kairon-node --all-containers --tail=200 >"$OUT/node.log" 2>&1 || true
 kubectl get events -A --field-selector reason=Fenced,FailedScheduling,Scheduled,MigrationStarted,MigrationFailed --sort-by=.lastTimestamp >"$OUT/events.txt" 2>&1 || true
 kubectl get crd -o name | grep kairon.zyvor.dev | while read -r crd; do
-  kubectl get "$crd" -A -o yaml >"$OUT/$(basename "$crd").yaml" 2>&1 || true
+  # crd is "customresourcedefinition.apiextensions.k8s.io/machines.kairon.zyvor.dev"
+  # (a TYPE/NAME identifier for the CRD object itself); strip the TYPE/
+  # prefix to get "machines.kairon.zyvor.dev" -- a resource.group
+  # specifier -- and use THAT for kubectl get below, not $crd, which
+  # would fetch the CRD's own schema object instead of any Machine
+  # instances (see scripts/backup-crds.sh, which had the same bug).
+  kind="$(basename "$crd")"
+  kubectl get "$kind" -A -o yaml >"$OUT/$kind.yaml" 2>&1 || true
 done
 
 tar -czf "${OUT}.tar.gz" "$OUT"
