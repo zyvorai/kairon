@@ -27,7 +27,22 @@ A `ResourceClaim` must be allocated before Kairon considers it. Resolved PCI BDF
 
 ## Images
 
-`--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. Signed-image policy is not yet implemented (no cosign). CI builds all three container images, pins their base images (`gcr.io/distroless/static-debian12`, `golang`, `node`) to a resolved digest rather than a floating tag, and runs both `govulncheck` against the Go dependency graph and a Trivy image-layer scan (failing on HIGH/CRITICAL) on every push. A separate tag-triggered workflow (`.github/workflows/release.yml`) publishes to `ghcr.io/zyvorai/kairon-*` -- this repository's CI is now the one place that mints those tags; it scans the exact bits it's about to push (not a separate build) and refuses to push anything the scan flags. SBOM/provenance attestation and image signing are not yet implemented.
+`--image-root` constrains Machine image paths. Keep VM image directories non-writable by untrusted workloads. CI builds all four container images (`controller`, `node`, `ui`, `csi-node`), pins their base images (`gcr.io/distroless/static-debian12`, `golang`, `node`) to a resolved digest rather than a floating tag, and runs both `govulncheck` against the Go dependency graph and a Trivy image-layer scan (failing on HIGH/CRITICAL) on every push. A separate tag-triggered workflow (`.github/workflows/release.yml`) publishes to `ghcr.io/zyvorai/kairon-*` -- this repository's CI is now the one place that mints those tags; it scans the exact bits it's about to push (not a separate build) and refuses to push anything the scan flags.
+
+Every published image is also SBOM'd and signed: `anchore/sbom-action` (wrapping `syft`) generates a real SPDX SBOM from the exact pushed image (by digest, not tag -- a tag is mutable, a digest isn't), `cosign` signs that digest and attests the SBOM to it, keylessly -- no private key this project generates, stores, or can leak; the GitHub Actions job's own short-lived OIDC token (`id-token: write`) is exchanged for a Fulcio-issued certificate scoped to this exact workflow/repo/ref, and the signature is recorded in Sigstore's public Rekor transparency log. Verify either with `cosign`:
+
+```bash
+CERT_ID='^https://github.com/zyvorai/kairon/\.github/workflows/release\.yml@refs/tags/.*$'
+ISSUER='https://token.actions.githubusercontent.com'
+
+cosign verify --certificate-identity-regexp "$CERT_ID" --certificate-oidc-issuer "$ISSUER" \
+  ghcr.io/zyvorai/kairon-controller:vX.Y.Z
+
+cosign verify-attestation --type spdxjson --certificate-identity-regexp "$CERT_ID" --certificate-oidc-issuer "$ISSUER" \
+  ghcr.io/zyvorai/kairon-controller:vX.Y.Z
+```
+
+Confirms two different things: `verify` proves the image byte-for-byte is what `release.yml` actually built and pushed for that tag (not tampered with, not substituted); `verify-attestation` additionally proves the attached SBOM is the real one generated from that same image, not a hand-edited or stale one. Each SBOM is also uploaded as a plain build artifact on the release workflow run, for anyone who just wants to read it without `cosign` at all. First shipped for the next tagged release after `v0.4.0` -- earlier tags were never signed or SBOM'd retroactively.
 
 ## `kairon-controller` leader election (`controller.leaderElection`)
 
