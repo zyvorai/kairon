@@ -22,13 +22,21 @@ and `github.com/container-storage-interface/spec`'s inclusion here is
 
 ## What kind of CSI driver this is
 
-**Node-only, no Controller service, no dynamic provisioning.** In CSI's
-own terminology this is a "pre-provisioned" driver: you (or your storage
-tooling) create the `PersistentVolume` directly, naming this driver and
-carrying the iSCSI target's connection info in `spec.csi.volumeAttributes`
--- there's no `StorageClass`-driven `CreateVolume` flow, and no
-`ControllerPublishVolume`/attach step (`attachRequired: false` on the
-`CSIDriver` object this chart installs).
+**Static provisioning by default; dynamic provisioning is opt-in
+(`csiController.enabled`).** By default this is a "pre-provisioned"
+driver in CSI's own terminology: you (or your storage tooling) create the
+`PersistentVolume` directly, naming this driver and carrying the iSCSI
+target's connection info in `spec.csi.volumeAttributes` -- there's no
+`ControllerPublishVolume`/attach step either way (`attachRequired: false`
+on the `CSIDriver` object this chart installs, regardless of
+`csiController.enabled`). Separately, enabling `csiController` deploys a
+single-replica Controller service (`internal/csinode.ControllerServer`,
+driven by a real Linux LIO/`targetcli` backend) so a `StorageClass`
+naming this driver can dynamically provision a fresh iSCSI target/LUN per
+PVC instead -- see "Setup" below for the static path and
+`charts/kairon/values.yaml`'s `csiController` block for the dynamic one.
+The two are independent: `csiNode` alone (the original, still fully
+supported path) never requires `csiController` at all.
 
 **One backend: iSCSI**, via `open-iscsi`'s `iscsiadm` CLI -- the most
 broadly available network-block protocol with a stable, scriptable Linux
@@ -128,18 +136,45 @@ only happens once, not every reconcile tick.
 **CHAP authentication**: supported by the driver itself (for a real
 Kubernetes Pod using it via kubelet, which resolves a `nodeStageSecretRef`
 Secret with its own properly-scoped RBAC) but **not** for Kairon's own
-Machine-boot-disk path -- see "Real limits" below for why.
+Machine-boot-disk path -- see "Real limits" below for why. This now also
+applies to dynamically provisioned volumes (`csiController.enabled`):
+point a `StorageClass`'s `csi.storage.k8s.io/provisioner-secret-name`/
+`-namespace` and `csi.storage.k8s.io/node-stage-secret-name`/`-namespace`
+parameters at the same pre-created Secret (keys `username`/`password`) to
+have `CreateVolume` configure real LIO CHAP instead of demo mode -- but a
+volume provisioned from that `StorageClass` can then only ever be
+consumed by a real Kubernetes Pod via kubelet, never by a Kairon Machine,
+for exactly the same reason. Leaving the `StorageClass` with no secret
+parameters (the default) preserves demo mode exactly as before.
 
 ## Real limits today (first cut)
 
 - **iSCSI only.** No Ceph RBD, EBS, or any other network-block backend.
-- **No dynamic provisioning.** Every PV is static, hand-created (or
-  created by your own tooling) -- no `StorageClass`, no `CreateVolume`.
+- **Dynamic provisioning (`csiController.enabled`) is single-storage-node
+  only.** One Controller replica, pinned via `nodeSelector` to whichever
+  node is this cluster's storage node -- no topology-aware placement
+  across multiple storage nodes. Leaving `csiController` disabled (the
+  default) keeps every PV static, hand-created (or created by your own
+  tooling) -- no `StorageClass`, no `CreateVolume`.
+  `csiController.leaderElection.enabled` (on by default) turns on the
+  `csi-provisioner`/`csi-resizer` sidecars' own Lease-based leader
+  election as defense-in-depth against more than one Controller replica
+  racing the same LIO target -- not real HA/failover on its own, since
+  this Controller's `hostPath`/`hostNetwork`/LIO configfs are still tied
+  to one physical storage node regardless of replica count.
 - **No raw block mode.** Only `Filesystem`-mode, mount-type volumes --
   matches every other Kairon boot-disk source.
-- **No volume expansion, health, or stats reporting.**
-  `NodeExpandVolume`/`NodeGetVolumeStats`/`NodeGetVolumeHealth` are all
-  unimplemented (the CSI spec's own `Unimplemented` response).
+- **Volume expansion is supported for dynamically provisioned volumes**
+  (`csiController.enabled`, `StorageClass.allowVolumeExpansion: true`):
+  growing a PVC's `spec.resources.requests.storage` grows the LIO
+  backstore (`ControllerExpandVolume`) and then the on-disk filesystem
+  (`NodeExpandVolume`, ext2/3/4 via `resize2fs`, xfs via `xfs_growfs`) --
+  grow-only, no shrink (the CSI spec has no shrink verb). Statically
+  provisioned volumes still don't support this -- there's no
+  `ControllerExpandVolume` call without a `StorageClass`/PVC driving it.
+  **No volume health or stats reporting.**
+  `NodeGetVolumeStats`/`NodeGetVolumeHealth` are both unimplemented (the
+  CSI spec's own `Unimplemented` response).
 - **No CHAP support on Kairon's own consumption path.** `kairon-node`
   acts as its own CSI client and never resolves a `nodeStageSecretRef` --
   doing so would mean granting it `get` RBAC on Secrets named by whatever

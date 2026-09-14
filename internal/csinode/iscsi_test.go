@@ -246,3 +246,65 @@ func TestEnsureFormattedPropagatesUnexpectedBlkidFailure(t *testing.T) {
 		t.Fatal("expected mkfs not to run when blkid's failure isn't the documented 'no filesystem' signal")
 	}
 }
+
+func TestRescanCommandShape(t *testing.T) {
+	run := newFakeCommandRunner()
+	c := &iscsiClient{run: run}
+	if err := c.rescan(context.Background(), iscsiConfig{Portal: "10.0.0.5:3260", IQN: "iqn.x", LUN: "0"}); err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	calls := run.callsFor("iscsiadm")
+	want := "-m node -T iqn.x -p 10.0.0.5:3260 -R"
+	if got := joinArgs(calls[0][1:]); got != want {
+		t.Fatalf("unexpected command: got %q want %q", got, want)
+	}
+}
+
+func TestRescanPropagatesFailure(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("iscsiadm", func(args ...string) (string, error) { return "", errors.New("boom") })
+	c := &iscsiClient{run: run}
+	if err := c.rescan(context.Background(), iscsiConfig{Portal: "p", IQN: "i", LUN: "0"}); err == nil {
+		t.Fatal("expected a failure to propagate")
+	}
+}
+
+func TestGrowFilesystemExt4UsesResize2fs(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("blkid", func(args ...string) (string, error) { return "ext4", nil })
+	if err := growFilesystem(context.Background(), run, "/dev/sda", "/mnt/x"); err != nil {
+		t.Fatalf("growFilesystem: %v", err)
+	}
+	calls := run.callsFor("resize2fs")
+	if len(calls) != 1 || joinArgs(calls[0][1:]) != "/dev/sda" {
+		t.Fatalf("expected resize2fs against the device, got %+v", calls)
+	}
+}
+
+func TestGrowFilesystemXFSUsesXFSGrowfsAgainstMountPath(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("blkid", func(args ...string) (string, error) { return "xfs", nil })
+	if err := growFilesystem(context.Background(), run, "/dev/sda", "/mnt/x"); err != nil {
+		t.Fatalf("growFilesystem: %v", err)
+	}
+	calls := run.callsFor("xfs_growfs")
+	if len(calls) != 1 || joinArgs(calls[0][1:]) != "/mnt/x" {
+		t.Fatalf("expected xfs_growfs against the mount path, got %+v", calls)
+	}
+}
+
+func TestGrowFilesystemRejectsUnsupportedType(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("blkid", func(args ...string) (string, error) { return "btrfs", nil })
+	if err := growFilesystem(context.Background(), run, "/dev/sda", "/mnt/x"); err == nil {
+		t.Fatal("expected an error for an unsupported filesystem type")
+	}
+}
+
+func TestGrowFilesystemPropagatesBlkidFailure(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("blkid", func(args ...string) (string, error) { return "", errors.New("boom") })
+	if err := growFilesystem(context.Background(), run, "/dev/sda", "/mnt/x"); err == nil {
+		t.Fatal("expected a blkid failure to propagate")
+	}
+}

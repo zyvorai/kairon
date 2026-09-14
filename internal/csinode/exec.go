@@ -2,18 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package csinode implements the CSI (Container Storage Interface) Node
-// service for Kairon's first-cut network-block volume driver: one
-// backend (iSCSI), no Controller service (see NodeServer's doc comment
-// for why), and the real, current limits documented in
-// docs/guides/machine-storage-csi.md.
+// and Controller services for Kairon's first-cut network-block volume
+// driver: one backend (iSCSI, real Linux LIO targets), and the real,
+// current limits documented in docs/guides/machine-storage-csi.md. The
+// Node service (NodeServer, served by cmd/kairon-csi-node) and the
+// Controller service (ControllerServer, served by
+// cmd/kairon-csi-controller) live in the same package -- they share the
+// exact same iSCSI domain model (iscsiConfig, encodeVolumeID/
+// decodeVolumeID) since a volume the Controller dynamically provisions is
+// consumed by the Node service exactly like a statically-provisioned one
+// always was, just with its portal/IQN/LUN generated instead of
+// hand-written into a PersistentVolume. They're still served from two
+// different binaries/processes/gRPC endpoints (a Node DaemonSet pod and a
+// Controller Deployment pod), matching standard CSI deployment topology.
 //
-// This package -- along with cmd/kairon-csi-node, which serves it over
-// gRPC -- is the second deliberate exception to Kairon's Go-stdlib-only
-// design guarantee (the first is kairon-ui's optional OIDC/SSO): the CSI
-// protocol itself is a gRPC/protobuf wire contract kubelet speaks to a
-// Unix socket, so there is no stdlib-only way to implement it at all.
-// kairon-controller/kairon-node's own core VM orchestration pulls in
-// none of this.
+// This package -- along with cmd/kairon-csi-node and
+// cmd/kairon-csi-controller, which serve it over gRPC -- is the second
+// deliberate exception to Kairon's Go-stdlib-only design guarantee (the
+// first is kairon-ui's optional OIDC/SSO): the CSI protocol itself is a
+// gRPC/protobuf wire contract kubelet speaks to a Unix socket, so there is
+// no stdlib-only way to implement it at all. kairon-controller/
+// kairon-node's own core VM orchestration pulls in none of this.
 package csinode
 
 import (

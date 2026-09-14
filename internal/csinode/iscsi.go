@@ -176,6 +176,45 @@ func (c *iscsiClient) logout(ctx context.Context, cfg iscsiConfig) error {
 	return nil
 }
 
+// rescan asks the initiator to re-read cfg's target/LUN size -- required
+// after ControllerExpandVolume has grown the backing LIO backstore and
+// before growFilesystem can grow the on-disk filesystem to match: the
+// kernel's SCSI layer caches a device's reported size at login and never
+// re-reads it on its own.
+func (c *iscsiClient) rescan(ctx context.Context, cfg iscsiConfig) error {
+	if _, err := c.run.Run(ctx, "iscsiadm", "-m", "node", "-T", cfg.IQN, "-p", cfg.Portal, "-R"); err != nil {
+		return fmt.Errorf("rescan iscsi target %s: %w", cfg.IQN, err)
+	}
+	return nil
+}
+
+// growFilesystem grows device's existing filesystem (probed via the same
+// blkid TYPE query ensureFormatted already uses) to fill its now-larger
+// backing device. ext2/3/4 grow the raw device directly with resize2fs;
+// xfs can only grow via an already-mounted mountPath, never the raw
+// device -- both are online-grow-only tools, matching this driver's own
+// grow-only ControllerExpandVolume contract (the CSI spec has no shrink
+// verb either).
+func growFilesystem(ctx context.Context, run CommandRunner, device, mountPath string) error {
+	fsType, err := run.Run(ctx, "blkid", "-p", "-o", "value", "-s", "TYPE", device)
+	if err != nil {
+		return fmt.Errorf("probe filesystem on %s: %w", device, err)
+	}
+	fsType = strings.TrimSpace(fsType)
+	switch fsType {
+	case "ext2", "ext3", "ext4":
+		_, err = run.Run(ctx, "resize2fs", device)
+	case "xfs":
+		_, err = run.Run(ctx, "xfs_growfs", mountPath)
+	default:
+		return fmt.Errorf("growing a %q filesystem is not supported", fsType)
+	}
+	if err != nil {
+		return fmt.Errorf("grow %s filesystem on %s: %w", fsType, device, err)
+	}
+	return nil
+}
+
 // ensureFormatted formats device with fsType if -- and only if -- blkid
 // reports no existing filesystem (exit code 2, blkid's own documented
 // signal for "no recognizable filesystem or partition"). Any other

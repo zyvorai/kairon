@@ -24,7 +24,8 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-controller ./cmd/kairon-controller && \
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-node ./cmd/kairon-node && \
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-ui ./cmd/kairon-ui && \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-csi-node ./cmd/kairon-csi-node
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-csi-node ./cmd/kairon-csi-node && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-csi-controller ./cmd/kairon-csi-controller
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS controller
 COPY --from=build /out/kairon-controller /kairon-controller
@@ -57,3 +58,20 @@ COPY --from=build /out/kairon-csi-node /kairon-csi-node
 COPY docker/kairon-csi-node-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+
+# Also not distroless, for the same reason as csi-node above: dynamic
+# provisioning (internal/csinode's ControllerServer) shells out to Linux
+# LIO's targetcli to create/destroy real iSCSI backstores/targets/LUNs
+# (see internal/csinode/lio.go) -- reimplementing raw configfs
+# manipulation isn't something this project does either. targetcli-fb
+# additionally needs the host's target_core_mod kernel module already
+# loaded (an operator/host prerequisite this image deliberately doesn't
+# try to modprobe itself -- see docs/guides/machine-storage-csi.md, the
+# same "we don't reach into host-level setup for you" posture this
+# project already takes for webhook/console TLS material).
+FROM debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS csi-controller
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends targetcli-fb ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/kairon-csi-controller /kairon-csi-controller
+ENTRYPOINT ["/kairon-csi-controller"]

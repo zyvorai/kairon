@@ -71,8 +71,24 @@ func TestNodeGetCapabilitiesReportsStageUnstage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NodeGetCapabilities: %v", err)
 	}
-	if len(resp.GetCapabilities()) != 1 || resp.GetCapabilities()[0].GetRpc().GetType() != csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME {
-		t.Fatalf("expected exactly STAGE_UNSTAGE_VOLUME, got %+v", resp.GetCapabilities())
+	want := map[csi.NodeServiceCapability_RPC_Type]bool{
+		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME: false,
+		csi.NodeServiceCapability_RPC_EXPAND_VOLUME:        false,
+	}
+	if len(resp.GetCapabilities()) != len(want) {
+		t.Fatalf("expected exactly %d capabilities, got %+v", len(want), resp.GetCapabilities())
+	}
+	for _, c := range resp.GetCapabilities() {
+		typ := c.GetRpc().GetType()
+		if _, ok := want[typ]; !ok {
+			t.Fatalf("unexpected capability %v", typ)
+		}
+		want[typ] = true
+	}
+	for typ, seen := range want {
+		if !seen {
+			t.Fatalf("missing expected capability %v", typ)
+		}
 	}
 }
 
@@ -276,5 +292,82 @@ func TestNodeUnpublishVolumeIsIdempotentWhenNotMounted(t *testing.T) {
 	req := &csi.NodeUnpublishVolumeRequest{VolumeId: "v1", TargetPath: t.TempDir() + "/never-mounted"}
 	if _, err := f.server.NodeUnpublishVolume(context.Background(), req); err != nil {
 		t.Fatalf("expected NodeUnpublishVolume to succeed against an already-unpublished path, got: %v", err)
+	}
+}
+
+func TestNodeExpandVolumeRequiresFields(t *testing.T) {
+	f := newTestNodeServer(t)
+	if _, err := f.server.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{VolumePath: "/x"}); err == nil {
+		t.Fatal("expected an error for an empty volume_id")
+	}
+	if _, err := f.server.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{VolumeId: "v1"}); err == nil {
+		t.Fatal("expected an error for an empty volume_path")
+	}
+}
+
+// setupExpandFixture points devicePathFunc at a real symlink to a fake
+// device file, the same seam setupLoginFixture already establishes for
+// NodeStageVolume's own tests.
+func setupExpandFixture(t *testing.T) (volumeID string) {
+	t.Helper()
+	dir := t.TempDir()
+	realDevice := dir + "/sda"
+	if err := writeFile(realDevice, "x"); err != nil {
+		t.Fatalf("write fake device: %v", err)
+	}
+	symlink := dir + "/by-path-link"
+	if err := symlinkFile(realDevice, symlink); err != nil {
+		t.Fatalf("symlink fake device: %v", err)
+	}
+	t.Cleanup(setDevicePathForTest(func(iscsiConfig) string { return symlink }))
+	return "iscsi|10.0.0.5:3260|iqn.2026-01.dev.zyvor.kairon:vol1|0"
+}
+
+func TestNodeExpandVolumeRescansAndGrowsExt4(t *testing.T) {
+	f := newTestNodeServer(t)
+	volumeID := setupExpandFixture(t)
+	f.run.on("blkid", func(args ...string) (string, error) { return "ext4", nil })
+
+	if _, err := f.server.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId: volumeID, VolumePath: "/staged",
+	}); err != nil {
+		t.Fatalf("NodeExpandVolume: %v", err)
+	}
+	if calls := f.run.callsFor("iscsiadm"); len(calls) != 1 || joinArgs(calls[0][1:]) != "-m node -T iqn.2026-01.dev.zyvor.kairon:vol1 -p 10.0.0.5:3260 -R" {
+		t.Fatalf("expected exactly one rescan call, got %+v", calls)
+	}
+	if calls := f.run.callsFor("resize2fs"); len(calls) != 1 {
+		t.Fatalf("expected exactly one resize2fs call, got %+v", calls)
+	}
+	if calls := f.run.callsFor("xfs_growfs"); len(calls) != 0 {
+		t.Fatalf("expected no xfs_growfs call for an ext4 filesystem, got %+v", calls)
+	}
+}
+
+func TestNodeExpandVolumeGrowsXFSViaVolumePath(t *testing.T) {
+	f := newTestNodeServer(t)
+	volumeID := setupExpandFixture(t)
+	f.run.on("blkid", func(args ...string) (string, error) { return "xfs", nil })
+
+	if _, err := f.server.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId: volumeID, VolumePath: "/staged",
+	}); err != nil {
+		t.Fatalf("NodeExpandVolume: %v", err)
+	}
+	calls := f.run.callsFor("xfs_growfs")
+	if len(calls) != 1 || joinArgs(calls[0][1:]) != "/staged" {
+		t.Fatalf("expected xfs_growfs to run against the volume path, got %+v", calls)
+	}
+}
+
+func TestNodeExpandVolumeRejectsUnsupportedFilesystem(t *testing.T) {
+	f := newTestNodeServer(t)
+	volumeID := setupExpandFixture(t)
+	f.run.on("blkid", func(args ...string) (string, error) { return "btrfs", nil })
+
+	if _, err := f.server.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId: volumeID, VolumePath: "/staged",
+	}); err == nil {
+		t.Fatal("expected an error for a filesystem this driver doesn't know how to grow")
 	}
 }

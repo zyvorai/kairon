@@ -454,9 +454,13 @@ spec:
         - name: modules-dir
           hostPath: {path: /lib/modules, type: Directory}
 ---
-# attachRequired: false, no Controller service -- see
-# internal/csinode.NodeServer's own doc comment for why this is a
-# Node-only, pre-provisioned-volumes-only driver in this first cut.
+# attachRequired: false regardless of whether csiController.enabled --
+# iSCSI volumes need no ControllerPublishVolume/ControllerUnpublishVolume
+# call (any node can log in to a target independently, unlike e.g. a
+# cloud block-storage API that must explicitly attach a disk to one
+# instance first); ControllerServer (controller.go) never implements
+# those two RPCs. See internal/csinode's package doc comment for the full
+# Node-service/Controller-service split.
 apiVersion: storage.k8s.io/v1
 kind: CSIDriver
 metadata: {name: csi.kairon.zyvor.dev}
@@ -464,6 +468,150 @@ spec:
   attachRequired: false
   podInfoOnMount: false
   volumeLifecycleModes: ["Persistent"]
+{{ end }}
+{{ if .Values.csiController.enabled }}
+---
+# kairon-csi-controller itself never talks to the Kubernetes API server
+# (see internal/csinode.ControllerServer's own doc comment) -- only the
+# external-provisioner sidecar does, watching PersistentVolumeClaims and
+# turning them into CreateVolume/DeleteVolume gRPC calls over the same
+# local Unix socket kairon-csi-controller listens on. This ClusterRole is
+# exactly what that upstream sidecar's own documented RBAC requires
+# (https://github.com/kubernetes-csi/external-provisioner) -- nothing
+# Kairon-specific.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-csi-controller
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kairon-csi-controller
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    # update: the csi-resizer sidecar's own documented RBAC
+    # (https://github.com/kubernetes-csi/external-resizer) -- it patches
+    # a PersistentVolume's capacity after ControllerExpandVolume succeeds.
+    verbs: ["get", "list", "watch", "create", "delete", "update"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    # csi-resizer's own documented RBAC -- it patches
+    # FileSystemResizePending onto a PVC's conditions while a resize is in
+    # flight.
+    resources: ["persistentvolumeclaims/status"]
+    verbs: ["patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch", "create", "update", "patch"]
+{{ if .Values.csiController.leaderElection.enabled }}
+  # The csi-provisioner sidecar's own Lease-based leader election --
+  # see csiController.leaderElection's own doc comment in values.yaml for
+  # why this lives on the sidecar, not a hand-rolled equivalent in
+  # kairon-csi-controller's own binary.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kairon-csi-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kairon-csi-controller
+subjects:
+  - kind: ServiceAccount
+    name: kairon-csi-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kairon-csi-controller, namespace: {{ .Release.Namespace }}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: kairon-csi-controller}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: kairon-csi-controller}}
+    spec:
+      serviceAccountName: kairon-csi-controller
+      # LIO's iSCSI portal must be reachable on the storage node's real
+      # interfaces, not a Pod-network address other nodes' initiators
+      # can't route to -- same reason csiNode's DaemonSet runs this way.
+      hostNetwork: true
+      nodeSelector:
+{{ toYaml .Values.csiController.nodeSelector | indent 8 }}
+      containers:
+        - name: csi-provisioner
+          image: "{{ .Values.csiController.provisioner.image.repository }}:{{ .Values.csiController.provisioner.image.tag }}"
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--leader-election={{ .Values.csiController.leaderElection.enabled }}"
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+        - name: csi-resizer
+          image: "{{ .Values.csiController.resizer.image.repository }}:{{ .Values.csiController.resizer.image.tag }}"
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--leader-election={{ .Values.csiController.leaderElection.enabled }}"
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+        - name: csi-controller
+          image: "{{ .Values.csiController.image.repository }}:{{ .Values.csiController.image.tag }}"
+          imagePullPolicy: {{ .Values.csiController.image.pullPolicy }}
+          args:
+            - "--endpoint=unix:///csi/csi.sock"
+            - "--portal={{ .Values.csiController.portal }}"
+            - "--volume-dir={{ .Values.csiController.volumeDir }}"
+          # Privileged: real Linux LIO/configfs target management
+          # (internal/csinode/lio.go) needs this, the same tradeoff
+          # csiNode's own container already makes for iSCSI initiation
+          # and mounting. See SECURITY.md.
+          securityContext:
+            privileged: true
+          resources:
+{{ toYaml .Values.csiController.resources | indent 12 }}
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+            - {name: volume-dir, mountPath: {{ .Values.csiController.volumeDir | quote }}}
+            - {name: target-configfs, mountPath: /sys/kernel/config}
+      volumes:
+        - name: plugin-dir
+          hostPath: {path: /var/lib/kairon/csi-controller-plugin, type: DirectoryOrCreate}
+        - name: volume-dir
+          hostPath:
+            path: {{ .Values.csiController.volumeDir | quote }}
+            type: DirectoryOrCreate
+        - name: target-configfs
+          hostPath: {path: /sys/kernel/config, type: Directory}
+{{ if .Values.csiController.storageClass.create }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata: {name: {{ .Values.csiController.storageClass.name | quote }}}
+provisioner: csi.kairon.zyvor.dev
+reclaimPolicy: {{ .Values.csiController.storageClass.reclaimPolicy }}
+volumeBindingMode: Immediate
+allowVolumeExpansion: {{ .Values.csiController.storageClass.allowVolumeExpansion }}
+{{ end }}
 {{ end }}
 {{ if .Values.ui.enabled }}
 {{- $usersConfigured := eq (include "kairon.ui.usersConfigured" .) "true" }}

@@ -6,6 +6,7 @@ package csinode
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
@@ -32,11 +33,16 @@ const stagingDirPerm = 0o750
 // current, real limits (iSCSI only, mount-type volumes only -- no raw
 // block mode, no volume expansion, no volume health/stats).
 //
-// There is deliberately no Controller service: this is a
-// "pre-provisioned" CSI driver in the CSI spec's own terminology --
-// PersistentVolumes reference it statically (an admin creates the PV
-// directly, with spec.csi.volumeAttributes carrying the iSCSI
-// portal/IQN/LUN), never via dynamic provisioning from a StorageClass.
+// A PersistentVolume this driver serves can come from either of two
+// places now: an admin still can create one statically (spec.csi.
+// volumeAttributes carrying the iSCSI portal/IQN/LUN by hand -- the
+// original, still fully supported "pre-provisioned" path), or a
+// StorageClass naming this driver as its provisioner can request one
+// dynamically via ControllerServer (controller.go), served by the
+// separate kairon-csi-controller binary/Deployment -- see its own doc
+// comment for what that first cut does and doesn't cover. Either way, the
+// Node service's own job is unchanged: log in to whatever portal/IQN/LUN
+// the resulting PersistentVolume's volumeAttributes name and mount it.
 // Kairon's own Machine boot-disk consumption path (internal/agent) also
 // never goes through kubelet's Pod volume machinery at all -- kairon-node
 // dials this same node plugin's Unix socket directly as a CSI client, the
@@ -86,6 +92,9 @@ func (s *NodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 			{Type: &csi.NodeServiceCapability_Rpc{Rpc: &csi.NodeServiceCapability_RPC{
 				Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
 			}}},
+			{Type: &csi.NodeServiceCapability_Rpc{Rpc: &csi.NodeServiceCapability_RPC{
+				Type: csi.NodeServiceCapability_RPC_EXPAND_VOLUME,
+			}}},
 		},
 	}, nil
 }
@@ -134,6 +143,38 @@ func (s *NodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Errorf(codes.Internal, "mount %s at %s: %v", device, req.GetStagingTargetPath(), err)
 	}
 	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+// NodeExpandVolume grows volume_id's on-disk filesystem to fill its
+// backing device, after ControllerExpandVolume has already grown the LIO
+// backstore itself -- see rescan/growFilesystem's own doc comments for
+// why both steps (rescan, then grow) are required and in that order.
+// volume_path is either a staging or a publish path per the CSI spec;
+// this driver's own staging path is what growFilesystem's own remount
+// mechanism (xfs_growfs) needs regardless, since xfs can only grow via
+// an already-mounted path.
+func (s *NodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
+	}
+	if req.GetVolumePath() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_path is required")
+	}
+	cfg, err := decodeVolumeID(req.GetVolumeId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if err := s.iscsi.rescan(ctx, cfg); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	device, err := filepath.EvalSymlinks(devicePathFunc(cfg))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "resolve device for volume %s: %v", req.GetVolumeId(), err)
+	}
+	if err := growFilesystem(ctx, s.Runner, device, req.GetVolumePath()); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &csi.NodeExpandVolumeResponse{}, nil
 }
 
 // NodeUnstageVolume unmounts staging_target_path (if mounted) and logs

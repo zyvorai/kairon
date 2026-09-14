@@ -108,6 +108,100 @@ csiNode:
     limits: {cpu: 200m, memory: 128Mi}
   nodeSelector:
     kairon.zyvor.dev/capable: "true"
+csiController:
+  # Dynamic provisioning for csiNode's iSCSI backend (see
+  # internal/csinode's ControllerServer, docs/guides/machine-storage-csi.md):
+  # a StorageClass naming csi.kairon.zyvor.dev creates a real Linux LIO
+  # backstore/target/LUN per PersistentVolumeClaim instead of an admin
+  # hand-writing a static PersistentVolume. Off by default, and only
+  # meaningful once csiNode.enabled is also true (dynamic provisioning
+  # without the Node plugin to actually stage/mount the result is
+  # pointless). Single replica, pinned via nodeSelector to whichever node
+  # is this cluster's storage node -- still true today (see "Real limits"
+  # in docs/guides/machine-storage-csi.md); leaderElection below is
+  # defense-in-depth for a future multi-storage-node cut, not a sign more
+  # than one replica is supported now. Requires the host's target_core_mod
+  # kernel module already loaded (this chart doesn't modprobe it for you,
+  # same posture as webhook/console TLS material -- see SECURITY.md) and
+  # hostNetwork so portal below is actually reachable on that node's real
+  # interfaces, not a Pod-network address other nodes' iSCSI initiators
+  # can't route to.
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/kairon-csi-controller
+    tag: latest
+    pullPolicy: IfNotPresent
+  # host:port initiators dial to reach volumes this Controller
+  # provisions -- the storage node's own real, cluster-reachable IP (or a
+  # stable VIP in front of it). Required when enabled is true; there is
+  # deliberately no default, the same "we don't guess your network
+  # topology" posture migration.tlsServerName/console.tls already take.
+  portal: ""
+  # Local directory on the storage node each dynamically provisioned
+  # volume's backing sparse file is created under.
+  volumeDir: /var/lib/kairon/csi-volumes
+  # The upstream, Kubernetes-maintained sidecar that watches
+  # PersistentVolumeClaims naming this driver's StorageClass and turns
+  # them into CreateVolume/DeleteVolume calls -- not something Kairon
+  # implements itself, the same convention csiNode.registrar already
+  # follows for the Node-registration side. See
+  # https://github.com/kubernetes-csi/external-provisioner.
+  provisioner:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-provisioner
+      tag: v5.1.0
+  # The upstream sidecar that watches a growing PersistentVolumeClaim
+  # (spec.resources.requests.storage increased past what the bound
+  # PersistentVolume already reports) and turns it into
+  # ControllerExpandVolume -- same "not something Kairon implements
+  # itself" convention as provisioner above. See
+  # https://github.com/kubernetes-csi/external-resizer.
+  resizer:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-resizer
+      tag: v1.12.0
+  # The provisioner sidecar's own Lease-based leader election
+  # (coordination.k8s.io/v1, its own bundled client-go logic) -- not
+  # something kairon-csi-controller's own binary needs to reimplement the
+  # way kairon-controller's internal/leaderelection had to: that binary
+  # already talks to the Kubernetes API for reconciliation regardless, so
+  # hand-rolling Lease coordination there to avoid a full client-go
+  # dependency was a real trade-off; kairon-csi-controller has no
+  # Kubernetes API dependency today (see cmd/kairon-csi-controller's
+  # package doc) and shouldn't gain one just for this when the sidecar
+  # it's already deployed alongside solves it for free. Only meaningful
+  # once more than one replica exists, which today's single-storage-node
+  # pinning doesn't support (see "Real limits" in
+  # docs/guides/machine-storage-csi.md) -- on by default anyway, the same
+  # "no-op single-writer race at one replica, never a flag an operator has
+  # to remember to flip later" reasoning controller.leaderElection.enabled
+  # already documents.
+  leaderElection:
+    enabled: true
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  # Pins the single Controller replica to this cluster's one storage
+  # node -- required when enabled is true. Matched against a label the
+  # operator applies themselves (this chart doesn't invent or apply one
+  # for you), e.g. `kubectl label node <name> kairon.zyvor.dev/storage-node=true`.
+  nodeSelector: {}
+  # Creates a StorageClass named kairon-iscsi naming csi.kairon.zyvor.dev
+  # as its provisioner, so a PVC can request dynamic provisioning with no
+  # further setup beyond enabling this. Off by default even when
+  # csiController.enabled is true, in case an operator wants to hand-write
+  # their own StorageClass (e.g. a non-default reclaimPolicy) instead.
+  storageClass:
+    create: false
+    name: kairon-iscsi
+    reclaimPolicy: Delete
+    # ControllerExpandVolume/NodeExpandVolume are both implemented (grow
+    # the sparse backing file, the LIO backstore, then the guest
+    # filesystem) -- see internal/csinode/controller.go and node.go.
+    # Shrinking is never supported (the CSI spec itself doesn't have a
+    # shrink verb; ext4/xfs online shrink isn't reliable enough to build
+    # on regardless).
+    allowVolumeExpansion: true
 migration:
   # Secure peer preparation is opt-in until a Kairon migration adapter is installed.
   enabled: false
