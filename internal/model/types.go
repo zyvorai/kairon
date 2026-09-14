@@ -139,12 +139,19 @@ type PlacementSpec struct {
 	// there's nothing to prefer.
 	PreferredAffinity     []WeightedAffinityTerm `json:"preferredAffinity,omitempty"`
 	PreferredAntiAffinity []WeightedAffinityTerm `json:"preferredAntiAffinity,omitempty"`
-	// TopologySpreadConstraints softly favors, for each constraint, whichever
+	// TopologySpreadConstraints favors, for each constraint, whichever
 	// eligible node's TopologyKey-domain currently has the fewest other
-	// Machines matching LabelSelector -- a first cut: it influences scoring
-	// toward a more even spread, it does not hard-enforce MaxSkew (MaxSkew
-	// is accepted for forward-compatibility/familiarity with the
-	// Kubernetes shape but not yet read by the scheduler).
+	// Machines matching LabelSelector -- this scoring pass (see
+	// internal/scheduler.topologySpreadPenalty) applies to every
+	// constraint regardless of WhenUnsatisfiable, mirroring how a real
+	// Kubernetes topology-spread scoring plugin doesn't care about that
+	// field either. WhenUnsatisfiable: "DoNotSchedule" additionally
+	// hard-filters: a node is never a candidate at all if placing this
+	// Machine there would push that constraint's skew over MaxSkew (see
+	// internal/scheduler.filterMaxSkew) -- the default, "" (equivalent to
+	// "ScheduleAnyway"), keeps every existing topologySpreadConstraints
+	// spec scheduling identically to before this field existed: scoring
+	// only, never a hard rejection.
 	TopologySpreadConstraints []TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 }
 
@@ -172,15 +179,27 @@ type WeightedAffinityTerm struct {
 	MachineAffinityTerm `json:",inline"`
 }
 
-// TopologySpreadConstraint softly favors spreading Machines matching
+// TopologySpreadConstraint favors spreading Machines matching
 // LabelSelector evenly across the distinct values of the TopologyKey
-// label. MaxSkew mirrors the Kubernetes field for familiarity but is
-// currently informational only -- see PlacementSpec's doc comment.
+// label -- always, as a soft scoring signal. WhenUnsatisfiable additionally
+// controls whether MaxSkew is hard-enforced -- see PlacementSpec's doc
+// comment.
 type TopologySpreadConstraint struct {
 	TopologyKey   string            `json:"topologyKey"`
 	LabelSelector map[string]string `json:"labelSelector"`
 	MaxSkew       int32             `json:"maxSkew,omitempty"`
+	// WhenUnsatisfiable mirrors the Kubernetes field: "DoNotSchedule" hard-
+	// enforces MaxSkew (a node that would exceed it is never eligible);
+	// "ScheduleAnyway", or empty/unset (the default, and this project's
+	// original behavior), never rejects a node over skew -- MaxSkew only
+	// ever influences scoring.
+	WhenUnsatisfiable string `json:"whenUnsatisfiable,omitempty"`
 }
+
+const (
+	WhenUnsatisfiableDoNotSchedule  = "DoNotSchedule"
+	WhenUnsatisfiableScheduleAnyway = "ScheduleAnyway"
+)
 
 type SecuritySpec struct {
 	SecureBoot bool `json:"secureBoot,omitempty"`

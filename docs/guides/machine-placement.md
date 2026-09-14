@@ -13,15 +13,17 @@ real limits are.
 | `antiAffinity` | Require separation from every other Machine matching a selector | Hard |
 | `preferredAffinity` | Weighted preference to co-locate with a matching Machine | Soft |
 | `preferredAntiAffinity` | Weighted preference to separate from a matching Machine | Soft |
-| `topologySpreadConstraints` | Weighted preference to spread matching Machines evenly across a topology label's domains | Soft |
+| `topologySpreadConstraints` | Weighted preference to spread matching Machines evenly across a topology label's domains; hard-caps skew too if `whenUnsatisfiable: DoNotSchedule` | Soft, or hard per-constraint |
 
-The four hard fields are filters evaluated at scheduling time by
-`internal/scheduler`'s `eligible` check: a node failing one is never a
-candidate at all. The three soft fields never reject a node -- they only
-influence which *eligible* node wins, via a real weighted scoring pass
-(`internal/scheduler.score`). None of the seven influence an
-already-scheduled Machine (`spec.nodeName` is set once, at scheduling
-time, same as `spec.image`/`spec.resources`).
+The first four fields are always-hard filters evaluated at scheduling time
+by `internal/scheduler`'s `eligible` check: a node failing one is never a
+candidate at all. `preferredAffinity`/`preferredAntiAffinity` never reject
+a node -- they only influence which *eligible* node wins, via a real
+weighted scoring pass (`internal/scheduler.score`).
+`topologySpreadConstraints` is scored the same way regardless, but each
+constraint can *also* hard-filter (see below) if you ask it to. None of
+these fields influence an already-scheduled Machine (`spec.nodeName` is
+set once, at scheduling time, same as `spec.image`/`spec.resources`).
 
 ## Affinity and anti-affinity
 
@@ -98,12 +100,40 @@ imbalance you want the preference to be able to outweigh (weight 20
 comfortably beats several Machines' worth of imbalance; weight 1 only
 matters when load is already tied).
 
+## Hard-enforcing `topologySpreadConstraints.maxSkew`
+
+```yaml
+    topologySpreadConstraints:
+      - topologyKey: topology.kubernetes.io/zone
+        labelSelector: {tier: web}
+        maxSkew: 1
+        whenUnsatisfiable: DoNotSchedule
+```
+
+`whenUnsatisfiable: DoNotSchedule` (mirroring the Kubernetes field exactly)
+turns this one constraint into a real filter, on top of the scoring it
+already gets: a candidate node is dropped outright if placing this
+Machine there would push that domain's skew (the matching-Machine count in
+that domain versus the least-populated domain among candidates) over
+`maxSkew`. Every domain still eligible after *all* `DoNotSchedule`
+constraints are applied moves on to the same weighted scoring as before;
+`Choose` returns an error if none are left. Omitting `whenUnsatisfiable`,
+or setting it to `ScheduleAnyway` (the default, and every
+`topologySpreadConstraints` entry before this field existed), never
+rejects a node over skew -- `maxSkew` stays purely informational for
+scoring, exactly as before.
+
+`maxSkew`'s zero value (unset, same as writing `0` explicitly -- there's
+no way to tell those apart through this field alone) is treated as a real
+"domains must stay perfectly balanced," not as disabling enforcement --
+the stricter of the two readings, deliberately, matching this project's
+general fail-closed posture elsewhere. A real Kubernetes cluster's API
+server would reject `maxSkew: 0` outright as invalid; Kairon has no
+equivalent admission-time field validation to hook a rejection into, so
+if you meant to write a positive number, write one.
+
 ## Real limits today
 
-- **`topologySpreadConstraints.maxSkew` is accepted but not enforced.**
-  It's there for familiarity with the Kubernetes shape; the scheduler
-  currently just minimizes the matching-Machine count in each candidate's
-  domain, it doesn't hard-cap the skew between domains.
 - **DRA topology-awareness is a best-effort hint, not an allocation
   decision.** `kairon-controller` has no role in DRA device allocation
   itself -- for a Machine with `spec.deviceClaims`, it only reads back an
@@ -119,4 +149,11 @@ matters when load is already tied).
   "no eligible nodes" message -- resolved automatically on the next
   reconcile tick (every `controller.interval`, 5s by default) once the
   other Machine has a node. This is a real, observed timing window, not a
-  hypothetical.
+  hypothetical -- it applies to `DoNotSchedule` topology-spread domain
+  counts too, not just affinity/anti-affinity.
+- **`DoNotSchedule` domains are only counted among candidate nodes, not
+  every node in the cluster** -- a domain with matching Machines but no
+  currently-eligible node in it (filtered out by `architecture`/
+  `nodeSelector`/affinity/anti-affinity first) isn't part of the skew
+  calculation at all, the same "candidate nodes matching the pod's own
+  node affinity" scope real Kubernetes topology spread uses.

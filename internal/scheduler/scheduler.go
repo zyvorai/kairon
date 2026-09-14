@@ -39,14 +39,18 @@ type Scheduler struct {
 // set, in the same node order, so the same hash tie-break lands on the
 // same node.
 func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.Machine, assigned map[string]int, draPreferredNode string) (string, error) {
-	var eligible []model.Node
+	var preSkew []model.Node
 	for _, n := range nodes {
 		if s.eligible(m, n, nodes, machines) {
-			eligible = append(eligible, n)
+			preSkew = append(preSkew, n)
 		}
 	}
-	if len(eligible) == 0 {
+	if len(preSkew) == 0 {
 		return "", fmt.Errorf("no Ready Kairon-capable nodes match placement constraints")
+	}
+	eligible := s.filterMaxSkew(m, preSkew, nodes, machines)
+	if len(eligible) == 0 {
+		return "", fmt.Errorf("no node satisfies topologySpreadConstraints maxSkew (whenUnsatisfiable: DoNotSchedule)")
 	}
 	sort.Slice(eligible, func(i, j int) bool { return eligible[i].Metadata.Name < eligible[j].Metadata.Name })
 
@@ -125,6 +129,122 @@ func topologySpreadPenalty(m model.Machine, n model.Node, nodes []model.Node, ma
 		}
 	}
 	return count
+}
+
+// filterMaxSkew drops any candidate node that would violate a
+// WhenUnsatisfiable: DoNotSchedule constraint's MaxSkew if m were placed
+// there. ScheduleAnyway constraints (the default, and every constraint
+// before this field existed) are never enforced here -- only scored, via
+// topologySpreadPenalty above, which runs unconditionally regardless of
+// WhenUnsatisfiable. A Machine with no DoNotSchedule constraints returns
+// candidates unchanged.
+//
+// MaxSkew's Go zero value (unset, via omitempty -- there's no way to
+// distinguish "unset" from "explicitly 0" through this field alone) is
+// treated as a real, meaningful 0 -- "domains must stay perfectly
+// balanced" -- rather than silently disabling enforcement or defaulting
+// to some other value. Real Kubernetes requires maxSkew to be a positive
+// integer and rejects 0 at admission; Kairon has no such API-level
+// validation layer to hook a rejection into, and defaulting to "no
+// opinion" for a field an operator set WhenUnsatisfiable specifically to
+// make meaningful would be the more surprising choice of the two --
+// erring toward the stricter interpretation matches this project's
+// general fail-closed posture elsewhere (RBAC, migration TLS, etc.).
+func (s Scheduler) filterMaxSkew(m model.Machine, candidates []model.Node, nodes []model.Node, machines []model.Machine) []model.Node {
+	var hard []model.TopologySpreadConstraint
+	for _, c := range m.Spec.Placement.TopologySpreadConstraints {
+		if c.WhenUnsatisfiable == model.WhenUnsatisfiableDoNotSchedule {
+			hard = append(hard, c)
+		}
+	}
+	if len(hard) == 0 {
+		return candidates
+	}
+	// Domain counts are a property of the whole candidate set for a given
+	// constraint, not any one node -- compute each once, rather than
+	// recomputing it per candidate node below (minAfterPlacingOn still
+	// needs the counts map itself per node, since which domain gets the
+	// hypothetical +1 differs per candidate).
+	counts := make([]map[string]int, len(hard))
+	for i, c := range hard {
+		counts[i] = topologyDomainCounts(m, c, candidates, nodes, machines)
+	}
+
+	out := make([]model.Node, 0, len(candidates))
+	for _, n := range candidates {
+		ok := true
+		for i, c := range hard {
+			v, has := n.Metadata.Labels[c.TopologyKey]
+			if !has {
+				continue // can't evaluate skew for this node -- no opinion, same posture topologySpreadPenalty/termSatisfied take for a missing topology label
+			}
+			newCount := counts[i][v] + 1
+			if newCount-minAfterPlacingOn(counts[i], v) > int(c.MaxSkew) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// topologyDomainCounts returns, for constraint c evaluated against
+// candidates (nodes already eligible on every other ground -- domains are
+// only considered among these, matching real Kubernetes' own "candidate
+// nodes matching the pod's node affinity" scope, not every node in the
+// cluster), how many other Machines matching c.LabelSelector currently sit
+// in each of c.TopologyKey's distinct values among candidates (0 for any
+// domain with no matching Machines at all).
+func topologyDomainCounts(m model.Machine, c model.TopologySpreadConstraint, candidates []model.Node, nodes []model.Node, machines []model.Machine) map[string]int {
+	counts := map[string]int{}
+	for _, cand := range candidates {
+		if v, ok := cand.Metadata.Labels[c.TopologyKey]; ok {
+			if _, seen := counts[v]; !seen {
+				counts[v] = 0
+			}
+		}
+	}
+	for _, other := range machines {
+		if other.Namespace() == m.Namespace() && other.Metadata.Name == m.Metadata.Name {
+			continue
+		}
+		if other.Spec.NodeName == "" || !model.LabelsMatch(other.Metadata.Labels, c.LabelSelector) {
+			continue
+		}
+		if v, ok := nodeLabelValue(nodes, other.Spec.NodeName, c.TopologyKey); ok {
+			if _, tracked := counts[v]; tracked {
+				counts[v]++
+			}
+		}
+	}
+	return counts
+}
+
+// minAfterPlacingOn returns the minimum domain count across counts if one
+// more Machine were hypothetically placed in domain target -- NOT simply
+// the pre-placement global minimum applied uniformly to every candidate,
+// which undercounts a domain that was itself the (unique) minimum: placing
+// there raises its own count, so the minimum after placement may shift to
+// whatever the next-smallest domain was. Mirrors real Kubernetes'
+// topology-spread skew definition exactly (recomputed per candidate
+// domain, not cached globally), the subtlety a first attempt at this got
+// wrong.
+func minAfterPlacingOn(counts map[string]int, target string) int {
+	min := counts[target] + 1
+	found := false
+	for k, c := range counts {
+		if k == target {
+			continue
+		}
+		if !found || c < min {
+			min = c
+			found = true
+		}
+	}
+	return min
 }
 
 func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine) bool {

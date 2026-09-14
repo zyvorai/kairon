@@ -275,6 +275,101 @@ func TestChooseTopologySpreadPrefersTheEmptierDomain(t *testing.T) {
 	}
 }
 
+func TestChooseHardMaxSkewRejectsNodeEvenWhenScoringWouldPreferIt(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	east := node("east", true, true)
+	east.Metadata.Labels["zone"] = "us-east"
+	west := node("west", true, true)
+	west.Metadata.Labels["zone"] = "us-west"
+	existing := []model.Machine{
+		{Metadata: model.ObjectMeta{Name: "web-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Spec: model.MachineSpec{NodeName: "east"}},
+	}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web-2", Namespace: "default", Labels: map[string]string{"tier": "web"}},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{
+			TopologySpreadConstraints: []model.TopologySpreadConstraint{{
+				TopologyKey:       "zone",
+				LabelSelector:     map[string]string{"tier": "web"},
+				MaxSkew:           0,
+				WhenUnsatisfiable: model.WhenUnsatisfiableDoNotSchedule,
+			}},
+		}},
+	}
+	// west is massively overloaded (100 unrelated Machines), so pure
+	// load-balancing scoring would strongly prefer east -- but east
+	// already has 1 tier=web Machine and west has 0; placing web-2 on
+	// east would make east=2 vs west's unchanged 0, skew 2 > maxSkew 0.
+	// Placing on west instead makes it 1 vs east's 1, skew 0 -- allowed.
+	// DoNotSchedule must reject east outright despite its far better
+	// load score.
+	got, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 100}, "")
+	if err != nil || got != "west" {
+		t.Fatalf("got %q err=%v, want west (east hard-rejected by maxSkew despite a much better load score)", got, err)
+	}
+}
+
+func TestChooseHardMaxSkewReturnsErrorWhenNoNodeSatisfiesIt(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	east := node("east", true, true)
+	east.Metadata.Labels["zone"] = "us-east"
+	west := node("west", true, true)
+	west.Metadata.Labels["zone"] = "us-west"
+	existing := []model.Machine{
+		{Metadata: model.ObjectMeta{Name: "web-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Spec: model.MachineSpec{NodeName: "east"}},
+		{Metadata: model.ObjectMeta{Name: "web-2", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Spec: model.MachineSpec{NodeName: "west"}},
+	}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web-3", Namespace: "default", Labels: map[string]string{"tier": "web"}},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{
+			TopologySpreadConstraints: []model.TopologySpreadConstraint{{
+				TopologyKey:       "zone",
+				LabelSelector:     map[string]string{"tier": "web"},
+				MaxSkew:           0,
+				WhenUnsatisfiable: model.WhenUnsatisfiableDoNotSchedule,
+			}},
+		}},
+	}
+	// Both domains already balanced at 1 each -- placing the third
+	// Machine in either one makes it 2 vs the other's unchanged 1, skew 1
+	// > maxSkew 0. No node can satisfy it.
+	_, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 0}, "")
+	if err == nil {
+		t.Fatal("expected an error: no node can satisfy maxSkew 0 when both domains are already balanced")
+	}
+}
+
+func TestChooseScheduleAnywayNeverHardRejects(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	east := node("east", true, true)
+	east.Metadata.Labels["zone"] = "us-east"
+	west := node("west", true, true)
+	west.Metadata.Labels["zone"] = "us-west"
+	existing := []model.Machine{
+		{Metadata: model.ObjectMeta{Name: "web-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Spec: model.MachineSpec{NodeName: "east"}},
+	}
+	// Explicit ScheduleAnyway (the default, tested here spelled out) --
+	// same skew-violating setup as the hard-rejection test above, but
+	// this must never error, and east must still be a legal candidate.
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web-2", Namespace: "default", Labels: map[string]string{"tier": "web"}},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{
+			TopologySpreadConstraints: []model.TopologySpreadConstraint{{
+				TopologyKey:       "zone",
+				LabelSelector:     map[string]string{"tier": "web"},
+				MaxSkew:           0,
+				WhenUnsatisfiable: model.WhenUnsatisfiableScheduleAnyway,
+			}},
+		}},
+	}
+	got, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 0}, "")
+	if err != nil {
+		t.Fatalf("ScheduleAnyway must never return an error: %v", err)
+	}
+	if got != "west" {
+		t.Fatalf("got %q, want west (still the soft-scoring winner via topologySpreadPenalty, just not a hard requirement)", got)
+	}
+}
+
 func TestChooseDRAPreferredNodeBreaksTies(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	a := node("a", true, true)

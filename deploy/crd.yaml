@@ -258,6 +258,9 @@ spec:
                         maxSkew:
                           type: integer
                           format: int32
+                        whenUnsatisfiable:
+                          type: string
+                          enum: ["DoNotSchedule", "ScheduleAnyway"]
               security:
                 type: object
                 properties:
