@@ -236,6 +236,40 @@ ui:
     # externally-managed signing key.
     existingSessionSecret: ""
     existingSessionSecretKey: "sessionSecret"
+  oidc:
+    # "Sign in with SSO" against an external OpenID Connect identity
+    # provider (Authorization Code + PKCE), alongside -- not instead of --
+    # ui.auth.users/ui.token above. Off by default. Breaks this project's
+    # Go-stdlib-only design guarantee deliberately (real JWT/JWK
+    # verification isn't something to hand-roll) -- see README.md's "Why
+    # Kairon exists" and docs/guides/kairon-ui-oidc.md.
+    enabled: false
+    # issuerURL: the provider's issuer, e.g. https://accounts.example.com
+    # -- kairon-ui discovers the rest (authorization/token/jwks endpoints)
+    # from {issuerURL}/.well-known/openid-configuration at startup, and
+    # refuses to start if that fails.
+    issuerURL: ""
+    clientID: ""
+    # clientSecret: may be left empty for a public client relying on PKCE
+    # alone (a normal, common OIDC pattern) -- set clientSecret or
+    # existingSecret, never both.
+    clientSecret: ""
+    existingSecret: ""
+    existingSecretKey: "clientSecret"
+    # redirectURL: the full, externally-reachable callback URL, e.g.
+    # https://kairon.example.com/api/v1/auth/oidc/callback -- must be
+    # registered with the identity provider as an allowed redirect URI.
+    # kairon-ui can't safely infer its own external HTTPS URL (proxies,
+    # ingress hostnames vary), so this is always explicit, never guessed.
+    redirectURL: ""
+    # usernameClaim: which ID token claim becomes the kairon-ui session's
+    # username -- the same username space ui.auth.users already occupies,
+    # so audit log attribution stays consistent regardless of login
+    # method. An OIDC-authenticated username is never treated as an admin
+    # account (that stays exclusively a ui.auth.users[].admin: true
+    # capability) -- see docs/guides/kairon-ui-oidc.md.
+    usernameClaim: "email"
+    scopes: "openid,profile,email"
   service:
     type: ClusterIP
     # Also the container's actual internal listen port (-listen=:port) --

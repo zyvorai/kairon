@@ -50,6 +50,8 @@ export function apiJSON<T = unknown>(path: string, method: string, body: unknown
 export interface AuthConfig {
   loginEnabled: boolean;
   tokenEnabled: boolean;
+  ssoEnabled?: boolean;
+  ssoLoginURL?: string;
 }
 
 // getAuthConfig is unauthenticated by design (see internal/uiapi/auth.go),
@@ -70,6 +72,32 @@ export async function login(usernameInput: string, password: string): Promise<vo
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   const out = await r.json();
   setSession(out.token, out.username, out.isAdmin);
+}
+
+// parseSSOCallbackFragment is the pure part of completeSSOCallback below,
+// split out so it's testable without a DOM (see api.test.ts) -- it never
+// touches window/sessionStorage itself.
+export function parseSSOCallbackFragment(hash: string): { token: string; username: string } | { error: string } {
+  const frag = new URLSearchParams(hash.replace(/^#/, ''));
+  const err = frag.get('error');
+  if (err) return { error: err };
+  const token = frag.get('token');
+  const username = frag.get('username');
+  if (!token || !username) return { error: 'the identity provider did not return a usable session' };
+  return { token, username };
+}
+
+// completeSSOCallback reads the outcome the backend's OIDC callback
+// redirect left in the URL *fragment* (see internal/uiapi/oidc.go's own
+// doc comment for why a fragment, never the query string) and, on
+// success, stores the session exactly like a password login does.
+// Returns an empty string on success, or an error message to show the
+// operator.
+export function completeSSOCallback(): string {
+  const result = parseSSOCallbackFragment(window.location.hash);
+  if ('error' in result) return result.error;
+  setSession(result.token, result.username, false);
+  return '';
 }
 
 export async function logout(): Promise<void> {

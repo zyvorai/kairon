@@ -324,12 +324,19 @@ type loginRequest struct {
 
 // handleAuthConfig tells the frontend which login UI to render, without it
 // having to guess from a 401: the two-step username/password form when
-// Users is configured, otherwise the legacy raw-token box.
+// Users is configured, the legacy raw-token box when only Token is, and an
+// "SSO" option whenever OIDC is -- these are independent, not mutually
+// exclusive, so a deployment can offer more than one at once.
 func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{
+	resp := map[string]any{
 		"loginEnabled": s.userCount() > 0,
 		"tokenEnabled": s.Token != "",
-	})
+		"ssoEnabled":   s.OIDC != nil,
+	}
+	if s.OIDC != nil {
+		resp["ssoLoginURL"] = "/api/v1/auth/oidc/login"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {

@@ -395,6 +395,17 @@ stringData:
   token: {{ .Values.ui.token | quote }}
 ---
 {{ end }}
+{{ if and .Values.ui.oidc.enabled .Values.ui.oidc.clientSecret (not .Values.ui.oidc.existingSecret) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kairon-ui-oidc
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  clientSecret: {{ .Values.ui.oidc.clientSecret | quote }}
+---
+{{ end }}
 {{ if not .Values.ui.auth.existingSessionSecret }}
 apiVersion: v1
 kind: Secret
@@ -482,6 +493,22 @@ spec:
 {{ if and $seedDefaultAdmin (not .Values.ui.auth.existingSessionSecret) }}
             - name: KAIRON_UI_DEFAULT_ADMIN_PASSWORD
               valueFrom: {secretKeyRef: {name: kairon-ui-session, key: defaultAdminPassword}}
+{{ end }}
+{{ if .Values.ui.oidc.enabled }}
+            - name: KAIRON_UI_OIDC_ISSUER_URL
+              value: {{ .Values.ui.oidc.issuerURL | quote }}
+            - name: KAIRON_UI_OIDC_CLIENT_ID
+              value: {{ .Values.ui.oidc.clientID | quote }}
+            - name: KAIRON_UI_OIDC_REDIRECT_URL
+              value: {{ .Values.ui.oidc.redirectURL | quote }}
+            - name: KAIRON_UI_OIDC_USERNAME_CLAIM
+              value: {{ .Values.ui.oidc.usernameClaim | quote }}
+            - name: KAIRON_UI_OIDC_SCOPES
+              value: {{ .Values.ui.oidc.scopes | quote }}
+{{ if or .Values.ui.oidc.clientSecret .Values.ui.oidc.existingSecret }}
+            - name: KAIRON_UI_OIDC_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ .Values.ui.oidc.existingSecret | default "kairon-ui-oidc" }}, key: {{ .Values.ui.oidc.existingSecretKey | default "clientSecret" }}}}
+{{ end }}
 {{ end }}
 {{ if .Values.console.enabled }}
             - name: KAIRON_NODE_CONSOLE_TOKEN

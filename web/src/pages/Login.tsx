@@ -87,10 +87,33 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     );
   }
 
+  // SSO is offered alongside whichever other method(s) are configured
+  // below, not instead of them -- a deployment can run ui.auth.users and
+  // OIDC/SSO at once (see internal/uiapi/oidc.go), e.g. while migrating
+  // operators from named accounts to a real identity provider.
+  const sso = config.ssoEnabled && config.ssoLoginURL && (
+    <div className="loginstep">
+      <button type="button" className="primary" onClick={() => (window.location.href = config.ssoLoginURL!)}>
+        Sign in with SSO
+      </button>
+    </div>
+  );
+
   if (!config.loginEnabled) {
+    if (!config.tokenEnabled) {
+      return (
+        <LoginChrome>
+          <span className="eyebrow">SIGN IN</span>
+          {sso}
+          {!sso && <p>No login method is configured on this server.</p>}
+        </LoginChrome>
+      );
+    }
     return (
       <LoginChrome>
         <span className="eyebrow">SIGN IN</span>
+        {sso}
+        {sso && <p className="loginor">or</p>}
         <h3>API token</h3>
         <form onSubmit={useToken}>
           <div className="formgrid">
@@ -118,6 +141,8 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <LoginChrome>
       <span className="eyebrow">SIGN IN</span>
+      {sso}
+      {sso && <p className="loginor">or</p>}
       {step === 'username' ? (
         <div key="username" className="loginstep">
           <form onSubmit={continueToPassword}>

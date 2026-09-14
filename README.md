@@ -36,7 +36,7 @@ Kairon starts from a different premise: a VM is not a Pod, so stop pretending it
 
 Three things follow from that premise, and they shape everything below:
 
-- **Small enough to read in an afternoon.** `go.mod` has no `client-go`, no generated deep call stacks, no vendored operator framework — `kairon-controller` and `kairon-node` are each a handful of files. You can actually audit what's running your VMs, not just trust that someone else did.
+- **Small enough to read in an afternoon.** `go.mod` has no `client-go`, no generated deep call stacks, no vendored operator framework — `kairon-controller` and `kairon-node` are each a handful of files. You can actually audit what's running your VMs, not just trust that someone else did. The one deliberate exception is `kairon-ui`'s opt-in OIDC/SSO (`ui.oidc.enabled`, off by default): real JWT/JWK verification against an external identity provider isn't something to hand-roll, so that one feature pulls in `golang.org/x/oauth2`/`github.com/coreos/go-oidc/v3` — see [SECURITY.md](SECURITY.md). `kairon-controller`/`kairon-node`/`kaironctl` (the actual VM control plane) stay Go-stdlib-only, unconditionally.
 - **Kubernetes stays the only source of truth.** A `Machine` object is where desired state lives, full stop. The dashboard (`kairon-ui`) isn't a second database with its own opinions — it's a thin HTTP client with exactly the same standing as `kaironctl` or `kubectl`.
 - **An uncertain outcome gets a name, not a guess.** When a live migration's commit result is genuinely ambiguous, Kairon doesn't flip a coin between "assume it worked" and "assume it didn't" — either one risks running the same VM twice. It parks the migration in `NeedsRecovery` and waits for an operator's attested decision. See [Relocating a Machine](#relocating-a-machine).
 
@@ -47,6 +47,7 @@ Three things follow from that premise, and they shape everything below:
 | You are... | You need... | Kairon gives you... |
 |---|---|---|
 | **A platform engineer replacing KubeVirt** | Real VMs on Kubernetes without adopting `virt-launcher` Pods, libvirt, or a large operator surface | A `Machine` CRD, a stdlib-only controller/agent pair, FluxVM doing the actual KVM work — see the table above |
+| **An operator who needs real SSO** | `kairon-ui` login tied to your existing identity provider, not a second set of passwords to manage | `ui.oidc.enabled`: Authorization Code + PKCE against any OIDC provider, alongside `ui.auth.users` — the control plane itself stays untouched and Go-stdlib-only either way, see [SECURITY.md](SECURITY.md) |
 | **An SRE running a Machine fleet** | Draining a node without taking out more capacity than you can afford; capping what a noisy namespace can consume | `MachineDisruptionBudget` throttles disruption, `MachineQuota` caps `maxMachines`/CPU/memory per namespace — both are now enforceable at admission time, not just convention, see [Guarding the fleet](#guarding-the-fleet) |
 | **Whoever's on call for live migration** | A migration commit that can't silently resolve into split-brain | `NeedsRecovery` names the ambiguous case explicitly and parks it for an attested human decision — see [Relocating a Machine](#relocating-a-machine) |
 | **An economic buyer sizing up build-vs-adopt** | Honesty about what's real today versus what's still open | Apache-2.0, actively developed, and [Status](#status) below is a punch list, not a marketing page |
@@ -127,7 +128,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 
 **Operate it**
 - **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
-- **`kairon-ui`** — an optional web dashboard, real per-operator login with in-place password change/reset (not "regenerate a hash and redeploy"), a `NeedsRecovery` recovery workflow, and an optional VNC console — see [The dashboard](#the-dashboard)
+- **`kairon-ui`** — an optional web dashboard, real per-operator login with in-place password change/reset (not "regenerate a hash and redeploy"), optional OIDC/SSO, a `NeedsRecovery` recovery workflow, an optional VNC console, and more than one replica once you need it — see [The dashboard](#the-dashboard)
 - **Prometheus metrics + alert rules**, a per-node/cluster migration concurrency quota, `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted
 - **`PodDisruptionBudget`** on by default, opt-in `NetworkPolicy`, digest-pinned + Trivy-scanned container images, Helm + raw manifests + CI
 
@@ -229,6 +230,18 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system \
 
 A named account can change its own password from the dashboard (`POST /api/v1/auth/password`) — no more hand-hashing and redeploying. An `admin: true` account can reset anyone else's, which also immediately signs that operator's active sessions out. (The zero-config seeded `admin` account can sign in like anyone else but can't self-service its password yet — graduate to a named account for that.) Every mutating request is logged with method, path, remote address, resulting status, and — for a session-token login — the signed-in username. The legacy shared token (`ui.token`/`ui.existingSecret`, or `ui.allowUnauthenticated=true` for local dev) still works unchanged alongside `ui.auth.users`; treat it like a shared root password if you're still on it.
 
+**OIDC/SSO** (`ui.oidc.enabled`, off by default): "Sign in with SSO" against an external identity provider, alongside `ui.auth.users` — good for tying kairon-ui into your existing SSO rather than managing a second set of passwords. Deliberately the one place Kairon breaks its own Go-stdlib-only guarantee, since real JWT/JWK verification isn't something to hand-roll; see [SECURITY.md](SECURITY.md). An OIDC-authenticated session is a normal operator, never an admin, regardless of provider-side groups/roles — see [`docs/guides/kairon-ui-oidc.md`](docs/guides/kairon-ui-oidc.md).
+
+```bash
+helm upgrade --install kairon ./charts/kairon -n kairon-system \
+  --set ui.enabled=true \
+  --set ui.oidc.enabled=true \
+  --set ui.oidc.issuerURL=https://idp.example.com \
+  --set ui.oidc.clientID=kairon-ui \
+  --set ui.oidc.clientSecret=... \
+  --set ui.oidc.redirectURL=https://kairon.example.com/api/v1/auth/oidc/callback
+```
+
 `ui.replicaCount` (`1` by default) can now go above 1 — session revocation, login lockout, console tickets, and password changes all propagate across replicas via a Kubernetes-native `ConfigMap` this chart creates alongside `kairon-ui`, deliberately not Redis. Propagation is eventually-consistent (~15s), not instant, and login-lockout's failure count is evaluated per-replica, not as one cluster-wide counter — see [`docs/guides/kairon-ui-ha.md`](docs/guides/kairon-ui-ha.md) for what that actually means before you rely on it.
 
 **VNC console** (`--set console.enabled=true`, off by default): a real graphical VNC session in the browser for QEMU-backend Machines, relayed `kairon-ui → kairon-node → the VM's local socket`. Read [SECURITY.md](SECURITY.md)'s "VNC console" section first — FluxVM's own VNC socket has no auth of its own, so this trades convenience for a trust chain suited to a trusted operator team, not a hostile network. That relay hop can now run over TLS (`console.tls.enabled`).
@@ -306,7 +319,7 @@ make test-race
 ./scripts/must-gather.sh
 ```
 
-Runtime code uses the **Go standard library only** — no `client-go`, no generated deep stacks. That's a deliberate constraint, not an oversight: it keeps the control plane small enough to actually audit, and it's why the admission webhook above hand-rolls the small, stable `AdmissionReview` JSON shape (`internal/admission`) instead of pulling in `k8s.io/api`.
+Runtime code uses the **Go standard library only** — no `client-go`, no generated deep stacks. That's a deliberate constraint, not an oversight: it keeps the control plane small enough to actually audit, and it's why the admission webhook above hand-rolls the small, stable `AdmissionReview` JSON shape (`internal/admission`) instead of pulling in `k8s.io/api`. The one exception is `kairon-ui`'s opt-in OIDC/SSO (`golang.org/x/oauth2`, `github.com/coreos/go-oidc/v3`) — real JWT/JWK verification isn't something this project hand-rolls; `kairon-controller`/`kairon-node`/`kaironctl` pull in none of it, with or without OIDC/SSO enabled. See [SECURITY.md](SECURITY.md).
 
 Touching the dashboard (`web/`)? `make all` doesn't build the frontend — run its own checks:
 
@@ -333,6 +346,7 @@ npm --prefix web run build
 | [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |
 | [`docs/guides/machine-fencing.md`](docs/guides/machine-fencing.md) | `NodeUnreachable`/`Fenced` conditions, `kaironctl fence`'s safety model, storage/network migration preflight labels |
 | [`docs/guides/kairon-ui-ha.md`](docs/guides/kairon-ui-ha.md) | Running `ui.replicaCount > 1`: what's shared, how, and its real limits |
+| [`docs/guides/kairon-ui-oidc.md`](docs/guides/kairon-ui-oidc.md) | OIDC/SSO setup, the Authorization Code + PKCE flow, and why it breaks Go-stdlib-only |
 | [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) · [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
 | [`ROADMAP.md`](ROADMAP.md) · [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
 | [`SECURITY.md`](SECURITY.md) | Threat model, vulnerability reporting |
@@ -355,7 +369,8 @@ Still genuinely open, and why:
 - **PVC-backed boot disks are a first cut**: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, `hostPath`/`local` sources only — Kairon runs no CSI node plugin of its own, so a network-block volume (Ceph RBD, EBS, …) needs to already be attached by something else first.
 - **`MachineSnapshotRestore` restores into a new PVC only**, deliberately not also a Machine (see its guide for why), and needs a real CSI snapshotter behind your StorageClass — Rancher's `local-path-provisioner`, a common default, doesn't have one.
 - **CPU/memory hotplug is grow-only** (FluxVM has no CPU/DIMM unplug), bounded by headroom reserved at creation (not yet Kairon-configurable), and lost across any stop/start — expected QEMU behavior, not a bug.
-- **`kairon-ui` multi-replica state propagation is eventually-consistent, not instant**: `ui.replicaCount > 1` is now supported (session revocation, login lockout, console tickets, and password changes propagate via a shared `ConfigMap`, deliberately not Redis), but cross-replica visibility lands within ~15s, login-lockout's failure count is per-replica not cluster-wide-atomic, and concurrent password changes to two different accounts on two different replicas can still race. See [`docs/guides/kairon-ui-ha.md`](docs/guides/kairon-ui-ha.md). OIDC/SSO is a bigger, separate product decision and isn't implemented.
+- **`kairon-ui` multi-replica state propagation is eventually-consistent, not instant**: `ui.replicaCount > 1` is now supported (session revocation, login lockout, console tickets, and password changes propagate via a shared `ConfigMap`, deliberately not Redis), but cross-replica visibility lands within ~15s, login-lockout's failure count is per-replica not cluster-wide-atomic, and concurrent password changes to two different accounts on two different replicas can still race. See [`docs/guides/kairon-ui-ha.md`](docs/guides/kairon-ui-ha.md).
+- **OIDC/SSO has no group-to-admin mapping**: an OIDC-authenticated session is a normal, non-admin operator identity — never eligible to reset another account's password — regardless of what groups/roles the identity provider reports. Admin capability stays exclusively a `ui.auth.users[].admin: true` property. See [`docs/guides/kairon-ui-oidc.md`](docs/guides/kairon-ui-oidc.md).
 - **No CRD-version-upgrade story beyond today's single `v1alpha1`** — no conversion webhook or versioning scaffold exists; that's its own project once a `v1beta1`/`v1` is actually needed.
 - **The admission webhook (above) only ever evaluates `CREATE`**, matching the reconcile-loop/`kaironctl` checks it backstops exactly — an already-scheduled Machine growing past quota via hotplug isn't caught by either the webhook or the reconcile loop.
 - **The VNC console inherits FluxVM's own unauthenticated VNC socket as-is** — Kairon can't add auth/encryption FluxVM itself doesn't have. Its real security rests on kairon-ui's operator auth, a single-use per-session ticket, and the shared cluster-wide token to kairon-node (optionally now over TLS). See [SECURITY.md](SECURITY.md).

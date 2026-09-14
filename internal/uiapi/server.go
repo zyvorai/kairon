@@ -70,6 +70,12 @@ type Server struct {
 	// separately, via UsersSecretName above, independent of this field.
 	SharedStateNamespace     string
 	SharedStateConfigMapName string
+	// OIDC, when set, enables "Sign in with SSO" (see oidc.go) alongside
+	// -- not instead of -- Token and Users above. This is the one place
+	// in Kairon that breaks the project's Go-stdlib-only design guarantee
+	// (see README.md); nil (the default) means every request path
+	// behaves exactly as it did before this field existed.
+	OIDC *OIDCAuth
 	// revoked backs POST /api/v1/auth/logout; zero value (an empty
 	// sync.Map) is ready to use.
 	revoked sync.Map
@@ -148,6 +154,10 @@ func (s *Server) Handler() http.Handler {
 	top.HandleFunc("GET /api/v1/auth/config", s.handleAuthConfig)
 	top.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	top.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	// OIDC/SSO (see oidc.go) -- unauthenticated for the same reason as
+	// auth/login above: this IS how a browser authenticates.
+	top.HandleFunc("GET /api/v1/auth/oidc/login", s.handleOIDCLogin)
+	top.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
 	// Also unauthenticated at this layer by necessity: a browser's native
 	// WebSocket API can't send an Authorization header, so this route is
 	// gated by the single-use ticket handleConsoleTicket issues instead
@@ -248,7 +258,7 @@ func (r *statusRecorder) WriteHeader(status int) {
 // unauthenticated dev mode, unchanged from before.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Token == "" && s.userCount() == 0 {
+		if s.Token == "" && s.userCount() == 0 && s.OIDC == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -258,7 +268,15 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if s.userCount() > 0 {
+			// Gated on SessionSecret being configured, not on userCount()
+			// -- a session token verifies the same way regardless of
+			// whether it came from POST /api/v1/auth/login (Users) or the
+			// OIDC callback (OIDC); both require SessionSecret to be set
+			// at startup (see cmd/kairon-ui/main.go), and an OIDC-only
+			// deployment (no ui.auth.users at all) must still verify its
+			// own sessions here, not fall through to the "wide open"
+			// branch above.
+			if len(s.SessionSecret) > 0 {
 				if username, _, issuedAt, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) && !s.passwordChangedAfter(username, issuedAt) {
 					setContextUsername(r.Context(), username)
 					next.ServeHTTP(w, r)

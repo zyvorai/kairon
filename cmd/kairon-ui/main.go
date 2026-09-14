@@ -14,10 +14,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/oauth2"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/uiapi"
@@ -60,8 +63,24 @@ func run() int {
 		log.Error("loading users", "error", err)
 		return 1
 	}
-	if len(users) > 0 && os.Getenv("KAIRON_UI_SESSION_SECRET") == "" {
-		log.Error("secure startup refused", "reason", "$KAIRON_UI_SESSION_SECRET is required whenever username/password login is configured")
+
+	// OIDC/SSO config is all-or-nothing: issuer, client ID, and redirect
+	// URL together, or none at all -- same "fail closed on a half-set
+	// group of flags" posture as -migration-data-tls's own three flags.
+	// kairon-ui can't safely guess its own externally-reachable HTTPS URL
+	// (proxies, ingress hostnames vary), so the redirect URL is always
+	// explicit, never inferred from the incoming request.
+	oidcIssuerURL := os.Getenv("KAIRON_UI_OIDC_ISSUER_URL")
+	oidcClientID := os.Getenv("KAIRON_UI_OIDC_CLIENT_ID")
+	oidcRedirectURL := os.Getenv("KAIRON_UI_OIDC_REDIRECT_URL")
+	oidcConfigured := oidcIssuerURL != "" || oidcClientID != "" || oidcRedirectURL != ""
+	if oidcConfigured && (oidcIssuerURL == "" || oidcClientID == "" || oidcRedirectURL == "") {
+		log.Error("secure startup refused", "reason", "OIDC/SSO requires $KAIRON_UI_OIDC_ISSUER_URL, $KAIRON_UI_OIDC_CLIENT_ID, and $KAIRON_UI_OIDC_REDIRECT_URL together")
+		return 1
+	}
+
+	if (len(users) > 0 || oidcConfigured) && os.Getenv("KAIRON_UI_SESSION_SECRET") == "" {
+		log.Error("secure startup refused", "reason", "$KAIRON_UI_SESSION_SECRET is required whenever username/password login or OIDC/SSO is configured")
 		return 1
 	}
 
@@ -70,12 +89,13 @@ func run() int {
 	// requiring all three cert flags together): kairon-ui is a
 	// human-facing dashboard capable of creating/deleting Machines and
 	// forcing migration recovery actions, so it must not silently come up
-	// wide open just because an operator forgot to set a token or a user.
-	if *token == "" && len(users) == 0 && !*allowUnauthenticated {
-		log.Error("secure startup refused", "reason", "-token (or $KAIRON_UI_TOKEN), $KAIRON_UI_USERS_JSON, or $KAIRON_UI_DEFAULT_ADMIN_PASSWORD is required unless -allow-unauthenticated is set")
+	// wide open just because an operator forgot to set a token, a user,
+	// or OIDC/SSO.
+	if *token == "" && len(users) == 0 && !oidcConfigured && !*allowUnauthenticated {
+		log.Error("secure startup refused", "reason", "-token (or $KAIRON_UI_TOKEN), $KAIRON_UI_USERS_JSON/$KAIRON_UI_DEFAULT_ADMIN_PASSWORD, or OIDC/SSO is required unless -allow-unauthenticated is set")
 		return 1
 	}
-	if *token == "" && len(users) == 0 {
+	if *token == "" && len(users) == 0 && !oidcConfigured {
 		log.Warn("unauthenticated mode enabled -- every /api/v1/... route is open to anyone who can reach this server")
 	}
 
@@ -93,6 +113,19 @@ func run() int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	var oidcAuth *uiapi.OIDCAuth
+	if oidcConfigured {
+		discoverCtx, discoverCancel := context.WithTimeout(ctx, 15*time.Second)
+		oidcAuth, err = newOIDCAuth(discoverCtx, oidcIssuerURL, oidcClientID, os.Getenv("KAIRON_UI_OIDC_CLIENT_SECRET"), oidcRedirectURL,
+			env("KAIRON_UI_OIDC_USERNAME_CLAIM", "email"), strings.Split(env("KAIRON_UI_OIDC_SCOPES", "openid,profile,email"), ","))
+		discoverCancel()
+		if err != nil {
+			log.Error("OIDC/SSO setup failed", "error", err)
+			return 1
+		}
+		log.Info("OIDC/SSO configured", "issuer", oidcIssuerURL, "clientID", oidcClientID)
+	}
 
 	srv := &uiapi.Server{
 		Kube:          kc,
@@ -120,6 +153,7 @@ func run() int {
 		// docs/guides/kairon-ui-ha.md.
 		SharedStateNamespace:     os.Getenv("KAIRON_UI_NAMESPACE"),
 		SharedStateConfigMapName: os.Getenv("KAIRON_UI_SHARED_STATE_CONFIGMAP_NAME"),
+		OIDC:                     oidcAuth,
 		// ConsoleToken/ConsolePort must match the value every kairon-node
 		// is configured with (KAIRON_NODE_CONSOLE_TOKEN/-console-addr);
 		// either empty disables the VNC console feature (see console.go).
@@ -169,6 +203,35 @@ func consoleTLSConfig(caPath string) (*tls.Config, error) {
 		return nil, fmt.Errorf("console CA %s contains no certificates", caPath)
 	}
 	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}, nil
+}
+
+// newOIDCAuth resolves an OIDC provider's discovery document
+// (/.well-known/openid-configuration) and builds the uiapi.OIDCAuth
+// oidc.go's handlers use for the rest of the process's life. A network
+// call, deliberately made once at startup rather than lazily on first
+// login -- a misconfigured issuer fails the container immediately (a
+// visible CrashLoopBackOff), not a confusing 500 the first time an
+// operator actually tries to sign in.
+func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL, usernameClaim string, scopes []string) (*uiapi.OIDCAuth, error) {
+	provider, err := oidc.NewProvider(ctx, issuerURL)
+	if err != nil {
+		return nil, fmt.Errorf("OIDC discovery against %s: %w", issuerURL, err)
+	}
+	return &uiapi.OIDCAuth{
+		OAuth2: oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			Endpoint:     provider.Endpoint(),
+			RedirectURL:  redirectURL,
+			Scopes:       scopes,
+		},
+		// ClientSecret above may legitimately be empty -- a public client
+		// relying on PKCE alone (oidc.go's handleOIDCLogin always sends a
+		// PKCE challenge) is a normal, common OIDC pattern, not a
+		// misconfiguration this needs to refuse.
+		Verifier:      provider.Verifier(&oidc.Config{ClientID: clientID}),
+		UsernameClaim: usernameClaim,
+	}, nil
 }
 
 func env(k, d string) string {

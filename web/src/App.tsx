@@ -6,12 +6,18 @@ import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
 import Account from './pages/Account';
 import Login from './pages/Login';
+import OIDCCallback from './pages/OIDCCallback';
 import { logout, token, UNAUTHORIZED_EVENT, username } from './api';
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview');
   const [signedIn, setSignedIn] = useState(!!token());
   const [prefillMachine, setPrefillMachine] = useState('');
+  // No client-side router elsewhere in this app -- this one path is the
+  // sole exception, since the OIDC callback (see internal/uiapi/oidc.go)
+  // has to land somewhere real rather than at whatever page the operator
+  // happened to be on when they clicked "Sign in with SSO".
+  const [onOIDCCallback] = useState(() => window.location.pathname === '/oidc/callback');
 
   useEffect(() => {
     // Fired by api.ts on any 401, from anywhere in the app -- a stale or
@@ -34,6 +40,17 @@ export default function App() {
   async function signOut() {
     await logout().catch(() => {});
     setSignedIn(false);
+  }
+
+  if (onOIDCCallback) {
+    return (
+      <OIDCCallback
+        onDone={() => {
+          window.history.replaceState(null, '', '/');
+          setSignedIn(true);
+        }}
+      />
+    );
   }
 
   if (!signedIn) {

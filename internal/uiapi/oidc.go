@@ -1,0 +1,229 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package uiapi
+
+import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
+)
+
+// OIDCAuth holds everything kairon-ui needs to run an OpenID Connect
+// Authorization Code + PKCE flow against one external identity provider.
+// Resolved once at process startup (see cmd/kairon-ui/main.go) -- provider
+// discovery is a network call to the issuer's own
+// /.well-known/openid-configuration, so a misconfigured issuer fails the
+// process at startup, not silently on the first login attempt.
+//
+// This is the one place in Kairon that breaks the project's Go-stdlib-only
+// design guarantee (see README.md's "Why Kairon exists"): real JWT/JWK
+// verification (golang.org/x/oauth2, github.com/coreos/go-oidc/v3) is not
+// something this codebase hand-rolls. That tradeoff was made deliberately
+// and explicitly for this one feature -- see docs/guides/kairon-ui-oidc.md.
+type OIDCAuth struct {
+	OAuth2   oauth2.Config
+	Verifier *oidc.IDTokenVerifier
+	// UsernameClaim names the ID token claim kairon-ui reads as the
+	// session's username (typically "email") -- the same username space
+	// ui.auth.users already occupies, so audit log attribution stays
+	// consistent regardless of login method. Kairon has no separate
+	// identity/account object for an OIDC-authenticated operator: a
+	// session token is all there ever is, and it's issued via signSession
+	// exactly like a password login's -- withAuth's verification path
+	// never had to change for this.
+	UsernameClaim string
+}
+
+// oidcStateTTL bounds how long an operator has to complete the redirect
+// round trip to their identity provider and back before kairon-ui refuses
+// the callback -- generous enough for a real login prompt, short enough
+// that a leaked/logged state value stops being useful quickly.
+const oidcStateTTL = 10 * time.Minute
+
+// oidcStatePayload is round-tripped through the identity provider inside
+// the OAuth2 "state" parameter -- kairon-ui keeps no server-side record of
+// an in-progress login, the same "no server-side session store" design
+// sessionPayload already uses (see auth.go). Signed with a key *derived*
+// from SessionSecret (see oidcStateKey), never SessionSecret itself, so a
+// state value can never be replayed as a session token or vice versa.
+type oidcStatePayload struct {
+	CodeVerifier string `json:"cv"`
+	Nonce        string `json:"n"`
+	Expires      int64  `json:"exp"`
+}
+
+func (s *Server) oidcStateKey() []byte {
+	mac := hmac.New(sha256.New, s.SessionSecret)
+	mac.Write([]byte("kairon-ui-oidc-state-v1"))
+	return mac.Sum(nil)
+}
+
+func (s *Server) signOIDCState(codeVerifier, nonce string) (string, error) {
+	payload, err := json.Marshal(oidcStatePayload{CodeVerifier: codeVerifier, Nonce: nonce, Expires: time.Now().Add(oidcStateTTL).Unix()})
+	if err != nil {
+		return "", err
+	}
+	encPayload := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, s.oidcStateKey())
+	mac.Write([]byte(encPayload))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return encPayload + "." + sig, nil
+}
+
+func (s *Server) verifyOIDCState(state string) (oidcStatePayload, bool) {
+	encPayload, sig, found := strings.Cut(state, ".")
+	if !found {
+		return oidcStatePayload{}, false
+	}
+	mac := hmac.New(sha256.New, s.oidcStateKey())
+	mac.Write([]byte(encPayload))
+	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if len(sig) != len(want) || !hmac.Equal([]byte(sig), []byte(want)) {
+		return oidcStatePayload{}, false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encPayload)
+	if err != nil {
+		return oidcStatePayload{}, false
+	}
+	var p oidcStatePayload
+	if json.Unmarshal(raw, &p) != nil {
+		return oidcStatePayload{}, false
+	}
+	if time.Now().After(time.Unix(p.Expires, 0)) {
+		return oidcStatePayload{}, false
+	}
+	return p, true
+}
+
+func randomNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// handleOIDCLogin redirects the browser to the configured identity
+// provider's authorization endpoint, beginning an Authorization Code +
+// PKCE flow. Unauthenticated by necessity -- this IS how a browser
+// authenticates in the first place.
+func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
+	if s.OIDC == nil {
+		writeError(w, http.StatusNotImplemented, "OIDC/SSO is not configured on this server")
+		return
+	}
+	verifier := oauth2.GenerateVerifier()
+	nonce, err := randomNonce()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start OIDC login")
+		return
+	}
+	state, err := s.signOIDCState(verifier, nonce)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start OIDC login")
+		return
+	}
+	authURL := s.OIDC.OAuth2.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce))
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// oidcCallbackPath is the SPA route the browser lands on after this
+// completes, whether it succeeded or failed -- see
+// web/src/pages/OIDCCallback.tsx, which reads the outcome from the URL
+// *fragment*, never the query string and never something logged as part
+// of this redirect's own access log line: a fragment is never sent to any
+// server on a subsequent request, the same reason implicit-flow redirects
+// historically used one for a raw token.
+const oidcCallbackPath = "/oidc/callback"
+
+// handleOIDCCallback completes the Authorization Code + PKCE flow: it
+// verifies state, exchanges the code, verifies the returned ID token
+// (signature, issuer, audience, expiry, and nonce), and -- on success --
+// issues a normal kairon-ui session token via signSession, exactly the
+// same primitive POST /api/v1/auth/login already uses. An
+// OIDC-authenticated username is deliberately never treated as an admin
+// account -- that stays exclusively a ui.auth.users[].admin: true
+// capability, since there's nothing meaningful for an "OIDC admin" to
+// reset via POST /api/v1/users/{username}/password: an OIDC identity has
+// no PasswordHash in Kairon to begin with. See
+// docs/guides/kairon-ui-oidc.md.
+func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if s.OIDC == nil {
+		writeError(w, http.StatusNotImplemented, "OIDC/SSO is not configured on this server")
+		return
+	}
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		s.redirectOIDCError(w, r, errParam)
+		return
+	}
+	state, ok := s.verifyOIDCState(r.URL.Query().Get("state"))
+	if !ok {
+		s.redirectOIDCError(w, r, "invalid or expired login attempt, please try again")
+		return
+	}
+	token, err := s.OIDC.OAuth2.Exchange(r.Context(), r.URL.Query().Get("code"), oauth2.VerifierOption(state.CodeVerifier))
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Warn("uiapi oidc token exchange failed", "error", err)
+		}
+		s.redirectOIDCError(w, r, "sign-in failed")
+		return
+	}
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok {
+		s.redirectOIDCError(w, r, "identity provider did not return an ID token")
+		return
+	}
+	idToken, err := s.OIDC.Verifier.Verify(r.Context(), rawIDToken)
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Warn("uiapi oidc id token verification failed", "error", err)
+		}
+		s.redirectOIDCError(w, r, "sign-in failed")
+		return
+	}
+	if idToken.Nonce != state.Nonce {
+		if s.Log != nil {
+			s.Log.Warn("uiapi oidc nonce mismatch")
+		}
+		s.redirectOIDCError(w, r, "sign-in failed")
+		return
+	}
+	var claims map[string]any
+	if err := idToken.Claims(&claims); err != nil {
+		s.redirectOIDCError(w, r, "sign-in failed")
+		return
+	}
+	username, _ := claims[s.OIDC.UsernameClaim].(string)
+	if username == "" {
+		s.redirectOIDCError(w, r, fmt.Sprintf("identity provider did not return a %q claim", s.OIDC.UsernameClaim))
+		return
+	}
+	sessionToken, expires, err := signSession(s.SessionSecret, username, sessionTTL)
+	if err != nil {
+		s.redirectOIDCError(w, r, "sign-in failed")
+		return
+	}
+	if s.Log != nil {
+		s.Log.Info("uiapi oidc login", "username", username, "remoteAddr", r.RemoteAddr)
+	}
+	values := url.Values{"token": {sessionToken}, "username": {username}, "expiresAt": {expires.Format(time.RFC3339)}}
+	http.Redirect(w, r, oidcCallbackPath+"#"+values.Encode(), http.StatusFound)
+}
+
+func (s *Server) redirectOIDCError(w http.ResponseWriter, r *http.Request, message string) {
+	values := url.Values{"error": {message}}
+	http.Redirect(w, r, oidcCallbackPath+"#"+values.Encode(), http.StatusFound)
+}

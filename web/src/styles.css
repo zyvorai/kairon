@@ -413,6 +413,14 @@ table.datatable .rowactions button {
   border-radius: 6px;
   color: #666;
 }
+.loginor {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 14px 0;
+}
 .loginstep { animation: loginStepIn 0.25s ease; }
 @keyframes loginStepIn {
   from { opacity: 0; transform: translateX(10px); }
