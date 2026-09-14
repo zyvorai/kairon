@@ -49,15 +49,18 @@ func dialWS(ctx context.Context, u string, opts *websocket.DialOptions) (*websoc
 func TestConsoleTicketIsSingleUse(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice")
-	username, ok := s.consumeConsoleTicket(ctx, ticket)
+	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1")
+	username, namespace, name, ok := s.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected a freshly issued ticket to be valid")
 	}
 	if username != "alice" {
 		t.Fatalf("expected ticket to be bound to alice, got %q", username)
 	}
-	if _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
+	if namespace != "default" || name != "vm1" {
+		t.Fatalf("expected ticket to be bound to default/vm1, got %q/%q", namespace, name)
+	}
+	if _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected a ticket to be rejected the second time it's presented")
 	}
 }
@@ -65,11 +68,11 @@ func TestConsoleTicketIsSingleUse(t *testing.T) {
 func TestConsoleTicketRejectsExpired(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice")
+	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1")
 	// Overwrite with an already-expired timestamp rather than sleeping
 	// past the real (30s) TTL.
-	s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: "alice", expires: time.Now().Add(-time.Second)})
-	if _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
+	s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: "alice", namespace: "default", name: "vm1", expires: time.Now().Add(-time.Second)})
+	if _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected an expired ticket to be rejected")
 	}
 }
@@ -77,10 +80,10 @@ func TestConsoleTicketRejectsExpired(t *testing.T) {
 func TestConsoleTicketRejectsUnknownOrEmpty(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	if _, ok := s.consumeConsoleTicket(ctx, ""); ok {
+	if _, _, _, ok := s.consumeConsoleTicket(ctx, ""); ok {
 		t.Fatal("expected an empty ticket to be rejected")
 	}
-	if _, ok := s.consumeConsoleTicket(ctx, "never-issued"); ok {
+	if _, _, _, ok := s.consumeConsoleTicket(ctx, "never-issued"); ok {
 		t.Fatal("expected an unissued ticket to be rejected")
 	}
 }
@@ -132,7 +135,14 @@ func listenEchoVNCSocket(t *testing.T, dir string) {
 // Unix socket standing in for QEMU's VNC server. Only the noVNC-in-browser
 // leg is out of reach of a Go test.
 func TestHandleConsoleTicketIssuesAUsableTicket(t *testing.T) {
-	s := &Server{Kube: mustKubeClientAt(t, "http://127.0.0.1:0")}
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL)}
 	h := s.Handler()
 	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/console/ticket", "", nil)
 	if rr.Code != http.StatusOK {
@@ -147,14 +157,21 @@ func TestHandleConsoleTicketIssuesAUsableTicket(t *testing.T) {
 	if out.Ticket == "" {
 		t.Fatal("expected a non-empty ticket")
 	}
-	if _, ok := s.consumeConsoleTicket(context.Background(), out.Ticket); !ok {
+	if _, _, _, ok := s.consumeConsoleTicket(context.Background(), out.Ticket); !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
 }
 
 func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+
 	s := &Server{
-		Kube:          mustKubeClientAt(t, "http://127.0.0.1:0"),
+		Kube:          mustKubeClientAt(t, kubeSrv.URL),
 		Users:         []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}},
 		SessionSecret: []byte("test-session-secret"),
 	}
@@ -178,12 +195,122 @@ func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &ticketOut); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	username, ok := s.consumeConsoleTicket(context.Background(), ticketOut.Ticket)
+	username, _, _, ok := s.consumeConsoleTicket(context.Background(), ticketOut.Ticket)
 	if !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
 	if username != "alice" {
 		t.Fatalf("expected the ticket to be bound to the authenticated user alice, got %q", username)
+	}
+}
+
+func TestConsoleAuthorizedUnsetAnnotationAllowsAll(t *testing.T) {
+	s := &Server{}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if !s.consoleAuthorized(m, "") {
+		t.Fatal("expected an unset console-allowed-users annotation to allow even an empty (unauthenticated) username")
+	}
+	if !s.consoleAuthorized(m, "anyone") {
+		t.Fatal("expected an unset console-allowed-users annotation to allow any authenticated username")
+	}
+}
+
+func TestConsoleAuthorizedRestrictsToAllowlist(t *testing.T) {
+	s := &Server{}
+	m := model.Machine{Metadata: model.ObjectMeta{
+		Name: "vm1", Namespace: "default",
+		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice, bob"},
+	}}
+	if !s.consoleAuthorized(m, "alice") {
+		t.Fatal("expected alice to be authorized (listed)")
+	}
+	if !s.consoleAuthorized(m, "bob") {
+		t.Fatal("expected bob to be authorized (listed, with surrounding whitespace trimmed)")
+	}
+	if s.consoleAuthorized(m, "carol") {
+		t.Fatal("expected carol to be denied (not listed)")
+	}
+}
+
+func TestConsoleAuthorizedDeniesEmptyUsernameWhenRestricted(t *testing.T) {
+	s := &Server{}
+	m := model.Machine{Metadata: model.ObjectMeta{
+		Name: "vm1", Namespace: "default",
+		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice"},
+	}}
+	if s.consoleAuthorized(m, "") {
+		t.Fatal("expected an empty (legacy shared-token or dev-mode) username to be denied once a Machine restricts console access")
+	}
+}
+
+func TestConsoleAuthorizedAdminBypassesAllowlist(t *testing.T) {
+	s := &Server{Users: []User{{Username: "root", IsAdmin: true}}}
+	m := model.Machine{Metadata: model.ObjectMeta{
+		Name: "vm1", Namespace: "default",
+		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice"},
+	}}
+	if !s.consoleAuthorized(m, "root") {
+		t.Fatal("expected an admin account to bypass the console allowlist for break-glass access")
+	}
+}
+
+func TestHandleConsoleTicketDeniesUserNotInAllowlist(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{
+			Name: "vm1", Namespace: "default",
+			Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "bob"},
+		},
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+
+	s := &Server{
+		Kube:          mustKubeClientAt(t, kubeSrv.URL),
+		Users:         []User{{Username: "alice", PasswordHash: hashFor(t, "correct-horse")}},
+		SessionSecret: []byte("test-session-secret"),
+	}
+	h := s.Handler()
+
+	loginRR := login(t, h, "alice", "correct-horse")
+	var loginOut struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(loginRR.Body.Bytes(), &loginOut); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/console/ticket", loginOut.Token, nil)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a user not on the console allowlist, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleConsoleRejectsTicketIssuedForADifferentMachine(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+	}
+	fk.machines["vm2"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm2", Namespace: "default"},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-2"},
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	kc := mustKubeClientAt(t, kubeSrv.URL)
+
+	s := &Server{Kube: kc, ConsoleToken: "x", ConsolePort: "8090"}
+	uiSrv := httptest.NewServer(s.Handler())
+	defer uiSrv.Close()
+
+	// Ticket is bound to vm1 at issuance, then replayed against vm2's
+	// console endpoint -- must be rejected even though the ticket itself
+	// is otherwise still valid and unconsumed.
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm2/console?ticket=" + ticket
+	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
+		t.Fatal("expected a ticket issued for vm1 to be rejected when presented against vm2's console")
 	}
 }
 
@@ -256,7 +383,7 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -337,7 +464,7 @@ func TestHandleConsoleFullRelayOverTLS(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -416,7 +543,7 @@ func TestHandleConsoleTLSRejectsUntrustedCert(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected the dial to fail when kairon-node's certificate isn't trusted")
@@ -437,7 +564,7 @@ func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-Running machine to fail")
@@ -458,7 +585,7 @@ func TestHandleConsoleDisabledWhenNotConfigured(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console to be refused when ConsoleToken/ConsolePort aren't configured")
@@ -480,7 +607,7 @@ func TestHandleConsoleRejectsNonQemuBackend(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-qemu backend to fail")

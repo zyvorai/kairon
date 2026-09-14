@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 // consoleTicketTTL is deliberately short: a ticket only needs to survive
@@ -25,12 +27,17 @@ import (
 // custom headers on a native WebSocket upgrade).
 const consoleTicketTTL = 30 * time.Second
 
-// consoleTicketState binds a ticket to the operator it was issued to, so
+// consoleTicketState binds a ticket to the operator it was issued to (so
 // handleConsole's audit log can attribute a console session to a person,
-// not just "someone who had a valid ticket."
+// not just "someone who had a valid ticket") and to the one Machine it
+// was issued for (so a ticket minted for one Machine can't be replayed
+// against a different one's console endpoint within its short TTL --
+// see consumeConsoleTicket/handleConsole).
 type consoleTicketState struct {
-	username string
-	expires  time.Time
+	username  string
+	namespace string
+	name      string
+	expires   time.Time
 }
 
 // issueConsoleTicket mints a single-use ticket for handleConsole, so the
@@ -43,16 +50,16 @@ type consoleTicketState struct {
 // ConfigMap becomes the single source of truth instead -- see
 // consumeConsoleTicket for why a ticket can't be trusted from both places
 // at once.
-func (s *Server) issueConsoleTicket(ctx context.Context, username string) string {
+func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, name string) string {
 	buf := make([]byte, 20)
 	_, _ = rand.Read(buf)
 	ticket := hex.EncodeToString(buf)
 	expires := time.Now().Add(consoleTicketTTL)
 	if s.SharedStateConfigMapName == "" {
-		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, expires: expires})
+		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, namespace: namespace, name: name, expires: expires})
 		return ticket
 	}
-	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Expires: expires})
+	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Namespace: namespace, Name: name, Expires: expires})
 	return ticket
 }
 
@@ -82,44 +89,89 @@ func (s *Server) issueConsoleTicket(ctx context.Context, username string) string
 // interval, which is why this can't just wait for the periodic sync to
 // pick a remote ticket up (see RunSharedStateSync in sharedstate.go) --
 // it has to be a direct, synchronous lookup instead.
-func (s *Server) consumeConsoleTicket(ctx context.Context, ticket string) (username string, ok bool) {
+func (s *Server) consumeConsoleTicket(ctx context.Context, ticket string) (username, namespace, name string, ok bool) {
 	if ticket == "" {
-		return "", false
+		return "", "", "", false
 	}
 	hash := sha256Hex(ticket)
 	if s.SharedStateConfigMapName == "" {
 		v, found := s.consoleTickets.LoadAndDelete(hash)
 		if !found {
-			return "", false
+			return "", "", "", false
 		}
 		st, _ := v.(consoleTicketState)
 		if time.Now().After(st.expires) {
-			return "", false
+			return "", "", "", false
 		}
-		return st.username, true
+		return st.username, st.namespace, st.name, true
 	}
 	cm, err := s.Kube.GetConfigMap(ctx, s.SharedStateNamespace, s.SharedStateConfigMapName)
 	if err != nil {
 		if s.Log != nil {
 			s.Log.Warn("uiapi console ticket lookup failed", "error", err)
 		}
-		return "", false
+		return "", "", "", false
 	}
 	key := sharedStateTicketPrefix + hash
 	raw, found := cm.Data[key]
 	if !found {
-		return "", false
+		return "", "", "", false
 	}
 	s.deleteSharedState(ctx, key)
 	var e sharedTicketEntry
 	if json.Unmarshal([]byte(raw), &e) != nil || time.Now().After(e.Expires) {
-		return "", false
+		return "", "", "", false
 	}
-	return e.Username, true
+	return e.Username, e.Namespace, e.Name, true
 }
 
 func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), usernameFromContext(r.Context()))})
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	m, err := s.Kube.GetMachine(r.Context(), namespace, name)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	username := usernameFromContext(r.Context())
+	if !s.consoleAuthorized(m, username) {
+		if s.Log != nil {
+			s.Log.Warn("uiapi console ticket denied", "username", username, "namespace", namespace, "name", name)
+		}
+		writeError(w, http.StatusForbidden, "not authorized to open this machine's console")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), username, namespace, name)})
+}
+
+// consoleAuthorized reports whether username may open m's console. Unset
+// kairon.zyvor.dev/console-allowed-users (the default) means every
+// authenticated operator may -- unchanged from before this annotation
+// existed. Set, it's a comma-separated allowlist of usernames; an admin
+// account (ui.auth.users[].admin, the same elevated-privilege property
+// that already lets an admin reset another operator's password) can
+// always open any console regardless, for break-glass access an
+// allowlist author didn't have to anticipate. An empty username -- the
+// legacy shared ui.token has no per-operator identity at all, and
+// neither does fully unauthenticated dev mode -- is denied whenever the
+// Machine restricts console access, since there's no real identity to
+// check against an allowlist: fail closed rather than silently allow.
+func (s *Server) consoleAuthorized(m model.Machine, username string) bool {
+	allowed := strings.TrimSpace(m.Metadata.Annotations[model.AnnotationConsoleAllowedUsers])
+	if allowed == "" {
+		return true
+	}
+	if username == "" {
+		return false
+	}
+	if user, found := s.findUser(username); found && user.IsAdmin {
+		return true
+	}
+	for _, u := range strings.Split(allowed, ",") {
+		if strings.TrimSpace(u) == username {
+			return true
+		}
+	}
+	return false
 }
 
 // handleConfig reports small, non-sensitive feature toggles the frontend
@@ -137,8 +189,23 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // local, unix-socket-only QEMU VNC server. See docs/architecture.md for
 // the full chain and its trust boundary.
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
-	username, ok := s.consumeConsoleTicket(r.Context(), r.URL.Query().Get("ticket"))
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	username, ticketNamespace, ticketName, ok := s.consumeConsoleTicket(r.Context(), r.URL.Query().Get("ticket"))
 	if !ok {
+		writeError(w, http.StatusUnauthorized, "invalid or expired console ticket")
+		return
+	}
+	// A ticket only ever authorizes the one Machine handleConsoleTicket
+	// issued it for -- reject outright rather than relaying to a
+	// different Machine's console just because the ticket happens to be
+	// otherwise valid. This is what actually makes consoleAuthorized's
+	// per-Machine check (above, at issuance) meaningful: without this,
+	// a ticket for a Machine the caller IS authorized to view could be
+	// replayed here against one they aren't, within the ticket's 30s TTL.
+	if ticketNamespace != namespace || ticketName != name {
+		if s.Log != nil {
+			s.Log.Warn("uiapi console ticket machine mismatch", "username", username, "ticketNamespace", ticketNamespace, "ticketName", ticketName, "requestedNamespace", namespace, "requestedName", name)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid or expired console ticket")
 		return
 	}
@@ -146,7 +213,6 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "console is not enabled on this deployment")
 		return
 	}
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	m, err := s.Kube.GetMachine(r.Context(), namespace, name)
 	if err != nil {
 		writeUpstreamError(w, err)

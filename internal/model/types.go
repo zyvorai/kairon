@@ -16,6 +16,14 @@ const (
 	AnnotationAdoptOnly    = "kairon.zyvor.dev/adopt-only"
 	AnnotationVFIOBDF      = "kairon.zyvor.dev/vfio-bdf"
 	AnnotationMigrationRef = "kairon.zyvor.dev/migration"
+	// AnnotationConsoleAllowedUsers opts a Machine into a per-Machine VNC
+	// console access allowlist -- a comma-separated list of kairon-ui
+	// operator usernames (see internal/uiapi's consoleAuthorized). Unset
+	// (the default) means every authenticated operator may open this
+	// Machine's console, exactly as before this annotation existed --
+	// this is opt-in, never a behavior change for a Machine that doesn't
+	// set it.
+	AnnotationConsoleAllowedUsers = "kairon.zyvor.dev/console-allowed-users"
 	// ConditionNodeUnreachable is a MachineStatus.Conditions[].Type
 	// kairon-controller sets/clears every reconcile tick to reflect
 	// whether spec.nodeName currently names a Ready, present Kubernetes

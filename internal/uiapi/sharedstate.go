@@ -39,8 +39,17 @@ type sharedPasswordChangeEntry struct {
 // ticket itself is, which is exactly why the *key* it's stored under is a
 // one-way hash (see sharedSecretKey below), not the ticket value itself.
 type sharedTicketEntry struct {
-	Username string    `json:"username"`
-	Expires  time.Time `json:"expires"`
+	Username string `json:"username"`
+	// Namespace/Name bind the ticket to the one Machine it was issued
+	// for -- handleConsole checks these against its own URL path params
+	// before ever dialing anything, so a ticket minted for one Machine
+	// can't be replayed against a different one's console endpoint within
+	// its short TTL. Neither is a secret -- unlike Username (kept only
+	// for audit attribution, see the doc comment above), these exist for
+	// this check specifically, not for logging.
+	Namespace string    `json:"namespace"`
+	Name      string    `json:"name"`
+	Expires   time.Time `json:"expires"`
 }
 
 // sha256Hex is the general-purpose one-way hash behind every shared-state
