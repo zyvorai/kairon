@@ -23,8 +23,10 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 )
 
 // Server wires a *kube.Client into the /api/v1/... route table and,
@@ -102,6 +104,11 @@ type Server struct {
 	// consoleTickets backs the console feature's single-use WebSocket
 	// tickets; zero value is ready to use.
 	consoleTickets sync.Map
+	// Metrics, when set, serves /metrics (unauthenticated, same convention
+	// as /healthz/readyz) and observes every request's method/status/
+	// duration -- see withMetrics. Optional, nil-checked; without it
+	// nothing here changes.
+	Metrics *metrics.Recorder
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -119,6 +126,12 @@ func (s *Server) Handler() http.Handler {
 	// internal/health.Server.
 	top.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	top.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	// Unauthenticated for the same reason: a Prometheus scrape config
+	// never carries the bearer token either, same convention as
+	// internal/health.Server's own /metrics route.
+	if s.Metrics != nil {
+		top.Handle("GET /metrics", s.Metrics.Handler())
+	}
 
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
@@ -168,7 +181,26 @@ func (s *Server) Handler() http.Handler {
 	// every actual data fetch the page makes goes through the auth-gated
 	// /api/v1/... routes above.
 	top.HandleFunc("/", s.serveWeb)
-	return top
+	return s.withMetrics(top)
+}
+
+// withMetrics wraps every route (auth-gated or not, including /healthz/
+// readyz/metrics themselves) with request count/latency observation --
+// deliberately outermost, the same reasoning withAudit already documents
+// for wrapping outside withAuth: request volume/latency on a rejected or
+// unauthenticated call (a failed login, a probe) is real signal too, not
+// just successful API calls. No-op wrapper when Metrics isn't configured,
+// so this changes nothing about behavior or performance without it.
+func (s *Server) withMetrics(next http.Handler) http.Handler {
+	if s.Metrics == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.Metrics.ObserveHTTPRequest(r.Method, rec.status, time.Since(start))
+	})
 }
 
 // serveWeb serves the built web/dist SPA from WebDir, mirroring netra's

@@ -82,6 +82,7 @@ Three constraints shape almost every design choice above — see the top-level [
 - [`docs/guides/machine-fencing.md`](docs/guides/machine-fencing.md) — `NodeUnreachable` detection, `kaironctl fence`'s safety model, storage/network migration preflight labels
 - [`docs/guides/kairon-ui-ha.md`](docs/guides/kairon-ui-ha.md) — running `ui.replicaCount > 1`, what's shared and how
 - [`docs/guides/kairon-controller-ha.md`](docs/guides/kairon-controller-ha.md) — running `controller.replicaCount > 1`, Lease-based leader election
+- [`docs/guides/observability.md`](docs/guides/observability.md) — what each component's `/metrics` exposes, and the alert rules
 - [`docs/runbook-backup-restore.md`](docs/runbook-backup-restore.md) — backing up/restoring Kairon's CRD state, and what it doesn't cover
 - [`docs/guides/kairon-ui-oidc.md`](docs/guides/kairon-ui-oidc.md) — OIDC/SSO setup and the Go-stdlib-only exception it is
 - [`docs/guides/machine-storage.md`](docs/guides/machine-storage.md) · [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md) — PVC-backed boot disks, and Kairon's own first-cut iSCSI CSI driver

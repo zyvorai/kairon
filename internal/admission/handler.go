@@ -23,7 +23,14 @@ type Validator func(r *http.Request, req *Request) Decision
 // failure according to failurePolicy but a well-formed *denial* the same
 // way regardless, and a clear message here is far more useful to whoever's
 // `kubectl apply` just got rejected than an opaque "the webhook errored."
-func Handler(log *slog.Logger, validate Validator) http.HandlerFunc {
+//
+// observe, when non-nil, is called once per decision with the resource
+// kind, operation, and whether the request was allowed -- kairon-controller
+// wires this to internal/metrics for a kairon_webhook_decisions_total
+// counter (see internal/controller/webhook.go). Optional, nil-checked,
+// same convention as log above, so this package has no hard dependency on
+// internal/metrics.
+func Handler(log *slog.Logger, validate Validator, observe func(resource, operation string, allowed bool)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var in Review
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Request == nil {
@@ -33,6 +40,9 @@ func Handler(log *slog.Logger, validate Validator) http.HandlerFunc {
 		decision := validate(r, in.Request)
 		if !decision.Allowed && log != nil {
 			log.Warn("admission denied", "resource", in.Request.Resource.Resource, "namespace", in.Request.Namespace, "operation", in.Request.Operation, "reason", decision.Reason)
+		}
+		if observe != nil {
+			observe(in.Request.Resource.Resource, in.Request.Operation, decision.Allowed)
 		}
 		writeReview(w, in.Request.UID, decision)
 	}

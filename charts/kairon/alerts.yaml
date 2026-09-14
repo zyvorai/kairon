@@ -1,14 +1,23 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 #
-# Example Prometheus alert rules for kairon-controller's migration metrics
-# (see internal/metrics, exposed at /metrics on the controller's health
-# port). This is a plain, documented rules file -- not wired into the Helm
-# chart automatically, since not every cluster runs prometheus-operator.
-# If yours does, charts/kairon/templates/prometheusrule.yaml (gated behind
+# Example Prometheus alert rules for Kairon's metrics (see internal/metrics,
+# exposed at /metrics on kairon-controller's health port, kairon-node's
+# health port, and kairon-ui's own listen port). This is a plain, documented
+# rules file -- not wired into the Helm chart automatically, since not
+# every cluster runs prometheus-operator. If yours does,
+# charts/kairon/templates/prometheusrule.yaml (gated behind
 # `metrics.prometheusRule.enabled`) wraps this same rule group as a real
 # PrometheusRule custom resource; otherwise, copy this group into your own
 # Prometheus rule_files config.
+#
+# kairon-health below deliberately writes plain PromQL with no job/instance
+# filter baked in -- which component(s) a firing alert actually came from
+# depends on your own scrape config's job/instance labels (kairon-controller
+# and kairon-node both expose kairon_reconcile_*/kairon_apiserver_* under
+# the same metric names on their own separate targets), same as any
+# multi-target Prometheus rule. Add a job=~"..." selector if you want to
+# split these per component.
 groups:
   - name: kairon-migrations
     rules:
@@ -53,3 +62,55 @@ groups:
             is crossing the network in cleartext. See
             docs/runbook-migration-failures.md#unencrypted-migration-data-plane.
           runbook: "docs/runbook-migration-failures.md#unencrypted-migration-data-plane"
+
+  # Cross-component operational health -- previously this project had no
+  # alerting at all for kairon-controller/kairon-node being unhealthy or
+  # wedged, or for apiserver connectivity problems; every alert until now
+  # was migration-specific. See internal/metrics's package doc for what
+  # each component's Recorder exposes.
+  - name: kairon-health
+    rules:
+      - alert: KaironReconcileErrorRateHigh
+        expr: increase(kairon_reconcile_errors_total[15m]) > 5
+        labels:
+          severity: warn
+        annotations:
+          summary: "A Kairon reconcile loop (kairon-controller or kairon-node) has failed more than 5 times in 15 minutes"
+          description: >-
+            kairon_reconcile_errors_total counts a reconcile tick that
+            returned an error -- check that component's logs
+            ("reconcile failed"/"agent stopped") for the actual cause.
+            Occasional errors (a transient apiserver hiccup) are normal;
+            a sustained rate usually means the apiserver is unreachable,
+            RBAC changed under it, or a bug is panicking mid-reconcile.
+
+      - alert: KaironAPIServerErrorRateHigh
+        expr: increase(kairon_apiserver_request_duration_seconds_count{outcome="error"}[15m]) > 10
+        labels:
+          severity: warn
+        annotations:
+          summary: "More than 10 Kubernetes apiserver requests from a Kairon component failed in 15 minutes"
+          description: >-
+            kairon_apiserver_request_duration_seconds is recorded by
+            every component's internal/kube.Client (kairon-controller,
+            kairon-node, kairon-ui) for every apiserver call it makes.
+            A sustained error rate points at apiserver availability, a
+            revoked/expired ServiceAccount token, or an RBAC change that
+            broke a component's own permissions.
+
+      - alert: KaironWebhookDenyRateHigh
+        expr: increase(kairon_webhook_decisions_total{decision="deny"}[15m]) > 20
+        labels:
+          severity: info
+        annotations:
+          summary: "The admission webhook has denied more than 20 requests in 15 minutes"
+          description: >-
+            Only fires when webhook.enabled is true. A denial is
+            expected, working-as-intended behavior for an over-quota
+            Machine create/resize or a disruption-budget-violating
+            migration -- but a sudden spike usually means a MachineQuota/
+            MachineDisruptionBudget was set too strictly (or a bug is
+            generating Machines faster than expected), not that anything
+            is broken. severity: info, not warn/page, because "the
+            webhook is working" and "the webhook is blocking too much"
+            look identical in this metric alone.

@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -258,6 +259,35 @@ func TestAuditLogsMutatingRequestsNotReads(t *testing.T) {
 		!strings.Contains(logged, "path=/api/v1/machines/default/db/stop") ||
 		!strings.Contains(logged, "status=204") {
 		t.Fatalf("expected an audit log line with method/path/status, got: %s", logged)
+	}
+}
+
+func TestMetricsRouteAndRequestObservationAreOptIn(t *testing.T) {
+	fk := newFakeKube()
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	// Without Metrics set, /metrics isn't a route at all -- falls through
+	// to serveWeb's "no WebDir configured" JSON response, not a 200 with
+	// Prometheus exposition text.
+	rr := doJSON(t, h, http.MethodGet, "/metrics", "", nil)
+	if strings.Contains(rr.Body.String(), "# HELP") {
+		t.Fatalf("expected no /metrics route without Server.Metrics set, got: %s", rr.Body.String())
+	}
+
+	rec := metrics.NewUIRecorder()
+	s.Metrics = rec
+	h = s.Handler()
+
+	doJSON(t, h, http.MethodGet, "/api/v1/overview", "", nil)
+
+	rr = doJSON(t, h, http.MethodGet, "/metrics", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /metrics: got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "kairon_ui_request_duration_seconds") {
+		t.Errorf("missing kairon_ui_request_duration_seconds in:\n%s", body)
 	}
 }
 

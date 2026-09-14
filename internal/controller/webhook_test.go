@@ -11,10 +11,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/admission"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -317,5 +319,58 @@ func TestWebhookHandlerEndToEnd(t *testing.T) {
 	}
 	if out.Response.Status == nil || out.Response.Status.Message == "" {
 		t.Fatal("expected a denial message")
+	}
+}
+
+// TestWebhookHandlerRecordsDecisionMetrics confirms WebhookHandler's
+// observeWebhookDecision wiring actually reaches
+// kairon_webhook_decisions_total -- exercised through the real HTTP
+// envelope (like TestWebhookHandlerEndToEnd above) so this also covers
+// admission.Handler's observe callback, not just the Controller-side
+// method in isolation.
+func TestWebhookHandlerRecordsDecisionMetrics(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxMachines: intPtr(0)}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, nil, nil, nil)
+	rec := metrics.NewRecorder()
+	ctl.Metrics = rec
+	h := ctl.WebhookHandler()
+
+	post := func(t *testing.T, path string, req admission.Request) {
+		t.Helper()
+		body, _ := json.Marshal(admission.Review{APIVersion: admission.APIVersion, Kind: "AdmissionReview", Request: &req})
+		httpReq := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httpReq)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("POST %s: got %d", path, rr.Code)
+		}
+	}
+
+	deniedRaw, _ := json.Marshal(model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}})
+	post(t, "/validate-machine", admission.Request{
+		Resource:  admission.GroupVersionResource{Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: "machines"},
+		Namespace: "prod",
+		Operation: admission.OperationCreate,
+		Object:    deniedRaw,
+	})
+	// Not "machines"/"machinemigrations" -> always allowed (WebhookHandler
+	// only wires those two resources, but the underlying validators
+	// themselves also allow anything else -- see validateMachine).
+	allowedRaw, _ := json.Marshal(model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-2"}})
+	post(t, "/validate-machinemigration", admission.Request{
+		Resource:  admission.GroupVersionResource{Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: "machinemigrations"},
+		Namespace: "prod",
+		Operation: "DELETE",
+		Object:    allowedRaw,
+	})
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, `kairon_webhook_decisions_total{decision="deny",operation="CREATE",resource="machines"} 1`) {
+		t.Errorf("missing expected deny counter in:\n%s", body)
+	}
+	if !strings.Contains(body, `kairon_webhook_decisions_total{decision="allow",operation="DELETE",resource="machinemigrations"} 1`) {
+		t.Errorf("missing expected allow counter in:\n%s", body)
 	}
 }

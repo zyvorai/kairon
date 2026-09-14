@@ -1,9 +1,19 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-// Package metrics exposes Prometheus metrics for kairon-controller's view of
-// MachineMigration state -- the single cluster-wide vantage point, since
-// Controller.Reconcile already lists every MachineMigration every tick.
+// Package metrics exposes Prometheus metrics for Kairon's components.
+// kairon-controller's Recorder (NewRecorder) additionally covers its
+// unique cluster-wide view of MachineMigration state, since
+// Controller.Reconcile already lists every MachineMigration every tick;
+// kairon-node (NewNodeRecorder) and kairon-ui (NewUIRecorder) get a
+// smaller, purpose-specific subset instead of the full controller set, so
+// neither exposes migration-lifecycle metrics it has no way to keep
+// meaningful (a node's /metrics permanently reporting
+// kairon_migration_phase_count=0 would be misleading, not just unused).
+// Every Recorder shares the same struct and Observe* methods; a method
+// whose backing metric wasn't registered by the constructor that built
+// this Recorder is simply a no-op (nil-checked), so callers never need to
+// know which concrete subset they're holding.
 package metrics
 
 import (
@@ -27,12 +37,15 @@ type phaseState struct {
 	since time.Time
 }
 
-// Recorder tracks MachineMigration metrics. Not a global var by design --
-// callers construct one and pass it explicitly (e.g. Controller.Metrics),
-// matching this codebase's existing style (Agent.MigrationPeer etc.).
+// Recorder tracks Prometheus metrics for one Kairon component. Not a
+// global var by design -- callers construct one and pass it explicitly
+// (e.g. Controller.Metrics), matching this codebase's existing style
+// (Agent.MigrationPeer etc.).
 type Recorder struct {
 	registry *prometheus.Registry
 
+	// Migration-lifecycle metrics -- only registered by NewRecorder
+	// (kairon-controller), see ObserveMigrations.
 	phaseCount         *prometheus.GaugeVec
 	phaseAgeSeconds    *prometheus.GaugeVec
 	completedTotal     *prometheus.CounterVec
@@ -40,14 +53,57 @@ type Recorder struct {
 	cutoverDowntime    prometheus.Histogram
 	dataPlaneEncrypted *prometheus.GaugeVec
 
+	// Reconcile-loop metrics -- registered by NewRecorder and
+	// NewNodeRecorder (kairon-controller/kairon-node both run one), see
+	// ObserveReconcile.
+	reconcileDuration prometheus.Histogram
+	reconcileErrors   prometheus.Counter
+
+	// Admission-webhook decision metrics -- only registered by
+	// NewRecorder (kairon-node/kairon-ui don't serve the webhook), see
+	// ObserveWebhookDecision.
+	webhookDecisions *prometheus.CounterVec
+
+	// Kubernetes apiserver call metrics -- registered by all three
+	// constructors, since every component talks to the apiserver via
+	// internal/kube.Client. See ObserveAPIRequest.
+	apiRequestDuration *prometheus.HistogramVec
+
+	// kairon-ui's own HTTP request metrics -- only registered by
+	// NewUIRecorder. See ObserveHTTPRequest.
+	uiRequestDuration *prometheus.HistogramVec
+
 	mu         sync.Mutex
 	phaseSince map[phaseKey]phaseState
 	completed  map[phaseKey]bool
 	now        func() time.Time
 }
 
+func newReconcileMetrics() (prometheus.Histogram, prometheus.Counter) {
+	return prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "kairon_reconcile_duration_seconds",
+			Help:    "Duration of one reconcile loop iteration.",
+			Buckets: prometheus.DefBuckets,
+		}), prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "kairon_reconcile_errors_total",
+			Help: "Total reconcile loop iterations that returned an error.",
+		})
+}
+
+func newAPIRequestDurationMetric() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "kairon_apiserver_request_duration_seconds",
+		Help:    "Kubernetes apiserver request duration, by HTTP method and outcome (ok/error).",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "outcome"})
+}
+
+// NewRecorder builds the full metric set kairon-controller uses: migration
+// lifecycle, its own reconcile loop, admission-webhook decisions (if
+// webhook.enabled), and apiserver call health.
 func NewRecorder() *Recorder {
 	reg := prometheus.NewRegistry()
+	reconcileDuration, reconcileErrors := newReconcileMetrics()
 	r := &Recorder{
 		registry: reg,
 		phaseCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -76,11 +132,54 @@ func NewRecorder() *Recorder {
 			Name: "kairon_migration_dataplane_encrypted",
 			Help: "1 if an active live migration's QEMU data-plane transport is TLS-encrypted, 0 otherwise.",
 		}, []string{"namespace", "name"}),
-		phaseSince: map[phaseKey]phaseState{},
-		completed:  map[phaseKey]bool{},
-		now:        time.Now,
+		reconcileDuration: reconcileDuration,
+		reconcileErrors:   reconcileErrors,
+		webhookDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kairon_webhook_decisions_total",
+			Help: "Admission webhook decisions, by resource, operation, and outcome (allow/deny).",
+		}, []string{"resource", "operation", "decision"}),
+		apiRequestDuration: newAPIRequestDurationMetric(),
+		phaseSince:         map[phaseKey]phaseState{},
+		completed:          map[phaseKey]bool{},
+		now:                time.Now,
 	}
-	reg.MustRegister(r.phaseCount, r.phaseAgeSeconds, r.completedTotal, r.transferDuration, r.cutoverDowntime, r.dataPlaneEncrypted)
+	reg.MustRegister(r.phaseCount, r.phaseAgeSeconds, r.completedTotal, r.transferDuration, r.cutoverDowntime, r.dataPlaneEncrypted,
+		r.reconcileDuration, r.reconcileErrors, r.webhookDecisions, r.apiRequestDuration)
+	return r
+}
+
+// NewNodeRecorder builds the smaller metric set kairon-node uses: its own
+// reconcile loop plus apiserver call health -- no migration-lifecycle or
+// webhook metrics, since kairon-node reconciles individual Machines on one
+// node, not MachineMigrations cluster-wide, and never serves the webhook.
+func NewNodeRecorder() *Recorder {
+	reg := prometheus.NewRegistry()
+	reconcileDuration, reconcileErrors := newReconcileMetrics()
+	r := &Recorder{
+		registry:           reg,
+		reconcileDuration:  reconcileDuration,
+		reconcileErrors:    reconcileErrors,
+		apiRequestDuration: newAPIRequestDurationMetric(),
+	}
+	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.apiRequestDuration)
+	return r
+}
+
+// NewUIRecorder builds the metric set kairon-ui uses: its own HTTP request
+// health plus apiserver call health. kairon-ui has no reconcile loop or
+// webhook of its own.
+func NewUIRecorder() *Recorder {
+	reg := prometheus.NewRegistry()
+	r := &Recorder{
+		registry:           reg,
+		apiRequestDuration: newAPIRequestDurationMetric(),
+		uiRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "kairon_ui_request_duration_seconds",
+			Help:    "kairon-ui HTTP request duration, by method and response status class.",
+			Buckets: prometheus.DefBuckets,
+		}, []string{"method", "status_class"}),
+	}
+	reg.MustRegister(r.apiRequestDuration, r.uiRequestDuration)
 	return r
 }
 
@@ -95,6 +194,9 @@ func (r *Recorder) Handler() http.Handler {
 // right after ListMachineMigrations) rather than scattering Record*() calls
 // across every PatchMachineMigrationStatus call site in controller.go/agent.go.
 func (r *Recorder) ObserveMigrations(migrations []model.MachineMigration) {
+	if r.phaseCount == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -152,4 +254,69 @@ func (r *Recorder) ObserveMigrations(migrations []model.MachineMigration) {
 	for phase, n := range counts {
 		r.phaseCount.WithLabelValues(phase).Set(float64(n))
 	}
+}
+
+// ObserveReconcile records one reconcile loop iteration's duration and,
+// if err is non-nil, counts it as a failed iteration. Call once per tick
+// from Controller.Run/Agent.Run, regardless of outcome -- a nil Recorder
+// method receiver is never valid here (callers nil-check the *Recorder
+// itself, e.g. `if c.Metrics != nil`), but a Recorder built by a
+// constructor that didn't register these two metrics (there is none
+// today -- every constructor does) would silently no-op via the nil
+// field check below.
+func (r *Recorder) ObserveReconcile(d time.Duration, err error) {
+	if r.reconcileDuration == nil {
+		return
+	}
+	r.reconcileDuration.Observe(d.Seconds())
+	if err != nil {
+		r.reconcileErrors.Inc()
+	}
+}
+
+// ObserveWebhookDecision records one admission webhook decision. No-op on
+// a Recorder that didn't register webhookDecisions (NewNodeRecorder/
+// NewUIRecorder) -- neither kairon-node nor kairon-ui serves the webhook.
+func (r *Recorder) ObserveWebhookDecision(resource, operation string, allowed bool) {
+	if r.webhookDecisions == nil {
+		return
+	}
+	decision := "deny"
+	if allowed {
+		decision = "allow"
+	}
+	r.webhookDecisions.WithLabelValues(resource, operation, decision).Inc()
+}
+
+// ObserveAPIRequest records one Kubernetes apiserver call. Wire it to
+// internal/kube.Client.Observe (see cmd/*/main.go) -- every constructor
+// registers apiRequestDuration, so this is safe to call from any
+// component's Recorder.
+func (r *Recorder) ObserveAPIRequest(method string, d time.Duration, err error) {
+	if r.apiRequestDuration == nil {
+		return
+	}
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	r.apiRequestDuration.WithLabelValues(method, outcome).Observe(d.Seconds())
+}
+
+// ObserveHTTPRequest records one kairon-ui HTTP request. No-op on any
+// Recorder but NewUIRecorder's.
+func (r *Recorder) ObserveHTTPRequest(method string, status int, d time.Duration) {
+	if r.uiRequestDuration == nil {
+		return
+	}
+	class := "2xx"
+	switch {
+	case status >= 500:
+		class = "5xx"
+	case status >= 400:
+		class = "4xx"
+	case status >= 300:
+		class = "3xx"
+	}
+	r.uiRequestDuration.WithLabelValues(method, class).Observe(d.Seconds())
 }

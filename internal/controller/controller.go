@@ -506,7 +506,12 @@ func (c *Controller) Run(ctx context.Context, interval time.Duration) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		if err := c.Reconcile(ctx); err != nil {
+		start := time.Now()
+		err := c.Reconcile(ctx)
+		if c.Metrics != nil {
+			c.Metrics.ObserveReconcile(time.Since(start), err)
+		}
+		if err != nil {
 			c.Log.Error("reconcile failed", "error", err)
 		}
 		select {

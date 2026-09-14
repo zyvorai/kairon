@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -94,5 +95,45 @@ func TestLeaseCreateGetUpdateAndConflict(t *testing.T) {
 	updated, err := c.UpdateLease(ctx, "kairon-system", got)
 	if err != nil || updated.Metadata.ResourceVersion != "2" {
 		t.Fatalf("UpdateLease: updated=%+v err=%v", updated, err)
+	}
+}
+
+func TestObserveCalledForEverySuccessfulAndFailedRequest(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok" {
+			_ = json.NewEncoder(w).Encode(model.MachineList{})
+			return
+		}
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "", "", false)
+	c.HTTP = s.Client()
+
+	var calls []struct {
+		method  string
+		errored bool
+	}
+	c.Observe = func(method string, d time.Duration, err error) {
+		if d < 0 {
+			t.Errorf("negative duration observed: %v", d)
+		}
+		calls = append(calls, struct {
+			method  string
+			errored bool
+		}{method, err != nil})
+	}
+
+	_ = c.request(context.Background(), http.MethodGet, "/ok", nil, nil, "")
+	_ = c.request(context.Background(), http.MethodGet, "/fail", nil, nil, "")
+
+	if len(calls) != 2 {
+		t.Fatalf("Observe called %d times, want 2", len(calls))
+	}
+	if calls[0].method != http.MethodGet || calls[0].errored {
+		t.Errorf("call[0] = %+v, want ok GET", calls[0])
+	}
+	if calls[1].method != http.MethodGet || !calls[1].errored {
+		t.Errorf("call[1] = %+v, want errored GET", calls[1])
 	}
 }

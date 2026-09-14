@@ -27,6 +27,15 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	// Observe, when set, is called after every apiserver request with the
+	// HTTP method, how long it took, and its outcome -- kairon-controller/
+	// kairon-node/kairon-ui each wire this to their own
+	// internal/metrics.Recorder for a kairon_apiserver_request_duration_seconds
+	// histogram (see cmd/*/main.go). Optional so internal/kube has no hard
+	// dependency on internal/metrics, the same nil-checked-callback
+	// pattern internal/admission.Handler already uses for its own
+	// log/observe parameters.
+	Observe func(method string, d time.Duration, err error)
 }
 
 type APIError struct {
@@ -91,6 +100,15 @@ func New(baseURL, token, caPath string, insecure bool) (*Client, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body any, out any, contentType string) error {
+	start := time.Now()
+	err := c.doRequest(ctx, method, path, body, out, contentType)
+	if c.Observe != nil {
+		c.Observe(method, time.Since(start), err)
+	}
+	return err
+}
+
+func (c *Client) doRequest(ctx context.Context, method, path string, body any, out any, contentType string) error {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)

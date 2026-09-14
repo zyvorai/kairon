@@ -12,8 +12,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/scheduler"
 )
@@ -51,6 +53,38 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 	}
 	if patchedNode != "worker-1" {
 		t.Fatalf("scheduled node = %q", patchedNode)
+	}
+}
+
+// TestRunRecordsReconcileMetrics confirms Run's per-tick timing/error
+// observation actually reaches Metrics -- kairon_reconcile_duration_seconds
+// should have at least one sample after a couple of ticks.
+func TestRunRecordsReconcileMetrics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			_ = json.NewEncoder(w).Encode(model.NodeList{})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	rec := metrics.NewRecorder()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: rec}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_ = ctl.Run(ctx, 10*time.Millisecond)
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, "kairon_reconcile_duration_seconds_count") {
+		t.Errorf("missing reconcile duration histogram in:\n%s", body)
 	}
 }
 

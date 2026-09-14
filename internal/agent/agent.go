@@ -20,6 +20,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -38,6 +39,11 @@ type Agent struct {
 	MigrationPort    int
 	MigrationPeerURL func(context.Context, string) (string, error)
 	Log              *slog.Logger
+	// Metrics, when set, observes reconcile loop iteration duration/errors
+	// (see Run) and, if Kube.Observe is wired to the same Recorder,
+	// apiserver call health too. Optional, nil-checked, same convention as
+	// MigrationPeer.
+	Metrics *metrics.Recorder
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block
 	// (CSI-backed) PersistentVolume support -- see internal/agent/csi.go
 	// and internal/csinode. CSISocketPath empty (the default) means a
@@ -715,7 +721,12 @@ func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
-		if err := a.Reconcile(ctx); err != nil {
+		start := time.Now()
+		err := a.Reconcile(ctx)
+		if a.Metrics != nil {
+			a.Metrics.ObserveReconcile(time.Since(start), err)
+		}
+		if err != nil {
 			a.Log.Error("reconcile failed", "error", err)
 		}
 		select {

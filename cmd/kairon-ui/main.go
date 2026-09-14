@@ -23,6 +23,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/uiapi"
 )
 
@@ -104,6 +105,8 @@ func run() int {
 		log.Error("kubernetes client", "error", err)
 		return 1
 	}
+	rec := metrics.NewUIRecorder()
+	kc.Observe = rec.ObserveAPIRequest
 
 	consoleTLS, err := consoleTLSConfig(os.Getenv("KAIRON_NODE_CONSOLE_CA"))
 	if err != nil {
@@ -160,6 +163,7 @@ func run() int {
 		ConsoleToken: os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"),
 		ConsolePort:  env("KAIRON_NODE_CONSOLE_PORT", "8090"),
 		ConsoleTLS:   consoleTLS,
+		Metrics:      rec,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,

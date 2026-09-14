@@ -81,6 +81,7 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	rec := metrics.NewRecorder()
+	kc.Observe = rec.ObserveAPIRequest
 	hs := &health.Server{Metrics: rec.Handler()}
 	go func() {
 		if err := hs.Run(ctx, *healthAddr); err != nil && err != http.ErrServerClosed {

@@ -29,10 +29,19 @@ import (
 // wiring around them, no new enforcement logic.
 func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine))
-	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration))
+	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
+	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration, c.observeWebhookDecision))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
+}
+
+// observeWebhookDecision is the admission.Handler observe callback for
+// both routes above -- one choke point for kairon_webhook_decisions_total
+// regardless of which resource/validator produced the decision.
+func (c *Controller) observeWebhookDecision(resource, operation string, allowed bool) {
+	if c.Metrics != nil {
+		c.Metrics.ObserveWebhookDecision(resource, operation, allowed)
+	}
 }
 
 // RunWebhook serves the admission webhook over TLS on addr until ctx is

@@ -22,6 +22,7 @@ import (
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/tlsreload"
 )
@@ -80,6 +81,8 @@ func run() int {
 		log.Error("kubernetes client", "error", err)
 		return 1
 	}
+	rec := metrics.NewNodeRecorder()
+	kc.Observe = rec.ObserveAPIRequest
 	fc := fluxvm.New(*fluxURL, os.Getenv("FLUXVM_TOKEN"))
 	vfioAllowlist, err := agent.ParseVFIOAllowlist(*vfioAllowlistRaw)
 	if err != nil {
@@ -89,7 +92,7 @@ func run() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	hs := &health.Server{}
+	hs := &health.Server{Metrics: rec.Handler()}
 	go func() {
 		if err := hs.Run(ctx, *healthAddr); err != nil && err != http.ErrServerClosed {
 			log.Error("health server", "error", err)
@@ -133,6 +136,7 @@ func run() int {
 		CSIStagingDir:  *csiStagingDir,
 		CSIPublishDir:  *csiPublishDir,
 		Log:            log,
+		Metrics:        rec,
 	}
 	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("agent stopped", "error", err)
