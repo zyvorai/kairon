@@ -185,6 +185,15 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 			}
 			fmt.Printf("%s\t%s\t%s\t%s\t%d\t%d\t%d\n", q.Metadata.Name, maxMachines, dash(q.Spec.MaxTotalCPU), dash(q.Spec.MaxTotalMemory), q.Status.UsedMachines, q.Status.UsedTotalCPUCores, q.Status.UsedTotalMemoryMiB)
 		}
+	case "budget", "budgets", "machinedisruptionbudgets":
+		items, err := kc.ListMachineDisruptionBudgetsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tMINAVAILABLE\tMAXUNAVAILABLE\tEXPECTED\tHEALTHY\tDESIRED\tALLOWED\n")
+		for _, b := range items {
+			fmt.Printf("%s\t%s\t%s\t%d\t%d\t%d\t%d\n", b.Metadata.Name, dash(b.Spec.MinAvailable), dash(b.Spec.MaxUnavailable), b.Status.ExpectedMachines, b.Status.CurrentHealthy, b.Status.DesiredHealthy, b.Status.DisruptionsAllowed)
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}

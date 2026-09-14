@@ -4,8 +4,15 @@
 package controller
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -94,5 +101,66 @@ func TestAdmitDisruptionMachineNotMatchingAnyBudgetIsAlwaysAllowed(t *testing.T)
 	}
 	if reason := AdmitDisruption(states, m); reason != "" {
 		t.Fatalf("expected no budget to apply, got reason %q", reason)
+	}
+}
+
+func TestBudgetStateStatusReportsRealNumbers(t *testing.T) {
+	machines := []model.Machine{
+		webMachine("web-1", "node-a", "Running"),
+		webMachine("web-2", "node-a", "Running"),
+		webMachine("web-3", "node-a", "Running"),
+	}
+	migrations := []model.MachineMigration{
+		{Metadata: model.ObjectMeta{Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "web-1"}, Status: model.MachineMigrationStatus{Phase: "Starting"}},
+	}
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "2")}, machines, migrations)
+	if err != nil {
+		t.Fatalf("LoadBudgetStates: %v", err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("len(states) = %d, want 1", len(states))
+	}
+	got := states[0].Status()
+	// 3 machines match; web-1 is mid-migration so only web-2/web-3 count as
+	// healthy (2); minAvailable=2 desired; disruptionsAllowed = 2-2 = 0.
+	want := model.MachineDisruptionBudgetStatus{ExpectedMachines: 3, CurrentHealthy: 2, DesiredHealthy: 2, DisruptionsAllowed: 0}
+	if got != want {
+		t.Fatalf("Status() = %+v, want %+v", got, want)
+	}
+}
+
+func TestReconcileDisruptionBudgetsStatusPatchesRealStatus(t *testing.T) {
+	var patchedBody map[string]model.MachineDisruptionBudgetStatus
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
+			_ = json.NewDecoder(r.Body).Decode(&patchedBody)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets" {
+			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: []model.MachineDisruptionBudget{webBudget("web-pdb", "1")}})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running"), webMachine("web-2", "node-a", "Running")}
+	if err := ctl.reconcileDisruptionBudgetsStatus(context.Background(), machines, nil); err != nil {
+		t.Fatalf("reconcileDisruptionBudgetsStatus: %v", err)
+	}
+	got, ok := patchedBody["status"]
+	if !ok {
+		t.Fatal("expected a status patch to have been sent")
+	}
+	want := model.MachineDisruptionBudgetStatus{ExpectedMachines: 2, CurrentHealthy: 2, DesiredHealthy: 1, DisruptionsAllowed: 1}
+	if got != want {
+		t.Fatalf("patched status = %+v, want %+v", got, want)
 	}
 }

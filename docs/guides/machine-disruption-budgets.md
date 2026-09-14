@@ -11,14 +11,17 @@ a node being decommissioned on its own. The only thing that does that is
 every Machine on that node at once. `MachineDisruptionBudget` makes
 `evacuate` throttle itself instead of firing everything simultaneously.
 
-**By default, this is a client-side check inside `kaironctl`, not a
-server-side admission guarantee.** Nothing reconciles this object on a
-timer, and with the admission webhook below disabled (the default),
+**Enforcement is still client-side by default, not a server-side admission
+guarantee.** With the admission webhook below disabled (the default),
 nothing stops a `MachineMigration` created directly through the Kubernetes
 API (bypassing `kaironctl evacuate`) from ignoring it entirely. Treat it
 the same way you'd treat any other `kaironctl`-enforced convention -- real
 for anyone using the CLI as intended, not a hard multi-tenant guarantee --
 unless you enable the webhook.
+
+`kairon-controller` *does* now reconcile this object on a timer, but only
+for `status` -- see "Status" below. That reconciliation is purely
+observational; it doesn't change the enforcement story above at all.
 
 ### Admission webhook (`webhook.enabled`)
 
@@ -52,6 +55,25 @@ evaluated against however many Machines currently match `selector` --
 same shape and rounding (percentages round up) as a real Kubernetes
 `PodDisruptionBudget`.
 
+## Status
+
+Every reconcile tick, `kairon-controller` computes each budget's
+`status.expectedMachines`/`currentHealthy`/`desiredHealthy`/
+`disruptionsAllowed` from the exact same `LoadBudgetStates` logic
+`evacuate`/the admission webhook use, and patches it onto the object --
+`kubectl get mdb`/`kaironctl get budgets` now report real numbers instead
+of an empty `{}`. This is purely observational: `evacuate` and the
+webhook still each recompute their own allowance fresh at decision time
+rather than trusting this status, since it can be up to one reconcile
+interval (`controller.interval`, 5s default) stale -- a real-time decision
+should never be made against a cached number that old.
+
+```
+$ kaironctl get budgets
+NAME       MINAVAILABLE  MAXUNAVAILABLE  EXPECTED  HEALTHY  DESIRED  ALLOWED
+web-tier   2             -               3         3        2        1
+```
+
 ## How `evacuate` uses it
 
 For every Machine on the node being evacuated:
@@ -74,10 +96,14 @@ script/alert on.
 
 ## Real limits today (v1 of this feature)
 
-- Client-side only (see above) -- a `MachineMigration` created some other
-  way isn't gated at all.
-- No live `status` (the CRD has a status subresource for schema consistency
-  with every other Kairon CRD, but nothing writes to it -- there's no
-  controller for this object).
+- Client-side only unless `webhook.enabled` (see above) -- a
+  `MachineMigration` created some other way isn't gated at all.
+- `status` is observational only, not authoritative for any real-time
+  decision (see "Status" above) -- up to one reconcile interval stale, and
+  reconciling it is best-effort (a patch failure is logged, not retried
+  until the next tick).
 - A Machine matching zero `MachineDisruptionBudget`s is never blocked --
   budgets are opt-in per selector, not a cluster-wide default.
+- Still no automatic node-drain/eviction path -- `MachineDisruptionBudget`
+  only throttles `kaironctl evacuate`'s own batch, it doesn't cause
+  anything to start draining on its own.

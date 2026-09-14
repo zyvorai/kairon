@@ -204,6 +204,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	if err := c.reconcileDisruptionBudgetsStatus(ctx, machines, migrations); err != nil {
+		c.Log.Error("machine disruption budget status computation failed", "error", err)
+	}
+
 	c.detectUnreachableNodes(ctx, machines, nodes)
 	return nil
 }

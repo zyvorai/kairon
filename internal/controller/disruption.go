@@ -4,8 +4,10 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -21,7 +23,30 @@ import (
 // not a shared cross-package dependency worth taking for one boolean.
 type BudgetState struct {
 	budget  model.MachineDisruptionBudget
+	total   int
+	healthy int
+	desired int
 	allowed int
+}
+
+// Status snapshots this budget's MachineDisruptionBudgetStatus as of when
+// LoadBudgetStates computed it -- unaffected by any later AdmitDisruption
+// calls against allowed (those track a caller's own spend-as-you-go
+// allowance for one evacuate/webhook run, not the budget's observed
+// state). Used by reconcileDisruptionBudgetsStatus to patch the object's
+// real status once per reconcile tick.
+func (s *BudgetState) Status() model.MachineDisruptionBudgetStatus {
+	return model.MachineDisruptionBudgetStatus{
+		ExpectedMachines:   s.total,
+		CurrentHealthy:     s.healthy,
+		DesiredHealthy:     s.desired,
+		DisruptionsAllowed: s.allowed,
+	}
+}
+
+// Budget returns the MachineDisruptionBudget this state was computed for.
+func (s *BudgetState) Budget() model.MachineDisruptionBudget {
+	return s.budget
 }
 
 func isTerminalMigrationPhase(phase string) bool {
@@ -63,7 +88,7 @@ func LoadBudgetStates(budgets []model.MachineDisruptionBudget, machines []model.
 		if allowed < 0 {
 			allowed = 0
 		}
-		states = append(states, &BudgetState{budget: b, allowed: allowed})
+		states = append(states, &BudgetState{budget: b, total: total, healthy: healthy, desired: desired, allowed: allowed})
 	}
 	return states, nil
 }
@@ -85,4 +110,35 @@ func AdmitDisruption(states []*BudgetState, machine model.Machine) string {
 		st.allowed--
 	}
 	return ""
+}
+
+// reconcileDisruptionBudgetsStatus lists every MachineDisruptionBudget
+// cluster-wide and patches its status from a fresh LoadBudgetStates
+// computation against the machines/migrations this tick already listed --
+// no separate I/O for machines/migrations, this is purely a status-visibility
+// pass, it never blocks or mutates a Machine/MachineMigration itself. A
+// LoadBudgetStates error (a malformed minAvailable/maxUnavailable) is
+// returned so the caller logs it once rather than per-budget; an
+// individual PatchMachineDisruptionBudgetStatus failure is logged and
+// skipped so one bad write doesn't stop every other budget's status from
+// updating.
+func (c *Controller) reconcileDisruptionBudgetsStatus(ctx context.Context, machines []model.Machine, migrations []model.MachineMigration) error {
+	budgets, err := c.Kube.ListMachineDisruptionBudgets(ctx)
+	if err != nil {
+		if kube.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	states, err := LoadBudgetStates(budgets, machines, migrations)
+	if err != nil {
+		return err
+	}
+	for _, st := range states {
+		b := st.Budget()
+		if statusErr := c.Kube.PatchMachineDisruptionBudgetStatus(ctx, b.Namespace(), b.Metadata.Name, st.Status()); statusErr != nil {
+			c.Log.Error("machine disruption budget status patch failed", "namespace", b.Namespace(), "budget", b.Metadata.Name, "error", statusErr)
+		}
+	}
+	return nil
 }

@@ -14,14 +14,40 @@ const KindMachineDisruptionBudget = "MachineDisruptionBudget"
 
 // MachineDisruptionBudget caps how many Machines matching Selector
 // `kaironctl evacuate` is willing to disrupt at once -- a client-side
-// courtesy check, not a server-side admission guarantee. Nothing reconciles
-// this object or enforces it if a MachineMigration is created directly
-// through the API instead of via `kaironctl evacuate`; see
-// docs/guides/machine-disruption-budgets.md.
+// courtesy check, not a server-side admission guarantee (the opt-in
+// admission webhook, webhook.enabled, additionally enforces it at
+// MachineMigration CREATE -- see internal/controller/webhook.go). Status
+// is reconciled every tick by kairon-controller (see
+// internal/controller/disruption.go's reconcileDisruptionBudgetsStatus),
+// mirroring a real Kubernetes PodDisruptionBudget's status -- it does not
+// itself gate anything, it's purely observational (`kubectl get mdb`/
+// `kaironctl get budgets` reporting real numbers instead of an empty {}).
+// See docs/guides/machine-disruption-budgets.md.
 type MachineDisruptionBudget struct {
 	TypeMeta `json:",inline"`
-	Metadata ObjectMeta                  `json:"metadata"`
-	Spec     MachineDisruptionBudgetSpec `json:"spec"`
+	Metadata ObjectMeta                    `json:"metadata"`
+	Spec     MachineDisruptionBudgetSpec   `json:"spec"`
+	Status   MachineDisruptionBudgetStatus `json:"status,omitempty"`
+}
+
+// MachineDisruptionBudgetStatus mirrors the meaningful subset of a real
+// Kubernetes PodDisruptionBudget's status -- computed fresh every
+// reconcile tick from the same LoadBudgetStates logic
+// `kaironctl evacuate`/the admission webhook already use, not a second
+// implementation.
+type MachineDisruptionBudgetStatus struct {
+	// ExpectedMachines is how many Machines currently match Selector.
+	ExpectedMachines int `json:"expectedMachines"`
+	// CurrentHealthy is how many of those are Running and not part of a
+	// non-terminal MachineMigration right now.
+	CurrentHealthy int `json:"currentHealthy"`
+	// DesiredHealthy is Spec.MinAvailable/MaxUnavailable resolved against
+	// ExpectedMachines.
+	DesiredHealthy int `json:"desiredHealthy"`
+	// DisruptionsAllowed is CurrentHealthy - DesiredHealthy, floored at 0
+	// -- how many more Machines matching Selector could be disrupted right
+	// now before this budget would be violated.
+	DisruptionsAllowed int `json:"disruptionsAllowed"`
 }
 
 func (b MachineDisruptionBudget) Namespace() string {

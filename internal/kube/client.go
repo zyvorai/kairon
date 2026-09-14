@@ -368,6 +368,10 @@ func (c *Client) ListMachineDisruptionBudgetsNamespace(ctx context.Context, ns s
 	return list.Items, err
 }
 
+func (c *Client) PatchMachineDisruptionBudgetStatus(ctx context.Context, ns, name string, status model.MachineDisruptionBudgetStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinedisruptionbudgets", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, ns string, pvc model.PersistentVolumeClaim) (model.PersistentVolumeClaim, error) {
 	var out model.PersistentVolumeClaim
 	err := c.request(ctx, http.MethodPost, fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims", url.PathEscape(ns)), pvc, &out, "")
