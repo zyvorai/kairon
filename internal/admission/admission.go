@@ -41,6 +41,11 @@ type Request struct {
 	Namespace string               `json:"namespace"`
 	Operation string               `json:"operation"`
 	Object    json.RawMessage      `json:"object"`
+	// OldObject is set by the API server for UPDATE and DELETE, never for
+	// CREATE -- the object's state as it was stored *before* this
+	// request, so a Validator can diff against what's actually changing
+	// rather than only ever seeing the incoming write in isolation.
+	OldObject json.RawMessage `json:"oldObject,omitempty"`
 }
 
 // Response is the subset of AdmissionResponse this package writes back.

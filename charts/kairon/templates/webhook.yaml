@@ -40,7 +40,12 @@ webhooks:
       - apiGroups: ["kairon.zyvor.dev"]
         apiVersions: ["v1alpha1"]
         resources: ["machines"]
-        operations: ["CREATE"]
+        # UPDATE closes a real gap CREATE alone leaves open: a Machine
+        # that grows past quota via hotplug (see internal/controller/
+        # webhook.go's validateMachineResize) -- unlike CREATE, this has
+        # no reconcile-loop equivalent to backstop it, so it's only ever
+        # caught here, and only once webhook.enabled is true.
+        operations: ["CREATE", "UPDATE"]
         scope: Namespaced
   - name: machinedisruptionbudget.kairon.zyvor.dev
     admissionReviewVersions: ["v1"]

@@ -59,44 +59,122 @@ func (c *Controller) RunWebhook(ctx context.Context, addr string, tlsConfig *tls
 	return nil
 }
 
-// validateMachine only applies to CREATE, matching the reconcile loop's
-// own quota semantics exactly: admitQuota (quota.go) is only ever called
-// once per Machine, at the moment the scheduler first picks a node for it
-// -- an already-scheduled Machine growing via hotplug is never re-checked
-// against quota by the reconcile loop either (see quota.go's own doc
-// comment: "quota blocks *new* scheduling, it doesn't evict or
-// retroactively un-admit anything"). Extending this webhook to also
-// enforce quota on UPDATE would make it *stricter* than the reconcile loop
-// it's meant to backstop -- a new inconsistency, not a fix -- so it
-// deliberately doesn't.
+// validateMachine enforces MachineQuota on a Machine CREATE (admitQuota,
+// the exact same check the reconcile loop's own scheduling-time admission
+// uses) and, separately, on an UPDATE that grows an already-scheduled
+// Machine's spec.resources (admitQuotaResize) -- closing the gap
+// documented until now as a real, accepted limitation: "an
+// already-scheduled Machine growing past quota via hotplug isn't caught
+// by either the webhook or the reconcile loop."
+//
+// The two cases aren't symmetric the way CREATE-vs-nothing might suggest.
+// For CREATE, this webhook is defense-in-depth: the reconcile loop's own
+// scheduling-time admitQuota call already backstops the exact same
+// decision, so the webhook can never become *stricter* than what it
+// backstops. For a resize UPDATE, there is no reconcile-loop equivalent to
+// backstop at all -- hotplug is entirely kairon-node's agent's own
+// concern (internal/agent/hotplug.go), reconciled per-node with no
+// cluster-wide MachineQuota visibility, and kairon-controller's reconcile
+// loop only ever calls admitQuota once, at initial scheduling. So unlike
+// the CREATE case, this IS new enforcement, not just closing a bypass
+// around something already enforced elsewhere -- with webhook.enabled
+// false (the default), a resize past quota still isn't caught anywhere,
+// same as before this existed.
 func (c *Controller) validateMachine(r *http.Request, req *admission.Request) admission.Decision {
-	if req.Resource.Resource != "machines" || req.Operation != admission.OperationCreate {
+	if req.Resource.Resource != "machines" {
 		return admission.Allow()
 	}
+	switch req.Operation {
+	case admission.OperationCreate:
+		return c.validateMachineCreate(r, req)
+	case admission.OperationUpdate:
+		return c.validateMachineResize(r, req)
+	default:
+		return admission.Allow()
+	}
+}
+
+func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Request) admission.Decision {
 	var m model.Machine
 	if err := json.Unmarshal(req.Object, &m); err != nil {
 		return admission.Deny(fmt.Sprintf("decode Machine: %v", err))
 	}
-	ctx := r.Context()
-	quotas, err := c.Kube.ListMachineQuotasNamespace(ctx, req.Namespace)
-	if err != nil {
-		return admission.Deny(fmt.Sprintf("list MachineQuotas: %v", err))
-	}
-	if len(quotas) == 0 {
-		return admission.Allow()
-	}
-	machines, err := c.Kube.ListMachinesNamespace(ctx, req.Namespace)
-	if err != nil {
-		return admission.Deny(fmt.Sprintf("list Machines: %v", err))
-	}
-	trackers, err := buildQuotaTrackers(quotas, machines)
+	trackers, ok, err := c.quotaTrackersForNamespace(r.Context(), req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
+	}
+	if !ok {
+		return admission.Allow()
 	}
 	if blocker := admitQuota(trackers, m); blocker != "" {
 		return admission.Deny(blocker)
 	}
 	return admission.Allow()
+}
+
+// validateMachineResize only ever denies a *growing* resize of an
+// already-scheduled Machine -- see validateMachine's own doc comment for
+// why this is the one quota check with no reconcile-loop backstop. A
+// Machine that isn't yet scheduled falls through to Allow(): the
+// reconcile loop's own scheduling-time admitQuota call covers that case
+// exactly like a CREATE would (machineCountsTowardQuota mirrors
+// buildQuotaTrackers' own seed-pass predicate exactly, so "not yet
+// scheduled" here means the same thing it means there). A shrink or
+// no-change UPDATE is also always allowed, without even listing quotas:
+// it can only ever lower usage below what was already accepted.
+func (c *Controller) validateMachineResize(r *http.Request, req *admission.Request) admission.Decision {
+	var oldM, newM model.Machine
+	if err := json.Unmarshal(req.OldObject, &oldM); err != nil {
+		return admission.Deny(fmt.Sprintf("decode old Machine: %v", err))
+	}
+	if err := json.Unmarshal(req.Object, &newM); err != nil {
+		return admission.Deny(fmt.Sprintf("decode Machine: %v", err))
+	}
+	if !machineCountsTowardQuota(oldM) {
+		return admission.Allow()
+	}
+	oldCPU, oldMem := machineFootprint(oldM)
+	newCPU, newMem := machineFootprint(newM)
+	if newCPU <= oldCPU && newMem <= oldMem {
+		return admission.Allow()
+	}
+	trackers, ok, err := c.quotaTrackersForNamespace(r.Context(), req.Namespace)
+	if err != nil {
+		return admission.Deny(err.Error())
+	}
+	if !ok {
+		return admission.Allow()
+	}
+	if blocker := admitQuotaResize(trackers, req.Namespace, oldCPU, newCPU, oldMem, newMem); blocker != "" {
+		return admission.Deny(blocker)
+	}
+	return admission.Allow()
+}
+
+// quotaTrackersForNamespace lists MachineQuotas and Machines for
+// namespace and seeds trackers from them -- the shared I/O sequence
+// behind both validateMachineCreate and validateMachineResize. ok is
+// false only when the caller should short-circuit straight to Allow()
+// without denying anything: no MachineQuota exists in this namespace at
+// all, so there's nothing to enforce and no reason to pay for the extra
+// ListMachines call.
+func (c *Controller) quotaTrackersForNamespace(ctx context.Context, namespace string) (trackers map[string][]*quotaTracker, ok bool, err error) {
+	quotas, err := c.Kube.ListMachineQuotasNamespace(ctx, namespace)
+	if err != nil {
+		return nil, false, fmt.Errorf("list MachineQuotas: %w", err)
+	}
+	if len(quotas) == 0 {
+		return nil, false, nil
+	}
+	machines, err := c.Kube.ListMachinesNamespace(ctx, namespace)
+	if err != nil {
+		return nil, false, fmt.Errorf("list Machines: %w", err)
+	}
+	trackers, err = buildQuotaTrackers(quotas, machines)
+	if err != nil {
+		return nil, false, err
+	}
+	return trackers, true, nil
 }
 
 // validateMachineMigration only applies to CREATE: a MachineMigration is

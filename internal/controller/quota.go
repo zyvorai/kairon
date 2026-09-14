@@ -31,7 +31,7 @@ func buildQuotaTrackers(quotas []model.MachineQuota, machines []model.Machine) (
 		trackers[q.Namespace()] = append(trackers[q.Namespace()], &quotaTracker{quota: q})
 	}
 	for _, m := range machines {
-		if m.Metadata.DeletionTimestamp != nil || m.DesiredPowerState() == "Stopped" || m.Spec.NodeName == "" {
+		if !machineCountsTowardQuota(m) {
 			continue
 		}
 		cpu, mem := machineFootprint(m)
@@ -64,6 +64,17 @@ func machineFootprint(m model.Machine) (cpu uint32, memMiB uint64) {
 	return cpu, memMiB
 }
 
+// machineCountsTowardQuota is the one predicate for "does this Machine's
+// footprint currently count against its namespace's MachineQuota" --
+// shared by buildQuotaTrackers' seed pass and the admission webhook's
+// UPDATE handling (see admitQuotaResize) so the two can never drift apart
+// on what "already counted" means. Matches quota blocking *new*
+// scheduling, not evicting or retroactively un-admitting anything: not
+// deleted, not desired-Stopped, and already scheduled.
+func machineCountsTowardQuota(m model.Machine) bool {
+	return m.Metadata.DeletionTimestamp == nil && m.DesiredPowerState() != "Stopped" && m.Spec.NodeName != ""
+}
+
 // admitQuota returns a non-empty blocker reason if scheduling m would push
 // any MachineQuota it's subject to over a limit, otherwise it spends m's
 // footprint against every quota in its namespace and returns "".
@@ -90,6 +101,37 @@ func admitQuota(trackers map[string][]*quotaTracker, m model.Machine) string {
 		t.used.UsedMachines++
 		t.used.UsedTotalCPUCores += cpu
 		t.used.UsedTotalMemoryMiB += mem
+	}
+	return ""
+}
+
+// admitQuotaResize returns a non-empty blocker reason if growing an
+// already-scheduled Machine's spec.resources from old to new would push
+// any MachineQuota it's subject to over its CPU/memory limit -- the
+// UPDATE counterpart to admitQuota's CREATE check (see
+// validateMachine in webhook.go). Deliberately never touches
+// MaxMachines: a resize doesn't change how many Machines exist. old must
+// be old's already-counted footprint (i.e. the caller has confirmed
+// machineCountsTowardQuota(oldMachine) so trackers already includes it,
+// seeded by buildQuotaTrackers from the pre-update Machine list) --
+// subtracting it before adding new is what makes this check the delta,
+// not admitQuota's "add a brand-new footprint on top" one. A shrink
+// (new <= old on both dimensions) can never be denied here: it only ever
+// lowers usage below what buildQuotaTrackers already saw and accepted.
+func admitQuotaResize(trackers map[string][]*quotaTracker, namespace string, oldCPU, newCPU uint32, oldMemMiB, newMemMiB uint64) string {
+	for _, t := range trackers[namespace] {
+		if t.quota.Spec.MaxTotalCPU != "" {
+			max, _ := model.ParseVCPUs(t.quota.Spec.MaxTotalCPU) // already validated in buildQuotaTrackers
+			if t.used.UsedTotalCPUCores-oldCPU+newCPU > max {
+				return fmt.Sprintf("MachineQuota %s/%s: maxTotalCpu %q reached", t.quota.Namespace(), t.quota.Metadata.Name, t.quota.Spec.MaxTotalCPU)
+			}
+		}
+		if t.quota.Spec.MaxTotalMemory != "" {
+			max, _ := model.ParseMemoryMiB(t.quota.Spec.MaxTotalMemory) // already validated in buildQuotaTrackers
+			if t.used.UsedTotalMemoryMiB-oldMemMiB+newMemMiB > max {
+				return fmt.Sprintf("MachineQuota %s/%s: maxTotalMemory %q reached", t.quota.Namespace(), t.quota.Metadata.Name, t.quota.Spec.MaxTotalMemory)
+			}
+		}
 	}
 	return ""
 }

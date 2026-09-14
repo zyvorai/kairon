@@ -50,31 +50,131 @@ func newWebhookTestController(t *testing.T, ns string, quotas []model.MachineQuo
 
 func admissionReq(t *testing.T, resource, namespace, operation string, obj any) (*http.Request, *admission.Request) {
 	t.Helper()
+	return admissionReqWithOld(t, resource, namespace, operation, obj, nil)
+}
+
+// admissionReqWithOld is admissionReq plus oldObj, marshaled into
+// OldObject -- the real API server only ever sets this for UPDATE/DELETE
+// (see admission.Request's own doc comment), so tests exercising
+// validateMachineResize need this instead of the plain admissionReq
+// CREATE-shaped helper. A nil oldObj leaves OldObject unset.
+func admissionReqWithOld(t *testing.T, resource, namespace, operation string, obj, oldObj any) (*http.Request, *admission.Request) {
+	t.Helper()
 	raw, err := json.Marshal(obj)
 	if err != nil {
 		t.Fatalf("marshal object: %v", err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/validate", nil).WithContext(context.Background())
-	return r, &admission.Request{
+	req := &admission.Request{
 		UID:       "test-uid",
 		Resource:  admission.GroupVersionResource{Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: resource},
 		Namespace: namespace,
 		Operation: operation,
 		Object:    raw,
 	}
+	if oldObj != nil {
+		oldRaw, err := json.Marshal(oldObj)
+		if err != nil {
+			t.Fatalf("marshal old object: %v", err)
+		}
+		req.OldObject = oldRaw
+	}
+	r := httptest.NewRequest(http.MethodPost, "/validate", nil).WithContext(context.Background())
+	return r, req
 }
 
-func TestValidateMachineIgnoresNonMachineResourcesAndUpdates(t *testing.T) {
+func TestValidateMachineIgnoresNonMachineResources(t *testing.T) {
 	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{{Spec: model.MachineQuotaSpec{MaxMachines: intPtr(0)}, Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}}}, nil, nil, nil)
 
 	r, req := admissionReq(t, "machinemigrations", "prod", admission.OperationCreate, model.Machine{})
 	if d := ctl.validateMachine(r, req); !d.Allowed {
 		t.Fatalf("expected non-machines resource to be ignored, got denied: %s", d.Reason)
 	}
+}
 
-	r, req = admissionReq(t, "machines", "prod", admission.OperationUpdate, model.Machine{Metadata: model.ObjectMeta{Namespace: "prod"}})
+func TestValidateMachineIgnoresOtherOperations(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{{Spec: model.MachineQuotaSpec{MaxMachines: intPtr(0)}, Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}}}, nil, nil, nil)
+	r, req := admissionReq(t, "machines", "prod", "DELETE", model.Machine{Metadata: model.ObjectMeta{Namespace: "prod"}})
 	if d := ctl.validateMachine(r, req); !d.Allowed {
-		t.Fatalf("expected UPDATE to be ignored (quota is create-only, matching the reconcile loop), got denied: %s", d.Reason)
+		t.Fatalf("expected an operation this webhook doesn't handle to be ignored, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineResizeAllowsUnscheduledMachine(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "1"}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, nil, nil, nil)
+
+	old := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{Resources: model.ResourceSpec{CPU: "1"}}} // NodeName unset: not yet scheduled
+	updated := old
+	updated.Spec.Resources.CPU = "100"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, updated, old)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected a resize of an unscheduled Machine to be allowed (the reconcile loop's own scheduling-time check backstops it), got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineResizeAllowsShrinkOrNoChange(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "2"}}
+	existing := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2"}}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, []model.Machine{existing}, nil, nil)
+
+	shrunk := existing
+	shrunk.Spec.Resources.CPU = "1"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, shrunk, existing)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected a shrink to be allowed without even listing quotas, got denied: %s", d.Reason)
+	}
+
+	r, req = admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, existing, existing)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected a no-change update to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineResizeDeniesGrowthOverMaxTotalCPU(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "4"}}
+	// Two Machines already scheduled: vm-1 (being resized) at 2 vCPU, and
+	// an unrelated vm-2 at 2 vCPU -- together already at the 4 vCPU cap,
+	// so growing vm-1 at all must be denied.
+	vm1 := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2"}}}
+	vm2 := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-2"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2"}}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, []model.Machine{vm1, vm2}, nil, nil)
+
+	grown := vm1
+	grown.Spec.Resources.CPU = "3"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, grown, vm1)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected growth past maxTotalCpu to be denied")
+	}
+	if d.Reason == "" {
+		t.Fatal("expected a non-empty denial reason")
+	}
+}
+
+func TestValidateMachineResizeAllowsGrowthWithinMaxTotalCPU(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "4"}}
+	vm1 := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2"}}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, []model.Machine{vm1}, nil, nil)
+
+	grown := vm1
+	grown.Spec.Resources.CPU = "4"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, grown, vm1)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected growth within maxTotalCpu to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineResizeDeniesGrowthOverMaxTotalMemory(t *testing.T) {
+	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalMemory: "4Gi"}}
+	vm1 := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{Memory: "4Gi"}}}
+	ctl := newWebhookTestController(t, "prod", []model.MachineQuota{quota}, []model.Machine{vm1}, nil, nil)
+
+	grown := vm1
+	grown.Spec.Resources.Memory = "8Gi"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, grown, vm1)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected growth past maxTotalMemory to be denied")
 	}
 }
 

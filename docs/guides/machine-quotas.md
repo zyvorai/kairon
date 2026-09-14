@@ -61,13 +61,24 @@ admission time), the reconcile-loop check above only runs *after* a
 `Machine` already exists -- an over-quota namespace could always create as
 many as it wanted, they just stayed `Pending` forever. An opt-in validating
 admission webhook on `kairon-controller` (`webhook.enabled`, off by
-default -- see the Helm chart's `webhook` values and SECURITY.md) now
-rejects the `Machine` create outright instead, reusing the exact same
-`buildQuotaTrackers`/`admitQuota` decision the reconcile loop above already
-makes. It only evaluates `CREATE` (not `UPDATE`), matching the reconcile
-loop's own scope exactly -- an already-scheduled Machine growing via
-hotplug was never quota-checked either (see "Real limits today" below), so
-the webhook deliberately doesn't become stricter than what it backstops.
+default -- see the Helm chart's `webhook` values and SECURITY.md) closes
+two gaps:
+
+- **`Machine` `CREATE`** is rejected outright instead of just staying
+  `Pending`, reusing the exact same `buildQuotaTrackers`/`admitQuota`
+  decision the reconcile loop above already makes. This only evaluates
+  `CREATE`, matching the reconcile loop's own scope exactly -- deliberately
+  never stricter than what it backstops.
+- **`Machine` `UPDATE`** is also rejected when it grows an
+  already-scheduled Machine's `spec.resources` (a hotplug resize) past
+  quota, via `admitQuotaResize` -- the one check on this page with no
+  reconcile-loop equivalent to backstop it at all: `kairon-node`'s hotplug
+  reconciliation is per-node and has no cluster-wide `MachineQuota`
+  visibility of its own. A shrink, a no-change update, or a resize of a
+  Machine that isn't yet scheduled are all always allowed (the last case is
+  covered by the reconcile loop's own scheduling-time check instead, the
+  same as a fresh `CREATE` would be).
+
 Requires an operator-supplied TLS certificate (`webhook.tlsSecretName`,
 `webhook.caBundle`) -- like `migration.tlsSecretName`, this chart doesn't
 mint one for you.
@@ -78,12 +89,12 @@ mint one for you.
   exists in the CRD but isn't read anywhere -- namespace is the only real
   multi-tenancy boundary Kairon uses today).
 - The admission webhook above is opt-in; with it off (the default),
-  nothing stops a namespace from having far more `Machine` objects created
-  than its quota allows -- it just means most of them stay `Pending`
-  forever instead of being rejected up front.
-- Neither the reconcile loop nor the webhook re-checks quota when an
-  already-scheduled Machine's `spec.resources` grows via hotplug -- quota
-  is only ever evaluated once, when a Machine is first scheduled/created.
+  nothing stops a namespace from having far more `Machine` objects created,
+  or an existing one hotplugged further, than its quota allows -- creates
+  just stay `Pending` forever instead of being rejected up front, and a
+  resize past quota isn't caught anywhere at all (not even by the
+  reconcile loop, which only ever evaluates quota once, at initial
+  scheduling).
 - CPU/memory quantities use the same fractional-CPU-rounds-up parsing as
   `Machine.spec.resources` (`internal/model.ParseVCPUs`/`ParseMemoryMiB`) --
   a `maxTotalCpu: "4.5"` cap behaves like `5`.
