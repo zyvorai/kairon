@@ -11,10 +11,22 @@ controller:
   # already running on a node sharing this container's network namespace
   # (found the hard way once already -- see console.port below).
   healthPort: 8080
-  # A single reconciler cluster-wide; lightweight by design (see
-  # internal/controller: no in-memory cache, every tick re-lists from the
-  # API). Raise for very large fleets if reconcile ticks start lagging
-  # -- there's no data yet on the real breaking point (see ROADMAP.md).
+  # A single reconciler is lightweight by design (see internal/controller:
+  # no in-memory cache, every tick re-lists from the API) -- raising
+  # replicaCount is about HA, not throughput; there's no data yet on this
+  # reconcile loop's real per-replica breaking point (see ROADMAP.md).
+  replicaCount: 1
+  leaderElection:
+    # Coordinates multiple replicas via a coordination.k8s.io/v1 Lease
+    # (see internal/leaderelection) so only the elected leader reconciles
+    # -- required once replicaCount > 1 (two un-coordinated reconcilers
+    # would race on the same Machines/MachineMigrations), but on by
+    # default even at replicaCount: 1 since it's a no-op single-writer
+    # race there and this way scaling up later never means flipping a
+    # flag on a config an operator forgot existed. The admission webhook
+    # and health/metrics server are unaffected -- they're stateless
+    # per-request reads, served from every replica regardless.
+    enabled: true
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 250m, memory: 128Mi}

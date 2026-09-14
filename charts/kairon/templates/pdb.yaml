@@ -2,13 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 {{/*
-kairon-controller and kairon-ui both run a single replica by design (see
-values.yaml) -- a PodDisruptionBudget here doesn't provide HA, it only
-stops a voluntary eviction (e.g. `kubectl drain`) from taking the only
-replica out without going through PDB accounting. maxUnavailable: 0 makes
-that "don't voluntarily evict the only replica" intent explicit. Default
-on: unlike networkpolicy.yaml, this has no real downside -- it only
-affects voluntary eviction, never the app's own traffic.
+kairon-controller and kairon-ui both default to a single replica (see
+controller.replicaCount/ui.replicaCount in values.yaml, and for
+kairon-controller, controller.leaderElection for what actually makes
+replicaCount > 1 safe) -- maxUnavailable: 0 unconditionally means "never
+voluntarily evict a replica of either without going through PDB
+accounting", regardless of replicaCount: at replicaCount: 1 that's "don't
+evict the only replica"; above 1 it's stricter than a typical PDB (it
+blocks a voluntary `kubectl drain` entirely rather than tolerating N-1),
+which is deliberate here since kairon-controller/kairon-ui are cheap
+enough that "drain requires an explicit override" is an acceptable
+default. Default on: unlike networkpolicy.yaml, this has no real
+downside -- it only affects voluntary eviction, never the app's own
+traffic.
 
 kairon-node is deliberately not covered here: it's a DaemonSet (one pod
 per capable node), and a PDB isn't a meaningful concept for a DaemonSet --

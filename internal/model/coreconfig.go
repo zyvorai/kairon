@@ -3,6 +3,8 @@
 
 package model
 
+import "time"
+
 // ConfigMap is the minimal core/v1 ConfigMap shape Kairon needs -- not a
 // general-purpose client. Used by internal/uiapi.Server to share session
 // revocation, login-lockout, and console-ticket state across kairon-ui
@@ -25,4 +27,23 @@ type Secret struct {
 	TypeMeta `json:",inline"`
 	Metadata ObjectMeta        `json:"metadata"`
 	Data     map[string][]byte `json:"data,omitempty"`
+}
+
+// Lease is the minimal coordination.k8s.io/v1 Lease shape Kairon needs for
+// kairon-controller's own leader election (see internal/leaderelection) --
+// not a general-purpose client. Pointer fields mirror the real API exactly
+// (an absent field there is a meaningful "never held"/"unset", not a zero
+// value) and round-trip through encoding/json's omitempty cleanly.
+type Lease struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta `json:"metadata"`
+	Spec     LeaseSpec  `json:"spec,omitempty"`
+}
+
+type LeaseSpec struct {
+	HolderIdentity       *string    `json:"holderIdentity,omitempty"`
+	LeaseDurationSeconds *int32     `json:"leaseDurationSeconds,omitempty"`
+	AcquireTime          *time.Time `json:"acquireTime,omitempty"`
+	RenewTime            *time.Time `json:"renewTime,omitempty"`
+	LeaseTransitions     *int32     `json:"leaseTransitions,omitempty"`
 }

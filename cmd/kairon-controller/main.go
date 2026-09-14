@@ -18,6 +18,7 @@ import (
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/leaderelection"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/scheduler"
 	"github.com/zyvorai/kairon/internal/tlsreload"
@@ -44,6 +45,9 @@ func run() int {
 	webhookAddr := flag.String("webhook-addr", ":8443", "validating admission webhook listen address (see -webhook-tls-cert/-key)")
 	webhookTLSCert := flag.String("webhook-tls-cert", "", "TLS certificate PEM for the admission webhook; must be set together with -webhook-tls-key. Empty (the default) disables the webhook -- MachineQuota/MachineDisruptionBudget enforcement stays reconcile-loop/kaironctl-only, same as before this flag existed")
 	webhookTLSKey := flag.String("webhook-tls-key", "", "TLS private key PEM for the admission webhook; must be set together with -webhook-tls-cert")
+	leaderElect := flag.Bool("leader-elect", false, "coordinate multiple kairon-controller replicas via a coordination.k8s.io/v1 Lease (see internal/leaderelection) so only the elected leader reconciles -- the admission webhook and health/metrics server are unaffected and always serve from every replica. Off by default for backward compatibility: turning it on requires the ServiceAccount to be granted the small, namespaced leases RBAC this needs, and -leader-elect-namespace (or KAIRON_CONTROLLER_NAMESPACE) to be set -- the Helm chart's controller.leaderElection.enabled turns both on together. Safe to enable even with a single replica; required once controller.replicaCount > 1")
+	leaderElectNamespace := flag.String("leader-elect-namespace", os.Getenv("KAIRON_CONTROLLER_NAMESPACE"), "namespace holding the leader-election Lease object; required when -leader-elect is set (defaults to KAIRON_CONTROLLER_NAMESPACE)")
+	leaderElectLeaseName := flag.String("leader-elect-lease-name", "kairon-controller", "name of the leader-election Lease object")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -53,6 +57,10 @@ func run() int {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if (*webhookTLSCert == "") != (*webhookTLSKey == "") {
 		log.Error("secure startup refused", "reason", "-webhook-tls-cert and -webhook-tls-key must be set together")
+		return 1
+	}
+	if *leaderElect && *leaderElectNamespace == "" {
+		log.Error("secure startup refused", "reason", "-leader-elect requires -leader-elect-namespace (or KAIRON_CONTROLLER_NAMESPACE) to be set")
 		return 1
 	}
 	var webhookTLSConfig *tls.Config
@@ -96,9 +104,26 @@ func run() int {
 		log.Info("admission webhook listening", "address", *webhookAddr)
 	}
 	hs.SetReady(true)
-	if err := ctl.Run(ctx, *interval); err != nil && ctx.Err() == nil {
-		log.Error("controller stopped", "error", err)
-		return 1
+	runReconcile := func(runCtx context.Context) {
+		if err := ctl.Run(runCtx, *interval); err != nil && runCtx.Err() == nil {
+			log.Error("controller stopped", "error", err)
+		}
 	}
+	if !*leaderElect {
+		runReconcile(ctx)
+		return 0
+	}
+	identity, err := os.Hostname()
+	if err != nil || identity == "" {
+		identity = "unknown"
+	}
+	elector := &leaderelection.Elector{
+		Kube:      kc,
+		Namespace: *leaderElectNamespace,
+		Name:      *leaderElectLeaseName,
+		Identity:  fmt.Sprintf("%s_%d", identity, os.Getpid()),
+		Log:       log,
+	}
+	elector.Run(ctx, runReconcile)
 	return 0
 }

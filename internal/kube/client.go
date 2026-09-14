@@ -47,6 +47,17 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// IsConflict reports whether err is the API server rejecting a write
+// because the object's resourceVersion is stale -- internal/leaderelection
+// relies on this to detect it lost a race to acquire/renew/take over a
+// Lease, rather than treating the write as a hard failure.
+func IsConflict(err error) bool {
+	if e, ok := err.(*APIError); ok {
+		return e.StatusCode == http.StatusConflict
+	}
+	return false
+}
+
 func FromEnvironment() (*Client, error) {
 	if base := os.Getenv("KAIRON_KUBE_URL"); base != "" {
 		return New(base, os.Getenv("KAIRON_KUBE_TOKEN"), os.Getenv("KAIRON_KUBE_CA"), os.Getenv("KAIRON_KUBE_INSECURE") == "true")
@@ -406,4 +417,38 @@ func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	var list model.NodeList
 	err := c.request(ctx, http.MethodGet, "/api/v1/nodes", nil, &list, "")
 	return list.Items, err
+}
+
+func leasePath(ns, name string) string {
+	return fmt.Sprintf("/apis/coordination.k8s.io/v1/namespaces/%s/leases/%s", url.PathEscape(ns), url.PathEscape(name))
+}
+
+// GetLease, CreateLease, and UpdateLease back kairon-controller's own
+// leader election (see internal/leaderelection) -- a coordination.k8s.io/v1
+// Lease is a core Kubernetes API type, not one of Kairon's own
+// kairon.zyvor.dev CRDs, hence the separate leasePath helper rather than
+// namespacePath/namespacedObjectPath above.
+func (c *Client) GetLease(ctx context.Context, ns, name string) (model.Lease, error) {
+	var l model.Lease
+	err := c.request(ctx, http.MethodGet, leasePath(ns, name), nil, &l, "")
+	return l, err
+}
+
+func (c *Client) CreateLease(ctx context.Context, ns string, lease model.Lease) (model.Lease, error) {
+	var out model.Lease
+	path := fmt.Sprintf("/apis/coordination.k8s.io/v1/namespaces/%s/leases", url.PathEscape(ns))
+	err := c.request(ctx, http.MethodPost, path, lease, &out, "")
+	return out, err
+}
+
+// UpdateLease requires lease.Metadata.ResourceVersion to be the version
+// last read. The API server rejects the write with HTTP 409 (surfaced as
+// an *APIError that IsConflict recognizes) if the Lease changed since --
+// exactly how internal/leaderelection detects it lost a race to renew or
+// take over the lease, without needing a separate compare-and-swap
+// primitive of its own.
+func (c *Client) UpdateLease(ctx context.Context, ns string, lease model.Lease) (model.Lease, error) {
+	var out model.Lease
+	err := c.request(ctx, http.MethodPut, leasePath(ns, lease.Metadata.Name), lease, &out, "")
+	return out, err
 }

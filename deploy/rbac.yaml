@@ -61,6 +61,34 @@ subjects:
     name: kairon-controller
     namespace: kairon-system
 ---
+# Only needed if kairon-controller is started with -leader-elect=true (off
+# by default -- see cmd/kairon-controller/main.go and
+# internal/leaderelection). Namespaced, not cluster-wide: leader election
+# only ever touches one Lease in kairon-controller's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kairon-controller-leader-election
+  namespace: kairon-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kairon-controller-leader-election
+  namespace: kairon-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kairon-controller-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: kairon-controller
+    namespace: kairon-system
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
