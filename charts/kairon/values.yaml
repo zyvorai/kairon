@@ -18,6 +18,23 @@ controller:
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 250m, memory: 128Mi}
+  podDisruptionBudget:
+    # Only affects voluntary eviction (e.g. `kubectl drain`) of the single
+    # kairon-controller replica -- essentially no downside, so on by
+    # default (see templates/pdb.yaml).
+    enabled: true
+  networkPolicy:
+    # Off by default: restricts ingress to kairon-controller's health/metrics
+    # port (and the webhook port, if webhook.enabled) to same-namespace pods
+    # plus allowIngressFrom below. Get allowIngressFrom wrong (e.g. Prometheus
+    # lives in another namespace) and scraping breaks silently -- see
+    # templates/networkpolicy.yaml.
+    enabled: false
+    # Each entry is a full NetworkPolicyPeer (namespaceSelector and/or
+    # podSelector), e.g.:
+    #   allowIngressFrom:
+    #     - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}
+    allowIngressFrom: []
 node:
   image:
     repository: ghcr.io/zyvorai/kairon-node
@@ -115,6 +132,33 @@ console:
     # default; unlike the console token, a real CA/cert pair isn't
     # something Helm should be minting for you.
     secretName: ""
+webhook:
+  # Validating admission webhooks closing the two gaps documented on
+  # MachineQuota/MachineDisruptionBudget: without this, a namespace can
+  # always create a Machine object even over quota (it just stays Pending,
+  # see internal/controller/quota.go), and a MachineMigration created
+  # directly through the API bypasses any MachineDisruptionBudget entirely
+  # (see internal/controller/disruption.go). Off by default -- like
+  # migration.tlsSecretName/console.tls.secretName above, this chart does
+  # not mint a serving certificate for you; the webhook can't come up
+  # without one, so leaving it off is the only safe default.
+  enabled: false
+  # A pre-created Secret with tls.crt/tls.key -- kairon-controller's
+  # webhook HTTPS serving certificate. Required when enabled is true.
+  tlsSecretName: ""
+  # The CA that signed tlsSecretName's certificate, base64-encoded PEM --
+  # goes into the ValidatingWebhookConfiguration's caBundle so the API
+  # server can verify kairon-controller's cert when calling the webhook.
+  # Get this wrong (or let it expire without rotating) and every Machine/
+  # MachineMigration write in the cluster starts failing per failurePolicy
+  # below -- there is deliberately no default.
+  caBundle: ""
+  port: 8443
+  # Fail closes the actual bypass (a webhook outage blocks all Machine/
+  # MachineMigration writes cluster-wide); Ignore trades that guarantee
+  # for availability -- enforcement becomes best-effort, same as before
+  # this webhook existed.
+  failurePolicy: Fail
 metrics:
   # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,
   # for clusters running prometheus-operator. Off by default since not every
@@ -151,13 +195,25 @@ ui:
     # Real per-operator username/password login (docs/getting-started.md),
     # alongside -- not instead of -- the legacy shared ui.token above.
     # Generate each entry's passwordHash with: kairon-ui -hash-password 'the password'
+    # Set admin: true on an entry to let that account reset another
+    # operator's password via POST /api/v1/users/{username}/password
+    # (every operator can always change their own via
+    # POST /api/v1/auth/password). Example:
+    #   users:
+    #     - {username: alice, passwordHash: "$2a$...", admin: true}
     # When empty (the default) and nothing above is set either, the chart
     # seeds one default "admin" account instead, with a random password it
     # generates once (see NOTES.txt after install/upgrade) -- so a fresh
-    # `helm install` with no ui.* values still gets a real, safe login.
+    # `helm install` with no ui.* values still gets a real, safe login. That
+    # seeded account can sign in and use the dashboard like any other, but
+    # (unlike a named ui.auth.users entry) can't change its own password
+    # in place -- graduate to a named ui.auth.users entry for that.
     users: []
     # existingSecret: a pre-created Secret with a users.json key (a JSON
-    # array of {username, passwordHash}) instead of ui.auth.users above.
+    # array of {username, passwordHash, admin}) instead of ui.auth.users
+    # above. When set, kairon-ui treats it as externally managed and never
+    # writes a password change back into it -- POST /api/v1/auth/password
+    # and POST /api/v1/users/{username}/password are refused (501).
     existingSecret: ""
     existingSecretKey: "users.json"
     # existingSessionSecret: a pre-created Secret holding the session-token
@@ -181,3 +237,15 @@ ui:
   resources:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
+  podDisruptionBudget:
+    # See controller.podDisruptionBudget above -- same reasoning, same
+    # essentially-no-downside default.
+    enabled: true
+  networkPolicy:
+    # See controller.networkPolicy above. Restricts ingress to kairon-ui's
+    # service port to same-namespace pods plus allowIngressFrom -- if
+    # ui.ingress is enabled and your ingress controller lives in a
+    # different namespace, it needs an entry here too, or requests will be
+    # silently dropped.
+    enabled: false
+    allowIngressFrom: []

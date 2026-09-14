@@ -19,6 +19,10 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+// newUserTestServer leaves UsersSecretName unset, same as a deployment
+// with no runtime password-persistence configured (ui.auth.existingSecret,
+// or a bare-metal install) -- most tests exercising login/session behavior
+// don't care about persistence and shouldn't need to think about it.
 func newUserTestServer(t *testing.T, users []User, sessionSecret string) *Server {
 	t.Helper()
 	fk := newFakeKube()
@@ -29,6 +33,29 @@ func newUserTestServer(t *testing.T, users []User, sessionSecret string) *Server
 		t.Fatalf("kube.New: %v", err)
 	}
 	return &Server{Kube: kc, Users: users, SessionSecret: []byte(sessionSecret)}
+}
+
+// newUserTestServerWithFake is newUserTestServer but lets the caller keep a
+// handle on the fake Kubernetes API double (e.g. to inspect what got
+// persisted to a Secret), and wires UsersSecretName/-Key/-Namespace so
+// setOwnPassword/resetPassword's persistUsers path is exercised the same
+// way it is in production, not left silently disabled.
+func newUserTestServerWithFake(t *testing.T, fk *fakeKube, users []User, sessionSecret string) *Server {
+	t.Helper()
+	srv := httptest.NewServer(fk.handler())
+	t.Cleanup(srv.Close)
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	return &Server{
+		Kube:                 kc,
+		Users:                users,
+		SessionSecret:        []byte(sessionSecret),
+		UsersSecretNamespace: "default",
+		UsersSecretName:      "kairon-ui-users",
+		UsersSecretKey:       "users.json",
+	}
 }
 
 func hashFor(t *testing.T, password string) string {
@@ -156,7 +183,7 @@ func TestSessionRejectsExpiredAndTamperedTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("signSession: %v", err)
 	}
-	if _, _, err := verifySession(key, expired); err == nil {
+	if _, _, _, err := verifySession(key, expired); err == nil {
 		t.Fatal("expected expired session to be rejected")
 	}
 
@@ -168,11 +195,11 @@ func TestSessionRejectsExpiredAndTamperedTokens(t *testing.T) {
 	if tampered == valid {
 		t.Fatal("test setup did not actually tamper the token")
 	}
-	if _, _, err := verifySession(key, tampered); err == nil {
+	if _, _, _, err := verifySession(key, tampered); err == nil {
 		t.Fatal("expected tampered session to be rejected")
 	}
 
-	if _, _, err := verifySession([]byte("wrong-key"), valid); err == nil {
+	if _, _, _, err := verifySession([]byte("wrong-key"), valid); err == nil {
 		t.Fatal("expected session signed with a different key to be rejected")
 	}
 }

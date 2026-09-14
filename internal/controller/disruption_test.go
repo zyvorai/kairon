@@ -1,7 +1,7 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-package main
+package controller
 
 import (
 	"testing"
@@ -30,15 +30,15 @@ func TestAdmitDisruptionAllowsUntilBudgetExhausted(t *testing.T) {
 		webMachine("web-2", "node-a", "Running"),
 		webMachine("web-3", "node-a", "Running"),
 	}
-	states, err := loadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "2")}, machines, nil)
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "2")}, machines, nil)
 	if err != nil {
-		t.Fatalf("loadBudgetStates: %v", err)
+		t.Fatalf("LoadBudgetStates: %v", err)
 	}
 	// 3 healthy, minAvailable 2 -> exactly 1 disruption allowed.
-	if reason := admitDisruption(states, machines[0]); reason != "" {
+	if reason := AdmitDisruption(states, machines[0]); reason != "" {
 		t.Fatalf("first disruption should be admitted, got reason %q", reason)
 	}
-	if reason := admitDisruption(states, machines[1]); reason == "" {
+	if reason := AdmitDisruption(states, machines[1]); reason == "" {
 		t.Fatal("second disruption should be blocked once the budget is spent")
 	}
 }
@@ -53,11 +53,11 @@ func TestAdmitDisruptionIgnoresMachinesAlreadyMidMigration(t *testing.T) {
 	}
 	// minAvailable 2, but web-1 is already mid-migration -> only web-2 counts
 	// as healthy, so disrupting it too would go below minAvailable.
-	states, err := loadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "2")}, machines, migrations)
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "2")}, machines, migrations)
 	if err != nil {
-		t.Fatalf("loadBudgetStates: %v", err)
+		t.Fatalf("LoadBudgetStates: %v", err)
 	}
-	if reason := admitDisruption(states, machines[1]); reason == "" {
+	if reason := AdmitDisruption(states, machines[1]); reason == "" {
 		t.Fatal("expected the in-flight migration to count against currentHealthy, blocking this disruption")
 	}
 }
@@ -75,24 +75,24 @@ func TestAdmitDisruptionSpendsAllowanceAcrossEveryMatchingBudget(t *testing.T) {
 		Metadata: model.ObjectMeta{Name: "team-pdb", Namespace: "prod"},
 		Spec:     model.MachineDisruptionBudgetSpec{Selector: map[string]string{"team": "payments"}, MaxUnavailable: "0"},
 	}
-	states, err := loadBudgetStates([]model.MachineDisruptionBudget{tierBudget, teamBudget}, []model.Machine{m}, nil)
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{tierBudget, teamBudget}, []model.Machine{m}, nil)
 	if err != nil {
-		t.Fatalf("loadBudgetStates: %v", err)
+		t.Fatalf("LoadBudgetStates: %v", err)
 	}
 	// tierBudget alone would allow 1 disruption, but teamBudget (maxUnavailable
 	// 0 out of the same 1 total machine) allows none -- the stricter budget wins.
-	if reason := admitDisruption(states, m); reason == "" {
+	if reason := AdmitDisruption(states, m); reason == "" {
 		t.Fatal("expected the stricter team budget to block this disruption")
 	}
 }
 
 func TestAdmitDisruptionMachineNotMatchingAnyBudgetIsAlwaysAllowed(t *testing.T) {
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "unmanaged", Namespace: "prod"}, Status: model.MachineStatus{Phase: "Running"}}
-	states, err := loadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "100")}, []model.Machine{m}, nil)
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "100")}, []model.Machine{m}, nil)
 	if err != nil {
-		t.Fatalf("loadBudgetStates: %v", err)
+		t.Fatalf("LoadBudgetStates: %v", err)
 	}
-	if reason := admitDisruption(states, m); reason != "" {
+	if reason := AdmitDisruption(states, m); reason != "" {
 		t.Fatalf("expected no budget to apply, got reason %q", reason)
 	}
 }

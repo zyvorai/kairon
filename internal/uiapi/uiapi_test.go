@@ -30,6 +30,10 @@ type fakeKube struct {
 	migrations map[string]model.MachineMigration
 	snapshots  map[string]model.MachineSnapshot
 	nodes      []model.Node
+	// secrets holds only stringData, keyed by "namespace/name" -- enough
+	// to exercise Client.PatchSecretStringData (see
+	// uiapi.Server.persistUsers) without modeling a full core/v1 Secret.
+	secrets map[string]map[string]string
 }
 
 func newFakeKube() *fakeKube {
@@ -37,6 +41,7 @@ func newFakeKube() *fakeKube {
 		machines:   map[string]model.Machine{},
 		migrations: map[string]model.MachineMigration{},
 		snapshots:  map[string]model.MachineSnapshot{},
+		secrets:    map[string]map[string]string{},
 	}
 }
 
@@ -151,6 +156,23 @@ func (f *fakeKube) handler() http.Handler {
 
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: f.nodes})
+
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/") && strings.Contains(r.URL.Path, "/secrets/"):
+			key := strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces/")
+			key = strings.Replace(key, "/secrets/", "/", 1)
+			var patch struct {
+				StringData map[string]string `json:"stringData"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&patch)
+			existing := f.secrets[key]
+			if existing == nil {
+				existing = map[string]string{}
+			}
+			for k, v := range patch.StringData {
+				existing[k] = v
+			}
+			f.secrets[key] = existing
+			w.WriteHeader(http.StatusOK)
 
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

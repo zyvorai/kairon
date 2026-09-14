@@ -1,11 +1,14 @@
 export const token = () => sessionStorage.getItem('kairon-token') || '';
 export const username = () => sessionStorage.getItem('kairon-username') || '';
+export const isAdmin = () => sessionStorage.getItem('kairon-is-admin') === 'true';
 
-export function setSession(tok: string, user: string) {
+export function setSession(tok: string, user: string, admin = false) {
   if (tok) sessionStorage.setItem('kairon-token', tok);
   else sessionStorage.removeItem('kairon-token');
   if (user) sessionStorage.setItem('kairon-username', user);
   else sessionStorage.removeItem('kairon-username');
+  if (user && admin) sessionStorage.setItem('kairon-is-admin', 'true');
+  else sessionStorage.removeItem('kairon-is-admin');
 }
 
 // setToken keeps the legacy raw-token entry point (still used by the
@@ -66,7 +69,7 @@ export async function login(usernameInput: string, password: string): Promise<vo
   });
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   const out = await r.json();
-  setSession(out.token, out.username);
+  setSession(out.token, out.username, out.isAdmin);
 }
 
 export async function logout(): Promise<void> {
@@ -75,6 +78,23 @@ export async function logout(): Promise<void> {
   } finally {
     setSession('', '');
   }
+}
+
+// changeOwnPassword re-proves currentPassword (a "confirm password" step,
+// same idea as GitHub/GitLab account settings) and, on success, replaces
+// it with newPassword -- see POST /api/v1/auth/password in
+// internal/uiapi/auth.go. Only meaningful for a session-token login; the
+// legacy shared token has no per-user identity to attach a password to.
+export function changeOwnPassword(currentPassword: string, newPassword: string): Promise<void> {
+  return apiJSON('/api/v1/auth/password', 'POST', { currentPassword, newPassword });
+}
+
+// resetUserPassword lets an admin account set another operator's password
+// without hand-crafting a bcrypt hash and redeploying -- see
+// POST /api/v1/users/{username}/password. Immediately invalidates that
+// operator's outstanding sessions server-side.
+export function resetUserPassword(targetUsername: string, newPassword: string): Promise<void> {
+  return apiJSON(`/api/v1/users/${encodeURIComponent(targetUsername)}/password`, 'POST', { newPassword });
 }
 
 export interface Config {

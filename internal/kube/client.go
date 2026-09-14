@@ -315,6 +315,12 @@ func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.Mach
 	return list.Items, err
 }
 
+func (c *Client) ListMachineDisruptionBudgetsNamespace(ctx context.Context, ns string) ([]model.MachineDisruptionBudget, error) {
+	var list model.MachineDisruptionBudgetList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinedisruptionbudgets"), nil, &list, "")
+	return list.Items, err
+}
+
 func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, ns string, pvc model.PersistentVolumeClaim) (model.PersistentVolumeClaim, error) {
 	var out model.PersistentVolumeClaim
 	err := c.request(ctx, http.MethodPost, fmt.Sprintf("/api/v1/namespaces/%s/persistentvolumeclaims", url.PathEscape(ns)), pvc, &out, "")
@@ -333,6 +339,18 @@ func (c *Client) GetPersistentVolume(ctx context.Context, name string) (model.Pe
 	path := "/api/v1/persistentvolumes/" + url.PathEscape(name)
 	err := c.request(ctx, http.MethodGet, path, nil, &pv, "")
 	return pv, err
+}
+
+// PatchSecretStringData merge-patches a core/v1 Secret's stringData field
+// -- the API server base64-encodes each value into .data itself, so
+// callers never handle encoding. Used by internal/uiapi to persist a
+// runtime password change back into the kairon-ui-users Secret (see
+// uiapi.Server.persistUsers); there is deliberately no generic PatchSecret
+// or GetSecret here, mirroring this client's existing one-method-per-intent
+// shape rather than a passthrough.
+func (c *Client) PatchSecretStringData(ctx context.Context, ns, name string, stringData map[string]string) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", url.PathEscape(ns), url.PathEscape(name))
+	return c.request(ctx, http.MethodPatch, path, map[string]any{"stringData": stringData}, nil, "application/merge-patch+json")
 }
 
 func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {

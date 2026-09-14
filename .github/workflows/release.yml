@@ -1,0 +1,63 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+# Publishes to ghcr.io/zyvorai/kairon-{controller,node,ui} on a version tag
+# push -- the piece ci.yml's own container job deliberately doesn't do (see
+# its comment). Before this workflow existed, nothing in this repository's
+# CI published anywhere; the images at ghcr.io/zyvorai/kairon-* were
+# produced by some out-of-repo process this repo couldn't vouch for. This
+# is now the one place that mints an "official" kairon-* image tag.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        target: [controller, node, ui]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # push: false/load: true here on purpose: build the exact bits once,
+      # scan those exact bits, and only then `docker push` them -- not a
+      # second build-and-push that could, even if only in principle,
+      # produce something different from what was scanned.
+      - name: Build ${{ matrix.target }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: |
+            ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}
+            ghcr.io/zyvorai/kairon-${{ matrix.target }}:latest
+      - name: Scan ${{ matrix.target }} image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+      # Only reached if the scan above passed -- a vulnerable image is
+      # never pushed, matching the failurePolicy: Fail posture used
+      # elsewhere in this GA pass (fail the guarantee closed, not open).
+      - name: Push ${{ matrix.target }} image
+        run: |
+          docker push "ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}"
+          docker push "ghcr.io/zyvorai/kairon-${{ matrix.target }}:latest"

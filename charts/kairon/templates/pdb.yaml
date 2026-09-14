@@ -1,0 +1,36 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+{{/*
+kairon-controller and kairon-ui both run a single replica by design (see
+values.yaml) -- a PodDisruptionBudget here doesn't provide HA, it only
+stops a voluntary eviction (e.g. `kubectl drain`) from taking the only
+replica out without going through PDB accounting. maxUnavailable: 0 makes
+that "don't voluntarily evict the only replica" intent explicit. Default
+on: unlike networkpolicy.yaml, this has no real downside -- it only
+affects voluntary eviction, never the app's own traffic.
+
+kairon-node is deliberately not covered here: it's a DaemonSet (one pod
+per capable node), and a PDB isn't a meaningful concept for a DaemonSet --
+draining a node already takes its kairon-node pod with it regardless, and
+Kubernetes evicts DaemonSet pods without consulting PDBs during a drain
+that also removes the node itself.
+*/}}
+{{ if .Values.controller.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: kairon-controller, namespace: {{ .Release.Namespace }}}
+spec:
+  maxUnavailable: 0
+  selector: {matchLabels: {app.kubernetes.io/name: kairon-controller}}
+---
+{{ end }}
+{{ if and .Values.ui.enabled .Values.ui.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: kairon-ui, namespace: {{ .Release.Namespace }}}
+spec:
+  maxUnavailable: 0
+  selector: {matchLabels: {app.kubernetes.io/name: kairon-ui}}
+---
+{{ end }}

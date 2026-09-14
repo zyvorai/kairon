@@ -4,6 +4,7 @@ import Overview from './pages/Overview';
 import Machines from './pages/Machines';
 import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
+import Account from './pages/Account';
 import Login from './pages/Login';
 import { logout, token, UNAUTHORIZED_EVENT, username } from './api';
 
@@ -44,6 +45,7 @@ export default function App() {
     machines: <Machines onMigrate={goMigrate} onSnapshot={goSnapshot} />,
     migrations: <Migrations prefillMachine={prefillMachine} />,
     snapshots: <Snapshots prefillMachine={prefillMachine} />,
+    account: <Account />,
   }[page];
 
   return (

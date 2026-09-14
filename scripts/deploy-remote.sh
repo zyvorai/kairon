@@ -86,6 +86,23 @@ Flags:
                           FluxVM's own VNC socket has no auth of its own.
   --console-port=N        kairon-node's console relay port (default 8090),
                           same auto-fallback-if-busy behavior as --node-port.
+  --console-tls           Enable one-way TLS on the kairon-ui -> kairon-node
+                          console relay hop (plaintext by default). Requires
+                          --with-console. With no --console-tls-cert/-key/-ca,
+                          a private CA + server certificate is generated
+                          locally (openssl) and installed on the remote host;
+                          its SAN list is a best-effort guess (this host's
+                          own IPs/hostname) since kairon-ui actually dials
+                          whatever address Kubernetes reports as this Node's
+                          InternalIP, which this script cannot always know --
+                          if verification fails, regenerate with an explicit
+                          --console-tls-cert/-key/-ca covering the right one.
+  --console-tls-cert=PATH  Bring your own console relay server certificate
+                          (local path). Must be given together with
+                          --console-tls-key and --console-tls-ca.
+  --console-tls-key=PATH   Bring your own console relay server private key.
+  --console-tls-ca=PATH    CA certificate that signed --console-tls-cert;
+                          installed on the kairon-ui side to verify it.
   --no-start              Install files but do not enable/start the service(s).
   --sync-only             Copy binaries + unit files to the remote host only;
                           skip user/dir/config/unit install and service start.
@@ -167,6 +184,11 @@ WITH_CONSOLE=0
 CONSOLE_PORT="8090"
 CONSOLE_PORT_EXPLICIT=0
 RESOLVED_CONSOLE_TOKEN=""
+WITH_CONSOLE_TLS=0
+CONSOLE_TLS_CERT=""
+CONSOLE_TLS_KEY=""
+CONSOLE_TLS_CA=""
+RESOLVED_CONSOLE_TLS_SOURCE="none"
 NO_START=0
 SYNC_ONLY=0
 DRY_RUN=0
@@ -226,6 +248,10 @@ while [[ $# -gt 0 ]]; do
     --ui-port=*) UI_PORT="${1#*=}"; UI_PORT_EXPLICIT=1 ;;
     --with-console) WITH_CONSOLE=1 ;;
     --console-port=*) CONSOLE_PORT="${1#*=}"; CONSOLE_PORT_EXPLICIT=1 ;;
+    --console-tls) WITH_CONSOLE_TLS=1 ;;
+    --console-tls-cert=*) CONSOLE_TLS_CERT="${1#*=}" ;;
+    --console-tls-key=*) CONSOLE_TLS_KEY="${1#*=}" ;;
+    --console-tls-ca=*) CONSOLE_TLS_CA="${1#*=}" ;;
     --no-start) NO_START=1 ;;
     --sync-only) SYNC_ONLY=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -279,6 +305,23 @@ if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" && "$MIGRATION_CONFIGURED" != "1" ]]
 fi
 if [[ "$WITH_CONSOLE" == "1" && "$WITH_UI" != "1" ]]; then
   die "--with-console requires --with-ui (the browser only ever talks to kairon-node's console relay through kairon-ui)"
+fi
+
+console_tls_paths_given=0
+for p in "$CONSOLE_TLS_CERT" "$CONSOLE_TLS_KEY" "$CONSOLE_TLS_CA"; do
+  [[ -n "$p" ]] && console_tls_paths_given=$((console_tls_paths_given + 1))
+done
+if [[ "$console_tls_paths_given" -gt 0 && "$console_tls_paths_given" -lt 3 ]]; then
+  die "--console-tls-cert, --console-tls-key and --console-tls-ca must be given together (fail-closed, matches --migration-ca/-cert/-key's own validation)"
+fi
+if [[ "$console_tls_paths_given" -eq 3 ]]; then
+  [[ "$WITH_CONSOLE_TLS" == "1" ]] || die "--console-tls-cert/-key/-ca require --console-tls"
+  for p in "$CONSOLE_TLS_CERT" "$CONSOLE_TLS_KEY" "$CONSOLE_TLS_CA"; do
+    [[ -f "$p" ]] || die "console TLS file not found: $p"
+  done
+fi
+if [[ "$WITH_CONSOLE_TLS" == "1" && "$WITH_CONSOLE" != "1" ]]; then
+  die "--console-tls requires --with-console"
 fi
 
 if [[ ${#POSITIONAL[@]} -ge 1 ]]; then
@@ -414,6 +457,7 @@ $([[ "$WITH_UI" == "1" ]] && echo "UI port:                 ${UI_PORT}$([[ "$UI_
 $([[ "$WITH_UI" == "1" ]] && echo "Dashboard token:          $(if [[ -n "$UI_TOKEN" ]]; then echo "provided via --ui-token"; elif [[ "$UI_ALLOW_UNAUTHENTICATED" == "1" ]]; then echo "none (--ui-allow-unauthenticated -- open dashboard, local/dev only)"; else echo "will be auto-generated at deploy time (openssl rand -hex 24) and printed once at the end"; fi)")
 $([[ "$WITH_CONSOLE" == "1" ]] && echo "Console relay port:       ${CONSOLE_PORT}$([[ "$CONSOLE_PORT_EXPLICIT" != "1" ]] && echo " (default; auto-replaced with a random free port if busy)")")
 $([[ "$WITH_CONSOLE" == "1" ]] && echo "Console relay token:      will be auto-generated at deploy time (openssl rand -hex 32), shared between kairon-node and kairon-ui only -- never shown to an operator")
+$([[ "$WITH_CONSOLE_TLS" == "1" ]] && echo "Console relay TLS:        $(if [[ -n "$CONSOLE_TLS_CERT" ]]; then echo "provided via --console-tls-cert/-key/-ca"; else echo "self-signed CA + cert will be auto-generated at deploy time (openssl)"; fi)")
 Start after install:      $([[ "$NO_START" == "1" ]] && echo "no (--no-start)" || echo "yes")
 
 Remote paths:
@@ -595,6 +639,56 @@ run_deploy() {
   local_stage="$(mktemp -d)"
   trap 'rm -rf "$local_stage"' RETURN
 
+  if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+    if [[ -n "$CONSOLE_TLS_CERT" ]]; then
+      RESOLVED_CONSOLE_TLS_SOURCE="explicit"
+      cp "$CONSOLE_TLS_CA" "$local_stage/console-tls-ca.pem"
+      cp "$CONSOLE_TLS_CERT" "$local_stage/console-tls-cert.pem"
+      cp "$CONSOLE_TLS_KEY" "$local_stage/console-tls-key.pem"
+      ok "using provided console TLS materials (--console-tls-cert/-key/-ca)"
+    else
+      command -v openssl >/dev/null 2>&1 || die "--console-tls needs a certificate: install 'openssl' (used to auto-generate a self-signed one), or pass --console-tls-cert/-key/-ca"
+      # Auto-generated, same convention as the console/UI tokens above: a
+      # private CA + server cert scoped to this one deploy, not something
+      # an operator is expected to already have lying around. kairon-ui
+      # verifies this cert against whatever address it dials kairon-node's
+      # console relay at (the Machine's Node's status.addresses internal
+      # IP, per internal/uiapi/console.go's nodeInternalIP -- NOT
+      # necessarily $HOST_ARG, which may be a different address, e.g. a
+      # public IP used only for SSH) -- so the SAN list below is
+      # deliberately broad (every address this host reports, plus the
+      # hostname and $HOST_ARG) to maximize the chance it already covers
+      # whatever Kubernetes reports as this Node's InternalIP. If it
+      # doesn't, TLS verification will fail with a clear certificate error
+      # naming the mismatched address -- regenerate with an explicit
+      # --console-tls-cert/-key/-ca covering the right one.
+      info "auto-generating a self-signed console TLS certificate..."
+      local remote_ips san_list
+      remote_ips="$(ssh_cmd "$REMOTE" "hostname -I" 2>/dev/null || true)"
+      san_list="DNS:${remote_hostname},IP:127.0.0.1"
+      local ip
+      for ip in $remote_ips; do
+        san_list="${san_list},IP:${ip}"
+      done
+      if [[ "$HOST_ARG" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ && "$san_list" != *"IP:${HOST_ARG}"* ]]; then
+        san_list="${san_list},IP:${HOST_ARG}"
+      fi
+      openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+        -keyout "$local_stage/console-tls-ca-key.pem" -out "$local_stage/console-tls-ca.pem" \
+        -subj "/CN=kairon-console-ca" >/dev/null 2>&1
+      openssl req -newkey rsa:2048 -sha256 -nodes \
+        -keyout "$local_stage/console-tls-key.pem" -out "$local_stage/console-tls.csr" \
+        -subj "/CN=${remote_hostname}" >/dev/null 2>&1
+      openssl x509 -req -sha256 -days 825 \
+        -in "$local_stage/console-tls.csr" \
+        -CA "$local_stage/console-tls-ca.pem" -CAkey "$local_stage/console-tls-ca-key.pem" -CAcreateserial \
+        -out "$local_stage/console-tls-cert.pem" \
+        -extfile <(printf 'subjectAltName=%s' "$san_list") >/dev/null 2>&1
+      RESOLVED_CONSOLE_TLS_SOURCE="generated"
+      ok "generated console TLS certificate (SAN: $san_list)"
+    fi
+  fi
+
   {
     printf 'WITH_CONTROLLER=%q\n' "$WITH_CONTROLLER"
     printf 'NO_START=%q\n' "$NO_START"
@@ -626,6 +720,7 @@ run_deploy() {
     printf 'CONSOLE_TOKEN=%q\n' "$RESOLVED_CONSOLE_TOKEN"
     printf 'CONSOLE_PORT=%q\n' "$CONSOLE_PORT"
     printf 'CONSOLE_PORT_EXPLICIT=%q\n' "$CONSOLE_PORT_EXPLICIT"
+    printf 'WITH_CONSOLE_TLS=%q\n' "$WITH_CONSOLE_TLS"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -733,6 +828,13 @@ if [[ ! -f /etc/kairon/kairon-node.env ]]; then
     else
       echo "#KAIRON_NODE_CONSOLE_TOKEN="
     fi
+    if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+      echo "KAIRON_NODE_CONSOLE_TLS_CERT=/etc/kairon/console-tls/cert.pem"
+      echo "KAIRON_NODE_CONSOLE_TLS_KEY=/etc/kairon/console-tls/key.pem"
+    else
+      echo "#KAIRON_NODE_CONSOLE_TLS_CERT="
+      echo "#KAIRON_NODE_CONSOLE_TLS_KEY="
+    fi
   } > /etc/kairon/kairon-node.env
   chmod 0640 /etc/kairon/kairon-node.env
   chown root:kairon /etc/kairon/kairon-node.env
@@ -750,6 +852,10 @@ else
     warn "--with-console was given but KAIRON_NODE_CONSOLE_TOKEN was NOT applied because the env file already exists"
     warn "edit /etc/kairon/kairon-node.env by hand (KAIRON_NODE_CONSOLE_TOKEN must match kairon-ui.env's), then: systemctl restart kairon-node"
   fi
+  if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+    warn "--console-tls was given but KAIRON_NODE_CONSOLE_TLS_CERT/_KEY were NOT applied because the env file already exists"
+    warn "edit /etc/kairon/kairon-node.env by hand, then: systemctl restart kairon-node"
+  fi
 fi
 
 if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
@@ -758,6 +864,14 @@ if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
   install -m 0640 -o root -g kairon ./migration-cert.pem /etc/kairon/migration/cert.pem
   install -m 0640 -o root -g kairon ./migration-key.pem /etc/kairon/migration/key.pem
   ok "installed migration mTLS materials to /etc/kairon/migration/"
+fi
+
+if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+  install -d -m 0750 -o root -g kairon /etc/kairon/console-tls
+  install -m 0640 -o root -g kairon ./console-tls-ca.pem /etc/kairon/console-tls/ca.crt
+  install -m 0640 -o root -g kairon ./console-tls-cert.pem /etc/kairon/console-tls/cert.pem
+  install -m 0640 -o root -g kairon ./console-tls-key.pem /etc/kairon/console-tls/key.pem
+  ok "installed console TLS materials to /etc/kairon/console-tls/"
 fi
 
 if [[ "$WITH_UI" == "1" ]]; then
@@ -786,6 +900,11 @@ if [[ "$WITH_UI" == "1" ]]; then
         echo "#KAIRON_NODE_CONSOLE_TOKEN="
         echo "#KAIRON_NODE_CONSOLE_PORT="
       fi
+      if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+        echo "KAIRON_NODE_CONSOLE_CA=/etc/kairon/console-tls/ca.crt"
+      else
+        echo "#KAIRON_NODE_CONSOLE_CA="
+      fi
     } > /etc/kairon/kairon-ui.env
     chmod 0640 /etc/kairon/kairon-ui.env
     chown root:kairon /etc/kairon/kairon-ui.env
@@ -799,6 +918,10 @@ if [[ "$WITH_UI" == "1" ]]; then
     if [[ "$WITH_CONSOLE" == "1" ]]; then
       warn "--with-console was given but KAIRON_NODE_CONSOLE_TOKEN/_PORT were NOT applied because the env file already exists"
       warn "edit /etc/kairon/kairon-ui.env by hand (KAIRON_NODE_CONSOLE_TOKEN must match kairon-node.env's), then: systemctl restart kairon-ui"
+    fi
+    if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+      warn "--console-tls was given but KAIRON_NODE_CONSOLE_CA was NOT applied because the env file already exists"
+      warn "edit /etc/kairon/kairon-ui.env by hand, then: systemctl restart kairon-ui"
     fi
   fi
 fi
@@ -889,6 +1012,9 @@ INSTALL_EOF
     cp "$MIGRATION_CERT" "$local_stage/migration-cert.pem"
     cp "$MIGRATION_KEY" "$local_stage/migration-key.pem"
     scp_files+=("$local_stage/migration-ca.pem" "$local_stage/migration-cert.pem" "$local_stage/migration-key.pem")
+  fi
+  if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+    scp_files+=("$local_stage/console-tls-ca.pem" "$local_stage/console-tls-cert.pem" "$local_stage/console-tls-key.pem")
   fi
   if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
     scp_files+=("$build_dir/kairon-migration-adapter-stub" "$REPO_ROOT/systemd/kairon-migration-adapter-stub.service")
@@ -1005,6 +1131,17 @@ INSTALL_EOF
         tip "read SECURITY.md's \"VNC console\" section before relying on this on a shared/untrusted network -- FluxVM's own VNC socket has no auth of its own"
       else
         tip "--with-console was given but at least one of kairon-node.env/kairon-ui.env already existed -- the auto-generated token was NOT applied to both; ssh in and compare 'sudo cat /etc/kairon/kairon-node.env /etc/kairon/kairon-ui.env'"
+      fi
+    fi
+
+    if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
+      if ssh_exec_privileged "$REMOTE" "${SUDO} test -f /etc/kairon/console-tls/cert.pem" >/dev/null 2>&1; then
+        ok "console relay TLS: enabled ($RESOLVED_CONSOLE_TLS_SOURCE certificate installed to /etc/kairon/console-tls/)"
+        if [[ "$RESOLVED_CONSOLE_TLS_SOURCE" == "generated" ]]; then
+          tip "kairon-ui verifies this cert against whatever address it dials kairon-node at (the Machine's Node's InternalIP) -- if the dashboard's console button fails with a TLS error, regenerate with an explicit --console-tls-cert/-key/-ca covering that address"
+        fi
+      else
+        tip "--console-tls was given but /etc/kairon/console-tls/cert.pem is missing on the remote host -- ssh in and check 'sudo journalctl -u kairon-node -n 50'"
       fi
     fi
   fi

@@ -2,7 +2,7 @@
 
 # Kairon
 
-### Kubernetes-native VMs — without KubeVirt, without libvirt, without a virt-launcher Pod
+### Real VMs, on Kubernetes, without the weight of KubeVirt
 
 **Kubernetes declares. Kairon orchestrates. FluxVM executes.**
 
@@ -13,188 +13,141 @@
 [![Release](https://img.shields.io/badge/version-v0.4.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
 [![Helm chart](https://img.shields.io/badge/Helm-0.4.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
-[![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#dashboard)
+[![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#the-dashboard)
 
-[Why Kairon](#why-kairon) · [Who this is for](#who-this-is-for) · [Architecture](docs/architecture.md) · [Getting started](docs/getting-started.md) · [Network Fabric](docs/network-fabric.md) · [Tutorial](docs/tutorials/network-fabric.md) · [Migration adapter](docs/migration-adapter.md) · [Recovery runbook](docs/runbook-migration-failures.md) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
+[Why](#why-kairon-exists) · [Architecture](docs/architecture.md) · [Quick start](#quick-start) · [Dashboard](#the-dashboard) · [Guarding the fleet](#guarding-the-fleet) · [Getting started](docs/getting-started.md) · [Security](SECURITY.md) · [Roadmap](ROADMAP.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
 
 </div>
 
 ---
 
-## Contents
+## Why Kairon exists
 
-- [Why Kairon](#why-kairon)
-- [Who this is for](#who-this-is-for)
-- [What you get in v0.4](#what-you-get-in-v04)
-- [Quick start](#quick-start)
-- [Architecture](#architecture)
-- [Relocate a Machine](#relocate-a-machine)
-- [Dashboard](#dashboard)
-- [Snapshots & devices](#snapshots--devices)
-- [CLI](#cli)
-- [Operability](#operability)
-- [Develop](#develop)
-- [Documentation map](#documentation-map)
-- [Status](#status)
+KubeVirt makes a VM look like a Pod: a `virt-launcher` Pod wrapping libvirt wrapping QEMU, scheduled by the Kubernetes Pod scheduler, migrated by machinery bolted onto that same abstraction. It works, but every layer you add is a layer you have to trust, patch, and debug at 2am.
 
----
+Kairon starts from a different premise: a VM is not a Pod, so stop pretending it is. A `Machine` is desired state in the Kubernetes API. `kairon-controller` places it. `kairon-node` turns that placement into a real [FluxVM](https://github.com/zyvorai/fluxvm) instance — QEMU, Cloud Hypervisor, Firecracker, or the FluxVM hypervisor — on real KVM: Kubernetes-native VMs without KubeVirt, without libvirt, without a `virt-launcher` Pod standing in for the VM, and without a guessed hypervisor migration endpoint smuggled through an annotation.
 
-Kairon is Zyvor’s Apache-2.0 control plane for running virtual machines on Kubernetes through [FluxVM](https://github.com/zyvorai/fluxvm). A `Machine` is desired state in the API. A small cluster controller places it. A node-local agent turns that into FluxVM — QEMU, Cloud Hypervisor, Firecracker, or FluxVM hypervisor — on real KVM.
-
-No per-VM wrapper Pod. No libvirt. No guessed hypervisor migration endpoints in the Kubernetes API.
-
-| | KubeVirt-style stacks | **Kairon** |
+|  | KubeVirt-style stacks | **Kairon** |
 |---|---|---|
-| Execution | virt-launcher Pod + libvirt | Node agent → FluxVM REST |
-| Scheduling | Pod scheduler + virt extras | Kairon least-loaded placement |
+| Execution | `virt-launcher` Pod + libvirt | Node agent → FluxVM REST, directly |
+| Scheduling | Pod scheduler + virt extras | Kairon's own least-loaded placement |
 | Live migrate | Built into the VMM stack | mTLS peer handshake + optional adapter |
-| Dependencies | Large Go/operator surface | **Go standard library only** |
+| Runtime dependencies | Large Go/operator surface | **Go standard library only** |
+
+Three things follow from that premise, and they shape everything below:
+
+- **Small enough to read in an afternoon.** `go.mod` has no `client-go`, no generated deep call stacks, no vendored operator framework — `kairon-controller` and `kairon-node` are each a handful of files. You can actually audit what's running your VMs, not just trust that someone else did.
+- **Kubernetes stays the only source of truth.** A `Machine` object is where desired state lives, full stop. The dashboard (`kairon-ui`) isn't a second database with its own opinions — it's a thin HTTP client with exactly the same standing as `kaironctl` or `kubectl`.
+- **An uncertain outcome gets a name, not a guess.** When a live migration's commit result is genuinely ambiguous, Kairon doesn't flip a coin between "assume it worked" and "assume it didn't" — either one risks running the same VM twice. It parks the migration in `NeedsRecovery` and waits for an operator's attested decision. See [Relocating a Machine](#relocating-a-machine).
 
 ---
 
-## Why Kairon
+## Who reaches for this
 
-- **Small enough to read in an afternoon.** Runtime code is Go standard library only (see `go.mod`) — no client-go, no generated deep call stacks, no vendored operator framework. `kairon-controller` and `kairon-node` are each a handful of files you can actually audit.
-- **Kubernetes stays the source of truth.** A `Machine` object is the only place desired state lives. Kairon never invents a second store, and neither does its optional dashboard (`kairon-ui`) — it's just another thin API client, the same standing as `kaironctl`.
-- **Ambiguity gets a name, not a guess.** `NeedsRecovery` exists because a genuinely uncertain migration commit is a real state, not a bug to paper over — Kairon parks it and waits for an operator's attested decision rather than risking split-brain. See [Relocate a Machine](#relocate-a-machine).
-- **Honest about maturity.** The [Status](#status) section below lists real, currently-open gaps, not a marketing gloss. v0.3 and v0.4 both shipped with their own boundaries stated plainly.
-
----
-
-## Who this is for
-
-| Persona | What they care about | Where Kairon fits |
-|---------|----------------------|--------------------|
-| **Platform engineer replacing KubeVirt** | Running real VMs on Kubernetes without adopting virt-launcher Pods, a libvirt dependency, or a large operator surface | A `Machine` CRD, a Go-stdlib-only controller/agent, and FluxVM doing the actual KVM work — see the comparison table above |
-| **SRE running a Machine fleet at scale** | Draining a node without taking out more capacity than the budget allows, capping how much a namespace can consume | `MachineDisruptionBudget` gates `kaironctl evacuate`; `MachineQuota` caps `maxMachines`/`maxTotalCpu`/`maxTotalMemory` per namespace — see [docs/guides/machine-disruption-budgets.md](docs/guides/machine-disruption-budgets.md) and [docs/guides/machine-quotas.md](docs/guides/machine-quotas.md) |
-| **Operator responsible for live migration safety** | What happens when a migration commit is ambiguous — silent split-brain risk is not acceptable | `NeedsRecovery` names that state explicitly and parks it for an attested operator decision instead of guessing — see [Relocate a Machine](#relocate-a-machine) |
-| **Economic buyer evaluating build-vs-adopt** | Whether the maturity level matches the use case, and whether open gaps are disclosed or hidden | Apache-2.0, actively developed; read [Status](#status) and its [Production gaps](#production-gaps) honestly before committing — this is not a KubeVirt-parity claim |
-
----
-
-## What you get in v0.4
-
-**Core Machine lifecycle**
-- **Machine CRD** — CPU, memory, image, network, power, volumes, DRA device claims
-- **PVC-backed boot disk** — `spec.volumes[0]` resolves through a Bound `PersistentVolumeClaim` to a real host directory (hostPath/local `PersistentVolume`s today) instead of requiring a hand-placed image file — see [docs/guides/machine-storage.md](docs/guides/machine-storage.md)
-- **Placement** — Ready, capable-labeled nodes; least-loaded with deterministic tie-break; required (hard) `spec.placement.affinity`/`antiAffinity` co-location/separation constraints against other Machines — see [docs/guides/machine-placement.md](docs/guides/machine-placement.md)
-- **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against a `minAvailable`/`maxUnavailable` budget instead of migrating an entire node's Machines at once — see [docs/guides/machine-disruption-budgets.md](docs/guides/machine-disruption-budgets.md)
-- **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap, enforced by `kairon-controller`'s scheduling loop (no admission webhook — an over-quota Machine stays `Pending` with a clear message) — see [docs/guides/machine-quotas.md](docs/guides/machine-quotas.md)
-- **Network Fabric** — rich `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge (see [docs/network-fabric.md](docs/network-fabric.md))
-- **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates standard snapshot objects; `MachineSnapshotRestore` restores one into a new `PersistentVolumeClaim` via the standard CSI `dataSource` flow — see [docs/guides/machine-snapshot-restore.md](docs/guides/machine-snapshot-restore.md)
-- **CPU/memory hotplug** — grow a running Machine's `spec.resources` without a reboot, via FluxVM's real QMP `device_add`/`object-add` (not just cgroup throttling) — see [docs/guides/machine-hotplug.md](docs/guides/machine-hotplug.md)
-- **Guest agent (`spec.guestAgent`)** — real guest-reported `status.guestIP` via `qemu-guest-agent`, for every network mode (including `user`/SLIRP, which has no DHCP lease to parse at all) — see [docs/guides/machine-guest-agent.md](docs/guides/machine-guest-agent.md)
-- **DRA → VFIO** — allocated `ResourceClaim` → PCI BDF → allowlisted `vfio_devices` (fail-closed)
-
-**Migration**
-- **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API
-- **Secure live handshake** — TLS 1.3 mTLS `prepare → transfer → commit`; no user-supplied `tcp:` URIs
-- **Split-brain guards** — rollback on transfer failure; `NeedsRecovery` when commit is ambiguous; adopt-only cutover
-- **A real migration adapter ships** — `cmd/kairon-migration-adapter-fluxvm` implements the target/source contract against real FluxVM endpoints (not just a stub) — see the caveat below
-
-**Operate it**
-- **kaironctl** — create, start/stop, migrate, evacuate, snapshot
-- **kairon-ui** — optional web dashboard for Machines, Migrations, Snapshots and operator recovery, deployable via Helm or `scripts/deploy-remote.sh --with-ui` (see [Dashboard](#dashboard))
-- **Prometheus metrics + alert rules**, a per-node/cluster migration concurrency quota, and `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted (see [Operability](#operability))
-- **Helm + raw manifests + CI** — auditable, reproducible builds
-
-Live *memory* transfer needs a node-local [migration adapter](docs/migration-adapter.md) deployed and configured on each node. Without one, live requests block **before** the source is touched. Cold migration works today.
+| You are... | You need... | Kairon gives you... |
+|---|---|---|
+| **A platform engineer replacing KubeVirt** | Real VMs on Kubernetes without adopting `virt-launcher` Pods, libvirt, or a large operator surface | A `Machine` CRD, a stdlib-only controller/agent pair, FluxVM doing the actual KVM work — see the table above |
+| **An SRE running a Machine fleet** | Draining a node without taking out more capacity than you can afford; capping what a noisy namespace can consume | `MachineDisruptionBudget` throttles disruption, `MachineQuota` caps `maxMachines`/CPU/memory per namespace — both are now enforceable at admission time, not just convention, see [Guarding the fleet](#guarding-the-fleet) |
+| **Whoever's on call for live migration** | A migration commit that can't silently resolve into split-brain | `NeedsRecovery` names the ambiguous case explicitly and parks it for an attested human decision — see [Relocating a Machine](#relocating-a-machine) |
+| **An economic buyer sizing up build-vs-adopt** | Honesty about what's real today versus what's still open | Apache-2.0, actively developed, and [Status](#status) below is a punch list, not a marketing page |
 
 ---
 
 ## Quick start
 
-**1. Label virtualization nodes**
-
 ```bash
+# 1. Label the nodes FluxVM actually runs on
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
-kubectl label node worker-2 kairon.zyvor.dev/capable=true
-```
 
-**2. Install**
+# 2. Install
+helm upgrade --install kairon ./charts/kairon --namespace kairon-system --create-namespace
 
-```bash
-kubectl apply -f deploy/crd.yaml
-kubectl apply -f deploy/rbac.yaml
-kubectl apply -f deploy/controller.yaml
-kubectl apply -f deploy/node.yaml
-```
-
-Or:
-
-```bash
-helm upgrade --install kairon ./charts/kairon \
-  --namespace kairon-system --create-namespace
-```
-
-**3. Run a VM**
-
-```bash
-kaironctl create demo \
-  --image /var/lib/fluxvm/images/ubuntu.qcow2 \
-  --cpu 2 --memory 2Gi --backend qemu
-
+# 3. Run something
+kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi --backend qemu
 kaironctl get machines
-kaironctl describe demo
 ```
 
-FluxVM must already be listening on each capable node (default `127.0.0.1:7788`), with the image path visible to the host.
-
-Prefer point-and-click? Jump to [Dashboard](#dashboard) once your first Machine is up.
+FluxVM needs to already be listening on each capable node (default `127.0.0.1:7788`) with the image path visible to the host. Prefer raw manifests over Helm? `kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/controller.yaml -f deploy/node.yaml` does the same thing. Prefer a UI? Jump to [the dashboard](#the-dashboard) once your first Machine is up.
 
 ---
 
-## Architecture
+## How it fits together
 
 ```text
-     kubectl / GitOps / kaironctl / kairon-ui
-                 │
-                 ▼
-┌────────────────────────────────────────────┐
-│           Kubernetes API                   │
-│  Machine · MachineMigration · Snapshot     │
-│  ResourceClaim · VolumeSnapshot            │
-└────────────────────┬───────────────────────┘
-                     │
-         ┌───────────┴───────────┐
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│ kairon-controller│     │   kairon-node   │
-│ placement        │     │ FluxVM lifecycle│
-│ migration FSM    │     │ DRA → VFIO      │
-│ CSI snapshots    │     │ mTLS peer :9443 │
-│ Prometheus metrics│    └────────┬────────┘
-└─────────────────┘              │
-              ┌──────────────────┼──────────────────┐
-              ▼                  ▼                  ▼
-         FluxVM API      migration adapter    KVM / VMM
-         (node-local)    (optional Unix sock)
+                  kubectl / GitOps / kaironctl / kairon-ui
+                                      │
+                                      ▼
+                 ┌────────────────────────────────────────┐
+                 │             Kubernetes API             │
+                 │ Machine · MachineMigration · Snapshot  │
+                 │ MachineQuota · MachineDisruptionBudget │
+                 └────────────────────────────────────────┘
+                                      │
+                  ┌───────────────────┴────────────────────┐
+                  ▼                                        ▼
+┌───────────────────────────────────┐      ┌───────────────────────────────┐
+│         kairon-controller         │      │          kairon-node          │
+│     placement · migration FSM     │      │ FluxVM lifecycle · DRA → VFIO │
+│ CSI snapshots · admission webhook │      │        mTLS peer :9443        │
+└───────────────────────────────────┘      └───────────────────────────────┘
+                                                           │
+                                                           ▼
+                                     FluxVM local API · migration adapter (Unix socket) · KVM/VMM
 ```
 
-Kubernetes is source of truth. FluxVM owns execution. Kairon owns placement, relocation policy, and Kubernetes lifecycle semantics. `kairon-ui` (not pictured — it's a peer of `kaironctl`, not a fourth tier) talks to the same Kubernetes API everything else does.
-
-More detail: [`docs/architecture.md`](docs/architecture.md).
+Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement, relocation policy, and Kubernetes lifecycle semantics — nothing more, nothing hidden behind an abstraction. `kairon-ui` isn't pictured as a fourth tier because it isn't one: it talks to the same Kubernetes API everything else does. Full write-up: [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
-## Relocate a Machine
+## What ships today
 
-**Cold** (proven path — shared or identically provisioned images required):
+**Machine lifecycle & placement**
+- **Machine CRD** — CPU, memory, image, network, power state, volumes, DRA device claims
+- **PVC-backed boot disk** — `spec.volumes[0]` resolves through a Bound `PersistentVolumeClaim` to a real host directory (`hostPath`/`local` `PersistentVolume`s today) instead of a hand-placed image file — [guide](docs/guides/machine-storage.md)
+- **Placement** — least-loaded scheduling across Ready, capable-labeled nodes, deterministic tie-break, plus required (hard) `spec.placement.affinity`/`antiAffinity` — [guide](docs/guides/machine-placement.md)
+- **DRA → VFIO** — an allocated `ResourceClaim`'s PCI BDF against the node's `vfio_devices` administrator allowlist, fail-closed (an empty allowlist denies all passthrough)
+- **CPU/memory hotplug** — grow a running Machine's `spec.resources` via FluxVM's real QMP `device_add`/`object-add`, no reboot — [guide](docs/guides/machine-hotplug.md)
+- **Guest agent** (`spec.guestAgent`) — real `qemu-guest-agent`-reported `status.guestIP`, including for `user`/SLIRP networking, which has no DHCP lease to parse at all — [guide](docs/guides/machine-guest-agent.md)
+
+**Migration**
+- **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API
+- **Secure live handshake** — TLS 1.3 mTLS `prepare → transfer → commit`, never a user-supplied `tcp:` URI
+- **Split-brain guards** — rollback on transfer failure, `NeedsRecovery` on ambiguous commit, adopt-only cutover
+- **A real migration adapter ships** — `cmd/kairon-migration-adapter-fluxvm` against real FluxVM endpoints, not just a test double
+
+**Guarding the fleet**
+- **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once — [guide](docs/guides/machine-disruption-budgets.md)
+- **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap — [guide](docs/guides/machine-quotas.md)
+- **Admission webhook** (`webhook.enabled`, opt-in) — both of the above can now be enforced *at admission*, not just in the reconcile loop or `kaironctl`: a `Machine` create that would blow a quota, or a `MachineMigration` create that would violate a budget, gets rejected outright instead of just parked `Pending` or silently allowed. See [Guarding the fleet](#guarding-the-fleet) below.
+- **Network Fabric** — `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge — [reference](docs/network-fabric.md)
+
+**Snapshots**
+- **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates a standard snapshot object; `MachineSnapshotRestore` restores one into a *new* `PersistentVolumeClaim` via the standard CSI `dataSource` flow (deliberately doesn't also create a Machine — see the guide for why) — [guide](docs/guides/machine-snapshot-restore.md)
+
+**Operate it**
+- **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
+- **`kairon-ui`** — an optional web dashboard, real per-operator login with in-place password change/reset (not "regenerate a hash and redeploy"), a `NeedsRecovery` recovery workflow, and an optional VNC console — see [The dashboard](#the-dashboard)
+- **Prometheus metrics + alert rules**, a per-node/cluster migration concurrency quota, `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted
+- **`PodDisruptionBudget`** on by default, opt-in `NetworkPolicy`, digest-pinned + Trivy-scanned container images, Helm + raw manifests + CI
+
+Live *memory* transfer needs a node-local [migration adapter](docs/migration-adapter.md) deployed and configured on each node — without one, a live request blocks before the source is touched. Cold migration needs nothing extra and works today.
+
+---
+
+## Relocating a Machine
+
+**Cold** — the proven path, needs shared or identically provisioned images:
 
 ```bash
 kaironctl migrate demo --strategy cold --target-node worker-2
-kaironctl evacuate worker-1   # batch cold/auto migrations off a node
+kaironctl evacuate worker-1   # batch cold/auto migrations off a node, budget-aware
 ```
 
-**Live handshake** (peer mTLS + adapter; you pick a *node*, never a raw destination):
+**Live** — a secure peer handshake; you pick a *node*, never a raw destination:
 
 ```bash
-kaironctl migrate demo \
-  --strategy live \
-  --target-node worker-2 \
-  --mode pre-copy \
-  --bandwidth-mbps 800 \
-  --max-downtime-ms 200
+kaironctl migrate demo --strategy live --target-node worker-2 \
+  --mode pre-copy --bandwidth-mbps 800 --max-downtime-ms 200
 ```
 
 ```text
@@ -205,124 +158,139 @@ source adapter transfers ──▶ target commit
                       adopt-only cutover
 ```
 
-Enable peer TLS:
+Enable it:
 
 ```bash
 kubectl -n kairon-system create secret generic kairon-migration-tls \
   --from-file=ca.crt --from-file=tls.crt --from-file=tls.key
-
-helm upgrade --install kairon ./charts/kairon -n kairon-system \
-  --set migration.enabled=true
+helm upgrade --install kairon ./charts/kairon -n kairon-system --set migration.enabled=true
 ```
 
-Certificates need `serverAuth` + `clientAuth` and the chart’s migration server name (default `kairon-node`). See [`docs/migration-adapter.md`](docs/migration-adapter.md) for the adapter contract and fail-closed behavior.
+Certificates need `serverAuth` + `clientAuth` and the chart's migration server name (default `kairon-node`) — see [`docs/migration-adapter.md`](docs/migration-adapter.md) for the full contract and fail-closed behavior.
 
-If a commit's outcome is genuinely ambiguous, the migration lands in `NeedsRecovery` instead of guessing — see [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md) for the decision tree, or resolve it straight from the [Dashboard](#dashboard).
+If a commit's outcome is genuinely ambiguous, the migration lands in `NeedsRecovery` instead of a guess. Work through it via [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md)'s decision tree, or resolve it straight from [the dashboard](#the-dashboard).
 
 ---
 
-## Dashboard
+## Guarding the fleet
 
-`kairon-ui` is an optional web dashboard (Go backend + a small React/TypeScript SPA, Apple-inspired styling) for Machines, Migrations, Snapshots, and — the one workflow worth a UI on its own — the `NeedsRecovery` operator-attested recovery form. It's a thin wrapper over the same Kubernetes API `kaironctl` uses; it has no side channel and no extra source of truth.
+`MachineQuota` and `MachineDisruptionBudget` have always existed as reconcile-loop/CLI-level checks — a Machine over quota just stayed `Pending`; a `MachineMigration` created directly through the API skipped `kaironctl evacuate`'s budget check entirely. Both gaps are now closeable with a real `ValidatingWebhookConfiguration`:
+
+```bash
+# You bring the certificate -- this chart doesn't mint one for you,
+# same posture as migration.tlsSecretName/console.tls.secretName.
+kubectl -n kairon-system create secret generic kairon-webhook-tls \
+  --from-file=tls.crt --from-file=tls.key
+
+helm upgrade --install kairon ./charts/kairon -n kairon-system \
+  --set webhook.enabled=true \
+  --set webhook.tlsSecretName=kairon-webhook-tls \
+  --set webhook.caBundle="$(base64 -w0 ca.crt)"
+```
+
+It reuses the exact decision functions the reconcile loop and `kaironctl evacuate` already had (`internal/controller/quota.go`, `internal/controller/disruption.go`) — not a second implementation to drift out of sync. It only ever evaluates `CREATE`, matching each check's pre-existing scope: an already-scheduled Machine growing via hotplug was never quota-checked either, so the webhook deliberately doesn't become *stricter* than what it backstops. `webhook.failurePolicy` defaults to `Fail` — an outage blocks every `Machine`/`MachineMigration` write cluster-wide rather than silently letting the old bypass back in; flip it to `Ignore` if you'd rather trade that guarantee for availability.
+
+---
+
+## The dashboard
+
+`kairon-ui` is an optional web dashboard (Go backend + a small React/TypeScript SPA) for Machines, Migrations, Snapshots, and — the one workflow that earns a UI on its own — the `NeedsRecovery` operator-attested recovery form. It has no side channel and no second source of truth; it's a thin wrapper over the same Kubernetes API `kaironctl` uses.
 
 | Page | What it shows |
 |---|---|
-| **Overview** | Fleet tiles: Machine/Migration counts by phase, a prominent warning tile whenever anything is parked in `NeedsRecovery` |
-| **Machines** | Table + create form (mirrors `kaironctl create`'s flags) + row actions: Start / Stop / Console / Migrate / Snapshot / Delete |
-| **Migrations** | List with phase badges, a "New Migration" form (mirrors `kaironctl migrate`), an "Evacuate Node" action, per-migration RAM/downtime detail, `status.dataPlaneEncrypted` badge, and the recovery workflow described above |
-| **Snapshots** | List + create form (mirrors `kaironctl snapshot`) |
+| **Overview** | Fleet tiles by phase, a prominent warning whenever anything is parked in `NeedsRecovery` |
+| **Machines** | Table + create form (mirrors `kaironctl create`) + Start / Stop / Console / Migrate / Snapshot / Delete |
+| **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, and the recovery workflow above |
+| **Snapshots** | List + create form |
+| **Account** | Change your own password; an admin account can reset another operator's |
 
 ```bash
 helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=true
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 ```
 
-Real per-operator username/password login, Apple-ID-style (username, then password on a second screen). With no `ui.*` auth values set, the chart seeds one default `admin` account with a random, generated-once password:
+With no `ui.*` auth values set, the chart seeds one default `admin` account with a random, generated-once password:
 
 ```bash
 kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
 ```
 
-Open `http://127.0.0.1:8082` and sign in as `admin` with that password. For real, named accounts instead, generate a bcrypt hash and set `ui.auth.users`:
+For real, named, per-operator accounts instead:
 
 ```bash
 kairon-ui -hash-password 'a real password'
 helm upgrade --install kairon ./charts/kairon -n kairon-system \
   --set ui.enabled=true \
   --set ui.auth.users[0].username=alice \
-  --set ui.auth.users[0].passwordHash='$2a$10$...'
+  --set ui.auth.users[0].passwordHash='$2a$10$...' \
+  --set ui.auth.users[0].admin=true
 ```
 
-Every mutating request (create/delete/start/stop/migrate/evacuate/recover) is logged with method, path, remote address, and status — now including the signed-in username for session-token logins, closing the "who did it" gap the legacy mode still has. The legacy single shared token (`ui.token`/`ui.existingSecret`, or `ui.allowUnauthenticated=true` for local development) still works unchanged and is accepted alongside `ui.auth.users` — treat it like a shared root password if you're still using it.
+A named account can change its own password from the dashboard (`POST /api/v1/auth/password`) — no more hand-hashing and redeploying. An `admin: true` account can reset anyone else's, which also immediately signs that operator's active sessions out. (The zero-config seeded `admin` account can sign in like anyone else but can't self-service its password yet — graduate to a named account for that.) Every mutating request is logged with method, path, remote address, resulting status, and — for a session-token login — the signed-in username. The legacy shared token (`ui.token`/`ui.existingSecret`, or `ui.allowUnauthenticated=true` for local dev) still works unchanged alongside `ui.auth.users`; treat it like a shared root password if you're still on it.
 
-**VNC console** (`--set console.enabled=true`, off by default): a real graphical VNC session in the browser for QEMU-backend Machines, relayed `kairon-ui -> kairon-node -> the VM's local socket`. Read [SECURITY.md](SECURITY.md)'s "VNC console" section first — FluxVM's own VNC socket has no auth of its own, so this trades convenience for a trust chain appropriate for a trusted operator team, not a hostile-network deployment.
+**VNC console** (`--set console.enabled=true`, off by default): a real graphical VNC session in the browser for QEMU-backend Machines, relayed `kairon-ui → kairon-node → the VM's local socket`. Read [SECURITY.md](SECURITY.md)'s "VNC console" section first — FluxVM's own VNC socket has no auth of its own, so this trades convenience for a trust chain suited to a trusted operator team, not a hostile network. That relay hop can now run over TLS (`console.tls.enabled`).
 
-Bare-metal alternative, no Kubernetes-hosted deployment needed:
+No Kubernetes cluster handy? Bare-metal works too:
 
 ```bash
-scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui
+scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui --with-console --console-tls
 ```
 
-Builds and installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`. A dashboard token is auto-generated and printed once at the end of the run (pass `--ui-token=...` to pin one across redeploys, or `--ui-allow-unauthenticated` for local/dev). Requires `npm` locally — the only place this script needs Node.js, and only with `--with-ui`.
+Installs everything as systemd services; a dashboard token is auto-generated and printed once. `--console-tls` now automates TLS for the console relay hop too — with no cert flags given, it generates a private CA and server certificate locally and installs them on the remote host; pass `--console-tls-cert`/`-key`/`-ca` to bring your own instead. Requires `npm` locally only for `--with-ui` — the one place this script needs Node.js.
 
 ---
 
 ## Snapshots & devices
 
-**CSI snapshot** of PVC-backed volumes:
-
 ```yaml
 spec:
   volumes:
-    - name: data
-      claimName: database-data
+    - {name: data, claimName: database-data}
 ```
-
 ```bash
 kaironctl snapshot database --name before-upgrade --class csi-snapclass
 ```
 
-**DRA / VFIO** (administrator allowlist on the node — empty allowlist denies all):
-
 ```yaml
 spec:
   deviceClaims:
-    - name: gpu-claim
+    - name: gpu-claim   # administrator allowlist on the node -- empty allowlist denies all
 ```
 
-Examples: [`examples/`](examples/).
+More worked examples: [`examples/`](examples/).
 
 ---
 
 ## CLI
 
 ```text
-kaironctl get [machines|migrations|snapshots] [-n NS]
+kaironctl get [machines|migrations|snapshots|quotas|restores] [-n NS]
 kaironctl describe NAME
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
-                 [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # last five repeatable/cloud-init; see docs/guides/machine-network.md
+                 [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # repeatable/cloud-init, see docs/guides/machine-network.md
 kaironctl start|stop|delete NAME
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
+kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON
 kaironctl version
 ```
 
-Point at a cluster with `KAIRON_KUBE_URL` (for example after `kubectl proxy`) or run in-cluster with the mounted service account.
+Point at a cluster with `KAIRON_KUBE_URL` (e.g. after `kubectl proxy`), or run in-cluster with the mounted service account.
 
 ---
 
 ## Operability
 
-`kairon-controller` exposes Prometheus metrics on its existing health port (`/metrics`): migration counts by phase, phase age, transfer/downtime histograms, completion counters, and a `dataplane_encrypted` gauge. Example alert rules ship in [`charts/kairon/alerts.yaml`](charts/kairon/alerts.yaml) (optionally rendered as a `PrometheusRule` via `metrics.prometheusRule.enabled=true`), each pointing at [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md).
+`kairon-controller` exposes Prometheus metrics on its existing health port (`/metrics`): migration counts by phase, phase age, transfer/downtime histograms, completion counters, a `dataplane_encrypted` gauge. Example alert rules ship in [`charts/kairon/alerts.yaml`](charts/kairon/alerts.yaml) (optionally a real `PrometheusRule` via `metrics.prometheusRule.enabled=true`), each pointing at [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md).
 
-`migration.maxConcurrentPerNode` / `migration.maxConcurrentCluster` (both `0` = unlimited) cap how many non-terminal migrations may touch one node or the cluster at once — a lightweight admission control, mainly useful to bound the blast radius of a bulk `kaironctl evacuate`.
+`migration.maxConcurrentPerNode`/`migration.maxConcurrentCluster` (both `0` = unlimited) bound how many non-terminal migrations may touch one node or the cluster at once — a lightweight admission control, mainly useful to cap the blast radius of a bulk `kaironctl evacuate`.
 
-Real two-host testing and a live `NeedsRecovery` drill (rehearsing operator recovery on purpose) are documented as runbooks with helper scripts, since they need hardware this repository's own CI doesn't have: [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md), [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md).
+All three workloads set CPU/memory `resources:` by default, `kairon-controller`/`kairon-ui` each get a `PodDisruptionBudget` (on by default — voluntary-eviction protection only, not HA), and an opt-in `NetworkPolicy` (`*.networkPolicy.enabled`) restricts their ingress once you tell it which other namespace needs to reach in (`*.networkPolicy.allowIngressFrom` — get this wrong and Prometheus scraping or your ingress controller breaks silently, so it's opt-in rather than default-on). CI runs `govulncheck` on every push, pins every `Dockerfile` base image to a digest, and scans every built image with Trivy; a tag-triggered workflow publishes scanned, digest-pinned images to `ghcr.io/zyvorai/kairon-*`.
 
-All three workloads (`kairon-controller`, `kairon-node`, `kairon-ui`) set CPU/memory `resources:` requests and limits by default (`values.yaml`'s `controller.resources`/`node.resources`/`ui.resources`), and CI runs `govulncheck` on every push. `kairon-ui` logs every mutating `/api/v1/...` request (method, path, remote address, resulting status) — see [Dashboard](#dashboard)'s note on what that trail can and can't tell you.
+Real two-host live-migration testing and a live `NeedsRecovery` drill are documented as runbooks with helper scripts, since they need hardware this repository's own CI doesn't have: [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md), [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md).
 
 ---
 
@@ -334,7 +302,7 @@ make test-race
 ./scripts/must-gather.sh
 ```
 
-Runtime code uses the **Go standard library only** — no client-go, no generated deep stacks. That keeps the control plane small enough to audit.
+Runtime code uses the **Go standard library only** — no `client-go`, no generated deep stacks. That's a deliberate constraint, not an oversight: it keeps the control plane small enough to actually audit, and it's why the admission webhook above hand-rolls the small, stable `AdmissionReview` JSON shape (`internal/admission`) instead of pulling in `k8s.io/api`.
 
 Touching the dashboard (`web/`)? `make all` doesn't build the frontend — run its own checks:
 
@@ -350,16 +318,15 @@ npm --prefix web run build
 
 | Doc | Covers |
 |---|---|
-| [`docs/getting-started.md`](docs/getting-started.md) | Install, run a first Machine, cold migrate, enable live migration, deploy the dashboard, Network Fabric |
+| [`docs/getting-started.md`](docs/getting-started.md) | Install, first Machine, cold migrate, live migration, the dashboard, Network Fabric |
 | [`docs/architecture.md`](docs/architecture.md) | Components, the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
-| [`docs/migration-adapter.md`](docs/migration-adapter.md) | The migration adapter HTTP contract (destination/source APIs), trust boundary, the real `kairon-migration-adapter-fluxvm` implementation |
+| [`docs/migration-adapter.md`](docs/migration-adapter.md) | The migration adapter HTTP contract, trust boundary, the real `kairon-migration-adapter-fluxvm` implementation |
 | [`docs/network-fabric.md`](docs/network-fabric.md) | `MachineNetworkPolicy`/`NetworkSecurityGroup` reference and the FluxVM eBPF edge |
 | [`docs/tutorials/network-fabric.md`](docs/tutorials/network-fabric.md) · [`docs/guides/machine-network.md`](docs/guides/machine-network.md) · [`docs/guides/network-policy.md`](docs/guides/network-policy.md) | Network Fabric walkthrough and field-level guides |
+| [`docs/guides/machine-quotas.md`](docs/guides/machine-quotas.md) · [`docs/guides/machine-disruption-budgets.md`](docs/guides/machine-disruption-budgets.md) | `MachineQuota`/`MachineDisruptionBudget` reference, including the admission webhook |
 | [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |
-| [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) | Real two-host live-migration testing (cert generation, adapter deploy, verification checklist) |
-| [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Deliberately drilling a live `NeedsRecovery` recovery, including an honestly-labeled best-effort trigger |
-| [`ROADMAP.md`](ROADMAP.md) | What shipped per version, what's still open, v0.5+ plans |
-| [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | Per-release changelog |
+| [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) · [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
+| [`ROADMAP.md`](ROADMAP.md) · [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
 | [`SECURITY.md`](SECURITY.md) | Threat model, vulnerability reporting |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | PR checklist, coverage floor, frontend checks |
 
@@ -367,15 +334,24 @@ npm --prefix web run build
 
 ## Status
 
-**v0.4.0** is open source and honest about maturity. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — but real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](#operability)). HA fencing, PVC attach, full admission/quotas, and qualification work are tracked in [`ROADMAP.md`](ROADMAP.md).
+**v0.4.0** is tagged and open source; the sections above also describe real, tested work merged since then (admission webhooks, dashboard password management, console TLS automation, Helm/CI hardening — see [`RELEASE_NOTES.md`](RELEASE_NOTES.md)'s Unreleased section) ahead of the next tag. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](#operability)).
 
 ### Production gaps
 
-Pre-GA gaps include storage/network migration preflight, automatic fencing, DRA topology-aware placement scoring, certificate rotation, confidential-compute enforcement, and large-scale hardware qualification. Real two-host live migration and a live `NeedsRecovery` drill are documented as runbooks but not yet exercised against real hardware in this repository's own CI. PVC-backed boot disks (above) are a first cut: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, and only `hostPath`/`local` sources — Kairon doesn't run a CSI node plugin itself, so a network-block volume (Ceph RBD, EBS, etc.) needs to already be attached/mounted on the node by something else before Kairon can use it. `MachineSnapshotRestore` (above) restores into a new PVC only — it deliberately doesn't also create a Machine (see the guide for why) — and needs a real CSI snapshotter behind your StorageClass; Rancher's `local-path-provisioner` (a common default) doesn't implement one. CPU/memory hotplug (above) is grow-only (no CPU/DIMM unplug in FluxVM), bounded by headroom reserved automatically at creation (not yet configurable from Kairon), and every hotplugged resource is lost across a stop/start cycle — expected QEMU behavior, not a bug. `spec.guestAgent` (above) only resolves `status.guestIP` once and never re-checks it once found, and only ever picks a single IPv4 address on the first non-loopback interface — no multi-NIC/IPv6 support, no graceful-shutdown wiring (turned out to be unnecessary: FluxVM's `stop`/`delete` already does ACPI `system_powerdown` with a wait-then-force fallback for every VM, guest agent or not). Affinity/anti-affinity (above) is required-constraints-only — no preferred/soft affinity, no topology spread constraints, since there's no weighted scheduler scoring system to plug them into yet. `MachineDisruptionBudget` (above) is a `kaironctl`-side check only — there's still no automatic node-drain/eviction path at all, and a `MachineMigration` created directly through the API bypasses the budget entirely. `MachineQuota` (above) has no admission webhook either — it's enforced only once `kairon-controller`'s scheduling loop looks at a Machine, so an over-quota namespace can still create as many `Machine` objects as it wants, they just stay `Pending`; the migration concurrency quota (see [Operability](#operability)) remains a separate, narrower control specific to in-flight migrations.
+Still genuinely open, and why:
 
-A code-level audit also surfaced gaps not on that list: `kairon-ui` now supports real per-operator username/password login (`ui.auth.users`, bcrypt-hashed, signed session tokens, audit-attributed) alongside the legacy shared bearer token, with rate limiting/lockout on repeated failed attempts (5 failures → 5-minute lockout, per requested username) — but there's still no password-reset flow beyond regenerating a hash and redeploying, and its session-logout/default-admin-password/lockout state lives on a single replica (the chart runs exactly one). OIDC/SSO is a bigger, separate decision and isn't implemented. Also open: no `PodDisruptionBudget` or `NetworkPolicy` in the Helm chart, no image digest pinning or vulnerability scanning of published images (CI builds all three images but never pushes them — publishing is an out-of-repo process today), and no CRD-version-upgrade story beyond today's single `v1alpha1`.
-
-The VNC console (`console.enabled`) inherits FluxVM's own unauthenticated VNC socket as-is — Kairon can't add auth/encryption FluxVM itself doesn't have — so its security rests on kairon-ui's operator auth, a single-use ticket bound to the requesting username (each session is now audit-logged), and a shared cluster-wide token to kairon-node. That hop can now optionally run over one-way TLS (`console.tls.enabled`); it's plain HTTP by default. `scripts/deploy-remote.sh --with-console` covers the bare-metal install path (token generation and env wiring only — TLS material there is still a manual step). See [SECURITY.md](SECURITY.md).
+- **Automatic fencing, storage/network migration preflight** — need real multi-host cluster behavior this repo's CI doesn't have.
+- **DRA topology-aware placement scoring, preferred/soft affinity, topology spread constraints** — all three need a weighted scheduler-scoring system the scheduler doesn't have yet; it's currently least-loaded with a deterministic tie-break only.
+- **Certificate rotation** for migration/console/webhook TLS — today's model across all three is "you supply a certificate," rotation is a separate lifecycle feature none of them have.
+- **Confidential-compute enforcement (SEV-SNP/TDX), large-scale hardware qualification** — hardware-dependent, not exercisable in CI.
+- **PVC-backed boot disks are a first cut**: one boot volume per Machine, `Filesystem`-mode `PersistentVolume`s only, `hostPath`/`local` sources only — Kairon runs no CSI node plugin of its own, so a network-block volume (Ceph RBD, EBS, …) needs to already be attached by something else first.
+- **`MachineSnapshotRestore` restores into a new PVC only**, deliberately not also a Machine (see its guide for why), and needs a real CSI snapshotter behind your StorageClass — Rancher's `local-path-provisioner`, a common default, doesn't have one.
+- **CPU/memory hotplug is grow-only** (FluxVM has no CPU/DIMM unplug), bounded by headroom reserved at creation (not yet Kairon-configurable), and lost across any stop/start — expected QEMU behavior, not a bug.
+- **`spec.guestAgent` resolves `status.guestIP` once and never re-checks it**, and only ever picks the first non-loopback IPv4 — no multi-NIC/IPv6 support yet.
+- **`kairon-ui` stays a single replica by design**: session revocation and login-lockout state live in-process, not in a distributed store — deliberately, since taking on something like Redis would work against this project's Go-stdlib-only design. OIDC/SSO is a bigger, separate product decision and isn't implemented.
+- **No CRD-version-upgrade story beyond today's single `v1alpha1`** — no conversion webhook or versioning scaffold exists; that's its own project once a `v1beta1`/`v1` is actually needed.
+- **The admission webhook (above) only ever evaluates `CREATE`**, matching the reconcile-loop/`kaironctl` checks it backstops exactly — an already-scheduled Machine growing past quota via hotplug isn't caught by either the webhook or the reconcile loop.
+- **The VNC console inherits FluxVM's own unauthenticated VNC socket as-is** — Kairon can't add auth/encryption FluxVM itself doesn't have. Its real security rests on kairon-ui's operator auth, a single-use per-session ticket, and the shared cluster-wide token to kairon-node (optionally now over TLS). See [SECURITY.md](SECURITY.md).
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 
@@ -385,12 +361,8 @@ Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md
 
 ### Open source (Apache-2.0)
 
-This repository is licensed under the [Apache License, Version 2.0](LICENSE).
-You may use, modify, and run it for personal, lab, and commercial production
-use at no charge, subject to Apache-2.0 (preserve notices / NOTICE where required).
-See [NOTICE](NOTICE).
+This repository is licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify, and run it for personal, lab, and commercial production use at no charge, subject to Apache-2.0 (preserve notices / NOTICE where required). See [NOTICE](NOTICE).
 
 ### Enterprise
 
-Production support, SLAs, and Zyvor Enterprise products are licensed separately.
-Contact [sales@zyvor.dev](mailto:sales@zyvor.dev) or see [zyvor.dev](https://zyvor.dev).
+Production support, SLAs, and Zyvor Enterprise products are licensed separately. Contact [sales@zyvor.dev](mailto:sales@zyvor.dev) or see [zyvor.dev](https://zyvor.dev).

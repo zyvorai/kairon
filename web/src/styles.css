@@ -109,7 +109,7 @@ button.danger:hover {
 .navright { display: flex; align-items: center; gap: 16px; }
 .navlinks { display: flex; gap: 6px; }
 .navuser { display: flex; align-items: center; gap: 8px; border-left: 1px solid var(--apple-border); padding-left: 16px; }
-.navusername { font-size: 13px; color: #777; }
+.navusername-btn { font-size: 13px; color: #777; }
 .nav button {
   border: 0;
   background: transparent;
@@ -321,6 +321,7 @@ table.datatable .rowactions button {
 
 .msg { font-size: 13px; color: #666; margin-top: 10px; }
 .msg.error { color: #b42318; }
+.hint { font-size: 12px; color: #999; margin-top: 14px; }
 
 .linklike {
   background: none !important;

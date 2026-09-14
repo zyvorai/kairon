@@ -11,12 +11,29 @@ a node being decommissioned on its own. The only thing that does that is
 every Machine on that node at once. `MachineDisruptionBudget` makes
 `evacuate` throttle itself instead of firing everything simultaneously.
 
-**This is a client-side check inside `kaironctl`, not a server-side
-admission guarantee.** Nothing reconciles this object, and nothing stops a
-`MachineMigration` created directly through the Kubernetes API (bypassing
-`kaironctl evacuate`) from ignoring it entirely. Treat it the same way you'd
-treat any other `kaironctl`-enforced convention -- real for anyone using the
-CLI as intended, not a hard multi-tenant guarantee.
+**By default, this is a client-side check inside `kaironctl`, not a
+server-side admission guarantee.** Nothing reconciles this object on a
+timer, and with the admission webhook below disabled (the default),
+nothing stops a `MachineMigration` created directly through the Kubernetes
+API (bypassing `kaironctl evacuate`) from ignoring it entirely. Treat it
+the same way you'd treat any other `kaironctl`-enforced convention -- real
+for anyone using the CLI as intended, not a hard multi-tenant guarantee --
+unless you enable the webhook.
+
+### Admission webhook (`webhook.enabled`)
+
+An opt-in validating admission webhook on `kairon-controller`
+(`webhook.enabled`, off by default -- see the Helm chart's `webhook` values
+and SECURITY.md) closes the direct-API bypass above: it rejects a
+`MachineMigration` create outright if disrupting its target Machine would
+violate a matching budget, reusing the exact same `LoadBudgetStates`/
+`AdmitDisruption` decision `kaironctl evacuate` already makes
+(`internal/controller/disruption.go`) rather than a second implementation.
+It only evaluates `CREATE` -- a `MachineMigration`'s target never changes
+after creation, so there's nothing for `UPDATE` to re-check. Requires an
+operator-supplied TLS certificate (`webhook.tlsSecretName`,
+`webhook.caBundle`); like `migration.tlsSecretName`, this chart doesn't
+mint one for you.
 
 ## Example
 

@@ -1,6 +1,6 @@
-import { Activity, ArrowLeftRight, Box, Camera, LogOut } from 'lucide-react';
+import { Activity, ArrowLeftRight, Box, Camera, LogOut, UserCog } from 'lucide-react';
 
-export type Page = 'overview' | 'machines' | 'migrations' | 'snapshots';
+export type Page = 'overview' | 'machines' | 'migrations' | 'snapshots' | 'account';
 
 const ITEMS: [Page, React.ReactNode, string][] = [
   ['overview', <Activity size={17} key="i" />, 'Overview'],
@@ -42,7 +42,12 @@ export default function Nav({
           ))}
         </div>
         <div className="navuser">
-          {username && <span className="navusername">{username}</span>}
+          {username && (
+            <button className={`navusername-btn ${page === 'account' ? 'active' : ''}`} onClick={() => setPage('account')}>
+              <UserCog size={17} />
+              {username}
+            </button>
+          )}
           <button onClick={onSignOut}>
             <LogOut size={17} />
             Sign out

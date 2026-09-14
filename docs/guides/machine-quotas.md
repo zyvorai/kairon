@@ -26,11 +26,8 @@ satisfied.
 
 ## How it's enforced
 
-Unlike a real Kubernetes `ResourceQuota` (enforced by the API server at
-admission time), there's no admission webhook here -- `Machine` objects can
-always be created via the API. `kairon-controller`'s existing scheduling
-loop checks quota instead, immediately before it would otherwise assign a
-Machine to a node:
+`kairon-controller`'s existing scheduling loop checks quota, immediately
+before it would otherwise assign a Machine to a node:
 
 1. Every reconcile tick, tally how much each `MachineQuota`'s namespace is
    already using: count and sum `spec.resources.cpu`/`.memory` across every
@@ -57,14 +54,36 @@ Machine to a node:
 Already-scheduled Machines are never evicted retroactively if a quota is
 lowered below what's already running -- quota only blocks *new* scheduling.
 
+## Admission webhook (`webhook.enabled`)
+
+Unlike a real Kubernetes `ResourceQuota` (enforced by the API server at
+admission time), the reconcile-loop check above only runs *after* a
+`Machine` already exists -- an over-quota namespace could always create as
+many as it wanted, they just stayed `Pending` forever. An opt-in validating
+admission webhook on `kairon-controller` (`webhook.enabled`, off by
+default -- see the Helm chart's `webhook` values and SECURITY.md) now
+rejects the `Machine` create outright instead, reusing the exact same
+`buildQuotaTrackers`/`admitQuota` decision the reconcile loop above already
+makes. It only evaluates `CREATE` (not `UPDATE`), matching the reconcile
+loop's own scope exactly -- an already-scheduled Machine growing via
+hotplug was never quota-checked either (see "Real limits today" below), so
+the webhook deliberately doesn't become stricter than what it backstops.
+Requires an operator-supplied TLS certificate (`webhook.tlsSecretName`,
+`webhook.caBundle`) -- like `migration.tlsSecretName`, this chart doesn't
+mint one for you.
+
 ## Real limits today (v1 of this feature)
 
 - Scoped by Kubernetes namespace, not `Machine.spec.tenant` (that field
   exists in the CRD but isn't read anywhere -- namespace is the only real
   multi-tenancy boundary Kairon uses today).
-- No admission webhook, so nothing stops a namespace from having far more
-  `Machine` objects created than its quota allows -- it just means most of
-  them stay `Pending` forever instead of being rejected up front.
+- The admission webhook above is opt-in; with it off (the default),
+  nothing stops a namespace from having far more `Machine` objects created
+  than its quota allows -- it just means most of them stay `Pending`
+  forever instead of being rejected up front.
+- Neither the reconcile loop nor the webhook re-checks quota when an
+  already-scheduled Machine's `spec.resources` grows via hotplug -- quota
+  is only ever evaluated once, when a Machine is first scheduled/created.
 - CPU/memory quantities use the same fractional-CPU-rounds-up parsing as
   `Machine.spec.resources` (`internal/model.ParseVCPUs`/`ParseMemoryMiB`) --
   a `maxTotalCpu: "4.5"` cap behaves like `5`.

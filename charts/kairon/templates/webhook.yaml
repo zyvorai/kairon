@@ -1,0 +1,63 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+{{/*
+Off by default -- like migration.tlsSecretName/console.tls.secretName, this
+chart does not mint webhook.tlsSecretName's certificate or webhook.caBundle
+for you (see values.yaml's webhook section for why). Without both set,
+leave this whole file rendering nothing rather than standing up a
+ValidatingWebhookConfiguration pointing at a Service with no valid
+certificate behind it -- that would fail every Machine/MachineMigration
+write in the cluster per webhook.failurePolicy, not just leave the gap
+this closes unaddressed.
+*/}}
+{{ if and .Values.webhook.enabled .Values.webhook.tlsSecretName .Values.webhook.caBundle }}
+apiVersion: v1
+kind: Service
+metadata: {name: kairon-controller-webhook, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {app.kubernetes.io/name: kairon-controller}
+  ports:
+    - {port: 443, targetPort: webhook}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata: {name: kairon-controller-webhook}
+webhooks:
+  - name: machinequota.kairon.zyvor.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-machine
+        port: 443
+    rules:
+      - apiGroups: ["kairon.zyvor.dev"]
+        apiVersions: ["v1alpha1"]
+        resources: ["machines"]
+        operations: ["CREATE"]
+        scope: Namespaced
+  - name: machinedisruptionbudget.kairon.zyvor.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-machinemigration
+        port: 443
+    rules:
+      - apiGroups: ["kairon.zyvor.dev"]
+        apiVersions: ["v1alpha1"]
+        resources: ["machinemigrations"]
+        operations: ["CREATE"]
+        scope: Namespaced
+{{ end }}

@@ -131,7 +131,7 @@ Bare-metal alternative:
 scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui --with-console
 ```
 
-Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js. `--with-console` (optionally `--console-port=N`, otherwise auto-picked if the default collides) generates the shared console token and wires it into both services' systemd env files -- TLS on that hop is still a manual step on this path (place cert/key/CA material yourself and pass `--console-tls-cert`/`--console-tls-key` to `kairon-node` and `KAIRON_NODE_CONSOLE_CA` to `kairon-ui`).
+Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js. `--with-console` (optionally `--console-port=N`, otherwise auto-picked if the default collides) generates the shared console token and wires it into both services' systemd env files. Add `--console-tls` to also enable TLS on that hop -- with no `--console-tls-cert`/`-key`/`-ca`, a private CA and server certificate are generated locally and installed on the remote host automatically (SAN list is a best-effort guess at the host's own addresses; if kairon-ui's console button fails with a TLS error afterward, regenerate with explicit `--console-tls-cert`/`-key`/`-ca` covering the right one), or pass those three yourself to bring your own.
 
 ## Network Fabric (eBPF edge)
 

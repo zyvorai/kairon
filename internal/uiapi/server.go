@@ -39,17 +39,36 @@ type Server struct {
 	WebDir string
 	// Users, when non-empty, enables real per-operator username/password
 	// login (see auth.go) alongside (not instead of) the legacy Token
-	// above -- either credential is accepted.
-	Users []User
+	// above -- either credential is accepted. Mutated at runtime by
+	// setOwnPassword/resetPassword, so every access goes through usersMu
+	// (see auth.go's userCount/findUser helpers) rather than reading the
+	// field directly.
+	Users   []User
+	usersMu sync.RWMutex
 	// SessionSecret signs/verifies session tokens issued by
 	// POST /api/v1/auth/login. Required whenever Users is non-empty.
 	SessionSecret []byte
+	// UsersSecretNamespace/UsersSecretName/UsersSecretKey tell
+	// persistUsers (auth.go) which Kubernetes Secret to write an updated
+	// Users list back into after a password change, so it survives a pod
+	// restart. UsersSecretName empty means runtime password changes are
+	// refused (see errPersistenceNotConfigured) -- set only when the Helm
+	// chart itself owns the kairon-ui-users Secret (not when an operator
+	// supplies ui.auth.existingSecret, which some external tool may manage
+	// and which kairon-ui must not silently overwrite).
+	UsersSecretNamespace string
+	UsersSecretName      string
+	UsersSecretKey       string
 	// revoked backs POST /api/v1/auth/logout; zero value (an empty
 	// sync.Map) is ready to use.
 	revoked sync.Map
 	// loginAttempts backs handleLogin's per-username rate limiting; zero
 	// value is ready to use.
 	loginAttempts sync.Map
+	// passwordChangedAt backs resetPassword's forced logout of a reset
+	// account's outstanding sessions (see passwordChangedAfter in
+	// auth.go); zero value is ready to use.
+	passwordChangedAt sync.Map
 	// ConsoleToken/ConsolePort configure the VNC console relay (see
 	// console.go): the shared bearer token kairon-ui presents to a
 	// kairon-node's console listener, and the port that listener runs on.
@@ -106,6 +125,9 @@ func (s *Server) Handler() http.Handler {
 
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
+
+	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
+	api.HandleFunc("POST /api/v1/users/{username}/password", s.handleResetPassword)
 
 	top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))
 
@@ -215,7 +237,7 @@ func (r *statusRecorder) WriteHeader(status int) {
 // unauthenticated dev mode, unchanged from before.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Token == "" && len(s.Users) == 0 {
+		if s.Token == "" && s.userCount() == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -225,8 +247,8 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if len(s.Users) > 0 {
-				if username, _, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) {
+			if s.userCount() > 0 {
+				if username, _, issuedAt, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) && !s.passwordChangedAfter(username, issuedAt) {
 					setContextUsername(r.Context(), username)
 					next.ServeHTTP(w, r)
 					return

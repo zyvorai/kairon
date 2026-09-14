@@ -23,6 +23,14 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # Read-only, and no /status subresource: the admission webhook
+    # (webhook.yaml) only ever lists these to evaluate a MachineMigration
+    # create against, it never reconciles or writes to them -- kaironctl
+    # remains the only writer of MachineDisruptionBudget status (it has
+    # none).
+    resources: ["machinedisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["get", "list", "watch", "create"]
@@ -84,12 +92,30 @@ spec:
 {{ if .Values.migration.maxConcurrentCluster }}
             - "--migration-max-concurrent-cluster={{ .Values.migration.maxConcurrentCluster }}"
 {{ end }}
-          ports: [{name: health, containerPort: {{ .Values.controller.healthPort }}}]
+{{ if .Values.webhook.enabled }}
+            - "--webhook-addr=:{{ .Values.webhook.port }}"
+            - "--webhook-tls-cert=/etc/kairon/webhook-tls/tls.crt"
+            - "--webhook-tls-key=/etc/kairon/webhook-tls/tls.key"
+{{ end }}
+          ports:
+            - {name: health, containerPort: {{ .Values.controller.healthPort }}}
+{{ if .Values.webhook.enabled }}
+            - {name: webhook, containerPort: {{ .Values.webhook.port }}}
+{{ end }}
           readinessProbe: {httpGet: {path: /readyz, port: health}}
           livenessProbe: {httpGet: {path: /healthz, port: health}}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.controller.resources | indent 12 }}
+{{ if .Values.webhook.enabled }}
+          volumeMounts:
+            - {name: webhook-tls, mountPath: /etc/kairon/webhook-tls, readOnly: true}
+{{ end }}
+{{ if .Values.webhook.enabled }}
+      volumes:
+        - name: webhook-tls
+          secret: {secretName: {{ .Values.webhook.tlsSecretName | quote }}}
+{{ end }}
 {{ if .Values.console.enabled }}
 {{- $existingConsoleSecret := lookup "v1" "Secret" .Release.Namespace "kairon-console-token" }}
 {{- $consoleTokenValue := randAlphaNum 32 }}
@@ -288,6 +314,33 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kairon-u
 subjects:
   - {kind: ServiceAccount, name: kairon-ui, namespace: {{ .Release.Namespace }}}
 ---
+{{ if and $usersConfigured (not .Values.ui.auth.existingSecret) }}
+# Namespaced Role (not a ClusterRole, and scoped by resourceNames to just
+# this one Secret): kairon-ui's password-change/-reset endpoints
+# (internal/uiapi/auth.go's setOwnPassword/resetPassword) need to write an
+# updated account list back into the same kairon-ui-users Secret it read
+# KAIRON_UI_USERS_JSON from at startup, so a password change survives a
+# pod restart instead of reverting to whatever ui.auth.users was at
+# install time. Only granted when the chart itself owns that Secret (not
+# when ui.auth.existingSecret points at one an operator/external tool
+# manages) -- see persistUsers's doc comment.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kairon-ui-users-secret, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["kairon-ui-users"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kairon-ui-users-secret, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kairon-ui-users-secret}
+subjects:
+  - {kind: ServiceAccount, name: kairon-ui, namespace: {{ .Release.Namespace }}}
+---
+{{ end }}
 {{ if not .Values.ui.existingSecret }}
 apiVersion: v1
 kind: Secret
@@ -314,6 +367,21 @@ stringData:
 ---
 {{ end }}
 {{ if and $usersConfigured (not .Values.ui.auth.existingSecret) }}
+{{/*
+kairon-ui can now PATCH this Secret at runtime (POST /api/v1/auth/password,
+POST /api/v1/users/{username}/password -- see internal/uiapi/auth.go's
+persistUsers) so a password change survives a pod restart. That means a
+plain `helm upgrade` must NOT reset users.json back to .Values.ui.auth.users
+every time, or it would silently undo any runtime change -- same
+lookup-based idempotency already used above for kairon-ui-session. Only the
+first install (the Secret doesn't exist yet) seeds from values; every
+later upgrade keeps whatever is already there.
+*/}}
+{{- $existingUsers := lookup "v1" "Secret" .Release.Namespace "kairon-ui-users" }}
+{{- $usersJSONValue := .Values.ui.auth.users | toJson }}
+{{- if and $existingUsers $existingUsers.data (index $existingUsers.data "users.json") }}
+{{- $usersJSONValue = index $existingUsers.data "users.json" | b64dec }}
+{{- end }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -321,7 +389,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 type: Opaque
 stringData:
-  users.json: {{ .Values.ui.auth.users | toJson | quote }}
+  users.json: {{ $usersJSONValue | quote }}
 ---
 {{ end }}
 apiVersion: apps/v1
@@ -349,6 +417,14 @@ spec:
 {{ if $usersConfigured }}
             - name: KAIRON_UI_USERS_JSON
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.auth.existingSecret | default "kairon-ui-users" }}, key: {{ .Values.ui.auth.existingSecretKey | default "users.json" }}}}
+{{ if not .Values.ui.auth.existingSecret }}
+            - name: KAIRON_UI_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: KAIRON_UI_USERS_SECRET_NAME
+              value: kairon-ui-users
+            - name: KAIRON_UI_USERS_SECRET_KEY
+              value: users.json
+{{ end }}
 {{ end }}
 {{ if and $seedDefaultAdmin (not .Values.ui.auth.existingSessionSecret) }}
             - name: KAIRON_UI_DEFAULT_ADMIN_PASSWORD

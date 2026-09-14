@@ -94,6 +94,17 @@ func run() int {
 		WebDir:        *webDir,
 		Users:         users,
 		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		// UsersSecretName empty (the default) means POST
+		// /api/v1/auth/password and POST /api/v1/users/{username}/password
+		// are refused -- set only when the Helm chart owns the
+		// kairon-ui-users Secret it seeded Users from (see
+		// charts/kairon/templates/all.yaml); a bare-metal deploy
+		// (scripts/deploy-remote.sh) has no Kubernetes Secret to write
+		// back to and leaves these unset, which is the correct fallback,
+		// not a bug.
+		UsersSecretNamespace: os.Getenv("KAIRON_UI_NAMESPACE"),
+		UsersSecretName:      os.Getenv("KAIRON_UI_USERS_SECRET_NAME"),
+		UsersSecretKey:       env("KAIRON_UI_USERS_SECRET_KEY", "users.json"),
 		// ConsoleToken/ConsolePort must match the value every kairon-node
 		// is configured with (KAIRON_NODE_CONSOLE_TOKEN/-console-addr);
 		// either empty disables the VNC console feature (see console.go).
@@ -170,7 +181,7 @@ func loadUsers(usersJSON, defaultAdminPassword string) ([]uiapi.User, error) {
 		if err != nil {
 			return nil, fmt.Errorf("hash default admin password: %w", err)
 		}
-		users = append(users, uiapi.User{Username: "admin", PasswordHash: string(hash)})
+		users = append(users, uiapi.User{Username: "admin", PasswordHash: string(hash), IsAdmin: true})
 	}
 	return users, nil
 }

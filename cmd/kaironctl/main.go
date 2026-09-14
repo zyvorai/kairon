@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -335,7 +336,7 @@ func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
 	if err != nil && !kube.IsNotFound(err) {
 		fatal(err)
 	}
-	states, err := loadBudgetStates(budgets, machines, migrations)
+	states, err := controller.LoadBudgetStates(budgets, machines, migrations)
 	if err != nil {
 		fatal(err)
 	}
@@ -346,7 +347,7 @@ func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
 		if machine.Spec.NodeName != node || machine.Metadata.DeletionTimestamp != nil {
 			continue
 		}
-		if blocker := admitDisruption(states, machine); blocker != "" {
+		if blocker := controller.AdmitDisruption(states, machine); blocker != "" {
 			fmt.Printf("machine %s/%s skipped: %s\n", machine.Namespace(), machine.Metadata.Name, blocker)
 			skipped++
 			continue
@@ -369,78 +370,6 @@ func cmdEvacuate(ctx context.Context, kc *kube.Client, args []string) {
 		os.Exit(1)
 	}
 	fmt.Println()
-}
-
-// budgetState tracks one MachineDisruptionBudget's remaining allowance for
-// the duration of a single `evacuate` run -- recomputed from scratch every
-// invocation, never persisted, since nothing reconciles this object (see
-// docs/guides/machine-disruption-budgets.md). isTerminalMigrationPhase here
-// deliberately duplicates rather than imports internal/uiapi's own
-// isNonTerminalMigrationPhase -- same "each consumer's own narrower
-// definition of terminal" precedent that helper's own comment establishes,
-// not a shared cross-package dependency worth taking for one boolean.
-type budgetState struct {
-	budget  model.MachineDisruptionBudget
-	allowed int
-}
-
-func isTerminalMigrationPhase(phase string) bool {
-	switch phase {
-	case "Succeeded", "Failed", "Blocked", "":
-		return true
-	}
-	return false
-}
-
-func loadBudgetStates(budgets []model.MachineDisruptionBudget, machines []model.Machine, migrations []model.MachineMigration) ([]*budgetState, error) {
-	inFlight := map[string]bool{}
-	for _, mig := range migrations {
-		if !isTerminalMigrationPhase(mig.Status.Phase) {
-			inFlight[mig.Namespace()+"/"+mig.Spec.MachineName] = true
-		}
-	}
-	states := make([]*budgetState, 0, len(budgets))
-	for _, b := range budgets {
-		total, healthy := 0, 0
-		for _, m := range machines {
-			if !model.LabelsMatch(m.Metadata.Labels, b.Spec.Selector) {
-				continue
-			}
-			total++
-			if m.Status.Phase == "Running" && !inFlight[m.Namespace()+"/"+m.Metadata.Name] {
-				healthy++
-			}
-		}
-		desired, err := b.Spec.DesiredHealthy(total)
-		if err != nil {
-			return nil, fmt.Errorf("MachineDisruptionBudget %s/%s: %w", b.Namespace(), b.Metadata.Name, err)
-		}
-		allowed := healthy - desired
-		if allowed < 0 {
-			allowed = 0
-		}
-		states = append(states, &budgetState{budget: b, allowed: allowed})
-	}
-	return states, nil
-}
-
-// admitDisruption returns a non-empty reason if disrupting machine would
-// violate some budget it matches, otherwise it spends one allowance from
-// every budget machine matches and returns "".
-func admitDisruption(states []*budgetState, machine model.Machine) string {
-	var applicable []*budgetState
-	for _, st := range states {
-		if model.LabelsMatch(machine.Metadata.Labels, st.budget.Spec.Selector) {
-			if st.allowed <= 0 {
-				return fmt.Sprintf("MachineDisruptionBudget %s/%s has 0 disruptions allowed", st.budget.Namespace(), st.budget.Metadata.Name)
-			}
-			applicable = append(applicable, st)
-		}
-	}
-	for _, st := range applicable {
-		st.allowed--
-	}
-	return ""
 }
 
 // cmdRecover is a thin convenience layer over spec.recovery, not a second
