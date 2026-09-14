@@ -39,23 +39,29 @@ address, not a host-side guess.
 
 ## How Kairon picks an address
 
-`status.guestIP` is a single string -- Kairon has no concept of a Machine
-having more than one reportable address (true of the DHCP-lease path too).
-Given the real guest-network-get-interfaces response, Kairon picks the
-first IPv4 address on the first non-loopback interface. If your guest has
-more than one NIC or address, that pick may not be the one you expect --
-there's no way to influence it today.
+`status.guestIP` stays a single string for backward compatibility (it's
+what `kubectl get machine`'s IP column and every existing consumer already
+expect), but `status.guestIPs` (and `status.network.guestIPs`) now report
+every address the guest agent sees, across every non-loopback interface --
+IPv4 addresses first, then IPv6, in interface order. `status.guestIP` is
+always `status.guestIPs[0]`: the first IPv4 address found anywhere, falling
+back to the first IPv6 address only if the guest has no IPv4 address at
+all. If your guest has more than one NIC, `status.guestIP` alone still
+can't tell you which one it picked -- read `status.guestIPs` (or
+`status.network.guestIPs`) for the full picture.
 
 ## Real limits today (v1 of this feature)
 
-- Only ever resolved once: once `status.guestIP` has a value, Kairon keeps
-  reporting it and stops asking the guest agent again, even if the address
-  later changes. Matches the existing DHCP-lease behavior's own
-  "preserve the last known value" convention.
+- Re-resolved periodically, not forever-sticky: once an address is first
+  resolved, Kairon re-verifies with the guest agent every 5 minutes (not
+  every reconcile tick) and updates `status.guestIP`/`status.guestIPs` if
+  it changed. Before the first successful resolution, it's retried every
+  reconcile tick instead (the guest agent may simply not have booted yet).
+  A `kairon-node` restart resets the 5-minute clock and triggers one
+  immediate re-check, which is expected, not a bug.
 - A guest agent that isn't installed or hasn't started yet just means
-  `status.guestIP` stays empty and is retried on the next reconcile tick --
-  not a hard error.
-- No IPv6 support -- `BestGuestIP` only ever picks an IPv4 address.
+  `status.guestIP`/`status.guestIPs` stay empty and resolution is retried
+  on the next reconcile tick -- not a hard error.
 - This is unrelated to FluxVM's own bespoke `spec.agent` (a different,
   vsock-based protocol requiring its own FluxVM-specific guest binary,
   powering `kaironctl exec`-style features Kairon doesn't expose yet) --

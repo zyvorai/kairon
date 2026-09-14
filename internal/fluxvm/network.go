@@ -124,25 +124,42 @@ func (c *Client) QGANetworkInterfaces(ctx context.Context, id string) ([]QgaNetw
 	return out, nil
 }
 
-// BestGuestIP picks a single, sensible IPv4 address to report as
-// status.guestIP from a real guest-network-get-interfaces response: the
-// first IPv4 address on the first non-loopback interface. Kairon has no
-// concept of a Machine having more than one reportable address today (the
-// same single-address assumption status.guestIP already makes for the
-// DHCP-lease path), so this deliberately doesn't try to rank multiple
-// candidates -- first found wins.
-func BestGuestIP(ifaces []QgaNetworkInterface) string {
+// AllGuestIPs returns every IPv4/IPv6 address the guest agent reports
+// across every non-loopback interface, IPv4 addresses first (in interface
+// order), then IPv6 (in interface order) -- not the literal wire order,
+// so that AllGuestIPs(ifaces)[0] always agrees with BestGuestIP(ifaces).
+// Backs status.guestIPs; status.guestIP (BestGuestIP, below) stays a
+// single string for backward compatibility.
+func AllGuestIPs(ifaces []QgaNetworkInterface) []string {
+	var v4, v6 []string
 	for _, iface := range ifaces {
 		if iface.Name == "lo" {
 			continue
 		}
 		for _, addr := range iface.IPAddresses {
-			if addr.IPAddressType == "ipv4" {
-				return addr.IPAddress
+			switch addr.IPAddressType {
+			case "ipv4":
+				v4 = append(v4, addr.IPAddress)
+			case "ipv6":
+				v6 = append(v6, addr.IPAddress)
 			}
 		}
 	}
-	return ""
+	return append(v4, v6...)
+}
+
+// BestGuestIP picks the single "primary" address for status.guestIP: the
+// first IPv4 address found across every non-loopback interface, falling
+// back to the first IPv6 address only when no IPv4 address exists anywhere
+// -- previously this returned "" in the IPv6-only case, silently reporting
+// no guest IP at all for an IPv6-only guest. See AllGuestIPs for the full
+// address list this is derived from.
+func BestGuestIP(ifaces []QgaNetworkInterface) string {
+	all := AllGuestIPs(ifaces)
+	if len(all) == 0 {
+		return ""
+	}
+	return all[0]
 }
 
 func (c *Client) NetworkStatus(ctx context.Context, id string) (*DataplaneStatus, error) {

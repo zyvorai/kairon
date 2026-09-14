@@ -49,6 +49,7 @@ type ServiceFabricMembership struct {
 // MachineNetworkStatus is projected for Fabric's Dataplane tab.
 type MachineNetworkStatus struct {
 	GuestIP   string                  `json:"guestIP,omitempty"`
+	GuestIPs  []string                `json:"guestIPs,omitempty"`
 	TapName   string                  `json:"tapName,omitempty"`
 	Dataplane *MachineDataplaneStatus `json:"dataplane,omitempty"`
 }

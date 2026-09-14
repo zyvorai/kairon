@@ -150,19 +150,58 @@ func TestBestGuestIPPicksFirstIPv4OnFirstNonLoopbackInterface(t *testing.T) {
 	}
 }
 
-func TestBestGuestIPReturnsEmptyWhenNoIPv4Anywhere(t *testing.T) {
+func TestBestGuestIPFallsBackToIPv6WhenNoIPv4Anywhere(t *testing.T) {
 	ifaces := []QgaNetworkInterface{
 		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},
 		{Name: "enp0s7", IPAddresses: []QgaIPAddress{{IPAddress: "fe80::1", IPAddressType: "ipv6"}}},
 	}
-	if got := BestGuestIP(ifaces); got != "" {
-		t.Fatalf("got %q, want empty (no non-loopback ipv4 address present)", got)
+	if got := BestGuestIP(ifaces); got != "fe80::1" {
+		t.Fatalf("got %q, want the IPv6 address as a fallback (no IPv4 anywhere shouldn't mean no address at all)", got)
 	}
 }
 
 func TestBestGuestIPHandlesNoInterfaces(t *testing.T) {
 	if got := BestGuestIP(nil); got != "" {
 		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestAllGuestIPsOrdersIPv4BeforeIPv6AcrossInterfaces(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},
+		{Name: "enp0s7", IPAddresses: []QgaIPAddress{
+			{IPAddress: "fe80::1", IPAddressType: "ipv6"},
+			{IPAddress: "10.0.2.15", IPAddressType: "ipv4"},
+		}},
+		{Name: "enp0s8", IPAddresses: []QgaIPAddress{
+			{IPAddress: "192.168.1.5", IPAddressType: "ipv4"},
+			{IPAddress: "2001:db8::5", IPAddressType: "ipv6"},
+		}},
+	}
+	got := AllGuestIPs(ifaces)
+	want := []string{"10.0.2.15", "192.168.1.5", "fe80::1", "2001:db8::5"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if got[0] != BestGuestIP(ifaces) {
+		t.Fatalf("AllGuestIPs()[0] = %q should agree with BestGuestIP() = %q", got[0], BestGuestIP(ifaces))
+	}
+}
+
+func TestAllGuestIPsExcludesLoopbackAndHandlesEmpty(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}, {IPAddress: "::1", IPAddressType: "ipv6"}}},
+	}
+	if got := AllGuestIPs(ifaces); len(got) != 0 {
+		t.Fatalf("got %v, want empty (only a loopback interface present)", got)
+	}
+	if got := AllGuestIPs(nil); len(got) != 0 {
+		t.Fatalf("got %v, want empty for nil input", got)
 	}
 }
 

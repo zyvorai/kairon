@@ -143,10 +143,17 @@ type DeviceClaimReference struct {
 }
 
 type MachineStatus struct {
-	Phase              string                `json:"phase,omitempty"`
-	NodeName           string                `json:"nodeName,omitempty"`
-	RuntimeID          string                `json:"runtimeID,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	NodeName  string `json:"nodeName,omitempty"`
+	RuntimeID string `json:"runtimeID,omitempty"`
+	// GuestIP is the single "primary" address (fluxvm.BestGuestIP's pick,
+	// or the DHCP-lease address when one exists) -- kept for backward
+	// compatibility with existing consumers of this field (e.g. the
+	// `kubectl get machine` IP printer column). GuestIPs is the full
+	// address list (multi-NIC, IPv4 and IPv6); when non-empty,
+	// GuestIPs[0] == GuestIP.
 	GuestIP            string                `json:"guestIP,omitempty"`
+	GuestIPs           []string              `json:"guestIPs,omitempty"`
 	Network            *MachineNetworkStatus `json:"network,omitempty"`
 	ObservedGeneration int64                 `json:"observedGeneration,omitempty"`
 	Message            string                `json:"message,omitempty"`

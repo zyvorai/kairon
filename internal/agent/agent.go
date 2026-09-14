@@ -36,6 +36,13 @@ type Agent struct {
 	MigrationPort    int
 	MigrationPeerURL func(context.Context, string) (string, error)
 	Log              *slog.Logger
+	// guestIPCheckedAt tracks, per "namespace/name", the last time
+	// projectNetworkStatus actually queried the guest agent for a Machine
+	// that already has a resolved guestIP -- see guestAgentRecheckInterval
+	// in network.go. Safe unguarded: Reconcile (and therefore every call
+	// into projectNetworkStatus) runs machine-by-machine inside a single
+	// goroutine, never concurrently (see Run's ticker loop below).
+	guestIPCheckedAt map[string]time.Time
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {

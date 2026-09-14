@@ -154,30 +154,59 @@ func policySelectsMachine(p model.MachineNetworkPolicy, m model.Machine) bool {
 	return model.LabelsMatch(m.Metadata.Labels, p.Spec.Selector)
 }
 
+// guestAgentRecheckInterval bounds how often projectNetworkStatus re-queries
+// the guest agent once a guestIP has already been resolved at least once --
+// unlike the initial resolution (retried every reconcile tick, since the
+// guest agent may simply not have booted yet), re-verifying an
+// already-known-good address doesn't need reconcile-tick granularity, and
+// polling qemu-guest-agent over virtio-serial every few seconds forever for
+// an address that essentially never changes would be needless overhead.
+const guestAgentRecheckInterval = 5 * time.Minute
+
 func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *fluxvm.Record, status *model.MachineStatus) error {
 	guestIP := rec.GuestIP
+	var guestIPs []string
 	if guestIP == "" {
 		// Preserve whatever was already resolved on a prior tick -- m.Status
 		// is this reconcile's untouched snapshot of the last-persisted
 		// status, unlike *status, which the caller already overwrote with
 		// this tick's (possibly empty) rec.GuestIP before calling here.
 		guestIP = m.Status.GuestIP
+		guestIPs = m.Status.GuestIPs
 	}
-	if guestIP == "" && m.Spec.GuestAgent.Enabled {
+	if rec.GuestIP == "" && m.Spec.GuestAgent.Enabled {
 		// No DHCP lease to read (spec.network.mode: user in particular has
 		// none at all) -- ask the real qemu-guest-agent instead, if the
-		// Machine opted in. A failure here (agent not booted yet, or never
-		// installed despite being enabled) is expected and transient early
-		// in a VM's life, not a reconcile error -- just leave guestIP empty
-		// for this tick and try again next time.
-		if resolved, err := a.Flux.QGANetworkInterfaces(ctx, rec.ID()); err != nil {
-			a.Log.Debug("qga guest IP resolution failed, will retry next tick", "machine", m.Metadata.Name, "error", err)
-		} else if ip := fluxvm.BestGuestIP(resolved); ip != "" {
-			guestIP = ip
+		// Machine opted in. Retried every tick until the first successful
+		// resolution (the guest agent may not have booted yet -- a failure
+		// here is expected and transient early in a VM's life, not a
+		// reconcile error); once resolved at least once, only re-verified
+		// every guestAgentRecheckInterval, so a long-lived VM's address
+		// change is eventually noticed without hammering QGA forever.
+		key := m.Namespace() + "/" + m.Metadata.Name
+		due := guestIP == ""
+		if !due {
+			last, checkedBefore := a.guestIPCheckedAt[key]
+			due = !checkedBefore || time.Since(last) >= guestAgentRecheckInterval
+		}
+		if due {
+			if resolved, err := a.Flux.QGANetworkInterfaces(ctx, rec.ID()); err != nil {
+				a.Log.Debug("qga guest IP resolution failed, will retry next tick", "machine", m.Metadata.Name, "error", err)
+			} else {
+				if a.guestIPCheckedAt == nil {
+					a.guestIPCheckedAt = map[string]time.Time{}
+				}
+				a.guestIPCheckedAt[key] = time.Now()
+				if all := fluxvm.AllGuestIPs(resolved); len(all) > 0 {
+					guestIPs = all
+					guestIP = fluxvm.BestGuestIP(resolved)
+				}
+			}
 		}
 	}
 	status.GuestIP = guestIP
-	netStatus := &model.MachineNetworkStatus{GuestIP: guestIP, TapName: rec.TapName}
+	status.GuestIPs = guestIPs
+	netStatus := &model.MachineNetworkStatus{GuestIP: guestIP, GuestIPs: guestIPs, TapName: rec.TapName}
 	dp, err := a.Flux.NetworkStatus(ctx, rec.ID())
 	if err != nil {
 		// Soft-fail when dataplane endpoints are unavailable (legacy FluxVM).

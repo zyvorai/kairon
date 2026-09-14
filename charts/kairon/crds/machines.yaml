@@ -282,6 +282,10 @@ spec:
                 type: string
               guestIP:
                 type: string
+              guestIPs:
+                type: array
+                items:
+                  type: string
               observedGeneration:
                 type: integer
                 format: int64
@@ -317,6 +321,10 @@ spec:
                 properties:
                   guestIP:
                     type: string
+                  guestIPs:
+                    type: array
+                    items:
+                      type: string
                   tapName:
                     type: string
                   dataplane:

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -47,10 +48,21 @@ func TestProjectNetworkStatusFallsBackToQGAWhenNoLeaseIP(t *testing.T) {
 	}
 }
 
-func TestProjectNetworkStatusPreservesLastKnownGoodIPWithoutCallingQGA(t *testing.T) {
+// TestProjectNetworkStatusThrottlesRecheckOnceResolved replaces the old
+// "never calls QGA again once resolved" guarantee: that guarantee is gone
+// on purpose (see guestAgentRecheckInterval) so a Machine's address change
+// is eventually noticed. What must still hold is that two ticks close
+// together (well within guestAgentRecheckInterval) on the *same* live
+// Agent don't call QGA twice -- confirmed by feeding the resolved status
+// from the first tick back in as the second tick's m.Status, the same way
+// a real reconcile loop would.
+func TestProjectNetworkStatusThrottlesRecheckOnceResolved(t *testing.T) {
+	calls := 0
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces" {
-			t.Fatal("qga should not be called when a guest IP is already known")
+			calls++
+			_, _ = w.Write([]byte(`[{"name":"enp0s7","ip-addresses":[{"ip-address":"10.0.2.15","ip-address-type":"ipv4"}]}]`))
+			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
@@ -62,15 +74,98 @@ func TestProjectNetworkStatusPreservesLastKnownGoodIPWithoutCallingQGA(t *testin
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
 		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Enabled: true}},
-		Status:   model.MachineStatus{GuestIP: "10.0.0.9"},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1"}
+
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus (first tick): %v", err)
+	}
+	if status.GuestIP != "10.0.2.15" || calls != 1 {
+		t.Fatalf("first tick: GuestIP=%q calls=%d, want 10.0.2.15 via exactly one qga call", status.GuestIP, calls)
+	}
+
+	m.Status = status
+	var status2 model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status2); err != nil {
+		t.Fatalf("projectNetworkStatus (second tick): %v", err)
+	}
+	if status2.GuestIP != "10.0.2.15" || calls != 1 {
+		t.Fatalf("second tick: GuestIP=%q calls=%d, want the preserved IP and no additional qga call", status2.GuestIP, calls)
+	}
+}
+
+func TestProjectNetworkStatusRechecksAfterIntervalElapses(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces" {
+			_, _ = w.Write([]byte(`[{"name":"enp0s7","ip-addresses":[{"ip-address":"10.0.2.99","ip-address-type":"ipv4"}]}]`))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		Flux: fc,
+		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		guestIPCheckedAt: map[string]time.Time{
+			"prod/db": time.Now().Add(-2 * guestAgentRecheckInterval),
+		},
+	}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Enabled: true}},
+		Status:   model.MachineStatus{GuestIP: "10.0.2.15"}, // stale -- address changed since the last check
 	}
 	rec := &fluxvm.Record{UUID: "vm-1"}
 	var status model.MachineStatus
 	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
 		t.Fatalf("projectNetworkStatus: %v", err)
 	}
-	if status.GuestIP != "10.0.0.9" {
-		t.Fatalf("got GuestIP %q, want the preserved 10.0.0.9", status.GuestIP)
+	if status.GuestIP != "10.0.2.99" {
+		t.Fatalf("got GuestIP %q, want the freshly re-resolved 10.0.2.99 once the recheck interval elapsed", status.GuestIP)
+	}
+}
+
+func TestProjectNetworkStatusPopulatesGuestIPsFromMultipleInterfaces(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/qga/network-interfaces" {
+			_, _ = w.Write([]byte(`[
+				{"name":"lo","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"}]},
+				{"name":"enp0s7","ip-addresses":[
+					{"ip-address":"fe80::1","ip-address-type":"ipv6"},
+					{"ip-address":"10.0.2.15","ip-address-type":"ipv4"}
+				]}
+			]`))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Enabled: true}},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1"}
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus: %v", err)
+	}
+	if status.GuestIP != "10.0.2.15" {
+		t.Fatalf("got GuestIP %q, want the IPv4 address to remain the primary pick", status.GuestIP)
+	}
+	want := []string{"10.0.2.15", "fe80::1"}
+	if len(status.GuestIPs) != len(want) || status.GuestIPs[0] != want[0] || status.GuestIPs[1] != want[1] {
+		t.Fatalf("got GuestIPs %v, want %v", status.GuestIPs, want)
+	}
+	if status.Network == nil || len(status.Network.GuestIPs) != len(want) {
+		t.Fatalf("status.Network.GuestIPs = %v, want it mirrored there too", status.Network)
 	}
 }
 
