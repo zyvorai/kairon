@@ -3,8 +3,6 @@
 
 package model
 
-import "time"
-
 // ConfigMap is the minimal core/v1 ConfigMap shape Kairon needs -- not a
 // general-purpose client. Used by internal/uiapi.Server to share session
 // revocation, login-lockout, and console-ticket state across kairon-ui
@@ -43,7 +41,7 @@ type Lease struct {
 type LeaseSpec struct {
 	HolderIdentity       *string    `json:"holderIdentity,omitempty"`
 	LeaseDurationSeconds *int32     `json:"leaseDurationSeconds,omitempty"`
-	AcquireTime          *time.Time `json:"acquireTime,omitempty"`
-	RenewTime            *time.Time `json:"renewTime,omitempty"`
+	AcquireTime          *MicroTime `json:"acquireTime,omitempty"`
+	RenewTime            *MicroTime `json:"renewTime,omitempty"`
 	LeaseTransitions     *int32     `json:"leaseTransitions,omitempty"`
 }

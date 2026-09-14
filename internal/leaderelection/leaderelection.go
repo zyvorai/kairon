@@ -172,7 +172,7 @@ func (e *Elector) renew(ctx context.Context) bool {
 		e.Log.Warn("leader election: lease held by another identity, stepping down", "lease", e.Name)
 		return false
 	}
-	now := time.Now()
+	now := model.NewMicroTime(time.Now())
 	current.Spec.RenewTime = &now
 	if _, err := e.Kube.UpdateLease(ctx, e.Namespace, current); err != nil {
 		if !kube.IsConflict(err) {
@@ -184,7 +184,7 @@ func (e *Elector) renew(ctx context.Context) bool {
 }
 
 func (e *Elector) create(ctx context.Context) bool {
-	now := time.Now()
+	now := model.NewMicroTime(time.Now())
 	dur := int32(e.leaseDuration().Seconds())
 	transitions := int32(1)
 	identity := e.Identity
@@ -213,7 +213,7 @@ func (e *Elector) create(ctx context.Context) bool {
 // takeover by another replica) and writes it back claiming this process as
 // holder.
 func (e *Elector) takeover(ctx context.Context, current model.Lease) bool {
-	now := time.Now()
+	now := model.NewMicroTime(time.Now())
 	dur := int32(e.leaseDuration().Seconds())
 	priorHolder := ""
 	if current.Spec.HolderIdentity != nil {
@@ -254,5 +254,5 @@ func (e *Elector) expired(l model.Lease) bool {
 	if l.Spec.LeaseDurationSeconds != nil {
 		d = time.Duration(*l.Spec.LeaseDurationSeconds) * time.Second
 	}
-	return time.Since(*l.Spec.RenewTime) > d
+	return time.Since(l.Spec.RenewTime.Time) > d
 }

@@ -158,7 +158,7 @@ func TestRenewKeepsLeadershipAndAdvancesRenewTime(t *testing.T) {
 	if !a.renew(context.Background()) {
 		t.Fatal("renew should succeed while still holder")
 	}
-	if !store.lease.Spec.RenewTime.After(firstRenew) {
+	if !store.lease.Spec.RenewTime.After(firstRenew.Time) {
 		t.Fatal("renewTime did not advance")
 	}
 }
