@@ -16,8 +16,14 @@ export default function App() {
   // No client-side router elsewhere in this app -- this one path is the
   // sole exception, since the OIDC callback (see internal/uiapi/oidc.go)
   // has to land somewhere real rather than at whatever page the operator
-  // happened to be on when they clicked "Sign in with SSO".
-  const [onOIDCCallback] = useState(() => window.location.pathname === '/oidc/callback');
+  // happened to be on when they clicked "Sign in with SSO". Mutable (not
+  // a one-time lazy useState) because onDone() below must be able to turn
+  // it back off once handled -- otherwise this stays true for the rest of
+  // the page's life (window.location.pathname doesn't get re-read after
+  // the initial render just because history.replaceState changed it), and
+  // OIDCCallback renders nothing on success, leaving the screen blank
+  // forever until a manual reload.
+  const [onOIDCCallback, setOnOIDCCallback] = useState(() => window.location.pathname === '/oidc/callback');
 
   useEffect(() => {
     // Fired by api.ts on any 401, from anywhere in the app -- a stale or
@@ -48,6 +54,7 @@ export default function App() {
         onDone={() => {
           window.history.replaceState(null, '', '/');
           setSignedIn(true);
+          setOnOIDCCallback(false);
         }}
       />
     );

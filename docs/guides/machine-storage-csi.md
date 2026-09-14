@@ -163,9 +163,21 @@ Machine-boot-disk path -- see "Real limits" below for why.
   Network reachability to the target, multipath (if you need it), and
   target-side ACLs are all your storage infrastructure's responsibility,
   same as they'd be for any other iSCSI consumer.
-- **Not exercised against a real iSCSI target in this project's own CI.**
-  `internal/csinode`'s orchestration logic (login/logout sequencing,
-  idempotency, format-if-needed, error handling) has real unit test
-  coverage against a faked command runner and mount state, but the actual
+- **If the node already runs its own `iscsid` (e.g. `open-iscsi` installed
+  at the OS level, common on storage-capable hosts), `kairon-csi-node`
+  detects and reuses it instead of starting a redundant one** --
+  confirmed necessary against a real host: `iscsid`'s IPC socket lives in
+  the *abstract* Unix socket namespace, which `hostNetwork: true` shares
+  with the node directly, so binding a second one over an
+  already-running instance fails outright. The container's entrypoint
+  probes (`iscsiadm -m iface`) before deciding whether to start its own.
+- **The actual iSCSI attach/mount path is still not verified against a
+  real target.** What *has* been confirmed on a real Kubernetes cluster:
+  the plugin starts, the upstream registrar sidecar registers it with
+  kubelet (`kubectl get csinodes` shows `csi.kairon.zyvor.dev` listed for
+  the node), and `internal/csinode`'s orchestration logic (login/logout
+  sequencing, idempotency, format-if-needed, error handling) has real
+  unit test coverage against a faked command runner and mount state. But
+  the actual
   OS-level behavior of `iscsiadm`/`mount`/`mkfs` can only be verified by
   running the built `kairon-csi-node` image for real.
