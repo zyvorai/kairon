@@ -70,7 +70,7 @@ Three constraints shape almost every design choice above — see the top-level [
 
 - **Go standard library only.** `go.mod` has no `client-go`, no controller-runtime, no generated deepcopy. `kairon-controller` is a hand-rolled interval poll loop over a raw REST client (`internal/kube`), not a watch-based `Manager`/`Reconciler` — which is also why the admission webhook hand-rolls the small `AdmissionReview` JSON shape (`internal/admission`) instead of importing `k8s.io/api` for it. The tradeoff is explicit: no client-side caching or watch-based low-latency reconciliation, in exchange for a codebase small enough to actually read start to finish.
 - **Kubernetes is the only source of truth.** Every component above — including the dashboard — is a client of the same API, never a second store. There is no Kairon-side database to get out of sync with reality.
-- **An ambiguous outcome gets a name, not a guess.** `NeedsRecovery` exists because a live migration whose commit result is genuinely uncertain has exactly two wrong automatic answers (assume success, assume failure) and one right one: stop, and ask an operator to attest what actually happened.
+- **An ambiguous outcome gets a name, not a guess.** `NeedsRecovery` exists because a live migration whose commit result is genuinely uncertain has exactly two wrong automatic answers (assume success, assume failure) and one right one: stop, and ask an operator to attest what actually happened. Node fencing follows the same shape: `kairon-controller` names a Machine's node `NodeUnreachable` on its own, but only an operator-run `kaironctl fence`, attesting the node is truly gone (not just unreachable), makes it eligible for rescheduling — automatic rescheduling here risks the same split-brain double-run `NeedsRecovery` prevents for migrations.
 
 ## Going deeper
 
@@ -78,4 +78,5 @@ Three constraints shape almost every design choice above — see the top-level [
 - [`docs/migration-adapter.md`](docs/migration-adapter.md) — the migration adapter's HTTP contract and trust boundary
 - [`docs/network-fabric.md`](docs/network-fabric.md) — `MachineNetworkPolicy`/`NetworkSecurityGroup` and the FluxVM eBPF edge
 - [`docs/tutorials/machine-lifecycle.md`](docs/tutorials/machine-lifecycle.md) — a hands-on walkthrough of the create → relocate → snapshot → restore flow described above
+- [`docs/guides/machine-fencing.md`](docs/guides/machine-fencing.md) — `NodeUnreachable` detection, `kaironctl fence`'s safety model, storage/network migration preflight labels
 - [SECURITY.md](SECURITY.md) — the full threat model behind every TLS hop and trust boundary mentioned here

@@ -114,6 +114,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Secure live handshake** — TLS 1.3 mTLS `prepare → transfer → commit`, never a user-supplied `tcp:` URI
 - **Split-brain guards** — rollback on transfer failure, `NeedsRecovery` on ambiguous commit, adopt-only cutover
 - **A real migration adapter ships** — `cmd/kairon-migration-adapter-fluxvm` against real FluxVM endpoints, not just a test double
+- **Node fencing is detection + operator-attested action, never a guess** — `kairon-controller` flags a Machine's node `NodeUnreachable` every reconcile tick but never reschedules it itself (that risks running the same VM twice if the node isn't actually dead); `kaironctl fence --reason ...` is the explicit, attested step that clears it for rescheduling — same shape as `NeedsRecovery`. Opt-in `kairon.zyvor.dev/storage-domain`/`network-domain` node labels also let migration preflight block a target when it's *confirmed* to not share storage/network with the source — [guide](docs/guides/machine-fencing.md)
 
 **Guarding the fleet**
 - **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once — [guide](docs/guides/machine-disruption-budgets.md)
@@ -275,6 +276,7 @@ kaironctl evacuate NODE [--strategy cold|auto]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
 kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON
+kaironctl fence MACHINE --reason REASON  # only once NodeUnreachable=True and you've confirmed the node is truly gone
 kaironctl version
 ```
 
@@ -327,6 +329,7 @@ npm --prefix web run build
 | [`docs/tutorials/network-fabric.md`](docs/tutorials/network-fabric.md) · [`docs/guides/machine-network.md`](docs/guides/machine-network.md) · [`docs/guides/network-policy.md`](docs/guides/network-policy.md) | Network Fabric walkthrough and field-level guides |
 | [`docs/guides/machine-quotas.md`](docs/guides/machine-quotas.md) · [`docs/guides/machine-disruption-budgets.md`](docs/guides/machine-disruption-budgets.md) | `MachineQuota`/`MachineDisruptionBudget` reference, including the admission webhook |
 | [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |
+| [`docs/guides/machine-fencing.md`](docs/guides/machine-fencing.md) | `NodeUnreachable`/`Fenced` conditions, `kaironctl fence`'s safety model, storage/network migration preflight labels |
 | [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) · [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
 | [`ROADMAP.md`](ROADMAP.md) · [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
 | [`SECURITY.md`](SECURITY.md) | Threat model, vulnerability reporting |
@@ -342,7 +345,7 @@ npm --prefix web run build
 
 Still genuinely open, and why:
 
-- **Automatic fencing, storage/network migration preflight** — need real multi-host cluster behavior this repo's CI doesn't have.
+- **Fencing detection and migration preflight are single-signal, not exhaustive** — fencing only looks at the Kubernetes Node's own `Ready` condition (no independent liveness probe of kairon-node itself), and preflight can only catch a *confirmed* storage/network mismatch when both nodes are labeled with `kairon.zyvor.dev/storage-domain`/`network-domain` — it can't prove compatibility when the labels are unset. Real multi-host fencing/preflight behavior hasn't been exercised against real hardware in this repo's own CI.
 - **`topologySpreadConstraints.maxSkew` is accepted but not enforced** — the scheduler minimizes matching-Machine count per domain, it doesn't hard-cap skew between domains.
 - **DRA topology-awareness is a best-effort scoring hint, not an allocation decision** — `kairon-controller` has no role in DRA device allocation itself; see [`docs/guides/machine-placement.md`](docs/guides/machine-placement.md).
 - **Confidential-compute enforcement (SEV-SNP/TDX), large-scale hardware qualification** — hardware-dependent, not exercisable in CI.

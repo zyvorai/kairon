@@ -482,13 +482,16 @@ func TestReconcileMigrationSkipsTerminalPhases(t *testing.T) {
 		t.Run(terminal, func(t *testing.T) {
 			machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
 			migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: terminal}}
+			// worker-1 must be Ready in this fixture, or fencing detection
+			// (an orthogonal concern -- see fencing.go) would itself PATCH
+			// the Machine's status, which is not what this test is about.
 			patched := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
 					_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
-					_ = json.NewEncoder(w).Encode(model.NodeList{})
+					_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1")}})
 				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
 					_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
 				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":

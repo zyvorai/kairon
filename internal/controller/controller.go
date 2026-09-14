@@ -203,6 +203,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+
+	c.detectUnreachableNodes(ctx, machines, nodes)
 	return nil
 }
 
@@ -397,7 +399,26 @@ func (c *Controller) migrationTarget(machine model.Machine, requested string, no
 		}
 		return "", fmt.Errorf("no migration target available: %w", err)
 	}
+	// Preflight against the chosen candidate only -- not a fallback search
+	// through the rest of candidates if it fails. See migrationPreflight's
+	// own doc comment for what this does and doesn't check.
+	if sourceNode, ok := nodeByName(nodes, machine.Spec.NodeName); ok {
+		if targetNode, ok := nodeByName(nodes, target); ok {
+			if blocker := migrationPreflight(sourceNode, targetNode); blocker != "" {
+				return "", fmt.Errorf("migration preflight failed: %s", blocker)
+			}
+		}
+	}
 	return target, nil
+}
+
+func nodeByName(nodes []model.Node, name string) (model.Node, bool) {
+	for _, n := range nodes {
+		if n.Metadata.Name == name {
+			return n, true
+		}
+	}
+	return model.Node{}, false
 }
 
 func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {

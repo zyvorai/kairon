@@ -16,6 +16,21 @@ const (
 	AnnotationAdoptOnly    = "kairon.zyvor.dev/adopt-only"
 	AnnotationVFIOBDF      = "kairon.zyvor.dev/vfio-bdf"
 	AnnotationMigrationRef = "kairon.zyvor.dev/migration"
+	// ConditionNodeUnreachable is a MachineStatus.Conditions[].Type
+	// kairon-controller sets/clears every reconcile tick to reflect
+	// whether spec.nodeName currently names a Ready, present Kubernetes
+	// Node -- see internal/controller/fencing.go. Detection only: nothing
+	// automatically reschedules the Machine when this goes True (that
+	// would risk running the same VM twice if the node isn't actually
+	// dead, just unreachable) -- see ConditionFenced and
+	// `kaironctl fence`.
+	ConditionNodeUnreachable = "NodeUnreachable"
+	// ConditionFenced records an operator-attested `kaironctl fence`
+	// action: the operator has confirmed (out-of-band, e.g. power-off)
+	// that the node named in Reason/Message is truly gone, not just
+	// unreachable, and it's safe to let the Machine be rescheduled
+	// elsewhere. Kairon cannot verify this itself.
+	ConditionFenced = "Fenced"
 )
 
 type TypeMeta struct {

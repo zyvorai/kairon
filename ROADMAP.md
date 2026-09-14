@@ -26,7 +26,7 @@ See [`docs/network-fabric.md`](docs/network-fabric.md).
 - [x] QEMU incoming destination lifecycle and QMP transfer implementation
 - [x] authenticated/encrypted data-plane transport (`migration.dataplaneTls`, `status.dataPlaneEncrypted`)
 - [x] cancellation and operator recovery commands (`kaironctl recover`, `docs/runbook-migration-failures.md`)
-- [ ] shared-storage and block-migration preflight
+- [x] shared-storage and block-migration preflight (first cut, opt-in `kairon.zyvor.dev/storage-domain`/`network-domain` node labels — see `docs/guides/machine-fencing.md`)
 - [x] migration network selection and bandwidth policy
 
 ## Operational tooling (shipped ahead of schedule)
@@ -54,10 +54,10 @@ Not originally scoped for a specific version, but small enough to land alongside
 - [x] `scripts/deploy-remote.sh --console-tls`: automates (or accepts bring-your-own) TLS material for the kairon-ui↔kairon-node console relay hop, previously a manual step.
 - [x] Helm chart hardening: `PodDisruptionBudget` (on by default) and opt-in `NetworkPolicy` for `kairon-controller`/`kairon-ui`.
 - [x] Supply chain: Dockerfile base images pinned to a digest, Trivy image scanning in CI, and a tag-triggered `release.yml` that publishes scanned, digest-pinned images to `ghcr.io/zyvorai/kairon-*` — this repo's CI is now the source of those tags.
-- DRA topology-aware scheduler scoring
 - SR-IOV/GPU migration capability checks
 - guest quiesce hooks for snapshots
 - [x] TLS certificate hot-reload (`internal/tlsreload`): migration mTLS, the VNC console relay, and the admission webhook all now pick up a renewed leaf certificate/key (e.g. from cert-manager) within 30s, no restart. Only the leaf cert/key -- a CA bundle still loads once at startup. Automated issuance (ACME/cert-manager integration Kairon itself drives) and SPIFFE-style workload identity remain open.
+- [x] node fencing (first cut): `kairon-controller` sets a `NodeUnreachable` condition on any Machine whose node stops being `Ready`, every reconcile tick -- detection only, never automatic rescheduling (risks running the same VM twice). `kaironctl fence --reason ...` is the explicit operator-attested action that clears a Machine for rescheduling once a human has confirmed out-of-band the node is truly gone -- see `docs/guides/machine-fencing.md`.
 - confidential VM policy (SEV-SNP/TDX)
 - OIDC/SSO for `kairon-ui`
 - multi-replica `kairon-ui` (session/lockout state is deliberately single-replica today, see SECURITY.md)

@@ -102,6 +102,8 @@ func run() int {
 		cmdEvacuate(ctx, kc, os.Args[2:])
 	case "recover":
 		cmdRecover(ctx, kc, os.Args[2:])
+	case "fence":
+		cmdFence(ctx, kc, os.Args[2:])
 	case "snapshot":
 		cmdSnapshot(ctx, kc, os.Args[2:])
 	case "restore":
@@ -266,6 +268,94 @@ func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(err)
 	}
 	fmt.Printf("machine/%s deleted\n", args[0])
+}
+
+// cmdFence is the operator-attested recovery action for a Machine whose
+// node kairon-controller has detected as unreachable (see
+// internal/controller/fencing.go's detectUnreachableNodes) -- the same
+// "park it, wait for an attested human decision" shape as `recover` uses
+// for a NeedsRecovery migration, applied to a dead node instead of an
+// ambiguous migration commit. Kairon cannot itself confirm a node is
+// truly gone rather than just unreachable, so this refuses to run at all
+// unless status already shows NodeUnreachable=True, and --reason is
+// required as the operator's own attestation (e.g. "confirmed powered off
+// via iDRAC at 14:02" or "node deleted from the cluster") -- if the old
+// node comes back while its FluxVM runtime is still actually running,
+// fencing it anyway risks the exact split-brain NeedsRecovery exists to
+// prevent for migrations. Clears spec.nodeName (picked up by the normal
+// scheduling loop on the next tick, same as a brand-new Machine) and every
+// status field tied to the old runtime, so the new node treats this as a
+// fresh create rather than trying to adopt something that may not exist.
+func cmdFence(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl fence MACHINE --reason REASON"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("fence", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	reason := fs.String("reason", "", "your out-of-band evidence the node is truly gone, not just unreachable (required)")
+	_ = fs.Parse(args[1:])
+	if *reason == "" {
+		fatal(fmt.Errorf("--reason is required: state the out-of-band evidence you have that the node is truly gone"))
+	}
+
+	m, err := kc.GetMachine(ctx, *ns, name)
+	if err != nil {
+		fatal(fmt.Errorf("get machine %s/%s: %w", *ns, name, err))
+	}
+	cond, found := findMachineCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
+	if !found || cond.Status != "True" {
+		fatal(fmt.Errorf("machine %s/%s does not currently have %s=True -- nothing to fence (its node looks Ready to kairon-controller)", *ns, name, model.ConditionNodeUnreachable))
+	}
+	fencedNode := m.Spec.NodeName
+	fmt.Printf("fencing machine/%s off node %q (kairon-controller's last-observed reason: %s)\n", name, fencedNode, cond.Message)
+
+	if err := kc.PatchMachine(ctx, *ns, name, map[string]any{"spec": map[string]any{"nodeName": ""}}); err != nil {
+		fatal(fmt.Errorf("clear spec.nodeName on %s/%s: %w", *ns, name, err))
+	}
+	status := m.Status
+	status.Phase = ""
+	status.NodeName = ""
+	status.RuntimeID = ""
+	status.GuestIP = ""
+	status.GuestIPs = nil
+	status.Network = nil
+	status.AppliedVCPUs = 0
+	status.AppliedMemoryMiB = 0
+	status.Conditions = setMachineCondition(status.Conditions, model.Condition{
+		Type: model.ConditionFenced, Status: "True", Reason: "OperatorAttested",
+		Message: fmt.Sprintf("fenced off node %q by an operator: %s", fencedNode, *reason), LastTransitionTime: time.Now().UTC(),
+	})
+	if err := kc.PatchMachineStatus(ctx, *ns, name, status); err != nil {
+		fatal(fmt.Errorf("clear runtime status on %s/%s: %w", *ns, name, err))
+	}
+	fmt.Printf("machine/%s: spec.nodeName cleared; will be rescheduled onto a different node on kairon-controller's next reconcile tick\n", name)
+}
+
+func findMachineCondition(conditions []model.Condition, condType string) (model.Condition, bool) {
+	for _, c := range conditions {
+		if c.Type == condType {
+			return c, true
+		}
+	}
+	return model.Condition{}, false
+}
+
+func setMachineCondition(conditions []model.Condition, cond model.Condition) []model.Condition {
+	out := make([]model.Condition, 0, len(conditions)+1)
+	replaced := false
+	for _, c := range conditions {
+		if c.Type == cond.Type {
+			out = append(out, cond)
+			replaced = true
+			continue
+		}
+		out = append(out, c)
+	}
+	if !replaced {
+		out = append(out, cond)
+	}
+	return out
 }
 
 func cmdPower(ctx context.Context, kc *kube.Client, args []string, state string) {
@@ -505,7 +595,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | migrate | evacuate | recover | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
