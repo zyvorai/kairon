@@ -193,11 +193,49 @@ spec:
 {{ if and .Values.migration.enabled .Values.migration.adapterHostPath .Values.migration.dataplaneTls }}
       initContainers:
         # kairon-migration-adapter-fluxvm runs as a bare-host systemd unit,
-        # not in this pod -- it has no access to the migration-tls Secret
-        # volume below. Materialize the same cert material it needs (for
-        # the QEMU migration data-plane TLS, distinct from this pod's own
-        # mTLS control-plane connection) onto the adapterHostPath volume,
-        # which the host-level adapter process reads directly.
+        # not in this pod -- it has no access to either Secret volume
+        # below. Materialize the cert material it needs (for the QEMU
+        # migration data-plane TLS, distinct from this pod's own mTLS
+        # control-plane connection) onto the adapterHostPath volume, which
+        # the host-level adapter process reads directly.
+{{ if .Values.migration.dataplaneTlsSecretName }}
+        # dataplaneTlsSecretName set: pick out *this node's own* cert from
+        # the per-node bundle (see values.yaml's comment) via the Downward
+        # API -- never the shared control-plane cert. Fails the pod
+        # outright (exit 1, not a silent fallback) if this node's own
+        # three files aren't in the Secret, since presenting no data-plane
+        # identity at all is a much safer failure than presenting the
+        # wrong one.
+        - name: migration-adapter-tls
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mkdir -p /adapter/tls
+              src="/etc/kairon/migration-dataplane-tls/${NODE_NAME}"
+              if [ ! -f "${src}-ca.crt" ] || [ ! -f "${src}-tls.crt" ] || [ ! -f "${src}-tls.key" ]; then
+                echo "FATAL: no per-node data-plane cert for node ${NODE_NAME} in migration.dataplaneTlsSecretName (expected ${NODE_NAME}-ca.crt/-tls.crt/-tls.key) -- refusing to fall back to a shared or wrong identity" >&2
+                exit 1
+              fi
+              cp "${src}-ca.crt" /adapter/tls/ca.crt
+              cp "${src}-tls.crt" /adapter/tls/tls.crt
+              cp "${src}-tls.key" /adapter/tls/tls.key
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          volumeMounts:
+            - {name: migration-dataplane-tls, mountPath: /etc/kairon/migration-dataplane-tls, readOnly: true}
+            - {name: migration-adapter, mountPath: /adapter}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+{{ else }}
+        # dataplaneTlsSecretName not set: fall back to staging the shared
+        # control-plane cert (tlsSecretName) onto the data plane too --
+        # weaker (every node can present the same identity there), but
+        # exactly this project's behavior before dataplaneTlsSecretName
+        # existed, so no existing deployment's `helm upgrade` changes
+        # behavior just by picking up this chart version.
         - name: migration-adapter-tls
           image: busybox:1.36
           command: ["sh", "-c", "mkdir -p /adapter/tls && cp /etc/kairon/migration-tls/ca.crt /etc/kairon/migration-tls/tls.crt /etc/kairon/migration-tls/tls.key /adapter/tls/"]
@@ -205,6 +243,7 @@ spec:
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
             - {name: migration-adapter, mountPath: /adapter}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
+{{ end }}
 {{ end }}
       containers:
         - name: node
@@ -288,6 +327,12 @@ spec:
           secret:
             secretName: {{ .Values.migration.tlsSecretName }}
             defaultMode: 0440
+{{ if and .Values.migration.dataplaneTls .Values.migration.dataplaneTlsSecretName }}
+        - name: migration-dataplane-tls
+          secret:
+            secretName: {{ .Values.migration.dataplaneTlsSecretName }}
+            defaultMode: 0440
+{{ end }}
         - name: migration-state
 {{ if .Values.migration.stateHostPath }}
           hostPath:

@@ -36,10 +36,21 @@
 #     -- copy to every host's /etc/kairon/migration/{ca,cert,key}.pem
 #   data-plane/<HOST_A_NAME>-ca.pem  data-plane/<HOST_A_NAME>-cert.pem  data-plane/<HOST_A_NAME>-key.pem
 #     -- copy to that host's /etc/kairon/migration/adapter-{ca,cert,key}.pem
+#   data-plane/kairon-migration-dataplane-tls.secret.yaml
+#     -- a ready-to-`kubectl apply -f` Secret bundling every host's
+#        data-plane cert (keys "<name>-ca.crt"/"<name>-tls.crt"/"<name>-tls.key"),
+#        in the exact shape charts/kairon expects for
+#        migration.dataplaneTlsSecretName -- each kairon-node pod picks out
+#        only its own node's three keys at runtime (see
+#        charts/kairon/templates/all.yaml's migration-adapter-tls init
+#        container), so this one Secret is all every node needs, not one
+#        Secret per node. Only useful when HOST_NAME above is the real
+#        Kubernetes node name (kubectl get nodes), not an arbitrary test
+#        hostname -- the init container matches on spec.nodeName exactly.
 #   (same CA reused across both families' PEM bundles is intentional --
 #   one root simplifies distribution; ONLY the leaf SANs differ.)
 #
-# Requires: openssl (any version with -addext support, 1.1.1+).
+# Requires: openssl (any version with -addext support, 1.1.1+), base64.
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
@@ -53,6 +64,15 @@ CONTROL_PLANE_SERVER_NAME="${KAIRON_MIGRATION_SERVER_NAME:-kairon-node}"
 DAYS="${CERT_DAYS:-30}"
 
 mkdir -p "$OUT_DIR/ca" "$OUT_DIR/control-plane" "$OUT_DIR/data-plane"
+
+SECRET_NAME="${KAIRON_DATAPLANE_SECRET_NAME:-kairon-migration-dataplane-tls}"
+SECRET_NAMESPACE="${KAIRON_DATAPLANE_SECRET_NAMESPACE:-kairon-system}"
+# Accumulated into the Secret's data: map as the per-host loop below runs --
+# base64 with -w0/-b0 isn't portable across GNU/BSD base64, so pipe through
+# `tr -d '\n'` instead, which strips whatever line-wrapping either variant
+# defaults to.
+SECRET_DATA_FILE="$(mktemp)"
+trap 'rm -f "$SECRET_DATA_FILE"' EXIT
 
 echo "[*] generating root CA (valid ${DAYS}d -- this is a throwaway test CA, not for production use)"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
@@ -91,7 +111,30 @@ for pair in "$@"; do
   cp "$OUT_DIR/ca/ca.pem" "$OUT_DIR/data-plane/$name-ca.pem"
   rm -f "$OUT_DIR/data-plane/$name-csr.pem"
   echo "    -> $OUT_DIR/data-plane/$name-{ca,cert,key}.pem"
+
+  {
+    printf '  %s-ca.crt: %s\n' "$name" "$(base64 <"$OUT_DIR/data-plane/$name-ca.pem" | tr -d '\n')"
+    printf '  %s-tls.crt: %s\n' "$name" "$(base64 <"$OUT_DIR/data-plane/$name-cert.pem" | tr -d '\n')"
+    printf '  %s-tls.key: %s\n' "$name" "$(base64 <"$OUT_DIR/data-plane/$name-key.pem" | tr -d '\n')"
+  } >>"$SECRET_DATA_FILE"
 done
+
+if [[ -s "$SECRET_DATA_FILE" ]]; then
+  SECRET_MANIFEST="$OUT_DIR/data-plane/kairon-migration-dataplane-tls.secret.yaml"
+  {
+    echo "apiVersion: v1"
+    echo "kind: Secret"
+    echo "metadata:"
+    echo "  name: $SECRET_NAME"
+    echo "  namespace: $SECRET_NAMESPACE"
+    echo "type: Opaque"
+    echo "data:"
+    cat "$SECRET_DATA_FILE"
+  } >"$SECRET_MANIFEST"
+  echo "[+] wrote $SECRET_MANIFEST -- kubectl apply -f it, then set"
+  echo "    migration.dataplaneTlsSecretName=$SECRET_NAME in Helm (KAIRON_DATAPLANE_SECRET_NAME/"
+  echo "    KAIRON_DATAPLANE_SECRET_NAMESPACE env vars override the name/namespace above)."
+fi
 
 echo "[+] done. Distribute control-plane/ to every host; distribute each host's own data-plane/<name>-* files to that host only."
 echo "    A deliberate negative test (wrong SAN): re-run for a THIRD host name/IP the adapter never advertises, install"

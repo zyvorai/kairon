@@ -70,7 +70,7 @@ Confirm `status.recovery.appliedAction`/`appliedReason`/`appliedAcknowledgedDiag
 `KaironMigrationDataPlaneUnencrypted` fires when `status.dataPlaneEncrypted` is `false` for an in-flight live migration -- the QEMU RAM/state stream is crossing the network in cleartext (the control-plane RPCs between kairon-node peers are always mTLS-encrypted regardless; this is specifically about the guest memory transfer itself). This is `info`-severity, not necessarily an incident: `migration.dataplaneTls` defaults to `false` in this chart.
 
 To actually turn encryption on, two things must both be true simultaneously across the fleet:
-1. `migration.dataplaneTls: true` in Helm (stages cert material onto every node's `adapterHostPath`).
+1. `migration.dataplaneTls: true` in Helm (stages cert material onto every node's `adapterHostPath`). Also set `migration.dataplaneTlsSecretName` for real per-node identity there instead of falling back to the shared control-plane cert -- see [`docs/guides/machine-migration-tls.md`](guides/machine-migration-tls.md).
 2. Every node's `kairon-migration-adapter-fluxvm` systemd unit passes `-migration-data-tls=true` with valid `-migration-ca/-migration-cert/-migration-key` -- this is **outside Helm's control**, set directly in the unit's `ExecStart`.
 
 Before flipping either, query whether every currently-active live migration already reports `dataPlaneEncrypted: true` (or watch the `kairon_migration_dataplane_encrypted` metric go to 1 across the board) -- that's the actual signal that every node's adapter is upgraded and configured, not just a guess based on when you think the rollout finished.

@@ -24,7 +24,7 @@ See [`docs/network-fabric.md`](docs/network-fabric.md).
 
 - [x] implement the Kairon migration adapter in FluxVM or a companion host service (`cmd/kairon-migration-adapter-fluxvm`)
 - [x] QEMU incoming destination lifecycle and QMP transfer implementation
-- [x] authenticated/encrypted data-plane transport (`migration.dataplaneTls`, `status.dataPlaneEncrypted`)
+- [x] authenticated/encrypted data-plane transport (`migration.dataplaneTls`, `status.dataPlaneEncrypted`). Since v0.5, `migration.dataplaneTlsSecretName` (opt-in) gives every node a real per-node data-plane cert instead of the shared control-plane cert it fell back to before -- `scripts/gen-migration-mtls-certs.sh` generates both the certs and a ready-to-apply Secret, each `kairon-node` pod's init container picks out only its own node's files (matched via the Downward API), and fails closed rather than falling back to a shared/wrong identity if its own entry is missing. See `docs/guides/machine-migration-tls.md`.
 - [x] cancellation and operator recovery commands (`kaironctl recover`, `docs/runbook-migration-failures.md`)
 - [x] shared-storage and block-migration preflight (first cut, opt-in `kairon.zyvor.dev/storage-domain`/`network-domain` node labels — see `docs/guides/machine-fencing.md`)
 - [x] migration network selection and bandwidth policy

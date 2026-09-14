@@ -140,6 +140,25 @@ migration:
   # kairon_migration_dataplane_encrypted metric) -- see
   # docs/runbook-migration-failures.md#unencrypted-migration-data-plane.
   dataplaneTls: false
+  # Optional: a Secret (NOT chart-managed, same posture as tlsSecretName)
+  # bundling a REAL PER-NODE data-plane cert for every node in the fleet --
+  # keys named "<nodeName>-ca.crt"/"<nodeName>-tls.crt"/"<nodeName>-tls.key"
+  # for each one. scripts/gen-migration-mtls-certs.sh generates both the
+  # certs and a ready-to-apply Secret manifest in this exact shape. Each
+  # kairon-node pod's init container picks out *only its own* node's three
+  # files (via the Downward API's spec.nodeName) before staging them onto
+  # adapterHostPath -- unlike tlsSecretName's cluster-membership cert
+  # (deliberately shared, see its own comment above), a real per-node cert
+  # here means one node presenting another node's identity on the data
+  # plane is cryptographically impossible, not just discouraged.
+  #
+  # Left empty (the default), dataplaneTls falls back to staging
+  # tlsSecretName's own shared cert onto the data plane too -- weaker
+  # (every node can present the same identity there), but exactly today's
+  # behavior, so no existing deployment's `helm upgrade` needs to change
+  # anything to keep working. Set this once you're ready to move to real
+  # per-node data-plane identity -- see docs/guides/machine-migration-tls.md.
+  dataplaneTlsSecretName: ""
   # Admission quota: caps concurrent non-terminal migrations touching one
   # node, and optionally cluster-wide. Rejected into the existing Blocked
   # phase, same mechanism as an unschedulable target. 0 = unlimited (today's
