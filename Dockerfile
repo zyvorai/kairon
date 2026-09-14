@@ -23,7 +23,8 @@ COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-controller ./cmd/kairon-controller && \
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-node ./cmd/kairon-node && \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-ui ./cmd/kairon-ui
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-ui ./cmd/kairon-ui && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/kairon-csi-node ./cmd/kairon-csi-node
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS controller
 COPY --from=build /out/kairon-controller /kairon-controller
@@ -38,3 +39,21 @@ COPY --from=build /out/kairon-ui /kairon-ui
 COPY --from=web /src/web/dist /web
 ENV KAIRON_UI_WEB_DIR=/web
 ENTRYPOINT ["/kairon-ui"]
+
+# Deliberately NOT the distroless base every other Kairon image uses:
+# internal/csinode shells out to a real iSCSI initiator (open-iscsi's
+# iscsiadm) and filesystem tooling (util-linux's blkid, e2fsprogs' mkfs.*)
+# it doesn't reimplement -- see internal/csinode/exec.go's own doc
+# comment for why. A larger, real attack surface than the other three
+# images, and a real tradeoff, not an oversight; it's also why this
+# runs privileged (see charts/kairon/templates/all.yaml's kairon-csi-node
+# DaemonSet) -- both are inherent to actually attaching/mounting network
+# block devices from inside a container, not specific to this image.
+FROM debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS csi-node
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends open-iscsi util-linux e2fsprogs ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/kairon-csi-node /kairon-csi-node
+COPY docker/kairon-csi-node-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

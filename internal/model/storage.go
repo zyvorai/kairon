@@ -43,11 +43,13 @@ type PersistentVolumeClaimStatus struct {
 }
 
 // PersistentVolume mirrors just the fields Kairon reads to turn a bound PV
-// into a real host directory a Machine's disk image can live in. Only
-// hostPath- and local-backed volumes are resolvable today -- see
-// docs/guides/machine-storage.md for why (the PV must already be
-// attach-ready on the node Kairon schedules onto; Kairon doesn't run a CSI
-// node plugin to attach/mount network-block volumes itself).
+// into a real host directory a Machine's disk image can live in.
+// hostPath- and local-backed volumes resolve to an already-attach-ready
+// host directory directly, no mounting involved. csi-backed volumes
+// (Kairon's own driver only -- see internal/csinode) resolve through a
+// real NodeStageVolume/NodePublishVolume call instead, since a
+// network-block volume has to actually be attached and mounted first;
+// see internal/agent/storage.go and docs/guides/machine-storage-csi.md.
 type PersistentVolume struct {
 	TypeMeta `json:",inline"`
 	Metadata ObjectMeta           `json:"metadata"`
@@ -59,9 +61,10 @@ type PersistentVolumeSpec struct {
 	// Kubernetes API) or "Block". Only Filesystem-mode volumes are
 	// supported: the Machine's disk image is a file inside the volume's
 	// directory, not the raw block device itself.
-	VolumeMode string                `json:"volumeMode,omitempty"`
-	HostPath   *HostPathVolumeSource `json:"hostPath,omitempty"`
-	Local      *LocalVolumeSource    `json:"local,omitempty"`
+	VolumeMode string                     `json:"volumeMode,omitempty"`
+	HostPath   *HostPathVolumeSource      `json:"hostPath,omitempty"`
+	Local      *LocalVolumeSource         `json:"local,omitempty"`
+	CSI        *CSIPersistentVolumeSource `json:"csi,omitempty"`
 }
 
 type HostPathVolumeSource struct {
@@ -70,4 +73,20 @@ type HostPathVolumeSource struct {
 
 type LocalVolumeSource struct {
 	Path string `json:"path,omitempty"`
+}
+
+// CSIPersistentVolumeSource mirrors core/v1's CSIPersistentVolumeSource,
+// scoped to what internal/agent/storage.go needs to drive
+// internal/csinode's Node service directly as its own CSI client (see
+// that package's own doc comment for why there's no Controller service,
+// and why kairon-node dials it directly rather than going through
+// kubelet's Pod volume machinery). Only Driver == csinode.DriverName is
+// ever resolvable -- a PV naming any other CSI driver is rejected the
+// same way an unrecognized volume source always was.
+type CSIPersistentVolumeSource struct {
+	Driver           string            `json:"driver"`
+	VolumeHandle     string            `json:"volumeHandle"`
+	FSType           string            `json:"fsType,omitempty"`
+	ReadOnly         bool              `json:"readOnly,omitempty"`
+	VolumeAttributes map[string]string `json:"volumeAttributes,omitempty"`
 }

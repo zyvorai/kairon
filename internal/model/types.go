@@ -222,6 +222,26 @@ type MachineStatus struct {
 	// resource, since they're not part of the boot-time -smp/-m args).
 	AppliedVCPUs     uint32 `json:"appliedVCPUs,omitempty"`
 	AppliedMemoryMiB uint64 `json:"appliedMemoryMiB,omitempty"`
+	// VolumeStagingPath/VolumePublishPath record that kairon-node has
+	// already called NodeStageVolume/NodePublishVolume (see
+	// internal/agent/storage.go, internal/csinode) for this Machine's
+	// spec.volumes[0] when it's CSI-backed -- kairon-csi-node's Node
+	// service has no query for "already staged/published" (NodeStageVolume
+	// is idempotent, but calling it every 3s reconcile tick would still
+	// mean an iscsiadm/mount syscall every tick for no reason), so Kairon
+	// tracks the fact itself in status, the same pattern
+	// AppliedVCPUs/AppliedMemoryMiB already use for FluxVM hotplug. Both
+	// empty for a hostPath/local-backed volume, or when spec.volumes is
+	// unset -- neither of those is ever staged/published, only read
+	// directly.
+	VolumeStagingPath string `json:"volumeStagingPath,omitempty"`
+	VolumePublishPath string `json:"volumePublishPath,omitempty"`
+	// VolumeHandle mirrors the CSI volume_id NodeStageVolume was called
+	// with -- kept in status (not just re-read from the PV at teardown
+	// time) so cleanup can call NodeUnstageVolume correctly even if the
+	// PVC/PV has already been deleted by the time the Machine itself
+	// finishes tearing down.
+	VolumeHandle string `json:"volumeHandle,omitempty"`
 }
 
 type Condition struct {

@@ -1,0 +1,200 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package agent
+
+import (
+	"context"
+	"net"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc"
+
+	"github.com/zyvorai/kairon/internal/csinode"
+	"github.com/zyvorai/kairon/internal/model"
+)
+
+// shortTempDir mirrors internal/consoleproxy's/uiapi's own helper of the
+// same name: AF_UNIX socket paths are capped at ~104 bytes on macOS, well
+// under what t.TempDir()'s test-name-based nesting produces.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "csi")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// fakeCSINodeServer is a minimal in-process double for kairon-csi-node's
+// gRPC surface -- real network I/O over a real Unix socket (not a hand-
+// rolled Agent-side mock), so this exercises the actual dial/call path
+// kairon-node uses in production, just against a fake instead of
+// internal/csinode's real iSCSI-backed implementation (which needs a
+// real target -- see that package's own tests for its orchestration
+// logic).
+type fakeCSINodeServer struct {
+	csi.UnimplementedNodeServer
+	stageCalls   []*csi.NodeStageVolumeRequest
+	publishCalls []*csi.NodePublishVolumeRequest
+	unpublish    []*csi.NodeUnpublishVolumeRequest
+	unstage      []*csi.NodeUnstageVolumeRequest
+	failStage    bool
+}
+
+func (f *fakeCSINodeServer) NodeStageVolume(_ context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
+	if f.failStage {
+		return nil, context.DeadlineExceeded
+	}
+	f.stageCalls = append(f.stageCalls, req)
+	return &csi.NodeStageVolumeResponse{}, nil
+}
+
+func (f *fakeCSINodeServer) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
+	f.publishCalls = append(f.publishCalls, req)
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+func (f *fakeCSINodeServer) NodeUnpublishVolume(_ context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+	f.unpublish = append(f.unpublish, req)
+	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+func (f *fakeCSINodeServer) NodeUnstageVolume(_ context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	f.unstage = append(f.unstage, req)
+	return &csi.NodeUnstageVolumeResponse{}, nil
+}
+
+// startFakeCSINode listens on a Unix socket under t.TempDir() and serves
+// fake off it, returning the socket path (what Agent.CSISocketPath
+// expects) and a cleanup already registered via t.Cleanup.
+func startFakeCSINode(t *testing.T, fake *fakeCSINodeServer) string {
+	t.Helper()
+	socketPath := filepath.Join(shortTempDir(t), "csi.sock")
+	lis, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	srv := grpc.NewServer()
+	csi.RegisterNodeServer(srv, fake)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	return socketPath
+}
+
+func testCSIPV(name, volumeHandle string) model.PersistentVolume {
+	return model.PersistentVolume{
+		Metadata: model.ObjectMeta{Name: name},
+		Spec: model.PersistentVolumeSpec{
+			CSI: &model.CSIPersistentVolumeSource{
+				Driver:           csinode.DriverName,
+				VolumeHandle:     volumeHandle,
+				FSType:           "ext4",
+				VolumeAttributes: map[string]string{"portal": "10.0.0.1:3260", "iqn": "iqn.test:disk"},
+			},
+		},
+	}
+}
+
+func TestResolveCSIVolumeStagesAndPublishes(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath, CSIStagingDir: t.TempDir(), CSIPublishDir: t.TempDir()}
+
+	pv := testCSIPV("pv-1", "iscsi|10.0.0.1:3260|iqn.test:disk|0")
+	path, volStatus, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv)
+	if err != nil {
+		t.Fatalf("resolveCSIVolume: %v", err)
+	}
+	want := filepath.Join(a.CSIPublishDir, "pv-1", bootDiskFileName)
+	if path != want {
+		t.Fatalf("got path %q, want %q", path, want)
+	}
+	if volStatus.VolumeID != pv.Spec.CSI.VolumeHandle {
+		t.Fatalf("got volume ID %q, want %q", volStatus.VolumeID, pv.Spec.CSI.VolumeHandle)
+	}
+	if len(fake.stageCalls) != 1 || len(fake.publishCalls) != 1 {
+		t.Fatalf("expected exactly one stage and one publish call, got %d/%d", len(fake.stageCalls), len(fake.publishCalls))
+	}
+	if fake.stageCalls[0].GetVolumeContext()["portal"] != "10.0.0.1:3260" {
+		t.Fatalf("expected volume_context to carry the PV's volumeAttributes, got %+v", fake.stageCalls[0].GetVolumeContext())
+	}
+	if len(fake.stageCalls[0].GetSecrets()) != 0 {
+		t.Fatal("expected no secrets to be sent -- kairon-node's own CSI-client path never resolves nodeStageSecretRef")
+	}
+}
+
+func TestResolveCSIVolumeIsIdempotentAgainstExistingStatus(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath, CSIStagingDir: t.TempDir(), CSIPublishDir: t.TempDir()}
+
+	pv := testCSIPV("pv-1", "iscsi|10.0.0.1:3260|iqn.test:disk|0")
+	status := model.MachineStatus{
+		VolumeStagingPath: "/already/staged", VolumePublishPath: "/already/published", VolumeHandle: pv.Spec.CSI.VolumeHandle,
+	}
+	path, volStatus, err := a.resolveCSIVolume(context.Background(), status, pv)
+	if err != nil {
+		t.Fatalf("resolveCSIVolume: %v", err)
+	}
+	if path != filepath.Join("/already/published", bootDiskFileName) {
+		t.Fatalf("expected the already-published path to be reused, got %q", path)
+	}
+	if volStatus.StagingPath != "/already/staged" {
+		t.Fatalf("expected the cached staging path, got %q", volStatus.StagingPath)
+	}
+	if len(fake.stageCalls) != 0 || len(fake.publishCalls) != 0 {
+		t.Fatal("expected no gRPC calls when status already records a matching staged/published volume")
+	}
+}
+
+func TestResolveCSIVolumeRejectsUnknownDriver(t *testing.T) {
+	a := &Agent{CSISocketPath: "/unused", CSIStagingDir: "/x", CSIPublishDir: "/y"}
+	pv := model.PersistentVolume{Spec: model.PersistentVolumeSpec{CSI: &model.CSIPersistentVolumeSource{Driver: "some-other-driver.example.com"}}}
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv); err == nil {
+		t.Fatal("expected an error for a CSI driver that isn't Kairon's own")
+	}
+}
+
+func TestResolveCSIVolumeRequiresSocketConfigured(t *testing.T) {
+	a := &Agent{CSIStagingDir: "/x", CSIPublishDir: "/y"} // CSISocketPath unset
+	pv := testCSIPV("pv-1", "iscsi|p|i|0")
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv); err == nil {
+		t.Fatal("expected an error when no CSI socket is configured")
+	}
+}
+
+func TestTeardownCSIVolumeUnpublishesAndUnstages(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath}
+
+	m := model.Machine{
+		Status: model.MachineStatus{
+			VolumeStagingPath: "/stage/pv-1", VolumePublishPath: "/publish/pv-1", VolumeHandle: "iscsi|p|i|0",
+		},
+	}
+	if err := a.teardownCSIVolume(context.Background(), m); err != nil {
+		t.Fatalf("teardownCSIVolume: %v", err)
+	}
+	if len(fake.unpublish) != 1 || fake.unpublish[0].GetTargetPath() != "/publish/pv-1" {
+		t.Fatalf("expected one NodeUnpublishVolume call against /publish/pv-1, got %+v", fake.unpublish)
+	}
+	if len(fake.unstage) != 1 || fake.unstage[0].GetStagingTargetPath() != "/stage/pv-1" {
+		t.Fatalf("expected one NodeUnstageVolume call against /stage/pv-1, got %+v", fake.unstage)
+	}
+}
+
+func TestTeardownCSIVolumeNoOpsWhenNeverStaged(t *testing.T) {
+	// No CSISocketPath configured at all -- if this tried to dial, it
+	// would fail loudly (see TestResolveCSIVolumeRequiresSocketConfigured);
+	// succeeding here proves the no-op path never even attempts to dial.
+	a := &Agent{}
+	if err := a.teardownCSIVolume(context.Background(), model.Machine{}); err != nil {
+		t.Fatalf("expected a no-op for a Machine that never staged a CSI volume, got: %v", err)
+	}
+}

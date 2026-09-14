@@ -60,6 +60,9 @@ func run() int {
 	consoleToken := flag.String("console-token", os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"), "shared bearer token kairon-ui must present for VNC console relay (default: $KAIRON_NODE_CONSOLE_TOKEN); empty disables the console listener")
 	consoleTLSCert := flag.String("console-tls-cert", env("KAIRON_NODE_CONSOLE_TLS_CERT", ""), "optional TLS certificate PEM for the console relay listener (server-only TLS -- the shared token already authenticates the caller, so no client cert is needed); must be set together with --console-tls-key")
 	consoleTLSKey := flag.String("console-tls-key", env("KAIRON_NODE_CONSOLE_TLS_KEY", ""), "optional TLS private key PEM for the console relay listener; must be set together with --console-tls-cert")
+	csiSocket := flag.String("csi-socket", env("KAIRON_CSI_SOCKET", ""), "kairon-csi-node's local Unix socket path (default: $KAIRON_CSI_SOCKET); empty refuses any CSI-backed (network-block) Machine volume with a clear error rather than silently failing -- see docs/guides/machine-storage-csi.md")
+	csiStagingDir := flag.String("csi-staging-dir", env("KAIRON_CSI_STAGING_DIR", "/var/lib/kairon/csi/staging"), "per-node directory kairon-node asks kairon-csi-node to stage CSI volumes under")
+	csiPublishDir := flag.String("csi-publish-dir", env("KAIRON_CSI_PUBLISH_DIR", "/var/lib/kairon/csi/publish"), "per-node directory kairon-node asks kairon-csi-node to publish (bind-mount) CSI volumes under")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -126,6 +129,9 @@ func run() int {
 		MigrationPeer:  peer,
 		SourceMigrator: source,
 		MigrationPort:  *migrationPort,
+		CSISocketPath:  *csiSocket,
+		CSIStagingDir:  *csiStagingDir,
+		CSIPublishDir:  *csiPublishDir,
 		Log:            log,
 	}
 	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {

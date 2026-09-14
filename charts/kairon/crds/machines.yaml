@@ -341,6 +341,12 @@ spec:
               appliedMemoryMiB:
                 type: integer
                 format: int64
+              volumeStagingPath:
+                type: string
+              volumePublishPath:
+                type: string
+              volumeHandle:
+                type: string
               conditions:
                 type: array
                 items:

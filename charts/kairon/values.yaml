@@ -58,6 +58,44 @@ node:
   vfioAllowlist: ""
   nodeSelector:
     kairon.zyvor.dev/capable: "true"
+  # csi: how kairon-node reaches kairon-csi-node's local Unix socket to
+  # resolve a network-block (CSI-backed) Machine boot disk -- see
+  # csiNode below. Ignored entirely (and safe to leave at these defaults)
+  # unless csiNode.enabled is also true.
+  csi:
+    socketDir: /var/lib/kubelet/plugins/csi.kairon.zyvor.dev
+    stagingDir: /var/lib/kairon/csi/staging
+    publishDir: /var/lib/kairon/csi/publish
+csiNode:
+  # Kairon's own first-cut CSI node plugin (see internal/csinode,
+  # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic
+  # provisioning -- PersistentVolumes reference it statically. Off by
+  # default; enabling it is what lets a Machine's spec.volumes[0]
+  # reference a network-block (CSI-backed) PersistentVolume instead of
+  # only hostPath/local ones. This is the one place Kairon's own images
+  # aren't built from the minimal distroless base every other component
+  # uses (a real iSCSI initiator and filesystem tooling need a real OS
+  # around them) and the one Kairon-built container that runs privileged
+  # -- both inherent to actually attaching/mounting network block devices
+  # from a container, see SECURITY.md.
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/kairon-csi-node
+    tag: latest
+    pullPolicy: IfNotPresent
+  # The upstream, Kubernetes-maintained sidecar that registers this
+  # plugin with kubelet -- not something Kairon implements itself; every
+  # real CSI driver in the ecosystem deploys this exact sidecar the same
+  # way. See https://github.com/kubernetes-csi/node-driver-registrar.
+  registrar:
+    image:
+      repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
+      tag: v2.18.0
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  nodeSelector:
+    kairon.zyvor.dev/capable: "true"
 migration:
   # Secure peer preparation is opt-in until a Kairon migration adapter is installed.
   enabled: false

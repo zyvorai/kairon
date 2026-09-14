@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/migration"
@@ -36,6 +38,20 @@ type Agent struct {
 	MigrationPort    int
 	MigrationPeerURL func(context.Context, string) (string, error)
 	Log              *slog.Logger
+	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block
+	// (CSI-backed) PersistentVolume support -- see internal/agent/csi.go
+	// and internal/csinode. CSISocketPath empty (the default) means a
+	// CSI-backed spec.volumes[0] is refused with a clear error rather
+	// than silently failing; hostPath/local-backed volumes and plain
+	// spec.image.path are entirely unaffected either way.
+	CSISocketPath string
+	CSIStagingDir string
+	CSIPublishDir string
+	// csiConn caches the dialed connection to kairon-csi-node's local
+	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
+	// same reason guestIPCheckedAt below is: Reconcile only ever runs
+	// single-goroutine, sequential.
+	csiConn *grpc.ClientConn
 	// guestIPCheckedAt tracks, per "namespace/name", the last time
 	// projectNetworkStatus actually queried the guest agent for a Machine
 	// that already has a resolved guestIP -- see guestAgentRecheckInterval
@@ -107,7 +123,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
-	bootDisk, err := a.resolveBootDiskPath(ctx, m)
+	bootDisk, volStatus, err := a.resolveBootDiskPath(ctx, m)
 	if err != nil {
 		return err
 	}
@@ -156,6 +172,9 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	status.RuntimeID = rec.ID()
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
+	status.VolumeStagingPath = volStatus.StagingPath
+	status.VolumePublishPath = volStatus.PublishPath
+	status.VolumeHandle = volStatus.VolumeID
 	appliedVCPUs, appliedMemoryMiB, hotplugErr := a.reconcileHotplug(ctx, m, rec, freshlyCreated)
 	status.AppliedVCPUs = appliedVCPUs
 	status.AppliedMemoryMiB = appliedMemoryMiB
@@ -227,6 +246,15 @@ func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
 		if err := a.Flux.Delete(ctx, m.Status.RuntimeID); err != nil {
 			return err
 		}
+	}
+	// Same "don't finish deleting until this succeeds" posture as the
+	// FluxVM runtime delete above -- a failed unpublish/unstage leaves
+	// the finalizer in place (this Machine stays around, reconciled
+	// again next tick) rather than silently leaking a mounted iSCSI
+	// session. A no-op for the overwhelmingly common case: plain
+	// spec.image.path, or a hostPath/local-backed volume.
+	if err := a.teardownCSIVolume(ctx, m); err != nil {
+		return fmt.Errorf("tear down CSI volume: %w", err)
 	}
 	var finals []string
 	for _, f := range m.Metadata.Finalizers {

@@ -206,6 +206,11 @@ spec:
             - "--console-tls-key=/etc/kairon/console-tls/tls.key"
 {{ end }}
 {{ end }}
+{{ if .Values.csiNode.enabled }}
+            - "--csi-socket=/kairon-csi/csi.sock"
+            - "--csi-staging-dir={{ .Values.node.csi.stagingDir }}"
+            - "--csi-publish-dir={{ .Values.node.csi.publishDir }}"
+{{ end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
@@ -226,7 +231,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.node.resources | indent 12 }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled }}
           volumeMounts:
 {{ if .Values.migration.enabled }}
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
@@ -238,8 +243,15 @@ spec:
 {{ if and .Values.console.enabled .Values.console.tls.enabled }}
             - {name: console-tls, mountPath: /etc/kairon/console-tls, readOnly: true}
 {{ end }}
+{{ if .Values.csiNode.enabled }}
+            # Read-only: kairon-node only ever dials the socket file
+            # here, it never creates or mounts anything itself -- see
+            # internal/agent/csi.go. Shared with kairon-csi-node's own
+            # DaemonSet via the same hostPath.
+            - {name: csi-socket-dir, mountPath: /kairon-csi, readOnly: true}
 {{ end }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) }}
+{{ end }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled }}
       volumes:
 {{ if .Values.migration.enabled }}
         - name: migration-tls
@@ -267,6 +279,116 @@ spec:
             secretName: {{ .Values.console.tls.secretName }}
             defaultMode: 0440
 {{ end }}
+{{ if .Values.csiNode.enabled }}
+        - name: csi-socket-dir
+          hostPath:
+            path: {{ .Values.node.csi.socketDir | quote }}
+            type: DirectoryOrCreate
+{{ end }}
+{{ end }}
+{{ if .Values.csiNode.enabled }}
+---
+# kairon-csi-node needs no Kubernetes API access at all: it's a pure
+# local gRPC server (see internal/csinode), and the registrar sidecar
+# only ever talks to kubelet's own local plugin-registration socket, not
+# the API server. automountServiceAccountToken is off below for exactly
+# that reason -- one less credential sitting in an already-privileged pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kairon-csi-node
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: kairon-csi-node, namespace: {{ .Release.Namespace }}}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kairon-csi-node}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: kairon-csi-node}}
+    spec:
+      serviceAccountName: kairon-csi-node
+      automountServiceAccountToken: false
+      # iscsiadm needs direct L3 reachability to the iSCSI target's real
+      # IP -- the same reason kairon-node itself runs hostNetwork: true.
+      hostNetwork: true
+      nodeSelector:
+{{ toYaml .Values.csiNode.nodeSelector | indent 8 }}
+      containers:
+        # The upstream, Kubernetes-maintained sidecar that registers this
+        # plugin with kubelet -- see values.yaml's own comment on
+        # csiNode.registrar. Not privileged, needs no Kubernetes API
+        # access, and never touches iSCSI/mount state itself.
+        - name: node-driver-registrar
+          image: "{{ .Values.csiNode.registrar.image.repository }}:{{ .Values.csiNode.registrar.image.tag }}"
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path={{ .Values.node.csi.socketDir }}/csi.sock"
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+            - {name: registration-dir, mountPath: /registration}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+        - name: csi-node
+          image: "{{ .Values.csiNode.image.repository }}:{{ .Values.csiNode.image.tag }}"
+          imagePullPolicy: {{ .Values.csiNode.image.pullPolicy }}
+          args:
+            - "--endpoint=unix:///csi/csi.sock"
+          env:
+            - name: KAIRON_NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          # Privileged, not just a capabilities list: attaching an iSCSI
+          # target and mounting the resulting filesystem genuinely needs
+          # this. See SECURITY.md and
+          # docs/guides/machine-storage-csi.md's own note on this
+          # tradeoff -- it's why kairon-csi-node is the one Kairon-built
+          # image that runs this way.
+          securityContext:
+            privileged: true
+          resources:
+{{ toYaml .Values.csiNode.resources | indent 12 }}
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+            # Bidirectional: a mount kairon-csi-node creates here must be
+            # visible on the real host filesystem too, since FluxVM
+            # itself (a host-local process, not a container) reads a
+            # Machine's boot disk directly from this same host path --
+            # see internal/agent/csi.go and docs/guides/machine-storage-csi.md.
+            - {name: staging-dir, mountPath: {{ .Values.node.csi.stagingDir | quote }}, mountPropagation: Bidirectional}
+            - {name: publish-dir, mountPath: {{ .Values.node.csi.publishDir | quote }}, mountPropagation: Bidirectional}
+            - {name: dev-dir, mountPath: /dev}
+            - {name: modules-dir, mountPath: /lib/modules, readOnly: true}
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: {{ .Values.node.csi.socketDir | quote }}
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: staging-dir
+          hostPath:
+            path: {{ .Values.node.csi.stagingDir | quote }}
+            type: DirectoryOrCreate
+        - name: publish-dir
+          hostPath:
+            path: {{ .Values.node.csi.publishDir | quote }}
+            type: DirectoryOrCreate
+        - name: dev-dir
+          hostPath: {path: /dev, type: Directory}
+        - name: modules-dir
+          hostPath: {path: /lib/modules, type: Directory}
+---
+# attachRequired: false, no Controller service -- see
+# internal/csinode.NodeServer's own doc comment for why this is a
+# Node-only, pre-provisioned-volumes-only driver in this first cut.
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata: {name: csi.kairon.zyvor.dev}
+spec:
+  attachRequired: false
+  podInfoOnMount: false
+  volumeLifecycleModes: ["Persistent"]
 {{ end }}
 {{ if .Values.ui.enabled }}
 {{- $usersConfigured := eq (include "kairon.ui.usersConfigured" .) "true" }}

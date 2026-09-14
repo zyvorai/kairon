@@ -22,7 +22,7 @@ import (
 func TestResolveBootDiskPathFallsBackToImagePathWithoutVolumes(t *testing.T) {
 	a := &Agent{Log: slog.Default()}
 	m := model.Machine{Spec: model.MachineSpec{Image: model.ImageSpec{Path: "/images/db.qcow2"}}}
-	got, err := a.resolveBootDiskPath(context.Background(), m)
+	got, _, err := a.resolveBootDiskPath(context.Background(), m)
 	if err != nil {
 		t.Fatalf("resolveBootDiskPath: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestResolveBootDiskPathFallsBackToImagePathWithoutVolumes(t *testing.T) {
 func TestResolveBootDiskPathRequiresClaimName(t *testing.T) {
 	a := &Agent{Log: slog.Default()}
 	m := model.Machine{Spec: model.MachineSpec{Volumes: []model.MachineVolume{{Name: "root"}}}}
-	if _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "claimName") {
+	if _, _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "claimName") {
 		t.Fatalf("expected a claimName error, got %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestResolveBootDiskPathResolvesBoundHostPathPV(t *testing.T) {
 		Metadata: model.ObjectMeta{Namespace: "prod"},
 		Spec:     model.MachineSpec{Volumes: []model.MachineVolume{{Name: "root", ClaimName: "root-pvc"}}},
 	}
-	got, err := a.resolveBootDiskPath(context.Background(), m)
+	got, _, err := a.resolveBootDiskPath(context.Background(), m)
 	if err != nil {
 		t.Fatalf("resolveBootDiskPath: %v", err)
 	}
@@ -95,17 +95,40 @@ func TestResolveBootDiskPathRejectsUnboundPVC(t *testing.T) {
 		Metadata: model.ObjectMeta{Namespace: "prod"},
 		Spec:     model.MachineSpec{Volumes: []model.MachineVolume{{Name: "root", ClaimName: "root-pvc"}}},
 	}
-	if _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "not Bound") {
+	if _, _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "not Bound") {
 		t.Fatalf("expected a not-Bound error, got %v", err)
 	}
 }
 
-func TestHostDirForPVRejectsBlockVolumeMode(t *testing.T) {
+func TestResolveBootDiskPathRejectsBlockVolumeMode(t *testing.T) {
+	pvc := model.PersistentVolumeClaim{
+		Spec:   model.PersistentVolumeClaimSpec{VolumeName: "pv-root"},
+		Status: model.PersistentVolumeClaimStatus{Phase: "Bound"},
+	}
 	pv := model.PersistentVolume{Spec: model.PersistentVolumeSpec{
 		VolumeMode: "Block",
 		HostPath:   &model.HostPathVolumeSource{Path: "/dev/sdb"},
 	}}
-	if _, err := hostDirForPV(pv); err == nil || !strings.Contains(err.Error(), "volumeMode") {
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/prod/persistentvolumeclaims/root-pvc":
+			_ = json.NewEncoder(w).Encode(pvc)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/persistentvolumes/pv-root":
+			_ = json.NewEncoder(w).Encode(pv)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+
+	a := &Agent{Kube: kc, Log: slog.Default()}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod"},
+		Spec:     model.MachineSpec{Volumes: []model.MachineVolume{{Name: "root", ClaimName: "root-pvc"}}},
+	}
+	if _, _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "volumeMode") {
 		t.Fatalf("expected a volumeMode error, got %v", err)
 	}
 }

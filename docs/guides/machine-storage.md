@@ -43,17 +43,17 @@ exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
   rejected with a clear error (`volumeMode "Block" is not supported...`) —
   Kairon opens a file inside the volume's directory, it doesn't hand FluxVM
   a raw block device.
-- **`hostPath` and `local` volume sources only.** These are the only two
-  `PersistentVolume` types that already name a real, present-today directory
-  on a specific node without anything else having to attach/mount them
-  first — which matches how `kairon-node` works today (it has no CSI node
-  plugin of its own). A PV backed by a network-block CSI driver (Ceph RBD,
-  EBS, etc.) is refused with `only hostPath- or local-backed
-  PersistentVolumes can be used as a Machine boot disk today` — that PV
-  would need to already be attached and mounted onto the target node by
-  something else (e.g., a CSI node plugin acting for an unrelated Pod on
-  that node) before Kairon could use its path, which isn't a real workflow
-  yet.
+- **`hostPath`, `local`, or Kairon's own CSI-backed volume sources.**
+  `hostPath`/`local` already name a real, present-today directory on a
+  specific node, resolved directly, no attach/mount step. A `csi`-backed PV
+  is also resolvable now, but *only* when it names Kairon's own first-cut
+  network-block (iSCSI) driver (`csi.kairon.zyvor.dev`) — see
+  [`docs/guides/machine-storage-csi.md`](machine-storage-csi.md) for setup,
+  and note this needs `csiNode.enabled` in the Helm chart plus
+  `kairon-node`'s own `--csi-socket` flag pointed at it, neither of which
+  is on by default. A PV naming any *other* CSI driver is still refused —
+  Kairon only ever attaches/mounts network storage through its own driver,
+  never an arbitrary third-party one.
 - **The PVC must already be `Bound`.** A `Pending` claim fails reconcile
   with a clear "not Bound yet" error rather than retrying silently forever —
   check `kubectl get pvc` if a Machine referencing one gets stuck.
@@ -67,9 +67,12 @@ exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
 
 This closes the gap between "Machines only boot from files an operator
 manually placed on a specific node" and "Machines can boot from Kubernetes
-storage" — for the common case of local/directory-backed storage classes
-(e.g. Rancher's `local-path-provisioner`). It does **not** yet provide:
-snapshot **restore** or clone-from-snapshot into a new Machine (`MachineSnapshot`
-is still create-only — see [architecture.md](../architecture.md)), CPU/memory
-hotplug, or a path to real network-block storage (Ceph/EBS/etc.) without a
-CSI node-plugin integration this project doesn't have yet.
+storage" — for local/directory-backed storage classes (e.g. Rancher's
+`local-path-provisioner`) directly, and for real network-block storage via
+Kairon's own first-cut iSCSI CSI driver — see
+[`docs/guides/machine-storage-csi.md`](machine-storage-csi.md). It does
+**not** yet provide: snapshot **restore** or clone-from-snapshot into a new
+Machine (`MachineSnapshot` is still create-only — see
+[architecture.md](../architecture.md)), CPU/memory hotplug via this path, or
+support for any network-block backend other than iSCSI (Ceph RBD/EBS/etc.
+would each need their own driver backend, not just config).
