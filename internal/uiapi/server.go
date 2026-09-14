@@ -59,6 +59,17 @@ type Server struct {
 	UsersSecretNamespace string
 	UsersSecretName      string
 	UsersSecretKey       string
+	// SharedStateNamespace/SharedStateConfigMapName point at the ConfigMap
+	// kairon-ui uses to make session revocation, login lockout, and
+	// console-ticket state visible across replicas -- see
+	// internal/uiapi/sharedstate.go and docs/guides/kairon-ui-ha.md. Empty
+	// SharedStateConfigMapName (the default) disables cross-replica sync
+	// entirely: every mutation below still applies to this process's own
+	// in-memory state exactly as before, correct for the single-replica
+	// deployment this chart still defaults to. Password changes propagate
+	// separately, via UsersSecretName above, independent of this field.
+	SharedStateNamespace     string
+	SharedStateConfigMapName string
 	// revoked backs POST /api/v1/auth/logout; zero value (an empty
 	// sync.Map) is ready to use.
 	revoked sync.Map

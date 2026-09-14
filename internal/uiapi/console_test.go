@@ -48,36 +48,39 @@ func dialWS(ctx context.Context, u string, opts *websocket.DialOptions) (*websoc
 
 func TestConsoleTicketIsSingleUse(t *testing.T) {
 	s := &Server{}
-	ticket := s.issueConsoleTicket("alice")
-	username, ok := s.consumeConsoleTicket(ticket)
+	ctx := context.Background()
+	ticket := s.issueConsoleTicket(ctx, "alice")
+	username, ok := s.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected a freshly issued ticket to be valid")
 	}
 	if username != "alice" {
 		t.Fatalf("expected ticket to be bound to alice, got %q", username)
 	}
-	if _, ok := s.consumeConsoleTicket(ticket); ok {
+	if _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected a ticket to be rejected the second time it's presented")
 	}
 }
 
 func TestConsoleTicketRejectsExpired(t *testing.T) {
 	s := &Server{}
-	ticket := s.issueConsoleTicket("alice")
+	ctx := context.Background()
+	ticket := s.issueConsoleTicket(ctx, "alice")
 	// Overwrite with an already-expired timestamp rather than sleeping
 	// past the real (30s) TTL.
-	s.consoleTickets.Store(ticket, consoleTicketState{username: "alice", expires: time.Now().Add(-time.Second)})
-	if _, ok := s.consumeConsoleTicket(ticket); ok {
+	s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: "alice", expires: time.Now().Add(-time.Second)})
+	if _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected an expired ticket to be rejected")
 	}
 }
 
 func TestConsoleTicketRejectsUnknownOrEmpty(t *testing.T) {
 	s := &Server{}
-	if _, ok := s.consumeConsoleTicket(""); ok {
+	ctx := context.Background()
+	if _, ok := s.consumeConsoleTicket(ctx, ""); ok {
 		t.Fatal("expected an empty ticket to be rejected")
 	}
-	if _, ok := s.consumeConsoleTicket("never-issued"); ok {
+	if _, ok := s.consumeConsoleTicket(ctx, "never-issued"); ok {
 		t.Fatal("expected an unissued ticket to be rejected")
 	}
 }
@@ -144,7 +147,7 @@ func TestHandleConsoleTicketIssuesAUsableTicket(t *testing.T) {
 	if out.Ticket == "" {
 		t.Fatal("expected a non-empty ticket")
 	}
-	if _, ok := s.consumeConsoleTicket(out.Ticket); !ok {
+	if _, ok := s.consumeConsoleTicket(context.Background(), out.Ticket); !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
 }
@@ -175,7 +178,7 @@ func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &ticketOut); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	username, ok := s.consumeConsoleTicket(ticketOut.Ticket)
+	username, ok := s.consumeConsoleTicket(context.Background(), ticketOut.Ticket)
 	if !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
@@ -253,7 +256,7 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -334,7 +337,7 @@ func TestHandleConsoleFullRelayOverTLS(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -413,7 +416,7 @@ func TestHandleConsoleTLSRejectsUntrustedCert(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected the dial to fail when kairon-node's certificate isn't trusted")
@@ -434,7 +437,7 @@ func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-Running machine to fail")
@@ -455,7 +458,7 @@ func TestHandleConsoleDisabledWhenNotConfigured(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console to be refused when ConsoleToken/ConsolePort aren't configured")
@@ -477,7 +480,7 @@ func TestHandleConsoleRejectsNonQemuBackend(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket("tester")
+	ticket := s.issueConsoleTicket(context.Background(), "tester")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-qemu backend to fail")

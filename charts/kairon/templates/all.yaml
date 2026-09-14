@@ -297,6 +297,42 @@ metadata:
   name: kairon-ui
   namespace: {{ .Release.Namespace }}
 ---
+# Always created, even for ui.replicaCount: 1 -- so scaling up later never
+# needs a separate chart change. Session revocation, login lockout, and
+# console tickets are mirrored here across replicas (see
+# internal/uiapi/sharedstate.go); with exactly one replica, kairon-ui
+# still writes to it but nothing ever needs to read a different replica's
+# entry back, so it's simply unused, not harmful. `data: {}` here only
+# means "this chart doesn't seed any entries" -- it renders identically on
+# every install/upgrade, so Helm's own diff against the previous release
+# never asks to reset live keys kairon-ui itself PATCHed in between
+# releases back to empty (the same reasoning that lets the
+# kairon-ui-token/kairon-ui-session Secrets above coexist with runtime
+# mutation, just without needing a `lookup` here since this template's
+# own output never changes release to release).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kairon-ui-shared-state
+  namespace: {{ .Release.Namespace }}
+data: {}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kairon-ui-shared-state, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["kairon-ui-shared-state"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kairon-ui-shared-state, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kairon-ui-shared-state}
+subjects:
+  - {kind: ServiceAccount, name: kairon-ui, namespace: {{ .Release.Namespace }}}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: kairon-ui}
@@ -403,7 +439,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: kairon-ui, namespace: {{ .Release.Namespace }}}
 spec:
-  replicas: 1
+  replicas: {{ .Values.ui.replicaCount }}
   selector: {matchLabels: {app.kubernetes.io/name: kairon-ui}}
   template:
     metadata: {labels: {app.kubernetes.io/name: kairon-ui}}
@@ -421,12 +457,22 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.existingSecret | default "kairon-ui-token" }}, key: {{ .Values.ui.existingSecretKey | default "token" }}}}
             - name: KAIRON_UI_SESSION_SECRET
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.auth.existingSessionSecret | default "kairon-ui-session" }}, key: {{ .Values.ui.auth.existingSessionSecretKey | default "sessionSecret" }}}}
+            # Always set, not just when usersConfigured -- KAIRON_UI_NAMESPACE
+            # also scopes the shared-state ConfigMap below (used by every
+            # ui.enabled deployment, token-only auth included, once console
+            # is enabled -- see internal/uiapi/sharedstate.go), and setting it
+            # unconditionally is free (a downward-API fieldRef, no Secret).
+            - name: KAIRON_UI_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            # See the ConfigMap's own comment above (near the kairon-ui
+            # ServiceAccount) for why this is safe to always set, even for
+            # ui.replicaCount: 1.
+            - name: KAIRON_UI_SHARED_STATE_CONFIGMAP_NAME
+              value: kairon-ui-shared-state
 {{ if $usersConfigured }}
             - name: KAIRON_UI_USERS_JSON
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.auth.existingSecret | default "kairon-ui-users" }}, key: {{ .Values.ui.auth.existingSecretKey | default "users.json" }}}}
 {{ if not .Values.ui.auth.existingSecret }}
-            - name: KAIRON_UI_NAMESPACE
-              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: KAIRON_UI_USERS_SECRET_NAME
               value: kairon-ui-users
             - name: KAIRON_UI_USERS_SECRET_KEY

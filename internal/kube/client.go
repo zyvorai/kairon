@@ -371,6 +371,37 @@ func (c *Client) PatchSecretStringData(ctx context.Context, ns, name string, str
 	return c.request(ctx, http.MethodPatch, path, map[string]any{"stringData": stringData}, nil, "application/merge-patch+json")
 }
 
+// GetSecret reads back a core/v1 Secret -- used by internal/uiapi to
+// notice a password change another kairon-ui replica made and persisted
+// (see PatchSecretStringData), since Server.Users is otherwise only
+// loaded once at startup.
+func (c *Client) GetSecret(ctx context.Context, ns, name string) (model.Secret, error) {
+	var s model.Secret
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", url.PathEscape(ns), url.PathEscape(name))
+	err := c.request(ctx, http.MethodGet, path, nil, &s, "")
+	return s, err
+}
+
+// GetConfigMap and PatchConfigMapData back internal/uiapi's cross-replica
+// session/lockout/console-ticket state (see internal/uiapi/sharedstate.go).
+// PatchConfigMapData's data values are `any` rather than `string` so a
+// caller can pass a nil value for a key to delete it -- an
+// application/merge-patch+json body with a null value removes that key
+// (RFC 7386), leaving every other key in .data untouched. That per-key
+// merge-patch shape is exactly why concurrent writers touching different
+// keys never conflict: there is no whole-object read-modify-write here.
+func (c *Client) GetConfigMap(ctx context.Context, ns, name string) (model.ConfigMap, error) {
+	var cm model.ConfigMap
+	path := fmt.Sprintf("/api/v1/namespaces/%s/configmaps/%s", url.PathEscape(ns), url.PathEscape(name))
+	err := c.request(ctx, http.MethodGet, path, nil, &cm, "")
+	return cm, err
+}
+
+func (c *Client) PatchConfigMapData(ctx context.Context, ns, name string, data map[string]any) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/configmaps/%s", url.PathEscape(ns), url.PathEscape(name))
+	return c.request(ctx, http.MethodPatch, path, map[string]any{"data": data}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	var list model.NodeList
 	err := c.request(ctx, http.MethodGet, "/api/v1/nodes", nil, &list, "")

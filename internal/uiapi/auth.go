@@ -151,23 +151,31 @@ func verifySession(key []byte, token string) (username string, expires time.Time
 // small in-memory, best-effort revocation list: sessions are otherwise
 // stateless (no server-side session store), so logout needs *something* to
 // actually invalidate the token rather than merely asking the client to
-// forget it. Only effective on the replica that served the logout --
-// kairon-ui runs as a single replica today (charts/kairon/values.yaml), so
-// this covers the common case, not a distributed session store. Entries
-// are lazily dropped once their own expiry passes, so this never grows
-// without bound.
-func (s *Server) revokeSession(token string, expires time.Time) {
-	s.revoked.Store(token, expires)
+// forget it. Applied to this replica's own state immediately regardless of
+// SharedStateConfigMapName -- a logout on the replica that served it is
+// enforced instantly. Also best-effort mirrored into the shared ConfigMap
+// (see sharedstate.go) so every OTHER replica picks it up within
+// sharedStateSyncInterval; with SharedStateConfigMapName unset (the
+// default), it stays exactly the single-replica-only behavior this always
+// was. Keyed by a one-way hash of the token, not the token itself, in
+// both places -- a revoked token grants nothing, but there's no reason to
+// ever write a bearer-credential-shaped value into a shared object.
+// Entries are lazily dropped once their own expiry passes, so this never
+// grows without bound.
+func (s *Server) revokeSession(ctx context.Context, token string, expires time.Time) {
+	s.revoked.Store(sha256Hex(token), expires)
+	s.writeSharedState(ctx, sharedRevocationKey(token), sharedRevocationEntry{Expires: expires})
 }
 
 func (s *Server) isSessionRevoked(token string) bool {
-	v, ok := s.revoked.Load(token)
+	key := sha256Hex(token)
+	v, ok := s.revoked.Load(key)
 	if !ok {
 		return false
 	}
 	expires, _ := v.(time.Time)
 	if time.Now().After(expires) {
-		s.revoked.Delete(token)
+		s.revoked.Delete(key)
 		return false
 	}
 	return true
@@ -176,8 +184,8 @@ func (s *Server) isSessionRevoked(token string) bool {
 // passwordChangedAfter reports whether username's password was reset (via
 // resetPassword) at or after sessionIssuedAt -- used by withAuth to reject
 // a session token issued before that reset, since there's no server-side
-// list of every outstanding token to individually revoke. Per-replica,
-// same documented limitation as revokeSession/recordLoginResult.
+// list of every outstanding token to individually revoke. Propagates to
+// other replicas the same way revokeSession does -- see sharedstate.go.
 func (s *Server) passwordChangedAfter(username string, sessionIssuedAt time.Time) bool {
 	v, ok := s.passwordChangedAt.Load(username)
 	if !ok {
@@ -267,22 +275,37 @@ func (s *Server) loginLockedFor(username string) time.Duration {
 // recordLoginResult clears a username's failure count on success, or
 // increments it on failure -- locking the username out for
 // loginLockoutFor once maxLoginAttempts consecutive failures accumulate.
-// This is in-memory and per-replica, the same documented limitation as
-// session revocation (see revokeSession) -- kairon-ui runs one replica by
-// default.
-func (s *Server) recordLoginResult(username string, success bool) {
+// The failure *count* itself stays purely local to this replica (a
+// distributed atomic counter is exactly the kind of machinery choosing a
+// Kubernetes object over Redis deliberately avoids taking on) -- so
+// maxLoginAttempts is reached by consecutive failures landing on ONE
+// replica, not accumulated across all of them. Once that happens, though,
+// the resulting lockedUntil IS mirrored into the shared ConfigMap (see
+// sharedstate.go), so every other replica honors it within
+// sharedStateSyncInterval -- and a success clears it everywhere, not just
+// here. With SharedStateConfigMapName unset (the default), this behaves
+// exactly as it always did on a single replica.
+func (s *Server) recordLoginResult(ctx context.Context, username string, success bool) {
 	st := s.loginState(username)
 	st.mu.Lock()
-	defer st.mu.Unlock()
 	if success {
 		st.count = 0
 		st.lockedUntil = time.Time{}
+		st.mu.Unlock()
+		s.deleteSharedState(ctx, sharedLockoutKey(username))
 		return
 	}
 	st.count++
+	newlyLocked := false
 	if st.count >= maxLoginAttempts {
 		st.lockedUntil = time.Now().Add(loginLockoutFor)
 		st.count = 0
+		newlyLocked = true
+	}
+	lockedUntil := st.lockedUntil
+	st.mu.Unlock()
+	if newlyLocked {
+		s.writeSharedState(ctx, sharedLockoutKey(username), sharedLockoutEntry{LockedUntil: lockedUntil})
 	}
 }
 
@@ -336,7 +359,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// "no such user" response takes the same time as a "wrong password"
 	// one -- avoids leaking valid usernames via response timing.
 	credentialsOK := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil
-	s.recordLoginResult(req.Username, found && credentialsOK)
+	s.recordLoginResult(r.Context(), req.Username, found && credentialsOK)
 	if !found || !credentialsOK {
 		if s.Log != nil {
 			s.Log.Warn("uiapi login failed", "username", req.Username, "remoteAddr", r.RemoteAddr)
@@ -358,7 +381,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if tok := bearerToken(r); tok != "" {
 		if _, expires, _, err := verifySession(s.SessionSecret, tok); err == nil {
-			s.revokeSession(tok, expires)
+			s.revokeSession(r.Context(), tok, expires)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -464,7 +487,9 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reset password: "+err.Error())
 		return
 	}
-	s.passwordChangedAt.Store(target, time.Now())
+	changedAt := time.Now()
+	s.passwordChangedAt.Store(target, changedAt)
+	s.writeSharedState(r.Context(), sharedPasswordChangeKey(target), sharedPasswordChangeEntry{ChangedAt: changedAt})
 	if s.Log != nil {
 		s.Log.Info("uiapi password reset", "username", target, "resetBy", caller, "remoteAddr", r.RemoteAddr)
 	}

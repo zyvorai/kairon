@@ -170,6 +170,17 @@ ui:
   # Web dashboard (cmd/kairon-ui). Off by default -- opt in once you have a
   # token ready, same posture as migration.enabled.
   enabled: false
+  # More than 1 is safe once ui.auth.users (or the seeded default admin) is
+  # in use: session revocation, login lockout, and console tickets all
+  # propagate across replicas via a shared kairon-ui-shared-state
+  # ConfigMap this chart always creates alongside kairon-ui, and password
+  # changes propagate via the existing kairon-ui-users Secret every
+  # replica already shares -- see internal/uiapi/sharedstate.go and
+  # docs/guides/kairon-ui-ha.md. Propagation lands within ~15s, not
+  # instantly, and a login-lockout threshold is evaluated per-replica, not
+  # as one cluster-wide counter -- real, documented first-cut limits, not
+  # bugs.
+  replicaCount: 1
   image:
     repository: ghcr.io/zyvorai/kairon-ui
     tag: latest
@@ -218,8 +229,11 @@ ui:
     existingSecretKey: "users.json"
     # existingSessionSecret: a pre-created Secret holding the session-token
     # signing key, instead of the one the chart generates and persists
-    # automatically. Needed once there's ever more than one kairon-ui
-    # replica (today's chart runs exactly one).
+    # automatically. The chart-generated one is already the same single
+    # Secret object every kairon-ui replica's Deployment reads from
+    # (idempotent across `helm upgrade` via a `lookup`), so ui.replicaCount
+    # > 1 does NOT require this -- it's only an escape hatch for an
+    # externally-managed signing key.
     existingSessionSecret: ""
     existingSessionSecretKey: "sessionSecret"
   service:

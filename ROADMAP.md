@@ -60,6 +60,6 @@ Not originally scoped for a specific version, but small enough to land alongside
 - [x] node fencing (first cut): `kairon-controller` sets a `NodeUnreachable` condition on any Machine whose node stops being `Ready`, every reconcile tick -- detection only, never automatic rescheduling (risks running the same VM twice). `kaironctl fence --reason ...` is the explicit operator-attested action that clears a Machine for rescheduling once a human has confirmed out-of-band the node is truly gone -- see `docs/guides/machine-fencing.md`.
 - confidential VM policy (SEV-SNP/TDX)
 - OIDC/SSO for `kairon-ui`
-- multi-replica `kairon-ui` (session/lockout state is deliberately single-replica today, see SECURITY.md)
+- [x] multi-replica `kairon-ui` (first cut): `ui.replicaCount > 1` propagates session revocation, login lockout, console tickets, and password changes across replicas via a shared, Kubernetes-native `ConfigMap` (deliberately not Redis) -- eventually-consistent (~15s), not instant; login-lockout's failure count is per-replica, not one cluster-wide atomic counter; concurrent password changes to two different accounts on two different replicas can still race. See `docs/guides/kairon-ui-ha.md`.
 - CRD version-upgrade story beyond today's single `v1alpha1` (no conversion webhook exists)
 - upgrade/scale/failure-injection test suites

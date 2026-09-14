@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -34,35 +35,91 @@ type consoleTicketState struct {
 
 // issueConsoleTicket mints a single-use ticket for handleConsole, so the
 // real session/token credential never has to appear in a URL or access
-// log -- only this short-lived, narrow-purpose value does.
-func (s *Server) issueConsoleTicket(username string) string {
+// log -- only this short-lived, narrow-purpose value does. With
+// SharedStateConfigMapName unset (a single replica, the default), this is
+// exactly the original purely-local implementation: stored in
+// consoleTickets, keyed by the ticket's own hash rather than the ticket
+// itself (see sha256Hex in sharedstate.go). With it set, the shared
+// ConfigMap becomes the single source of truth instead -- see
+// consumeConsoleTicket for why a ticket can't be trusted from both places
+// at once.
+func (s *Server) issueConsoleTicket(ctx context.Context, username string) string {
 	buf := make([]byte, 20)
 	_, _ = rand.Read(buf)
 	ticket := hex.EncodeToString(buf)
-	s.consoleTickets.Store(ticket, consoleTicketState{username: username, expires: time.Now().Add(consoleTicketTTL)})
+	expires := time.Now().Add(consoleTicketTTL)
+	if s.SharedStateConfigMapName == "" {
+		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, expires: expires})
+		return ticket
+	}
+	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Expires: expires})
 	return ticket
 }
 
 // consumeConsoleTicket validates and immediately deletes a ticket --
 // presenting the same ticket twice always fails the second time -- and
 // returns the username it was issued to.
-func (s *Server) consumeConsoleTicket(ticket string) (username string, ok bool) {
+//
+// With SharedStateConfigMapName set, this always goes straight to the
+// shared ConfigMap rather than checking consoleTickets first: the
+// browser's ticket-issuing fetch() and its follow-up WebSocket upgrade
+// are two separate connections, and with more than one kairon-ui replica
+// behind one Service, nothing guarantees they land on the same pod. If
+// this replica happened to be the one that minted the ticket, trusting
+// its own local copy first would let IT keep accepting the ticket even
+// after a DIFFERENT replica already consumed the shared one -- a local
+// cache that's optimistically ahead of the shared source of truth is
+// exactly what breaks single-use here, so once sharing is enabled the
+// shared ConfigMap is authoritative, full stop, and consoleTickets is
+// never written to at all (see issueConsoleTicket). This also means a
+// concurrent consume from two replicas within the same few milliseconds
+// can still both read the entry before either delete lands -- a narrow,
+// documented (docs/guides/kairon-ui-ha.md) limitation of a
+// read-then-delete that isn't atomic, not a design this "first cut" tries
+// to fully close.
+//
+// consoleTicketTTL (30s) is far shorter than any reasonable poll
+// interval, which is why this can't just wait for the periodic sync to
+// pick a remote ticket up (see RunSharedStateSync in sharedstate.go) --
+// it has to be a direct, synchronous lookup instead.
+func (s *Server) consumeConsoleTicket(ctx context.Context, ticket string) (username string, ok bool) {
 	if ticket == "" {
 		return "", false
 	}
-	v, found := s.consoleTickets.LoadAndDelete(ticket)
+	hash := sha256Hex(ticket)
+	if s.SharedStateConfigMapName == "" {
+		v, found := s.consoleTickets.LoadAndDelete(hash)
+		if !found {
+			return "", false
+		}
+		st, _ := v.(consoleTicketState)
+		if time.Now().After(st.expires) {
+			return "", false
+		}
+		return st.username, true
+	}
+	cm, err := s.Kube.GetConfigMap(ctx, s.SharedStateNamespace, s.SharedStateConfigMapName)
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Warn("uiapi console ticket lookup failed", "error", err)
+		}
+		return "", false
+	}
+	key := sharedStateTicketPrefix + hash
+	raw, found := cm.Data[key]
 	if !found {
 		return "", false
 	}
-	st, _ := v.(consoleTicketState)
-	if time.Now().After(st.expires) {
+	s.deleteSharedState(ctx, key)
+	var e sharedTicketEntry
+	if json.Unmarshal([]byte(raw), &e) != nil || time.Now().After(e.Expires) {
 		return "", false
 	}
-	return st.username, true
+	return e.Username, true
 }
 
 func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(usernameFromContext(r.Context()))})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), usernameFromContext(r.Context()))})
 }
 
 // handleConfig reports small, non-sensitive feature toggles the frontend
@@ -80,7 +137,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // local, unix-socket-only QEMU VNC server. See docs/architecture.md for
 // the full chain and its trust boundary.
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
-	username, ok := s.consumeConsoleTicket(r.URL.Query().Get("ticket"))
+	username, ok := s.consumeConsoleTicket(r.Context(), r.URL.Query().Get("ticket"))
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid or expired console ticket")
 		return

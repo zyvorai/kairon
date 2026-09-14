@@ -25,6 +25,13 @@ import (
 
 var version = "dev"
 
+// sharedStateSyncInterval bounds how often this replica polls the shared
+// ConfigMap and the Users-backing Secret for state a different replica
+// wrote -- see uiapi.Server.RunSharedStateSync's own doc comment. Same
+// shape as kairon-node/kairon-controller's own tlsReloadInterval consts:
+// the interval lives with the caller, not the reusable package.
+const sharedStateSyncInterval = 15 * time.Second
+
 func main() {
 	os.Exit(run())
 }
@@ -105,6 +112,14 @@ func run() int {
 		UsersSecretNamespace: os.Getenv("KAIRON_UI_NAMESPACE"),
 		UsersSecretName:      os.Getenv("KAIRON_UI_USERS_SECRET_NAME"),
 		UsersSecretKey:       env("KAIRON_UI_USERS_SECRET_KEY", "users.json"),
+		// SharedStateConfigMapName empty (the default) means every
+		// mutation below stays purely in this process's own memory --
+		// correct for a single replica. Set only once ui.replicaCount > 1
+		// (see the Helm chart), so session revocation, login lockout, and
+		// console tickets stay correct across replicas too -- see
+		// docs/guides/kairon-ui-ha.md.
+		SharedStateNamespace:     os.Getenv("KAIRON_UI_NAMESPACE"),
+		SharedStateConfigMapName: os.Getenv("KAIRON_UI_SHARED_STATE_CONFIGMAP_NAME"),
 		// ConsoleToken/ConsolePort must match the value every kairon-node
 		// is configured with (KAIRON_NODE_CONSOLE_TOKEN/-console-addr);
 		// either empty disables the VNC console feature (see console.go).
@@ -124,6 +139,7 @@ func run() int {
 		defer shutdownCancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 	}()
+	go srv.RunSharedStateSync(ctx, sharedStateSyncInterval)
 
 	log.Info("kairon-ui listening", "address", *listenAddr, "webDir", *webDir, "authenticated", *token != "" || len(users) > 0, "loginUsers", len(users))
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
