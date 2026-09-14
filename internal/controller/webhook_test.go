@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/admission"
+	"github.com/zyvorai/kairon/internal/conversion"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
@@ -372,5 +373,65 @@ func TestWebhookHandlerRecordsDecisionMetrics(t *testing.T) {
 	}
 	if !strings.Contains(body, `kairon_webhook_decisions_total{decision="allow",operation="DELETE",resource="machinemigrations"} 1`) {
 		t.Errorf("missing expected allow counter in:\n%s", body)
+	}
+}
+
+// TestWebhookHandlerConvertMachineQuotaEndToEnd exercises the real
+// ConversionReview HTTP envelope (internal/conversion) through
+// WebhookHandler's /convert/machinequotas route -- confirms the route is
+// actually wired to conversion.ConvertMachineQuota, not just that the
+// converter works in isolation (internal/conversion's own tests already
+// cover that). No live CRD calls this route yet (see
+// docs/guides/crd-versioning.md); this is what would call it if one did.
+func TestWebhookHandlerConvertMachineQuotaEndToEnd(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	h := ctl.WebhookHandler()
+
+	obj, _ := json.Marshal(map[string]any{
+		"apiVersion": "kairon.zyvor.dev/v1alpha1",
+		"kind":       "MachineQuota",
+		"metadata":   map[string]any{"name": "q1", "namespace": "prod"},
+		"spec":       map[string]any{"maxTotalCpu": "16"},
+	})
+	review := conversion.Review{
+		APIVersion: conversion.APIVersion,
+		Kind:       "ConversionReview",
+		Request: &conversion.Request{
+			UID:               "conv-1",
+			DesiredAPIVersion: "kairon.zyvor.dev/v1beta1",
+			Objects:           []json.RawMessage{obj},
+		},
+	}
+	body, _ := json.Marshal(review)
+	httpReq := httptest.NewRequest(http.MethodPost, "/convert/machinequotas", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (ConversionReview responses are always 200, the result is in the body), got %d", rr.Code)
+	}
+	var out conversion.Review
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Response == nil || out.Response.UID != "conv-1" {
+		t.Fatalf("expected a response echoing UID conv-1, got %+v", out.Response)
+	}
+	if out.Response.Result.Status != conversion.StatusSuccess {
+		t.Fatalf("expected Success, got %+v", out.Response.Result)
+	}
+	if len(out.Response.ConvertedObjects) != 1 {
+		t.Fatalf("expected 1 converted object, got %d", len(out.Response.ConvertedObjects))
+	}
+	var converted map[string]any
+	if err := json.Unmarshal(out.Response.ConvertedObjects[0], &converted); err != nil {
+		t.Fatalf("decode converted object: %v", err)
+	}
+	if converted["apiVersion"] != "kairon.zyvor.dev/v1beta1" {
+		t.Fatalf("expected the converted object's apiVersion to be v1beta1, got %v", converted["apiVersion"])
+	}
+	spec := converted["spec"].(map[string]any)
+	if spec["maxCpu"] != "16" {
+		t.Fatalf("expected spec.maxTotalCpu to be renamed to spec.maxCpu, got %+v", spec)
 	}
 }

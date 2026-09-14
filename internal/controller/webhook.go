@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zyvorai/kairon/internal/admission"
+	"github.com/zyvorai/kairon/internal/conversion"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/tlsreload"
 )
@@ -31,6 +32,14 @@ func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration, c.observeWebhookDecision))
+	// /convert/machinequotas is a scaffold, not live enforcement: no
+	// MachineQuota CRD registers a second version yet, so the API server
+	// never actually calls this route today. It exists, and is tested,
+	// so cutting a real kairon.zyvor.dev/v1beta1 later is "wire the CRD's
+	// spec.conversion at that version," not "build a conversion webhook
+	// from scratch" -- see docs/guides/crd-versioning.md and
+	// internal/conversion's package doc comment.
+	mux.HandleFunc("POST /convert/machinequotas", conversion.Handler(c.Log, model.KindMachineQuota, conversion.ConvertMachineQuota))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	return mux
 }
