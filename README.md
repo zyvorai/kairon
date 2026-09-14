@@ -15,7 +15,7 @@
 [![Helm chart](https://img.shields.io/badge/Helm-0.4.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
 [![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#the-dashboard)
 
-[Why](#why-kairon-exists) · [Architecture](docs/architecture.md) · [Quick start](#quick-start) · [Dashboard](#the-dashboard) · [Guarding the fleet](#guarding-the-fleet) · [Getting started](docs/getting-started.md) · [Security](SECURITY.md) · [Roadmap](ROADMAP.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
+[Why](#why-kairon-exists) · [Architecture](ARCHITECTURE.md) · [Quick start](#quick-start) · [Dashboard](#the-dashboard) · [Guarding the fleet](#guarding-the-fleet) · [Getting started](docs/getting-started.md) · [Security](SECURITY.md) · [Roadmap](ROADMAP.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
 
 </div>
 
@@ -95,7 +95,7 @@ FluxVM needs to already be listening on each capable node (default `127.0.0.1:77
                                      FluxVM local API · migration adapter (Unix socket) · KVM/VMM
 ```
 
-Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement, relocation policy, and Kubernetes lifecycle semantics — nothing more, nothing hidden behind an abstraction. `kairon-ui` isn't pictured as a fourth tier because it isn't one: it talks to the same Kubernetes API everything else does. Full write-up: [`docs/architecture.md`](docs/architecture.md).
+Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement, relocation policy, and Kubernetes lifecycle semantics — nothing more, nothing hidden behind an abstraction. `kairon-ui` isn't pictured as a fourth tier because it isn't one: it talks to the same Kubernetes API everything else does. Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) (the ten-minute tour) or [`docs/architecture.md`](docs/architecture.md) (the deep reference).
 
 ---
 
@@ -318,8 +318,10 @@ npm --prefix web run build
 
 | Doc | Covers |
 |---|---|
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | The ten-minute tour: components, request flow, trust boundaries/deployment topology, design rationale |
 | [`docs/getting-started.md`](docs/getting-started.md) | Install, first Machine, cold migrate, live migration, the dashboard, Network Fabric |
-| [`docs/architecture.md`](docs/architecture.md) | Components, the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
+| [`docs/tutorials/machine-lifecycle.md`](docs/tutorials/machine-lifecycle.md) | Narrated walkthrough: one Machine through create → relocate → snapshot → restore |
+| [`docs/architecture.md`](docs/architecture.md) | Deep reference: the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
 | [`docs/migration-adapter.md`](docs/migration-adapter.md) | The migration adapter HTTP contract, trust boundary, the real `kairon-migration-adapter-fluxvm` implementation |
 | [`docs/network-fabric.md`](docs/network-fabric.md) | `MachineNetworkPolicy`/`NetworkSecurityGroup` reference and the FluxVM eBPF edge |
 | [`docs/tutorials/network-fabric.md`](docs/tutorials/network-fabric.md) · [`docs/guides/machine-network.md`](docs/guides/machine-network.md) · [`docs/guides/network-policy.md`](docs/guides/network-policy.md) | Network Fabric walkthrough and field-level guides |
