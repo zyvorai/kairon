@@ -66,7 +66,7 @@ func (s *Server) handleGetMigration(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateMigration(w http.ResponseWriter, r *http.Request) {
 	var req createMigrationRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -112,7 +112,7 @@ func (s *Server) handleCreateMigration(w http.ResponseWriter, r *http.Request) {
 // as the CLI stopping on its first error).
 func (s *Server) handleEvacuate(w http.ResponseWriter, r *http.Request) {
 	var req evacuateRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -163,7 +163,7 @@ func (s *Server) handleEvacuate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRecoverMigration(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("namespace"), r.PathValue("name")
 	var req recoverRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

@@ -96,7 +96,7 @@ func (s *Server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createPoolRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -214,7 +214,7 @@ func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req claimPoolRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

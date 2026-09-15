@@ -41,7 +41,7 @@ func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req agentExecRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

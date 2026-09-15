@@ -57,7 +57,14 @@ text-only dashboard panel.
   `internal/fluxvm.Client`'s own 4MiB HTTP response limit; since content
   travels base64-encoded (~4/3 expansion), a file larger than roughly 3MB
   fails to decode with a clear error rather than returning truncated
-  content. Writes have no such cap enforced on Kairon's side.
+  content. A write is now capped too, symmetrically: `kairon-ui`'s own
+  request body decoder (`decodeJSON`, `internal/uiapi/server.go`) rejects
+  any JSON body over 1MiB by default, and this route in particular
+  (`internal/uiapi/agentfile.go`) raises that to 6MiB, sized to comfortably
+  fit the same ~3MB-of-real-content ceiling once base64-encoded. Before
+  this, a write's `contentBase64` had no size cap enforced on Kairon's own
+  side at all -- every other JSON-accepting route in `kairon-ui` had the
+  same gap, not just this one.
 - **Text-only in the dashboard UI**, as above -- the API itself is
   binary-safe (it's just base64 either way), only the dashboard's own
   panel assumes UTF-8 text.

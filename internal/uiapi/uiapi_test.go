@@ -230,6 +230,49 @@ func doJSON(t *testing.T, h http.Handler, method, path, token string, body any) 
 	return rr
 }
 
+// TestDecodeJSONRejectsBodyOverTheDefaultLimit proves decodeJSON now
+// actually bounds request body size -- before defaultMaxRequestBodyBytes
+// existed, nothing in kairon-ui's HTTP stack capped a JSON body at all.
+func TestDecodeJSONRejectsBodyOverTheDefaultLimit(t *testing.T) {
+	oversized := `{"path":"` + strings.Repeat("a", defaultMaxRequestBodyBytes+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(oversized))
+	rr := httptest.NewRecorder()
+	var out execRequest
+	if err := decodeJSON(rr, req, &out); err == nil {
+		t.Fatalf("expected an error decoding a body over defaultMaxRequestBodyBytes, got nil")
+	}
+}
+
+func TestDecodeJSONAcceptsAnOrdinaryBody(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"path":"/etc/hostname"}`))
+	rr := httptest.NewRecorder()
+	var out execRequest
+	if err := decodeJSON(rr, req, &out); err != nil {
+		t.Fatalf("expected no error decoding an ordinary small body, got %v", err)
+	}
+	if out.Path != "/etc/hostname" {
+		t.Fatalf("expected the body to actually decode, got %+v", out)
+	}
+}
+
+// TestDecodeJSONWithLimitHonorsAnExplicitOverride proves
+// handleAgentPutFile's maxAgentFileBodyBytes override actually takes
+// effect -- a body larger than defaultMaxRequestBodyBytes but within the
+// larger explicit limit must still decode successfully, not silently fall
+// back to the smaller default.
+func TestDecodeJSONWithLimitHonorsAnExplicitOverride(t *testing.T) {
+	big := strings.Repeat("a", defaultMaxRequestBodyBytes+1024)
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(`{"contentBase64":"`+big+`"}`))
+	rr := httptest.NewRecorder()
+	var out agentPutFileRequest
+	if err := decodeJSONWithLimit(rr, req, &out, maxAgentFileBodyBytes); err != nil {
+		t.Fatalf("expected the larger explicit limit to accept this body, got %v", err)
+	}
+	if len(out.ContentBase64) != len(big) {
+		t.Fatalf("expected the full content to decode, got length %d, want %d", len(out.ContentBase64), len(big))
+	}
+}
+
 func TestAuthRejectsMissingOrWrongToken(t *testing.T) {
 	s := newTestServer(t, newFakeKube(), "secret")
 	h := s.Handler()

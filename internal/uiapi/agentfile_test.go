@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/consoleproxy"
@@ -100,6 +101,29 @@ func TestHandleAgentFileDeniesWhenNotRunning(t *testing.T) {
 // get: kairon-ui's handleAgentPutFile/handleAgentGetFile -> a real
 // internal/consoleproxy.Server (standing in for kairon-node) -> a fake
 // FluxVM server answering agent/put-file and agent/get-file.
+// TestHandleAgentPutFileRejectsBodyOverTheAgentFileLimit proves the
+// maxAgentFileBodyBytes override actually applies to a real HTTP request
+// on this route, closing machine-guest-agent-files.md's own documented
+// gap ("Writes have no such cap enforced on Kairon's side"). No relay/
+// FluxVM server is needed -- decodeJSONWithLimit rejects the oversized
+// body before handleAgentPutFile ever reaches the node relay.
+func TestHandleAgentPutFileRejectsBodyOverTheAgentFileLimit(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Spec:     model.MachineSpec{GuestAgent: model.GuestAgentSpec{Console: true}},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+	}
+	s, token := newAdminServer(t, fk)
+	h := s.Handler()
+
+	oversized := strings.Repeat("a", maxAgentFileBodyBytes+1)
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/agent-file/put", token, agentPutFileRequest{Path: "/etc/x", ContentBase64: oversized})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a body over maxAgentFileBodyBytes, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestHandleAgentFileFullRelay(t *testing.T) {
 	var gotPutBody map[string]any
 	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

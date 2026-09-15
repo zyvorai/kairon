@@ -115,7 +115,7 @@ func (s *Server) handleQGAFirewallOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req firewallOpenRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -141,7 +141,7 @@ func (s *Server) handleQGAFirewallClose(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req firewallCloseRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

@@ -83,7 +83,7 @@ func (s *Server) handleAddCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req addCatalogEntryRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -169,7 +169,7 @@ func (s *Server) handleRenameCatalogEntry(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req renameCatalogEntryRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -196,7 +196,7 @@ func (s *Server) handleCloneCatalogEntry(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req cloneCatalogEntryRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -224,7 +224,7 @@ func (s *Server) handleExportCatalogEntry(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req exportCatalogEntryRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -252,7 +252,7 @@ func (s *Server) handleSetCatalogReadOnly(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req setCatalogReadOnlyRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

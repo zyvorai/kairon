@@ -13,6 +13,19 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+// maxAgentFileBodyBytes overrides decodeJSON's own defaultMaxRequestBodyBytes
+// for handleAgentPutFile -- closing the one half of the gap
+// machine-guest-agent-files.md's "Real limits" section used to document
+// honestly: a read was always capped (~3MB of real file content,
+// indirectly, via internal/fluxvm.Client's own 4MiB HTTP response limit),
+// but "Writes have no such cap enforced on Kairon's side" -- before
+// decodeJSON gained any body-size limit at all, a write's ContentBase64
+// could be arbitrarily large. Sized to comfortably fit that same ~3MB
+// real-content ceiling once base64-encoded (~4/3 expansion) plus a
+// generous JSON envelope allowance, matching the read side's own limit
+// rather than picking an unrelated number.
+const maxAgentFileBodyBytes = 6 << 20 // 6MiB
+
 // agentPutFileRequest/agentGetFileRequest/agentFileResponse mirror
 // internal/consoleproxy's own wire shape for the same reason
 // execRequest/execResponse do (internal/uiapi/exec.go's own doc comment).
@@ -180,7 +193,7 @@ func (s *Server) handleAgentPutFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req agentPutFileRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSONWithLimit(w, r, &req, maxAgentFileBodyBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -214,7 +227,7 @@ func (s *Server) handleAgentGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req agentGetFileRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

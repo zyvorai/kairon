@@ -82,7 +82,7 @@ func (s *Server) handleVMSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req vmSnapshotRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -123,7 +123,7 @@ func (s *Server) handleVMRestoreSnapshot(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req vmSnapshotRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

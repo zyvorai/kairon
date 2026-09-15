@@ -29,7 +29,7 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req createSnapshotRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

@@ -15,6 +15,8 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net"
@@ -553,10 +555,40 @@ func namespaceParam(r *http.Request) string {
 	return "default"
 }
 
-func decodeJSON(r *http.Request, out any) error {
+// defaultMaxRequestBodyBytes bounds every ordinary JSON request body
+// decodeJSON reads -- closing a real gap nothing in kairon-ui's HTTP stack
+// previously had at all: no handler, and no shared http.Server field
+// either, ever capped request body size, so a caller (even a legitimately
+// authenticated one) could send an arbitrarily large body and have
+// json.Decoder buffer all of it into memory before ever getting to
+// DisallowUnknownFields's own rejection. 1MiB comfortably covers every
+// ordinary JSON body this API accepts (Machine/MachineSet specs, exec
+// commands, pool/catalog requests, etc.) -- none of which legitimately
+// approach that size. decodeJSONWithLimit is the override for the one
+// real exception, guest file writes -- see agentfile.go.
+const defaultMaxRequestBodyBytes = 1 << 20 // 1MiB
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, out any) error {
+	return decodeJSONWithLimit(w, r, out, defaultMaxRequestBodyBytes)
+}
+
+// decodeJSONWithLimit is decodeJSON with an explicit body-size cap in
+// place of defaultMaxRequestBodyBytes. limit must be reachable by
+// http.MaxBytesReader, which requires w to satisfy net/http's internal
+// requestTooLarge hook -- true for every ResponseWriter this package ever
+// hands it, all real *http.response values from the standard mux.
+func decodeJSONWithLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(out)
+	if err := dec.Decode(out); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return fmt.Errorf("request body exceeds the %d byte limit", limit)
+		}
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

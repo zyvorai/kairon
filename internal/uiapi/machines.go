@@ -50,7 +50,7 @@ func (s *Server) handleGetMachine(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 	var req createMachineRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
