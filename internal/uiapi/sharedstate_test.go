@@ -209,10 +209,10 @@ func TestConsumeConsoleTicketFallsBackToSharedConfigMap(t *testing.T) {
 	ctx := context.Background()
 
 	issuer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1")
+	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
 
 	consumer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	username, namespace, name, ok := consumer.consumeConsoleTicket(ctx, ticket)
+	username, namespace, name, _, ok := consumer.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected a ticket minted on a different Server instance to be consumable via the shared ConfigMap")
 	}
@@ -222,10 +222,10 @@ func TestConsumeConsoleTicketFallsBackToSharedConfigMap(t *testing.T) {
 	if namespace != "default" || name != "vm1" {
 		t.Fatalf("expected the ticket to be bound to default/vm1, got %q/%q", namespace, name)
 	}
-	if _, _, _, ok := consumer.consumeConsoleTicket(ctx, ticket); ok {
+	if _, _, _, _, ok := consumer.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected the ticket to be rejected the second time, even across replicas")
 	}
-	if _, _, _, ok := issuer.consumeConsoleTicket(ctx, ticket); ok {
+	if _, _, _, _, ok := issuer.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected the ticket to be rejected on the issuing replica too, once consumed elsewhere")
 	}
 }
@@ -236,7 +236,7 @@ func TestSyncSharedConfigMapPreservesUnexpiredTicket(t *testing.T) {
 	ctx := context.Background()
 
 	issuer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1")
+	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
 
 	// A periodic sync landing inside the ticket's own lifetime must not
 	// prune it -- it isn't part of the recognized rev-/lock-/pwc- merge
@@ -245,7 +245,7 @@ func TestSyncSharedConfigMapPreservesUnexpiredTicket(t *testing.T) {
 	s.syncSharedConfigMap(ctx)
 
 	consumer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	username, _, _, ok := consumer.consumeConsoleTicket(ctx, ticket)
+	username, _, _, _, ok := consumer.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected the ticket to still be consumable after an intervening periodic sync")
 	}

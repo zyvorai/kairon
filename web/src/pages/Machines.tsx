@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, apiJSON, getConfig, isAdmin } from '../api';
 import { Machine } from '../types';
 import { badgeClass } from '../lib/phase';
 import Console from './Console';
 import Exec from './Exec';
+// Lazy-loaded: @xterm/xterm alone adds ~300kB to the bundle, not worth
+// shipping to every visitor when only a Machine with
+// spec.guestAgent.console even shows this button.
+const TextConsole = lazy(() => import('./TextConsole'));
 
 // QEMU is the only backend FluxVM gives a VNC display to at all (Cloud
 // Hypervisor/Firecracker have no display device) -- an empty/"auto"
@@ -11,6 +15,14 @@ import Exec from './Exec';
 function consoleEligible(m: Machine): boolean {
   const backend = m.spec.runtime?.backend;
   return m.status?.phase === 'Running' && (!backend || backend === 'qemu' || backend === 'auto');
+}
+
+// textConsoleEligible mirrors internal/uiapi/console.go's own
+// spec.guestAgent.console check -- unlike consoleEligible above, this
+// works on every backend, since FluxVM's own vsock console channel isn't
+// tied to a QEMU-specific display device.
+function textConsoleEligible(m: Machine): boolean {
+  return m.status?.phase === 'Running' && !!m.spec.guestAgent?.console;
 }
 
 // execEligible mirrors internal/uiapi/exec.go's own server-side checks
@@ -56,6 +68,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [consoleFor, setConsoleFor] = useState<string | null>(null);
+  const [textConsoleFor, setTextConsoleFor] = useState<string | null>(null);
   const [execFor, setExecFor] = useState<string | null>(null);
   // consoleEnabled also gates exec: both ride the exact same kairon-ui ->
   // kairon-node relay (internal/consoleproxy), so a deployment either has
@@ -217,6 +230,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
                     <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
                     {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
+                    {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
                     {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
@@ -236,6 +250,11 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
         </table>
       </div>
       {consoleFor && <Console namespace="default" name={consoleFor} onClose={() => setConsoleFor(null)} />}
+      {textConsoleFor && (
+        <Suspense fallback={<div className="consoleOverlay" />}>
+          <TextConsole namespace="default" name={textConsoleFor} onClose={() => setTextConsoleFor(null)} />
+        </Suspense>
+      )}
       {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
     </div>
   );

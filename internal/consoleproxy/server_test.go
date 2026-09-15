@@ -219,6 +219,116 @@ func TestHandleExecPropagatesFluxVMFailure(t *testing.T) {
 	}
 }
 
+// fakeFluxTextConsole stands in for FluxVM's own GET /v1/vms/{id}/console
+// WebSocket-upgrade endpoint -- accepts the upgrade and echoes whatever it
+// receives back, enough to prove handleTextConsole's client-dial-then-relay
+// shape actually carries bytes both ways, not just that it compiles.
+func fakeFluxTextConsole(t *testing.T, wantPath string) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != wantPath {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := r.Context()
+		for {
+			typ, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			if err := conn.Write(ctx, typ, data); err != nil {
+				return
+			}
+		}
+	})
+}
+
+func TestHandleTextConsoleRejectsWrongOrMissingToken(t *testing.T) {
+	fluxSrv := httptest.NewServer(fakeFluxTextConsole(t, "/v1/vms/vm-1/console"))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/text-console/vm-1"
+	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
+		t.Fatal("expected dial without a token to fail")
+	}
+}
+
+func TestHandleTextConsoleRelaysBytesToFluxVM(t *testing.T) {
+	fluxSrv := httptest.NewServer(fakeFluxTextConsole(t, "/v1/vms/vm-1/console"))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/text-console/vm-1"
+	conn, err := dialWS(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer secret"}},
+	})
+	if err != nil {
+		t.Fatalf("dial with correct token: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("$ ls\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(data) != "$ ls\n" {
+		t.Fatalf("expected the byte round trip through both relay hops, got %q", data)
+	}
+}
+
+func TestHandleTextConsolePreservesColsRowsQuery(t *testing.T) {
+	fluxSrv := httptest.NewServer(fakeFluxTextConsole(t, "/v1/vms/vm-1/console"))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	// fakeFluxTextConsole only accepts exactly "/v1/vms/vm-1/console" as
+	// its path (query strings don't affect http.Request.URL.Path), so a
+	// successful dial here already proves the query string was forwarded
+	// without corrupting the path itself.
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/text-console/vm-1?cols=120&rows=40"
+	conn, err := dialWS(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer secret"}},
+	})
+	if err != nil {
+		t.Fatalf("dial with cols/rows query: %v", err)
+	}
+	_ = conn.CloseNow()
+}
+
+func TestHandleTextConsolePropagatesFluxVMDialFailure(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/text-console/vm-1"
+	if _, err := dialWS(context.Background(), wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer secret"}},
+	}); err == nil {
+		t.Fatal("expected the dial to fail when FluxVM itself refuses the console upgrade")
+	}
+}
+
 func TestHandleConsoleRejectsUnknownRuntime(t *testing.T) {
 	// A fake Flux client that always 404s -- exercises the "lookup
 	// runtime" failure path distinct from "no workspace on the record".

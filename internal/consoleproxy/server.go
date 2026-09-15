@@ -6,11 +6,15 @@
 // kairon-ui with a shared bearer token, then either (VNC) pumps raw bytes
 // between a WebSocket and the VM's otherwise-unreachable local QEMU VNC
 // socket (<workspace>/vnc.sock -- see crates/fluxvm-qemu/src/lib.rs in the
-// FluxVM repo), or (exec) forwards a guest-exec request straight to
-// FluxVM's own REST API and relays its synchronous JSON result back.
-// kairon-node is always co-located with the FluxVM it manages (FLUXVM_URL
-// is a loopback address by convention everywhere in this repo), so it's
-// the only place that can reach either at all.
+// FluxVM repo), (exec) forwards a guest-exec request straight to FluxVM's
+// own REST API and relays its synchronous JSON result back, or (text
+// console) dials FluxVM's own WebSocket-upgraded interactive shell
+// endpoint as a client and relays raw bytes between it and the browser's
+// own WebSocket, the same shape as VNC but with FluxVM itself as the
+// upstream instead of a Unix socket. kairon-node is always co-located
+// with the FluxVM it manages (FLUXVM_URL is a loopback address by
+// convention everywhere in this repo), so it's the only place that can
+// reach any of the three at all.
 package consoleproxy
 
 import (
@@ -21,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -42,6 +47,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /console/{runtimeID}", s.handleConsole)
 	mux.HandleFunc("POST /exec/{runtimeID}", s.handleExec)
+	mux.HandleFunc("GET /text-console/{runtimeID}", s.handleTextConsole)
 	return mux
 }
 
@@ -140,6 +146,66 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 
 	ws := websocket.NetConn(r.Context(), conn, websocket.MessageBinary)
 	relay(ws, sock)
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// fluxWebSocketURL turns c's own BaseURL (http(s)://host:port, exactly
+// what every other fluxvm.Client REST call already uses) into the
+// equivalent ws(s):// URL for path -- FluxVM upgrades this same base
+// address's console route to a WebSocket rather than serving it on a
+// separate port.
+func fluxWebSocketURL(c *fluxvm.Client, path, rawQuery string) string {
+	u := strings.Replace(strings.Replace(c.BaseURL, "https://", "wss://", 1), "http://", "ws://", 1)
+	if rawQuery != "" {
+		return u + path + "?" + rawQuery
+	}
+	return u + path
+}
+
+// handleTextConsole relays a browser WebSocket straight through to
+// FluxVM's own interactive-shell WebSocket
+// (GET /v1/vms/{id}/console, requires spec.guestAgent.console --
+// FluxVM's proprietary vsock guest agent, a different channel from the
+// qemu-guest-agent handleExec above uses) -- kairon-node dials FluxVM as
+// a WebSocket client here, the only leg of this whole feature FluxVM
+// itself doesn't expose as a plain Unix socket the way VNC's QEMU display
+// is.
+func (s *Server) handleTextConsole(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	runtimeID := r.PathValue("runtimeID")
+	upstreamURL := fluxWebSocketURL(s.Flux, "/v1/vms/"+url.PathEscape(runtimeID)+"/console", r.URL.RawQuery)
+	dialOpts := &websocket.DialOptions{HTTPClient: s.Flux.HTTP}
+	if s.Flux.Token != "" {
+		dialOpts.HTTPHeader = http.Header{"Authorization": {"Bearer " + s.Flux.Token}}
+	}
+	dialCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	upstream, resp, err := websocket.Dial(dialCtx, upstreamURL, dialOpts)
+	cancel()
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("dial fluxvm text console: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = upstream.CloseNow() }()
+
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		// Server-to-server only, same reasoning as handleConsole's own
+		// InsecureSkipVerify above.
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	relay(
+		websocket.NetConn(r.Context(), conn, websocket.MessageBinary),
+		websocket.NetConn(r.Context(), upstream, websocket.MessageBinary),
+	)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
 }
 

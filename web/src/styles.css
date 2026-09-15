@@ -504,6 +504,12 @@ table.datatable .rowactions button {
   overflow: hidden;
 }
 .consoleScreen canvas { display: block; margin: auto; }
+.textConsoleScreen {
+  flex: 1;
+  overflow: hidden;
+  padding: 8px;
+}
+.textConsoleScreen .xterm { height: 100%; }
 
 .execBody {
   flex: 1;

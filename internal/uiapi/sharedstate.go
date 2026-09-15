@@ -47,9 +47,13 @@ type sharedTicketEntry struct {
 	// its short TTL. Neither is a secret -- unlike Username (kept only
 	// for audit attribution, see the doc comment above), these exist for
 	// this check specifically, not for logging.
-	Namespace string    `json:"namespace"`
-	Name      string    `json:"name"`
-	Expires   time.Time `json:"expires"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	// Kind is "vnc" or "text" -- which consoleproxy relay route
+	// handleConsole should dial, see consoleTicketState's own doc comment
+	// in console.go.
+	Kind    string    `json:"kind"`
+	Expires time.Time `json:"expires"`
 }
 
 // sha256Hex is the general-purpose one-way hash behind every shared-state

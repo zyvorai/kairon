@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -32,11 +33,16 @@ const consoleTicketTTL = 30 * time.Second
 // not just "someone who had a valid ticket") and to the one Machine it
 // was issued for (so a ticket minted for one Machine can't be replayed
 // against a different one's console endpoint within its short TTL --
-// see consumeConsoleTicket/handleConsole).
+// see consumeConsoleTicket/handleConsole). kind is "vnc" or "text" --
+// which of the two consoleproxy relay routes the caller asked for at
+// issuance; handleConsole still separately checks the Machine's own
+// eligibility for that kind at dial time (Running, the right backend/
+// guestAgent field), the same as it always has for VNC.
 type consoleTicketState struct {
 	username  string
 	namespace string
 	name      string
+	kind      string
 	expires   time.Time
 }
 
@@ -50,16 +56,16 @@ type consoleTicketState struct {
 // ConfigMap becomes the single source of truth instead -- see
 // consumeConsoleTicket for why a ticket can't be trusted from both places
 // at once.
-func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, name string) string {
+func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, name, kind string) string {
 	buf := make([]byte, 20)
 	_, _ = rand.Read(buf)
 	ticket := hex.EncodeToString(buf)
 	expires := time.Now().Add(consoleTicketTTL)
 	if s.SharedStateConfigMapName == "" {
-		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, namespace: namespace, name: name, expires: expires})
+		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, namespace: namespace, name: name, kind: kind, expires: expires})
 		return ticket
 	}
-	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Namespace: namespace, Name: name, Expires: expires})
+	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Namespace: namespace, Name: name, Kind: kind, Expires: expires})
 	return ticket
 }
 
@@ -89,44 +95,52 @@ func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, na
 // interval, which is why this can't just wait for the periodic sync to
 // pick a remote ticket up (see RunSharedStateSync in sharedstate.go) --
 // it has to be a direct, synchronous lookup instead.
-func (s *Server) consumeConsoleTicket(ctx context.Context, ticket string) (username, namespace, name string, ok bool) {
+func (s *Server) consumeConsoleTicket(ctx context.Context, ticket string) (username, namespace, name, kind string, ok bool) {
 	if ticket == "" {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	hash := sha256Hex(ticket)
 	if s.SharedStateConfigMapName == "" {
 		v, found := s.consoleTickets.LoadAndDelete(hash)
 		if !found {
-			return "", "", "", false
+			return "", "", "", "", false
 		}
 		st, _ := v.(consoleTicketState)
 		if time.Now().After(st.expires) {
-			return "", "", "", false
+			return "", "", "", "", false
 		}
-		return st.username, st.namespace, st.name, true
+		return st.username, st.namespace, st.name, st.kind, true
 	}
 	cm, err := s.Kube.GetConfigMap(ctx, s.SharedStateNamespace, s.SharedStateConfigMapName)
 	if err != nil {
 		if s.Log != nil {
 			s.Log.Warn("uiapi console ticket lookup failed", "error", err)
 		}
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	key := sharedStateTicketPrefix + hash
 	raw, found := cm.Data[key]
 	if !found {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
 	s.deleteSharedState(ctx, key)
 	var e sharedTicketEntry
 	if json.Unmarshal([]byte(raw), &e) != nil || time.Now().After(e.Expires) {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	return e.Username, e.Namespace, e.Name, true
+	return e.Username, e.Namespace, e.Name, e.Kind, true
 }
 
 func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		kind = "vnc"
+	}
+	if kind != "vnc" && kind != "text" {
+		writeError(w, http.StatusBadRequest, "kind must be \"vnc\" or \"text\"")
+		return
+	}
 	m, err := s.Kube.GetMachine(r.Context(), namespace, name)
 	if err != nil {
 		writeUpstreamError(w, err)
@@ -140,7 +154,7 @@ func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not authorized to open this machine's console")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), username, namespace, name)})
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), username, namespace, name, kind)})
 }
 
 // consoleAuthorized reports whether username may open m's console. Unset
@@ -227,13 +241,16 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleConsole relays a browser WebSocket to the target Machine's VNC
-// display: kairon-ui -> kairon-node (internal/consoleproxy) -> FluxVM's
-// local, unix-socket-only QEMU VNC server. See docs/architecture.md for
-// the full chain and its trust boundary.
+// handleConsole relays a browser WebSocket to the target Machine's console:
+// kairon-ui -> kairon-node (internal/consoleproxy) -> either FluxVM's
+// local, unix-socket-only QEMU VNC server ("vnc", the graphical display)
+// or FluxVM's own WebSocket-upgraded interactive shell endpoint ("text",
+// requiring spec.guestAgent.console -- a different, FluxVM-proprietary
+// vsock channel from the VNC display). See docs/architecture.md for the
+// full chain and its trust boundary.
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	username, ticketNamespace, ticketName, ok := s.consumeConsoleTicket(r.Context(), r.URL.Query().Get("ticket"))
+	username, ticketNamespace, ticketName, kind, ok := s.consumeConsoleTicket(r.Context(), r.URL.Query().Get("ticket"))
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "invalid or expired console ticket")
 		return
@@ -265,9 +282,20 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "machine is not Running")
 		return
 	}
-	if backend := m.Spec.Runtime.Backend; backend != "" && backend != "auto" && backend != "qemu" {
-		writeError(w, http.StatusBadRequest, "VNC console is only available for the qemu backend")
-		return
+	var nodePath string
+	switch kind {
+	case "text":
+		if !m.Spec.GuestAgent.Console {
+			writeError(w, http.StatusBadRequest, "text console requires spec.guestAgent.console")
+			return
+		}
+		nodePath = "text-console"
+	default: // "vnc"
+		if backend := m.Spec.Runtime.Backend; backend != "" && backend != "auto" && backend != "qemu" {
+			writeError(w, http.StatusBadRequest, "VNC console is only available for the qemu backend")
+			return
+		}
+		nodePath = "console"
 	}
 	if m.Status.RuntimeID == "" || m.Status.NodeName == "" {
 		writeError(w, http.StatusConflict, "machine has no runtime yet")
@@ -285,7 +313,23 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		scheme = "wss"
 		dialOpts.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: s.ConsoleTLS}}
 	}
-	upstreamURL := fmt.Sprintf("%s://%s:%s/console/%s", scheme, nodeAddr, s.ConsolePort, m.Status.RuntimeID)
+	upstreamURL := fmt.Sprintf("%s://%s:%s/%s/%s", scheme, nodeAddr, s.ConsolePort, nodePath, m.Status.RuntimeID)
+	if kind == "text" {
+		// Forward the browser's requested terminal size straight through
+		// to FluxVM's own ConsoleQuery (cols/rows) -- cosmetic only, a
+		// missing/invalid value just falls back to FluxVM's own 80x24
+		// default, nothing here validates them.
+		if q := r.URL.Query(); q.Has("cols") || q.Has("rows") {
+			forward := url.Values{}
+			if v := q.Get("cols"); v != "" {
+				forward.Set("cols", v)
+			}
+			if v := q.Get("rows"); v != "" {
+				forward.Set("rows", v)
+			}
+			upstreamURL += "?" + forward.Encode()
+		}
+	}
 	dialCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	upstream, resp, err := websocket.Dial(dialCtx, upstreamURL, dialOpts)
 	cancel()
@@ -305,7 +349,7 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = downstream.CloseNow() }()
 
 	if s.Log != nil {
-		s.Log.Info("uiapi console opened", "username", username, "namespace", namespace, "name", name, "remoteAddr", r.RemoteAddr)
+		s.Log.Info("uiapi console opened", "username", username, "namespace", namespace, "name", name, "kind", kind, "remoteAddr", r.RemoteAddr)
 	}
 	start := time.Now()
 	ctx := r.Context()
@@ -314,7 +358,7 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		websocket.NetConn(ctx, upstream, websocket.MessageBinary),
 	)
 	if s.Log != nil {
-		s.Log.Info("uiapi console closed", "username", username, "namespace", namespace, "name", name, "duration", time.Since(start).Round(time.Second).String())
+		s.Log.Info("uiapi console closed", "username", username, "namespace", namespace, "name", name, "kind", kind, "duration", time.Since(start).Round(time.Second).String())
 	}
 	_ = downstream.Close(websocket.StatusNormalClosure, "")
 }

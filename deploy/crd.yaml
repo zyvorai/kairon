@@ -327,6 +327,8 @@ spec:
                 properties:
                   enabled:
                     type: boolean
+                  console:
+                    type: boolean
               serviceFabric:
                 type: object
                 properties:

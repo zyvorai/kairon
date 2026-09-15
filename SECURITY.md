@@ -115,6 +115,18 @@ Running a command inside a guest -- `browser -> kairon-ui -> kairon-node -> Flux
 
 Off by default in practice (no admin account exists until an operator creates one, and `spec.guestAgent.enabled` is itself opt-in); once both are true, treat exec the same way you'd treat `kubectl exec` into a privileged pod -- convenient for a trusted admin team, not something to expose to less-trusted operators without a finer permission model this project doesn't have yet.
 
+## Text console (`spec.guestAgent.console`)
+
+An interactive shell inside the guest -- `browser (xterm.js) -> kairon-ui -> kairon-node -> FluxVM's own WebSocket-upgraded console endpoint` -- rides the exact same relay infrastructure and authorization model as the VNC console above (same ticket flow, same `consoleAuthorized` per-Machine allowlist, same `KAIRON_NODE_CONSOLE_TOKEN`/`console.tls` trust chain), just a different upstream on kairon-node's side and a different in-guest channel:
+
+- **A completely different guest-side dependency from every other guest-agent feature in this project.** VNC needs nothing in the guest at all; guest-exec/`MachineSnapshot` quiesce/guest-IP resolution need the standard, widely-packaged `qemu-guest-agent`. Text console needs FluxVM's own **proprietary** `fluxvm-guest-agent` binary and systemd service baked into the guest image -- a real, new operational requirement this project has never asked of an operator before enabling this. See `docs/guides/machine-text-console.md` for what that actually involves.
+- **Not gated by the exec's admin-only requirement above** -- text console reuses `consoleAuthorized`'s existing VNC-console model (any authenticated operator by default, restrictable via `kairon.zyvor.dev/console-allowed-users`), the same reasoning applies here as for VNC: an interactive shell is roughly the same trust level as a graphical display into the same guest.
+- **Works on every backend**, unlike VNC (QEMU-only) -- FluxVM's own vsock agent isn't tied to a display device.
+- **The vsock channel's own authentication token is entirely FluxVM's problem, not Kairon's**: FluxVM auto-generates a random per-VM token and burns it into the guest's own disk before boot whenever `spec.guestAgent.console` is set -- Kairon never generates, stores, or transmits this secret itself, and it never appears in a Kairon-controlled log or API response.
+- **A ticket now carries a `kind`** (`"vnc"` or `"text"`, `?kind=text` when requesting one) -- the same single-use, 30-second, per-Machine-bound ticket mechanism as VNC, just naming which of the two relay routes it authorizes.
+
+Off by default (`spec.guestAgent.console: false`); the console relay itself (`console.enabled`) must also be configured, the same deployment-level gate VNC and guest-exec both already share.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

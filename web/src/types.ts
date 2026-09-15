@@ -17,7 +17,7 @@ export interface Machine {
     runtime?: { backend?: string };
     network?: { mode?: string; netns?: boolean };
     powerState?: string;
-    guestAgent?: { enabled?: boolean };
+    guestAgent?: { enabled?: boolean; console?: boolean };
   };
   status?: {
     phase?: string;

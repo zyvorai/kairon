@@ -49,8 +49,8 @@ func dialWS(ctx context.Context, u string, opts *websocket.DialOptions) (*websoc
 func TestConsoleTicketIsSingleUse(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1")
-	username, namespace, name, ok := s.consumeConsoleTicket(ctx, ticket)
+	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
+	username, namespace, name, _, ok := s.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected a freshly issued ticket to be valid")
 	}
@@ -60,7 +60,7 @@ func TestConsoleTicketIsSingleUse(t *testing.T) {
 	if namespace != "default" || name != "vm1" {
 		t.Fatalf("expected ticket to be bound to default/vm1, got %q/%q", namespace, name)
 	}
-	if _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
+	if _, _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected a ticket to be rejected the second time it's presented")
 	}
 }
@@ -68,11 +68,11 @@ func TestConsoleTicketIsSingleUse(t *testing.T) {
 func TestConsoleTicketRejectsExpired(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1")
+	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
 	// Overwrite with an already-expired timestamp rather than sleeping
 	// past the real (30s) TTL.
 	s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: "alice", namespace: "default", name: "vm1", expires: time.Now().Add(-time.Second)})
-	if _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
+	if _, _, _, _, ok := s.consumeConsoleTicket(ctx, ticket); ok {
 		t.Fatal("expected an expired ticket to be rejected")
 	}
 }
@@ -80,10 +80,10 @@ func TestConsoleTicketRejectsExpired(t *testing.T) {
 func TestConsoleTicketRejectsUnknownOrEmpty(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	if _, _, _, ok := s.consumeConsoleTicket(ctx, ""); ok {
+	if _, _, _, _, ok := s.consumeConsoleTicket(ctx, ""); ok {
 		t.Fatal("expected an empty ticket to be rejected")
 	}
-	if _, _, _, ok := s.consumeConsoleTicket(ctx, "never-issued"); ok {
+	if _, _, _, _, ok := s.consumeConsoleTicket(ctx, "never-issued"); ok {
 		t.Fatal("expected an unissued ticket to be rejected")
 	}
 }
@@ -157,7 +157,7 @@ func TestHandleConsoleTicketIssuesAUsableTicket(t *testing.T) {
 	if out.Ticket == "" {
 		t.Fatal("expected a non-empty ticket")
 	}
-	if _, _, _, ok := s.consumeConsoleTicket(context.Background(), out.Ticket); !ok {
+	if _, _, _, _, ok := s.consumeConsoleTicket(context.Background(), out.Ticket); !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
 }
@@ -195,7 +195,7 @@ func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &ticketOut); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	username, _, _, ok := s.consumeConsoleTicket(context.Background(), ticketOut.Ticket)
+	username, _, _, _, ok := s.consumeConsoleTicket(context.Background(), ticketOut.Ticket)
 	if !ok {
 		t.Fatal("expected the issued ticket to be consumable")
 	}
@@ -388,7 +388,7 @@ func TestHandleConsoleRejectsTicketIssuedForADifferentMachine(t *testing.T) {
 	// Ticket is bound to vm1 at issuance, then replayed against vm2's
 	// console endpoint -- must be rejected even though the ticket itself
 	// is otherwise still valid and unconsumed.
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm2/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected a ticket issued for vm1 to be rejected when presented against vm2's console")
@@ -464,7 +464,7 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -545,7 +545,7 @@ func TestHandleConsoleFullRelayOverTLS(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -624,7 +624,7 @@ func TestHandleConsoleTLSRejectsUntrustedCert(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected the dial to fail when kairon-node's certificate isn't trusted")
@@ -645,7 +645,7 @@ func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-Running machine to fail")
@@ -666,7 +666,7 @@ func TestHandleConsoleDisabledWhenNotConfigured(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console to be refused when ConsoleToken/ConsolePort aren't configured")
@@ -688,9 +688,158 @@ func TestHandleConsoleRejectsNonQemuBackend(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1")
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-qemu backend to fail")
+	}
+}
+
+func TestHandleConsoleTicketRejectsInvalidKind(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL)}
+	h := s.Handler()
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/console/ticket?kind=bogus", "", nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an invalid kind, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleConsoleTicketDefaultsToVNCKind(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL)}
+	h := s.Handler()
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/vm1/console/ticket", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	_, _, _, kind, ok := s.consumeConsoleTicket(context.Background(), out.Ticket)
+	if !ok || kind != "vnc" {
+		t.Fatalf("expected a default kind of \"vnc\", got kind=%q ok=%v", kind, ok)
+	}
+}
+
+func TestHandleConsoleRejectsTextConsoleWithoutGuestAgentConsole(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+		// Spec.GuestAgent.Console left false
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	kc := mustKubeClientAt(t, kubeSrv.URL)
+
+	s := &Server{Kube: kc, ConsoleToken: "x", ConsolePort: "8090"}
+	uiSrv := httptest.NewServer(s.Handler())
+	defer uiSrv.Close()
+
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "text")
+	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
+	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
+		t.Fatal("expected a text-console dial to fail when spec.guestAgent.console is unset")
+	}
+}
+
+// fakeFluxTextConsole stands in for FluxVM's own GET /v1/vms/{id}/console
+// WebSocket-upgrade endpoint -- accepts the upgrade and echoes whatever it
+// receives back. Mirrors internal/consoleproxy's own test helper of the
+// same shape (different packages, no shared test-only dependency between
+// them).
+func fakeFluxTextConsole(t *testing.T) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		ctx := r.Context()
+		for {
+			typ, data, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			if err := conn.Write(ctx, typ, data); err != nil {
+				return
+			}
+		}
+	})
+}
+
+// TestHandleTextConsoleFullRelay exercises the entire chain: kairon-ui's
+// handleConsole (kind="text") -> a real internal/consoleproxy.Server
+// (standing in for kairon-node) -> a fake FluxVM WebSocket console
+// endpoint. Also proves text console works on a non-qemu backend, unlike
+// VNC (TestHandleConsoleRejectsNonQemuBackend above).
+func TestHandleTextConsoleFullRelay(t *testing.T) {
+	fluxSrv := httptest.NewServer(fakeFluxTextConsole(t))
+	defer fluxSrv.Close()
+
+	const relayToken = "shared-node-relay-token"
+	nodeRelay := &consoleproxy.Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: relayToken}
+	nodeSrv := httptest.NewServer(nodeRelay.Handler())
+	defer nodeSrv.Close()
+	nodeURL, err := url.Parse(nodeSrv.URL)
+	if err != nil {
+		t.Fatalf("parse node server URL: %v", err)
+	}
+	nodeHost, nodePort, err := net.SplitHostPort(nodeURL.Host)
+	if err != nil {
+		t.Fatalf("split node server host/port: %v", err)
+	}
+
+	fk := newFakeKube()
+	fk.machines["vm1"] = model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"},
+		Spec:     model.MachineSpec{Runtime: model.RuntimeSpec{Backend: "firecracker"}, GuestAgent: model.GuestAgentSpec{Console: true}},
+		Status:   model.MachineStatus{Phase: "Running", NodeName: "worker-1", RuntimeID: "runtime-1"},
+	}
+	fk.nodes = []model.Node{{
+		Metadata: model.ObjectMeta{Name: "worker-1"},
+		Status: struct {
+			Conditions []model.NodeCondition `json:"conditions,omitempty"`
+			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
+		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+	}}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	kc := mustKubeClientAt(t, kubeSrv.URL)
+
+	s := &Server{Kube: kc, ConsoleToken: relayToken, ConsolePort: nodePort}
+	uiSrv := httptest.NewServer(s.Handler())
+	defer uiSrv.Close()
+
+	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "text")
+	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket + "&cols=120&rows=40"
+	conn, err := dialWS(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial text console: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := conn.Write(ctx, websocket.MessageBinary, []byte("$ ls\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(data) != "$ ls\n" {
+		t.Fatalf("expected the byte round trip through both relay hops, got %q", data)
 	}
 }

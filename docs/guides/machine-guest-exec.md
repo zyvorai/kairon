@@ -50,9 +50,11 @@ stdout/stderr once the command completes.
 
 - **One-shot, not interactive.** There's no shell session, no stdin, no
   streaming output as it happens -- you get a complete result only once the
-  command has finished. For an interactive shell, FluxVM has one
-  (`GET /v1/vms/{id}/console`), but Kairon doesn't wrap it yet -- see
-  `docs/architecture.md`.
+  command has finished. For an interactive shell, see
+  [`machine-text-console.md`](machine-text-console.md) -- a separate
+  opt-in (`spec.guestAgent.console`) with its own, bigger guest-image
+  dependency (FluxVM's proprietary `fluxvm-guest-agent`, not the standard
+  `qemu-guest-agent` this feature uses).
 - **60-second default timeout** (FluxVM's own), overridable per call up to
   whatever your deployment is comfortable with -- a command that runs
   longer than its timeout returns an error, with no way to reconnect to it

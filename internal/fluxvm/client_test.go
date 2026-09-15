@@ -210,6 +210,48 @@ func TestDeleteNotFoundIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateWiresQgaAndAgentIndependently(t *testing.T) {
+	cases := []struct {
+		name       string
+		guestAgent model.GuestAgentSpec
+		wantQga    bool
+		wantAgent  bool
+	}{
+		{"neither set", model.GuestAgentSpec{}, false, false},
+		{"only qemu-guest-agent", model.GuestAgentSpec{Enabled: true}, true, false},
+		{"only the fluxvm-native console agent", model.GuestAgentSpec{Console: true}, false, true},
+		{"both", model.GuestAgentSpec{Enabled: true, Console: true}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got CreateRequest
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+			}))
+			defer s.Close()
+			c := New(s.URL, "")
+			c.HTTP = s.Client()
+			m := model.Machine{
+				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+				Spec: model.MachineSpec{
+					Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"},
+					Runtime: model.RuntimeSpec{Backend: "qemu"}, GuestAgent: tc.guestAgent,
+				},
+			}
+			if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Qga != nil && got.Qga.Enabled) != tc.wantQga {
+				t.Fatalf("qga=%+v, want enabled=%v", got.Qga, tc.wantQga)
+			}
+			if (got.Agent != nil && got.Agent.Enabled) != tc.wantAgent {
+				t.Fatalf("agent=%+v, want enabled=%v", got.Agent, tc.wantAgent)
+			}
+		})
+	}
+}
+
 func TestSetResourceLimitsOnlySendsSetFields(t *testing.T) {
 	var gotBody map[string]any
 	var gotPath string

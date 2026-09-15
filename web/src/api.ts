@@ -148,6 +148,17 @@ export async function getConsoleWebSocketURL(namespace: string, name: string): P
   return `${proto}://${window.location.host}/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console?ticket=${encodeURIComponent(out.ticket)}`;
 }
 
+// getTextConsoleWebSocketURL mirrors getConsoleWebSocketURL above, but
+// requests a "text" kind ticket instead of the default "vnc" one (see
+// internal/uiapi/console.go's handleConsoleTicket) and forwards the
+// terminal's current size so FluxVM's own console starts at the right
+// dimensions instead of always defaulting to 80x24.
+export async function getTextConsoleWebSocketURL(namespace: string, name: string, cols: number, rows: number): Promise<string> {
+  const out = await api<{ ticket: string }>(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console/ticket?kind=text`, { method: 'POST' });
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console?ticket=${encodeURIComponent(out.ticket)}&cols=${cols}&rows=${rows}`;
+}
+
 export interface ExecRequest {
   path?: string;
   args?: string[];

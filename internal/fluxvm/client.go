@@ -88,6 +88,7 @@ type CreateRequest struct {
 	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
 	VFIODevices []string       `json:"vfio_devices,omitempty"`
 	Qga         *QgaSpec       `json:"qga,omitempty"`
+	Agent       *AgentSpec     `json:"agent,omitempty"`
 	// NUMANode/CPUSet/Hugepages mirror FluxVM's own CreateVmRequest
 	// fields of the same name (fluxvm-core/src/model.rs) exactly --
 	// QEMU-backend-only there (silently ignored for Cloud Hypervisor/
@@ -102,6 +103,21 @@ type CreateRequest struct {
 // adds the channel to the VM's QEMU command line so kairon-node can later
 // call FluxVM's /qga/* endpoints against it.
 type QgaSpec struct {
+	Enabled bool `json:"enabled"`
+}
+
+// AgentSpec mirrors FluxVM's own bespoke vsock guest agent opt-in
+// (fluxvm-core's AgentSpec) -- a completely different channel from
+// QgaSpec above: it requires FluxVM's own proprietary fluxvm-guest-agent
+// binary installed and running inside the guest image (not the standard,
+// widely-available qemu-guest-agent package QgaSpec/spec.guestAgent.enabled
+// needs), and is what actually backs the interactive text console
+// (internal/consoleproxy's text-console relay). Port/Token are
+// deliberately left unset here: FluxVM defaults the vsock port itself and,
+// when Token is empty on an enabled request, generates a random one and
+// burns it into the guest's own disk before boot -- Kairon never has to
+// generate, store, or rotate this secret itself.
+type AgentSpec struct {
 	Enabled bool `json:"enabled"`
 }
 
@@ -244,6 +260,9 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}
+	}
+	if m.Spec.GuestAgent.Console {
+		payload.Agent = &AgentSpec{Enabled: true}
 	}
 	ci := m.Spec.CloudInit
 	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 {

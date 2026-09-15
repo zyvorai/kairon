@@ -117,6 +117,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Live host resource limits** (`spec.resources.limits`) — a real, kernel-enforced cgroup v2 cap (CPU quota %, memory ceiling, I/O weight, PID count) on a running Machine's own VMM process, freely raisable/lowerable at any time, backend-agnostic — [guide](docs/guides/machine-resource-limits.md)
 - **Guest agent** (`spec.guestAgent`) — real `qemu-guest-agent`-reported `status.guestIP`, including for `user`/SLIRP networking, which has no DHCP lease to parse at all — [guide](docs/guides/machine-guest-agent.md)
 - **Guest exec** (`spec.guestAgent.enabled`, admin-only) — run a one-shot command inside the guest via `kairon-ui`'s dashboard, no SSH/console needed — real `qemu-guest-agent` guest-exec, synchronous, exit code + stdout/stderr — [guide](docs/guides/machine-guest-exec.md)
+- **Text console** (`spec.guestAgent.console`) — an interactive shell in-browser (xterm.js), Kairon's `virtctl console` equivalent, working on every backend — requires FluxVM's own proprietary `fluxvm-guest-agent` baked into the guest image — [guide](docs/guides/machine-text-console.md)
 
 **Migration**
 - **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API

@@ -82,12 +82,17 @@ FluxVM's real qemu-guest-agent) is now wrapped the same way -- one
 synchronous request/response relay, not a long-lived connection --
 requiring `spec.guestAgent.enabled` and an admin account; see SECURITY.md's
 "Guest exec" section. FluxVM's own vsock-based interactive text console
-(`GET /v1/vms/{id}/console`, `virtctl console`'s equivalent) remains
-unwrapped: it needs FluxVM's own proprietary in-guest agent binary
-(`fluxvm-guest-agent`, a separate systemd service from qemu-guest-agent)
-baked into the guest image, a new dependency this project hasn't asked of
-users before, plus a new spec field and a browser terminal UI -- tracked as
-future work, not started. Live cgroup resize
+(`GET /v1/vms/{id}/console`, `virtctl console`'s equivalent) is also
+wrapped now, as `spec.guestAgent.console`: `kairon-ui` (xterm.js) relays a
+browser WebSocket through `kairon-node`'s own client-dialed WebSocket
+connection to FluxVM's console endpoint -- unlike VNC (a Unix socket
+kairon-node dials directly), FluxVM itself is the upstream WebSocket
+server here. This genuinely needed FluxVM's own proprietary in-guest agent
+binary (`fluxvm-guest-agent`, a separate systemd service from
+qemu-guest-agent) baked into the guest image -- a real, new dependency
+this project hadn't asked of users before -- see
+[guides/machine-text-console.md](guides/machine-text-console.md) and
+SECURITY.md's "Text console" section. Live cgroup resize
 (`POST /v1/vms/{id}/resources`) is now wrapped too, as `spec.resources.limits`
 (`internal/agent/resourcelimits.go`) -- a real, kernel-enforced host-side cap
 distinct from the QMP hotplug Kairon already wraps (`internal/agent/hotplug.go`,

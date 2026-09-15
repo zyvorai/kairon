@@ -141,6 +141,15 @@ type MachineSpec struct {
 // docs/guides/machine-guest-agent.md.
 type GuestAgentSpec struct {
 	Enabled bool `json:"enabled,omitempty"`
+	// Console opts into a completely different channel: FluxVM's own
+	// bespoke vsock guest agent (fluxvm.AgentSpec), which requires FluxVM's
+	// own proprietary fluxvm-guest-agent binary installed and running
+	// inside the guest image -- not the standard qemu-guest-agent Enabled
+	// above needs. It backs the interactive text console
+	// (internal/consoleproxy's text-console relay) -- see
+	// docs/guides/machine-text-console.md. Independent of Enabled: a
+	// Machine can set either, both, or neither.
+	Console bool `json:"console,omitempty"`
 }
 
 // CloudInitSpec injects operator-supplied guest customization at first boot,

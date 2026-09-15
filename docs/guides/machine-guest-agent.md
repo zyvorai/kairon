@@ -64,10 +64,11 @@ can't tell you which one it picked -- read `status.guestIPs` (or
   on the next reconcile tick -- not a hard error.
 - This is unrelated to FluxVM's own bespoke `spec.agent` (a different,
   vsock-based protocol requiring its own FluxVM-specific guest binary,
-  `fluxvm-guest-agent`, powering an interactive text console Kairon
-  doesn't expose yet -- see `docs/architecture.md`) -- `spec.guestAgent`
-  here is specifically the real, upstream `qemu-guest-agent` over
-  virtio-serial. This same flag also gates two other, separately
+  `fluxvm-guest-agent`) -- exposed as the separate, independent
+  `spec.guestAgent.console` flag, powering an interactive text console
+  ([guide](machine-text-console.md)). `spec.guestAgent.enabled` here is
+  specifically the real, upstream `qemu-guest-agent` over virtio-serial.
+  This same `enabled` flag also gates two other, separately
   documented capabilities built on that same channel: application-
   consistent `MachineSnapshot` quiesce
   ([guide](machine-snapshot-quiesce.md)) and running a one-shot command
