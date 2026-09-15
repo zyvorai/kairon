@@ -118,6 +118,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status.Phase = "Failed"
 			status.Message = err.Error()
 			c.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+			if c.Metrics != nil {
+				c.Metrics.ObserveReconcileItemError("migration")
+			}
 			if statusErr := c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("migration status patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", statusErr)
 			}
@@ -136,6 +139,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status.ReadyToUse = false
 			status.Message = err.Error()
 			c.Log.Error("snapshot reconcile failed", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "error", err)
+			if c.Metrics != nil {
+				c.Metrics.ObserveReconcileItemError("snapshot")
+			}
 			if statusErr := c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("snapshot status patch failed", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "error", statusErr)
 			}
@@ -152,6 +158,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status.Phase = "Failed"
 			status.Message = err.Error()
 			c.Log.Error("snapshot restore reconcile failed", "namespace", restore.Namespace(), "restore", restore.Metadata.Name, "error", err)
+			if c.Metrics != nil {
+				c.Metrics.ObserveReconcileItemError("snapshotrestore")
+			}
 			if statusErr := c.Kube.PatchMachineSnapshotRestoreStatus(ctx, restore.Namespace(), restore.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("snapshot restore status patch failed", "namespace", restore.Namespace(), "restore", restore.Metadata.Name, "error", statusErr)
 			}

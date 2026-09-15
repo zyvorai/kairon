@@ -55,9 +55,10 @@ type Recorder struct {
 
 	// Reconcile-loop metrics -- registered by NewRecorder and
 	// NewNodeRecorder (kairon-controller/kairon-node both run one), see
-	// ObserveReconcile.
-	reconcileDuration prometheus.Histogram
-	reconcileErrors   prometheus.Counter
+	// ObserveReconcile/ObserveReconcileItemError.
+	reconcileDuration   prometheus.Histogram
+	reconcileErrors     prometheus.Counter
+	reconcileItemErrors *prometheus.CounterVec
 
 	// Admission-webhook decision metrics -- only registered by
 	// NewRecorder (kairon-node/kairon-ui don't serve the webhook), see
@@ -79,15 +80,24 @@ type Recorder struct {
 	now        func() time.Time
 }
 
-func newReconcileMetrics() (prometheus.Histogram, prometheus.Counter) {
+func newReconcileMetrics() (prometheus.Histogram, prometheus.Counter, *prometheus.CounterVec) {
 	return prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "kairon_reconcile_duration_seconds",
 			Help:    "Duration of one reconcile loop iteration.",
 			Buckets: prometheus.DefBuckets,
 		}), prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "kairon_reconcile_errors_total",
-			Help: "Total reconcile loop iterations that returned an error.",
-		})
+			Help: "Total reconcile loop iterations that returned an error outright (e.g. a List call itself failing). " +
+				"Most per-item reconcile failures (one Machine/MachineMigration/etc. among many) are caught, logged, " +
+				"and status-patched without the tick itself returning an error -- see kairon_reconcile_item_errors_total " +
+				"for those.",
+		}), prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "kairon_reconcile_item_errors_total",
+			Help: "Total per-item reconcile failures inside a reconcile loop iteration, by resource kind " +
+				"(machine/migration/snapshot/snapshotrestore) -- a Machine or MachineMigration etc. whose own " +
+				"reconcile step failed, caught and logged individually rather than failing the whole tick. " +
+				"Labeled by kind only, never by name/namespace, to keep cardinality bounded.",
+		}, []string{"kind"})
 }
 
 func newAPIRequestDurationMetric() *prometheus.HistogramVec {
@@ -103,7 +113,7 @@ func newAPIRequestDurationMetric() *prometheus.HistogramVec {
 // webhook.enabled), and apiserver call health.
 func NewRecorder() *Recorder {
 	reg := prometheus.NewRegistry()
-	reconcileDuration, reconcileErrors := newReconcileMetrics()
+	reconcileDuration, reconcileErrors, reconcileItemErrors := newReconcileMetrics()
 	r := &Recorder{
 		registry: reg,
 		phaseCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -132,8 +142,9 @@ func NewRecorder() *Recorder {
 			Name: "kairon_migration_dataplane_encrypted",
 			Help: "1 if an active live migration's QEMU data-plane transport is TLS-encrypted, 0 otherwise.",
 		}, []string{"namespace", "name"}),
-		reconcileDuration: reconcileDuration,
-		reconcileErrors:   reconcileErrors,
+		reconcileDuration:   reconcileDuration,
+		reconcileErrors:     reconcileErrors,
+		reconcileItemErrors: reconcileItemErrors,
 		webhookDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kairon_webhook_decisions_total",
 			Help: "Admission webhook decisions, by resource, operation, and outcome (allow/deny).",
@@ -144,7 +155,7 @@ func NewRecorder() *Recorder {
 		now:                time.Now,
 	}
 	reg.MustRegister(r.phaseCount, r.phaseAgeSeconds, r.completedTotal, r.transferDuration, r.cutoverDowntime, r.dataPlaneEncrypted,
-		r.reconcileDuration, r.reconcileErrors, r.webhookDecisions, r.apiRequestDuration)
+		r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.webhookDecisions, r.apiRequestDuration)
 	return r
 }
 
@@ -154,14 +165,15 @@ func NewRecorder() *Recorder {
 // node, not MachineMigrations cluster-wide, and never serves the webhook.
 func NewNodeRecorder() *Recorder {
 	reg := prometheus.NewRegistry()
-	reconcileDuration, reconcileErrors := newReconcileMetrics()
+	reconcileDuration, reconcileErrors, reconcileItemErrors := newReconcileMetrics()
 	r := &Recorder{
-		registry:           reg,
-		reconcileDuration:  reconcileDuration,
-		reconcileErrors:    reconcileErrors,
-		apiRequestDuration: newAPIRequestDurationMetric(),
+		registry:            reg,
+		reconcileDuration:   reconcileDuration,
+		reconcileErrors:     reconcileErrors,
+		reconcileItemErrors: reconcileItemErrors,
+		apiRequestDuration:  newAPIRequestDurationMetric(),
 	}
-	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.apiRequestDuration)
+	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.apiRequestDuration)
 	return r
 }
 
@@ -276,6 +288,21 @@ func (r *Recorder) ObserveReconcile(d time.Duration, err error) {
 	if err != nil {
 		r.reconcileErrors.Inc()
 	}
+}
+
+// ObserveReconcileItemError counts one item's own reconcile step failing
+// inside a loop iteration (a single Machine's/MachineMigration's/etc. own
+// reconcileX call returning an error, caught, logged, and status-patched
+// without failing the whole tick) -- see kairon_reconcile_item_errors_total's
+// own doc string for why this exists alongside ObserveReconcile's
+// whole-tick counter. kind should be one of a small, fixed, already-known
+// set ("machine", "migration", "snapshot", "snapshotrestore") -- never a
+// resource name, which would blow up cardinality.
+func (r *Recorder) ObserveReconcileItemError(kind string) {
+	if r.reconcileItemErrors == nil {
+		return
+	}
+	r.reconcileItemErrors.WithLabelValues(kind).Inc()
 }
 
 // ObserveWebhookDecision records one admission webhook decision. No-op on

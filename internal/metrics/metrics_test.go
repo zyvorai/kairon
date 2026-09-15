@@ -124,6 +124,36 @@ func TestObserveReconcileRecordsDurationAndErrors(t *testing.T) {
 	}
 }
 
+func TestObserveReconcileItemErrorCountsByKind(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveReconcileItemError("machine")
+	r.ObserveReconcileItemError("machine")
+	r.ObserveReconcileItemError("migration")
+	if got := testutil.ToFloat64(r.reconcileItemErrors.WithLabelValues("machine")); got != 2 {
+		t.Errorf("machine count = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(r.reconcileItemErrors.WithLabelValues("migration")); got != 1 {
+		t.Errorf("migration count = %v, want 1", got)
+	}
+	// A whole-tick failure (ObserveReconcile with a non-nil err) and a
+	// per-item failure are deliberately independent counters -- a tick
+	// with two failed Machines but no outright List error should show 0
+	// here, not 1.
+	if got := testutil.ToFloat64(r.reconcileErrors); got != 0 {
+		t.Errorf("reconcileErrors = %v, want 0 (no whole-tick failure recorded)", got)
+	}
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `kairon_reconcile_item_errors_total{kind="machine"} 2`) {
+		t.Errorf("missing machine sample in:\n%s", body)
+	}
+	if !strings.Contains(body, `kairon_reconcile_item_errors_total{kind="migration"} 1`) {
+		t.Errorf("missing migration sample in:\n%s", body)
+	}
+}
+
 func TestObserveWebhookDecisionCountsByResourceOperationAndDecision(t *testing.T) {
 	r := NewRecorder()
 	r.ObserveWebhookDecision("machines", "CREATE", false)
@@ -151,6 +181,14 @@ func TestObserveAPIRequestCountsOkAndError(t *testing.T) {
 	if !strings.Contains(body, `kairon_apiserver_request_duration_seconds_count{method="GET",outcome="error"} 1`) {
 		t.Errorf("missing error sample in:\n%s", body)
 	}
+}
+
+func TestObserveReconcileItemErrorNoOpsOnARecorderWithoutReconcileMetrics(t *testing.T) {
+	// NewUIRecorder registers no reconcile metrics at all (kairon-ui has
+	// no reconcile loop) -- must not panic on a nil reconcileItemErrors,
+	// matching every other Observe* method's nil-checked no-op contract.
+	r := NewUIRecorder()
+	r.ObserveReconcileItemError("machine")
 }
 
 func TestObserveHTTPRequestBucketsByStatusClass(t *testing.T) {

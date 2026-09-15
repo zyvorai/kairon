@@ -84,6 +84,23 @@ groups:
             a sustained rate usually means the apiserver is unreachable,
             RBAC changed under it, or a bug is panicking mid-reconcile.
 
+      - alert: KaironReconcileItemErrorRateHigh
+        expr: increase(kairon_reconcile_item_errors_total[15m]) > 5
+        labels:
+          severity: warn
+        annotations:
+          summary: "A Kairon-managed resource has failed its own reconcile step more than 5 times in 15 minutes"
+          description: >-
+            kairon_reconcile_item_errors_total counts a single
+            Machine/MachineMigration/MachineSnapshot/MachineSnapshotRestore
+            failing its own reconcile step, labeled by kind -- distinct
+            from KaironReconcileErrorRateHigh, which only fires on a whole
+            tick failing outright (e.g. a List call itself failing).
+            Most per-item failures never trip that alert at all, since
+            they're caught and status-patched without failing the tick.
+            Check that component's "... reconcile failed" log line
+            (which does carry the specific namespace/name) for the cause.
+
       - alert: KaironAPIServerErrorRateHigh
         expr: increase(kairon_apiserver_request_duration_seconds_count{outcome="error"}[15m]) > 10
         labels:

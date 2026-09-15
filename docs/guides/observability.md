@@ -15,8 +15,8 @@ not a duplicate of it.
 
 | Component | Port | New in this pass | Already existed |
 |---|---|---|---|
-| `kairon-controller` | `controller.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_webhook_decisions_total` (only if `webhook.enabled`), `kairon_apiserver_request_duration_seconds` | `kairon_migration_phase_count`, `kairon_migration_phase_age_seconds`, `kairon_migration_completed_total`, `kairon_migration_transfer_duration_seconds`, `kairon_migration_cutover_downtime_seconds`, `kairon_migration_dataplane_encrypted` |
-| `kairon-node` | `node.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_apiserver_request_duration_seconds` | (none -- `internal/health.Server.Metrics` existed but was never wired to anything, so `/metrics` 404'd) |
+| `kairon-controller` | `controller.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_webhook_decisions_total` (only if `webhook.enabled`), `kairon_apiserver_request_duration_seconds` | `kairon_migration_phase_count`, `kairon_migration_phase_age_seconds`, `kairon_migration_completed_total`, `kairon_migration_transfer_duration_seconds`, `kairon_migration_cutover_downtime_seconds`, `kairon_migration_dataplane_encrypted` |
+| `kairon-node` | `node.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_apiserver_request_duration_seconds` | (none -- `internal/health.Server.Metrics` existed but was never wired to anything, so `/metrics` 404'd) |
 | `kairon-ui` | its own listen port (`GET /metrics`, unauthenticated -- see `SECURITY.md`) | `kairon_ui_request_duration_seconds`, `kairon_apiserver_request_duration_seconds` | (none -- no health/metrics endpoint of any kind existed) |
 
 `kairon_apiserver_request_duration_seconds` is the one metric all three
@@ -82,7 +82,16 @@ Prometheus `rule_files` config directly.
   `status_class` already bounds it against the full HTTP status range
   instead of the raw numeric code. A request matching nothing registered
   under `/api/v1/` (a genuine 404) reports `route="unmatched"`.
-- `kairon_reconcile_errors_total` counts a whole reconcile tick failing,
-  not which specific Machine/migration/snapshot inside that tick caused
-  it -- check the accompanying "reconcile failed"/"agent stopped" log
-  line for that.
+- `kairon_reconcile_errors_total` only counts a whole reconcile tick
+  returning an error outright (a `List*` call itself failing) -- the far
+  more common case, one Machine/MachineMigration/MachineSnapshot/
+  MachineSnapshotRestore among many failing its own reconcile step, is
+  caught, logged, and status-patched individually without the tick
+  itself failing, so it never incremented this counter at all.
+  `kairon_reconcile_item_errors_total{kind}` now counts exactly those,
+  `kind` being one of `machine`/`migration`/`snapshot`/`snapshotrestore`
+  -- labeled by resource *kind* only, never a specific name/namespace, to
+  keep cardinality bounded. Still not a substitute for a real trace: it
+  can tell you "machine reconciliation is failing repeatedly," not *which*
+  Machine -- check the accompanying "... reconcile failed" log line
+  (which does carry namespace/name) for that.

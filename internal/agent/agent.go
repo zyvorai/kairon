@@ -114,6 +114,9 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 		}
 		if err := a.reconcileMachine(ctx, m); err != nil {
 			a.Log.Error("machine reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
+			if a.Metrics != nil {
+				a.Metrics.ObserveReconcileItemError("machine")
+			}
 			status := m.Status
 			status.Phase = "Error"
 			status.NodeName = a.NodeName
@@ -144,6 +147,9 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 			status.Phase = "Failed"
 			status.Message = err.Error()
 			a.Log.Error("migration reconcile failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+			if a.Metrics != nil {
+				a.Metrics.ObserveReconcileItemError("migration")
+			}
 			if statusErr := a.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); statusErr != nil {
 				a.Log.Error("migration status patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", statusErr)
 			}
