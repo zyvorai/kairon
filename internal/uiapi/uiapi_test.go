@@ -28,11 +28,16 @@ import (
 // internal/integration's fakeCluster, but scoped to what this package's
 // handlers actually call.
 type fakeKube struct {
-	mu         sync.Mutex
-	machines   map[string]model.Machine
-	migrations map[string]model.MachineMigration
-	snapshots  map[string]model.MachineSnapshot
-	nodes      []model.Node
+	mu                sync.Mutex
+	machines          map[string]model.Machine
+	migrations        map[string]model.MachineMigration
+	snapshots         map[string]model.MachineSnapshot
+	quotas            map[string]model.MachineQuota
+	budgets           map[string]model.MachineDisruptionBudget
+	machineSets       map[string]model.MachineSet
+	instanceTypes     map[string]model.MachineInstanceType
+	migrationPolicies map[string]model.MigrationPolicy
+	nodes             []model.Node
 	// secrets holds only stringData, keyed by "namespace/name" -- enough
 	// to exercise Client.PatchSecretStringData (see
 	// uiapi.Server.persistUsers) without modeling a full core/v1 Secret.
@@ -46,10 +51,15 @@ type fakeKube struct {
 
 func newFakeKube() *fakeKube {
 	return &fakeKube{
-		machines:   map[string]model.Machine{},
-		migrations: map[string]model.MachineMigration{},
-		snapshots:  map[string]model.MachineSnapshot{},
-		secrets:    map[string]map[string]string{},
+		machines:          map[string]model.Machine{},
+		migrations:        map[string]model.MachineMigration{},
+		snapshots:         map[string]model.MachineSnapshot{},
+		quotas:            map[string]model.MachineQuota{},
+		budgets:           map[string]model.MachineDisruptionBudget{},
+		machineSets:       map[string]model.MachineSet{},
+		instanceTypes:     map[string]model.MachineInstanceType{},
+		migrationPolicies: map[string]model.MigrationPolicy{},
+		secrets:           map[string]map[string]string{},
 	}
 }
 
@@ -161,6 +171,37 @@ func (f *fakeKube) handler() http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			f.snapshots[s.Metadata.Name] = s
 			_ = json.NewEncoder(w).Encode(s)
+
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas":
+			items := make([]model.MachineQuota, 0, len(f.quotas))
+			for _, q := range f.quotas {
+				items = append(items, q)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets":
+			items := make([]model.MachineDisruptionBudget, 0, len(f.budgets))
+			for _, b := range f.budgets {
+				items = append(items, b)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+			items := make([]model.MachineSet, 0, len(f.machineSets))
+			for _, ms := range f.machineSets {
+				items = append(items, ms)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes":
+			items := make([]model.MachineInstanceType, 0, len(f.instanceTypes))
+			for _, it := range f.instanceTypes {
+				items = append(items, it)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineInstanceTypeList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies":
+			items := make([]model.MigrationPolicy, 0, len(f.migrationPolicies))
+			for _, p := range f.migrationPolicies {
+				items = append(items, p)
+			}
+			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: items})
 
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: f.nodes})
@@ -699,6 +740,37 @@ func TestListSnapshots(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Metadata.Name != "s1" {
 		t.Fatalf("expected one snapshot named s1, got %+v", items)
+	}
+}
+
+func TestListQuotasBudgetsMachineSetsInstanceTypesMigrationPolicies(t *testing.T) {
+	fk := newFakeKube()
+	fk.quotas["q1"] = model.MachineQuota{Metadata: model.ObjectMeta{Name: "q1", Namespace: "default"}}
+	fk.budgets["b1"] = model.MachineDisruptionBudget{Metadata: model.ObjectMeta{Name: "b1", Namespace: "default"}}
+	fk.machineSets["ms1"] = model.MachineSet{Metadata: model.ObjectMeta{Name: "ms1", Namespace: "default"}}
+	fk.instanceTypes["it1"] = model.MachineInstanceType{Metadata: model.ObjectMeta{Name: "it1", Namespace: "default"}}
+	fk.migrationPolicies["mp1"] = model.MigrationPolicy{Metadata: model.ObjectMeta{Name: "mp1", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/api/v1/quotas", "q1"},
+		{"/api/v1/disruption-budgets", "b1"},
+		{"/api/v1/machinesets", "ms1"},
+		{"/api/v1/instancetypes", "it1"},
+		{"/api/v1/migration-policies", "mp1"},
+	}
+	for _, c := range cases {
+		rr := doJSON(t, h, http.MethodGet, c.path, "", nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", c.path, rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), c.want) {
+			t.Fatalf("%s: expected body to contain %q, got %s", c.path, c.want, rr.Body.String())
+		}
 	}
 }
 

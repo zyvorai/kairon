@@ -213,6 +213,12 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/snapshots", s.handleListSnapshots)
 	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)
 
+	api.HandleFunc("GET /api/v1/quotas", s.handleListQuotas)
+	api.HandleFunc("GET /api/v1/disruption-budgets", s.handleListBudgets)
+	api.HandleFunc("GET /api/v1/machinesets", s.handleListMachineSets)
+	api.HandleFunc("GET /api/v1/instancetypes", s.handleListInstanceTypes)
+	api.HandleFunc("GET /api/v1/migration-policies", s.handleListMigrationPolicies)
+
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	api.HandleFunc("GET /api/v1/nodes/{node}/sandboxes", s.handleListNodeSandboxes)
 	api.HandleFunc("GET /api/v1/nodes/{node}/templates", s.handleListTemplates)
