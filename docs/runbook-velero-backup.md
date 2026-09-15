@@ -47,10 +47,14 @@ content** for either storage path Kairon supports today:
   [`machine-storage.md`](guides/machine-storage.md)) isn't a real CSI
   volume at all, so there's nothing for Velero's CSI plugin to snapshot.
 - Kairon's own iSCSI CSI driver (`csi.kairon.zyvor.dev`,
-  [`machine-storage-csi.md`](guides/machine-storage-csi.md)) has never
-  implemented the CSI `CreateSnapshot`/`DeleteSnapshot` RPCs -- there is
-  no `VolumeSnapshotClass` that could name it and actually work, today or
-  ever, until that's built.
+  [`machine-storage-csi.md`](guides/machine-storage-csi.md)) *does* now
+  implement `CreateSnapshot`/`DeleteSnapshot` for dynamically-provisioned
+  volumes (`csiController.enabled` + `csiController.snapshotter.enabled`)
+  -- Velero's generic CSI plugin should work against a `VolumeSnapshotClass`
+  naming it, the same as any other CSI driver with snapshot support. Not
+  yet drilled end-to-end against a real Velero backup/restore in this
+  repo's own CI, and still doesn't help the far more common `hostPath`/
+  `local` PV case above, which was never a CSI volume in the first place.
 
 This is the **same limit** `MachineSnapshot`
 ([`machine-snapshot-restore.md`](guides/machine-snapshot-restore.md))

@@ -175,6 +175,24 @@ parameters (the default) preserves demo mode exactly as before.
   **No volume health or stats reporting.**
   `NodeGetVolumeStats`/`NodeGetVolumeHealth` are both unimplemented (the
   CSI spec's own `Unimplemented` response).
+- **Volume snapshots are supported for dynamically provisioned volumes**
+  (`csiController.enabled` plus the separately-gated
+  `csiController.snapshotter.enabled`, off by default): `CreateSnapshot`/
+  `DeleteSnapshot` clone a volume's backing file via `cp --reflink=auto`
+  (an instant, metadata-only copy-on-write clone on a filesystem that
+  supports it -- btrfs, XFS with `reflink=1`, overlayfs on either -- a
+  real byte-for-byte copy otherwise, coreutils' own silent, automatic
+  fallback), and `CreateVolume`'s `volume_content_source` can restore a
+  new volume from one. Requires your cluster to already have the
+  `snapshot.storage.k8s.io` CRDs and the (separate, cluster-wide,
+  not-installed-by-this-chart) `snapshot-controller` running -- the
+  `csi-snapshotter` sidecar this enables fails to start at all without
+  them, which is exactly why this is a second, deliberate opt-in rather
+  than bundled into `csiController.enabled` automatically. No
+  cross-volume dedup and no incremental/differential snapshots -- each
+  is an independent full clone, so N snapshots of the same volume cost
+  (at minimum, before any CoW savings) N times the space if the
+  filesystem can't reflink.
 - **No CHAP support on Kairon's own consumption path.** `kairon-node`
   acts as its own CSI client and never resolves a `nodeStageSecretRef` --
   doing so would mean granting it `get` RBAC on Secrets named by whatever

@@ -178,6 +178,24 @@ csiController:
     image:
       repository: registry.k8s.io/sig-storage/csi-resizer
       tag: v1.12.0
+  # The upstream sidecar that watches VolumeSnapshotContent objects (the
+  # snapshot.storage.k8s.io CRDs, plus the separate, cluster-wide
+  # snapshot-controller that turns a VolumeSnapshot into one -- neither
+  # installed by this chart, the same "bring your own
+  # external-snapshotter stack" posture every CSI driver takes) and turns
+  # them into CreateSnapshot/DeleteSnapshot -- same "not something Kairon
+  # implements itself" convention as provisioner/resizer above. Off by
+  # default and separately gated from csiController.enabled itself: unlike
+  # provisioner/resizer (which only need the always-present core/storage
+  # APIs), this sidecar fails to start at all if the snapshot.storage.k8s.io
+  # CRDs aren't already installed, so it's a deliberate second opt-in, not
+  # bundled in automatically. See
+  # https://github.com/kubernetes-csi/external-snapshotter.
+  snapshotter:
+    enabled: false
+    image:
+      repository: registry.k8s.io/sig-storage/csi-snapshotter
+      tag: v8.2.0
   # The provisioner sidecar's own Lease-based leader election
   # (coordination.k8s.io/v1, its own bundled client-go logic) -- not
   # something kairon-csi-controller's own binary needs to reimplement the

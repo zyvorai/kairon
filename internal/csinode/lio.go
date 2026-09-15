@@ -169,3 +169,22 @@ func (c *lioClient) resizeBackstore(ctx context.Context, name string, sizeBytes 
 func tpgPath(iqn string) string {
 	return "/iscsi/" + iqn + "/tpg1"
 }
+
+// copyFile clones src's contents to dst via `cp --reflink=auto` -- a
+// reflink (copy-on-write) clone where the host filesystem supports it
+// (btrfs, XFS with reflink=1, overlayfs on either), an instant metadata-
+// only operation regardless of file size; a real byte-for-byte copy
+// otherwise (coreutils' own automatic, silent fallback -- `--reflink=auto`
+// never errors just because the filesystem lacks CoW support, unlike
+// `--reflink=always`). Shelling out to `cp` here for the same reason
+// lioClient shells out to targetcli: this project has no interest in
+// reimplementing FICLONE/copy_file_range ioctl handling and coreutils'
+// own fallback behavior in Go. dst must not already exist as a
+// directory; an existing regular file at dst is silently overwritten,
+// matching plain `cp`'s own default (no -n/--no-clobber).
+func (c *lioClient) copyFile(ctx context.Context, src, dst string) error {
+	if _, err := c.run.Run(ctx, "cp", "--reflink=auto", src, dst); err != nil {
+		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
+	}
+	return nil
+}

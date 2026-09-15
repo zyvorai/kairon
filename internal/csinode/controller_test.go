@@ -5,6 +5,7 @@ package csinode
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,15 +58,16 @@ func TestNewControllerServerValidatesPortalAndCreatesVolumeDir(t *testing.T) {
 	}
 }
 
-func TestControllerGetCapabilitiesReportsCreateDeleteVolume(t *testing.T) {
+func TestControllerGetCapabilitiesReportsAllSupportedRPCs(t *testing.T) {
 	s := newTestControllerServer(t, newFakeCommandRunner())
 	resp, err := s.ControllerGetCapabilities(context.Background(), &csi.ControllerGetCapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("ControllerGetCapabilities: %v", err)
 	}
 	want := map[csi.ControllerServiceCapability_RPC_Type]bool{
-		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME: false,
-		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME:        false,
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME:   false,
+		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME:          false,
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT: false,
 	}
 	if len(resp.Capabilities) != len(want) {
 		t.Fatalf("expected exactly %d capabilities, got %+v", len(want), resp.Capabilities)
@@ -426,5 +428,211 @@ func TestControllerExpandVolumeRejectsUnknownVolume(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an error for a volume this Controller never dynamically provisioned")
+	}
+}
+
+// fakeCPHandler stands in for the real `cp --reflink=auto <src> <dst>`
+// this driver shells out to (lioClient.copyFile) -- the fake
+// CommandRunner otherwise just no-ops without touching the filesystem,
+// which would make every os.Stat these snapshot tests rely on fail.
+func fakeCPHandler(args ...string) (string, error) {
+	if len(args) != 3 || args[0] != "--reflink=auto" {
+		return "", fmt.Errorf("unexpected cp args: %v", args)
+	}
+	data, err := os.ReadFile(args[1])
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(args[2]), 0o700); err != nil {
+		return "", err
+	}
+	return "", os.WriteFile(args[2], data, 0o600)
+}
+
+func TestCreateSnapshotRequiresNameAndSourceVolumeID(t *testing.T) {
+	s := newTestControllerServer(t, newFakeCommandRunner())
+	if _, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{SourceVolumeId: "x"}); err == nil {
+		t.Fatal("expected an error for an empty name")
+	}
+	if _, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{Name: "snap-1"}); err == nil {
+		t.Fatal("expected an error for an empty source_volume_id")
+	}
+}
+
+func TestCreateSnapshotRejectsUnknownSourceVolume(t *testing.T) {
+	s := newTestControllerServer(t, newFakeCommandRunner())
+	_, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name: "snap-1", SourceVolumeId: "iscsi|10.0.0.5:3260|iqn.2026-01.dev.zyvor:static-disk|0",
+	})
+	if err == nil {
+		t.Fatal("expected an error for a volume this Controller never dynamically provisioned")
+	}
+}
+
+func TestCreateSnapshotCopiesSourceVolumeBackingFile(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("cp", fakeCPHandler)
+	s := newTestControllerServer(t, run)
+	created, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "pvc-src", VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	content := []byte("real volume content")
+	if err := os.WriteFile(s.backingFilePath("pvc-src"), content, 0o600); err != nil {
+		t.Fatalf("seed backing file: %v", err)
+	}
+
+	resp, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name: "snap-1", SourceVolumeId: created.Volume.VolumeId,
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if resp.Snapshot.SnapshotId != "snap-1" || resp.Snapshot.SourceVolumeId != created.Volume.VolumeId {
+		t.Fatalf("unexpected snapshot: %+v", resp.Snapshot)
+	}
+	if resp.Snapshot.SizeBytes != int64(len(content)) || !resp.Snapshot.ReadyToUse {
+		t.Fatalf("unexpected snapshot metadata: %+v", resp.Snapshot)
+	}
+	got, err := os.ReadFile(s.snapshotFilePath("snap-1"))
+	if err != nil {
+		t.Fatalf("read snapshot file: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("expected the snapshot to contain the source volume's real content, got %q", got)
+	}
+}
+
+// TestCreateSnapshotIsIdempotentOnRetry mirrors
+// TestCreateVolumeIsIdempotentOnRetry's own reasoning: a retry with the
+// same Name must succeed without re-copying.
+func TestCreateSnapshotIsIdempotentOnRetry(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("cp", fakeCPHandler)
+	s := newTestControllerServer(t, run)
+	created, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "pvc-src", VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	if err := os.WriteFile(s.backingFilePath("pvc-src"), []byte("v1"), 0o600); err != nil {
+		t.Fatalf("seed backing file: %v", err)
+	}
+	req := &csi.CreateSnapshotRequest{Name: "snap-retry", SourceVolumeId: created.Volume.VolumeId}
+	if _, err := s.CreateSnapshot(context.Background(), req); err != nil {
+		t.Fatalf("first CreateSnapshot: %v", err)
+	}
+	before := len(run.callsFor("cp"))
+	if _, err := s.CreateSnapshot(context.Background(), req); err != nil {
+		t.Fatalf("retried CreateSnapshot: %v", err)
+	}
+	if after := len(run.callsFor("cp")); after != before {
+		t.Fatalf("expected no new copy on a retry with the same name, got %d new", after-before)
+	}
+}
+
+func TestDeleteSnapshotRequiresSnapshotID(t *testing.T) {
+	s := newTestControllerServer(t, newFakeCommandRunner())
+	if _, err := s.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{}); err == nil {
+		t.Fatal("expected an error for an empty snapshot_id")
+	}
+}
+
+func TestDeleteSnapshotRemovesTheFile(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("cp", fakeCPHandler)
+	s := newTestControllerServer(t, run)
+	created, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "pvc-src", VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	if err := os.WriteFile(s.backingFilePath("pvc-src"), []byte("v1"), 0o600); err != nil {
+		t.Fatalf("seed backing file: %v", err)
+	}
+	if _, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{Name: "snap-del", SourceVolumeId: created.Volume.VolumeId}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	if _, err := s.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{SnapshotId: "snap-del"}); err != nil {
+		t.Fatalf("DeleteSnapshot: %v", err)
+	}
+	if _, err := os.Stat(s.snapshotFilePath("snap-del")); !os.IsNotExist(err) {
+		t.Fatalf("expected the snapshot file to be gone, stat err=%v", err)
+	}
+}
+
+// TestDeleteSnapshotIsIdempotentOnUnknownID mirrors DeleteVolume's own
+// "never error on an already-gone/unrecognized ID" CSI requirement.
+func TestDeleteSnapshotIsIdempotentOnUnknownID(t *testing.T) {
+	s := newTestControllerServer(t, newFakeCommandRunner())
+	if _, err := s.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{SnapshotId: "never-created"}); err != nil {
+		t.Fatalf("expected DeleteSnapshot to succeed on an unknown snapshot_id, got %v", err)
+	}
+}
+
+// TestCreateVolumeRestoresFromSnapshot exercises the other half of the
+// snapshot feature: a new volume created with VolumeContentSource naming
+// an existing snapshot gets that snapshot's real content copied into its
+// own backing file before the LIO backstore is created around it.
+func TestCreateVolumeRestoresFromSnapshot(t *testing.T) {
+	run := newFakeCommandRunner()
+	run.on("cp", fakeCPHandler)
+	s := newTestControllerServer(t, run)
+	srcVol, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name: "pvc-src", VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume (source): %v", err)
+	}
+	content := []byte("snapshot restore content")
+	if err := os.WriteFile(s.backingFilePath("pvc-src"), content, 0o600); err != nil {
+		t.Fatalf("seed backing file: %v", err)
+	}
+	if _, err := s.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{Name: "snap-restore", SourceVolumeId: srcVol.Volume.VolumeId}); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	restored, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "pvc-restored",
+		VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+		// Deliberately smaller than the snapshot's own real size, to
+		// prove CreateVolume floors it up rather than honoring a
+		// requested size smaller than the content being restored.
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 1},
+		VolumeContentSource: &csi.VolumeContentSource{Type: &csi.VolumeContentSource_Snapshot{
+			Snapshot: &csi.VolumeContentSource_SnapshotSource{SnapshotId: "snap-restore"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume (restore): %v", err)
+	}
+	if restored.Volume.CapacityBytes != int64(len(content)) {
+		t.Fatalf("expected the restored volume's size to floor at the snapshot's own size, got %d", restored.Volume.CapacityBytes)
+	}
+	got, err := os.ReadFile(s.backingFilePath("pvc-restored"))
+	if err != nil {
+		t.Fatalf("read restored backing file: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Fatalf("expected the restored volume's backing file to contain the snapshot's real content, got %q", got)
+	}
+}
+
+func TestCreateVolumeRejectsUnknownSnapshotSource(t *testing.T) {
+	s := newTestControllerServer(t, newFakeCommandRunner())
+	_, err := s.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "pvc-restored",
+		VolumeCapabilities: []*csi.VolumeCapability{mountCapability()},
+		VolumeContentSource: &csi.VolumeContentSource{Type: &csi.VolumeContentSource_Snapshot{
+			Snapshot: &csi.VolumeContentSource_SnapshotSource{SnapshotId: "never-created"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when the named snapshot doesn't exist")
 	}
 }

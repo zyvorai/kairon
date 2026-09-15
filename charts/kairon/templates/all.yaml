@@ -567,6 +567,22 @@ rules:
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update"]
 {{ end }}
+{{ if .Values.csiController.snapshotter.enabled }}
+  # The csi-snapshotter sidecar's own documented RBAC
+  # (https://github.com/kubernetes-csi/external-snapshotter) -- it
+  # reconciles VolumeSnapshotContent (not VolumeSnapshot itself, which the
+  # separate, cluster-wide snapshot-controller this chart doesn't install
+  # owns) into CreateSnapshot/DeleteSnapshot calls.
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotcontents"]
+    verbs: ["create", "get", "list", "watch", "update", "delete", "patch"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotcontents/status"]
+    verbs: ["update", "patch"]
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -615,6 +631,16 @@ spec:
           volumeMounts:
             - {name: plugin-dir, mountPath: /csi}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+{{ if .Values.csiController.snapshotter.enabled }}
+        - name: csi-snapshotter
+          image: "{{ .Values.csiController.snapshotter.image.repository }}:{{ .Values.csiController.snapshotter.image.tag }}"
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--leader-election={{ .Values.csiController.leaderElection.enabled }}"
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+{{ end }}
         - name: csi-controller
           image: "{{ .Values.csiController.image.repository }}:{{ .Values.csiController.image.tag }}"
           imagePullPolicy: {{ .Values.csiController.image.pullPolicy }}

@@ -15,6 +15,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // iqnPrefix names every target this driver dynamically provisions --
@@ -35,6 +36,10 @@ const iqnPrefix = "iqn.2026-01.dev.zyvor.kairon:"
 // docs/guides/machine-storage-csi.md example LUN size.
 const defaultVolumeSizeBytes = 1 << 30
 
+// snapshotSubdir is the directory under VolumeDir CreateSnapshot's own
+// files live in -- see snapshotFilePath's doc comment.
+const snapshotSubdir = ".snapshots"
+
 // volumeNamePattern is what a CSI CreateVolumeRequest.Name is expected to
 // look like in practice (Kubernetes' own external-provisioner generates
 // "pvc-<uuid>") -- validated defensively since this name becomes both a
@@ -54,13 +59,17 @@ var volumeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // indistinguishable from a statically hand-written one once it reaches
 // NodeStageVolume.
 //
-// Real, current limits (see docs/guides/machine-storage-csi.md): no CHAP
-// on dynamically provisioned volumes (LIO "demo mode" -- see
-// ensureDemoMode's own doc comment for why), no volume expansion, no
-// snapshots through this path (MachineSnapshot's own CSI VolumeSnapshot
-// flow is unrelated and unaffected), one backing file per volume on
-// whichever single node runs kairon-csi-controller (no topology-aware
-// placement across multiple storage nodes -- this first cut assumes one).
+// Real, current limits (see docs/guides/machine-storage-csi.md): CHAP is
+// supported (a provisioner Secret's username/password configure real LIO
+// auth instead of demo mode -- see chapCredentialsFromSecrets) and so is
+// ControllerExpandVolume -- neither is a gap. What's still genuinely
+// missing: no CreateSnapshot/DeleteSnapshot through this path
+// (MachineSnapshot's own CSI VolumeSnapshot flow is unrelated and
+// unaffected -- that snapshots the PV a StorageClass/CSI driver already
+// provisioned, this driver just has no CreateSnapshot of its own to call),
+// and one backing file per volume on whichever single node runs
+// kairon-csi-controller (no topology-aware placement across multiple
+// storage nodes -- this first cut assumes one).
 type ControllerServer struct {
 	csi.UnimplementedControllerServer
 
@@ -111,6 +120,9 @@ func (s *ControllerServer) ControllerGetCapabilities(_ context.Context, _ *csi.C
 			{Type: &csi.ControllerServiceCapability_Rpc{Rpc: &csi.ControllerServiceCapability_RPC{
 				Type: csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 			}}},
+			{Type: &csi.ControllerServiceCapability_Rpc{Rpc: &csi.ControllerServiceCapability_RPC{
+				Type: csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
+			}}},
 		},
 	}, nil
 }
@@ -137,7 +149,9 @@ func chapCredentialsFromSecrets(secrets map[string]string) (chapCredentials, err
 }
 
 // CreateVolume provisions a new iSCSI target/LUN backed by a fresh
-// sparse file, and returns the volume_id/volume_context NodeServer's
+// sparse file (or, when VolumeContentSource names a snapshot this
+// Controller's own CreateSnapshot produced, a copy of that snapshot's
+// content instead), and returns the volume_id/volume_context NodeServer's
 // NodeStageVolume already knows how to consume. Idempotent per the CSI
 // spec's own requirement for CreateVolume: a retry with the same Name
 // (the external-provisioner sidecar's own idempotency token) reaches the
@@ -164,9 +178,50 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		sizeBytes = defaultVolumeSizeBytes
 	}
 
+	backingPath := s.backingFilePath(name)
+	var restoredSize int64
+	if src := req.GetVolumeContentSource().GetSnapshot(); src != nil {
+		snapshotID := src.GetSnapshotId()
+		if !volumeNamePattern.MatchString(snapshotID) {
+			return nil, status.Errorf(codes.NotFound, "snapshot %q not found", snapshotID)
+		}
+		info, err := os.Stat(s.snapshotFilePath(snapshotID))
+		if err != nil {
+			return nil, status.Errorf(codes.NotFound, "snapshot %q: %v", snapshotID, err)
+		}
+		restoredSize = info.Size()
+		if sizeBytes < restoredSize {
+			// The CSI spec requires the new volume's size never be less
+			// than its source snapshot's -- silently honor that floor
+			// rather than creating a target smaller than the content
+			// about to be restored into it.
+			sizeBytes = restoredSize
+		}
+		if _, err := os.Stat(backingPath); os.IsNotExist(err) {
+			// Not a CreateVolume retry (the backing file would already
+			// exist from a prior attempt) -- actually restore the
+			// snapshot's content now, before ensureBackstore below
+			// registers this path as a LIO backstore, so the target
+			// serves real restored data from its very first read rather
+			// than an empty sparse file.
+			if err := s.lio.copyFile(ctx, s.snapshotFilePath(snapshotID), backingPath); err != nil {
+				return nil, status.Error(codes.Internal, err.Error())
+			}
+		}
+	}
+
 	iqn := iqnPrefix + name
-	if err := s.lio.ensureBackstore(ctx, name, s.backingFilePath(name), sizeBytes); err != nil {
+	if err := s.lio.ensureBackstore(ctx, name, backingPath, sizeBytes); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if restoredSize > 0 && sizeBytes > restoredSize {
+		// A larger volume than the snapshot itself was requested --
+		// ensureBackstore above registered the backstore against the
+		// already-restored (smaller) file; grow it the same way
+		// ControllerExpandVolume already does for an existing volume.
+		if err := s.lio.resizeBackstore(ctx, name, sizeBytes); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 	}
 	if err := s.lio.ensureTarget(ctx, iqn); err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
@@ -193,6 +248,7 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	return &csi.CreateVolumeResponse{Volume: &csi.Volume{
 		VolumeId:      encodeVolumeID(cfg),
 		CapacityBytes: sizeBytes,
+		ContentSource: req.GetVolumeContentSource(),
 		VolumeContext: map[string]string{
 			volumeAttrPortal: s.Portal,
 			volumeAttrIQN:    iqn,
@@ -271,6 +327,85 @@ func (s *ControllerServer) ControllerExpandVolume(ctx context.Context, req *csi.
 
 func (s *ControllerServer) backingFilePath(name string) string {
 	return filepath.Join(s.VolumeDir, name+".img")
+}
+
+// snapshotFilePath is CreateSnapshot's own backingFilePath equivalent --
+// snapshots live in their own subdirectory under VolumeDir rather than
+// alongside live volumes' backing files, purely to make "what's a live
+// volume vs. a point-in-time copy" obvious from a directory listing (no
+// functional difference otherwise: both are just files this Controller's
+// own node owns).
+func (s *ControllerServer) snapshotFilePath(name string) string {
+	return filepath.Join(s.VolumeDir, snapshotSubdir, name+".img")
+}
+
+// CreateSnapshot clones a live volume's backing file into a new,
+// independent file under snapshotFilePath -- a real point-in-time copy,
+// not a reference into the live volume (so deleting or overwriting the
+// source volume afterward never affects a snapshot already taken of it).
+// Uses lioClient.copyFile's own reflink-where-possible behavior, so this
+// is cheap (a CoW clone, not a full byte copy) on a filesystem that
+// supports it. Idempotent per the CSI spec's own requirement: a retry
+// with the same Name returns the already-created snapshot rather than
+// re-copying or erroring.
+func (s *ControllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
+	name := req.GetName()
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name is required")
+	}
+	if !volumeNamePattern.MatchString(name) {
+		return nil, status.Errorf(codes.InvalidArgument, "name %q must match %s", name, volumeNamePattern.String())
+	}
+	if req.GetSourceVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "source_volume_id is required")
+	}
+	dst := s.snapshotFilePath(name)
+	if info, err := os.Stat(dst); err == nil {
+		return &csi.CreateSnapshotResponse{Snapshot: &csi.Snapshot{
+			SnapshotId: name, SourceVolumeId: req.GetSourceVolumeId(),
+			SizeBytes: info.Size(), CreationTime: timestamppb.New(info.ModTime()), ReadyToUse: true,
+		}}, nil
+	}
+	cfg, err := decodeVolumeID(req.GetSourceVolumeId())
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "source volume %q: %v", req.GetSourceVolumeId(), err)
+	}
+	volName, ok := nameFromIQN(cfg.IQN)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "source volume %q was not dynamically provisioned by this Controller", req.GetSourceVolumeId())
+	}
+	srcInfo, err := os.Stat(s.backingFilePath(volName))
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "source volume %q backing file: %v", req.GetSourceVolumeId(), err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if err := s.lio.copyFile(ctx, s.backingFilePath(volName), dst); err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &csi.CreateSnapshotResponse{Snapshot: &csi.Snapshot{
+		SnapshotId: name, SourceVolumeId: req.GetSourceVolumeId(),
+		SizeBytes: srcInfo.Size(), CreationTime: timestamppb.Now(), ReadyToUse: true,
+	}}, nil
+}
+
+// DeleteSnapshot removes the file CreateSnapshot created. Idempotent,
+// including against a snapshot_id this driver never actually recognizes
+// (the CSI spec requires DeleteSnapshot to succeed on an already-gone/
+// unknown snapshot, not error) -- the same posture DeleteVolume already
+// takes for an unrecognized volume_id.
+func (s *ControllerServer) DeleteSnapshot(_ context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
+	if req.GetSnapshotId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "snapshot_id is required")
+	}
+	if !volumeNamePattern.MatchString(req.GetSnapshotId()) {
+		return &csi.DeleteSnapshotResponse{}, nil
+	}
+	if err := os.Remove(s.snapshotFilePath(req.GetSnapshotId())); err != nil && !os.IsNotExist(err) {
+		return nil, status.Errorf(codes.Internal, "remove snapshot file for %s: %v", req.GetSnapshotId(), err)
+	}
+	return &csi.DeleteSnapshotResponse{}, nil
 }
 
 // nameFromIQN recovers CreateVolume's original name from an IQN this
