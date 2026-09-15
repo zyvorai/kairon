@@ -129,23 +129,52 @@ Node-scoped admin API, no dashboard yet:
   pools or show one's current `members` (VM UUIDs, any authenticated
   operator, read-only).
 - **`POST .../pools/{name}/claim`** (body `{"name", "ttlSeconds"}`, both
-  optional overrides) pops one ready member, resumes it, and returns the
-  now-`Running` VM. FluxVM triggers its own background backfill to
-  replace the claimed member; Kairon doesn't wait for that to finish.
-  Fails with a clear error if the pool has no ready members right now
-  (rather than silently falling back to a slow synchronous create) --
+  optional overrides, plus optional `{"createMachine", "namespace",
+  "machineName"}` -- see below) pops one ready member, resumes it, and
+  returns the now-`Running` VM. FluxVM triggers its own background
+  backfill to replace the claimed member; Kairon doesn't wait for that to
+  finish. Fails with a clear error if the pool has no ready members right
+  now (rather than silently falling back to a slow synchronous create) --
   retry shortly, or make the pool bigger.
 - **`DELETE .../pools/{name}`** (admin-only) deletes the pool **and every
   member VM it currently holds**, claimed or not -- a genuinely
   destructive operation, not just removing the pool's own bookkeeping.
 
-**A claimed VM is real FluxVM state, not automatically a Kairon Machine.**
-Claiming hands back FluxVM's own VM record (UUID, name, `guest_ip`,
-status) directly -- there is no automatic step that creates a
-corresponding Kubernetes `Machine` object for it. Managing a claimed VM
-as an ordinary Kairon Machine afterward (power state, disruption budgets,
-quota accounting, the dashboard) needs a manual follow-up you do
-yourself; this is a real, currently-open gap, not a hidden assumption.
+**By default, a claimed VM is real FluxVM state, not automatically a
+Kairon Machine.** Claiming hands back FluxVM's own VM record (UUID, name,
+`guest_ip`, status) directly -- with no `createMachine`, there is no
+automatic step that creates a corresponding Kubernetes `Machine` object
+for it, and managing it as an ordinary Kairon Machine afterward (power
+state, disruption budgets, quota accounting, the dashboard) needs a
+manual follow-up you do yourself.
+
+**Set `createMachine: true` (plus a required `machineName`, `namespace`
+defaulting to `default`) to close that gap for this claim.** The response
+becomes `{"vm": <claimed FluxVM record>, "machine": <created Machine>}`
+instead of the bare VM record. Under the hood: the claim's own FluxVM-side
+name is forced to `kairon-<namespace>-<machineName>` (overriding any
+`name` you also set), matching exactly what `Machine{Name, Namespace}.RuntimeName()`
+computes -- so kairon-node's existing adoption path (it already falls back
+to looking up a runtime *by that exact name* when a Machine has no
+`status.runtimeID` yet) picks up this precise VM on its very next
+reconcile tick, instead of creating a second, duplicate one. The new
+Machine's `spec.image`/`spec.resources`/`spec.runtime.backend` are built
+from the **pool's own template** (fetched fresh at claim time, the same
+spec every member was actually booted from) -- a first cut that covers
+what every Machine needs to be meaningfully reconciled, not every possible
+FluxVM `CreateVmRequest` field (no VFIO/NUMA/hugepages/cloud-init carried
+over). If creating the Machine object itself fails (a namespace/name
+conflict, an unreachable API server), the response still reports the
+successful claim (`"vm"` populated, `"machine": null`, plus a
+`"machineError"` explaining what to do next) -- the VM is real, running
+state either way; this never pretends the claim didn't happen just
+because the follow-up write did.
+
+Deliberately opt-in, not the new default: warm pools exist for fast,
+low-ceremony ephemeral VMs, and a full Machine object drags in
+finalizer-gated deletion, quota accounting, and webhook validation that
+not every caller wants -- omitting `createMachine` is byte-for-byte the
+same behavior as before this existed.
 
 **A note on overlap with FluxVM's own Kubernetes integration**: FluxVM
 ships its own `MicroVMPool` CRD (part of `fluxvm-microvm`, a node-local
@@ -173,6 +202,11 @@ identical underlying FluxVM state.
 - **No dashboard yet.** Every capability here (create, list, HTTP proxy,
   template build/list) is API-only -- `kaironctl` has no dedicated verbs
   either.
+- **`claim`'s `createMachine` builds a Machine spec from the pool's
+  template covering image/CPU/memory/backend only** -- VFIO device
+  claims, NUMA/cpuset/hugepages, cloud-init, and every other
+  `CreateVmRequest` field the template might set are not carried over
+  onto the new Machine object, a first cut, not full fidelity.
 - **No snapshot listing/deletion for templates**, matching
   [VM-state snapshot/restore](machine-vm-state-snapshot.md)'s own posture
   for tags -- FluxVM owns storage, Kairon has no prune/list-by-age

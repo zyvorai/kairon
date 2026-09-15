@@ -5,7 +5,12 @@ package uiapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strconv"
+
+	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 // requireCatalogAdmin (internal/uiapi/catalog.go) is reused as-is for
@@ -133,14 +138,75 @@ func (s *Server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 type claimPoolRequest struct {
 	Name       string `json:"name,omitempty"`
 	TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
+	// CreateMachine, when true, additionally creates a real Kubernetes
+	// Machine object for the claimed VM once the claim itself succeeds --
+	// closing the "claimed VM sits outside MachineQuota/the admission
+	// webhook until an operator explicitly creates one" gap README.md's
+	// own Production gaps section names. Opt-in and off by default: a
+	// request that omits it gets exactly the prior behavior, byte for
+	// byte -- warm pools exist for fast, low-ceremony ephemeral VMs (see
+	// docs/guides/machine-sandboxes.md), and a full Machine object drags
+	// in finalizer-gated deletion, quota accounting, webhook validation,
+	// and dashboard visibility that not every caller wants.
+	//
+	// Requires MachineName (fails closed with 400 rather than guessing a
+	// name). Namespace defaults to "default" like everywhere else in this
+	// API. The claimed VM's own FluxVM-side name is forced to
+	// Machine{Name: MachineName, Namespace: Namespace}.RuntimeName() --
+	// overriding any Name set above -- so kairon-node's existing adoption
+	// path (Agent.current falling back to LookupByName when
+	// status.runtimeID is unset) picks up this exact runtime on its next
+	// reconcile tick instead of creating a second, duplicate VM.
+	CreateMachine bool   `json:"createMachine,omitempty"`
+	Namespace     string `json:"namespace,omitempty"`
+	MachineName   string `json:"machineName,omitempty"`
+}
+
+// machineSpecFromPoolTemplate builds a best-effort model.MachineSpec from
+// a pool's own Template (FluxVM's raw CreateRequest shape, stored as
+// map[string]any since Kairon never otherwise needs to understand a
+// pool's template contents -- see createPoolRequest's own doc comment).
+// Covers the fields every Machine needs to be meaningfully reconciled
+// (image, cpu/memory, backend) -- deliberately not every possible
+// CreateRequest field (VFIO devices, NUMA/hugepages, cloud-init, etc.);
+// a first cut, same discipline as every other "real, named limit, not a
+// hidden gap" scoping decision in this project.
+func machineSpecFromPoolTemplate(template map[string]any) (model.MachineSpec, error) {
+	raw, err := json.Marshal(template)
+	if err != nil {
+		return model.MachineSpec{}, err
+	}
+	var cr fluxvm.CreateRequest
+	if err := json.Unmarshal(raw, &cr); err != nil {
+		return model.MachineSpec{}, err
+	}
+	backend := cr.Backend
+	if backend == "" {
+		backend = "qemu"
+	}
+	memory := "2Gi"
+	if cr.MemoryMiB > 0 {
+		memory = strconv.FormatUint(cr.MemoryMiB, 10) + "Mi"
+	}
+	cpu := "2"
+	if cr.VCPUs > 0 {
+		cpu = strconv.FormatUint(uint64(cr.VCPUs), 10)
+	}
+	return model.MachineSpec{
+		Image:      model.ImageSpec{Path: cr.Image},
+		Resources:  model.ResourceSpec{CPU: cpu, Memory: memory},
+		Runtime:    model.RuntimeSpec{Backend: backend},
+		PowerState: "Running",
+	}, nil
 }
 
 // handleClaimPool pops one ready pool member, resumes it, and returns the
 // now-Running VM: kairon-ui -> kairon-node -> FluxVM's own
 // POST /v1/pools/{name}/claim. Admin-only, same posture as creating a
 // pool. The claimed VM is real FluxVM state, not automatically wired into
-// a Kairon Machine object -- see docs/guides/machine-sandboxes.md's
-// "Warm pools" section for what that means in practice.
+// a Kairon Machine object unless req.CreateMachine is set -- see
+// docs/guides/machine-sandboxes.md's "Warm pools" section for what that
+// means in practice either way.
 func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 	nodeName, name := r.PathValue("node"), r.PathValue("name")
 	nodeAddr, ok := s.requireCatalogAdmin(w, r, nodeName)
@@ -152,19 +218,87 @@ func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	ns := req.Namespace
+	if req.CreateMachine {
+		if req.MachineName == "" {
+			writeError(w, http.StatusBadRequest, "machineName is required when createMachine is true")
+			return
+		}
+		if ns == "" {
+			ns = model.DefaultNamespace
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), poolTimeout)
+	defer cancel()
+
+	var template map[string]any
+	if req.CreateMachine {
+		// Fetch the pool's own template -- what every member, including
+		// the one about to be claimed, was actually booted from -- rather
+		// than trying to reconstruct a Machine spec from the claimed
+		// record's own FluxVM-side fields, which don't carry everything a
+		// Machine spec needs (e.g. the image path isn't echoed back on a
+		// claim response).
+		var poolOut map[string]any
+		if err := s.relayToNodeGet(ctx, nodeAddr, "pools/"+name, &poolOut); err != nil {
+			writeError(w, http.StatusBadGateway, "fetching pool template: "+err.Error())
+			return
+		}
+		if t, ok := poolOut["template"].(map[string]any); ok {
+			template = t
+		}
+	}
+
+	claimName := req.Name
+	if req.CreateMachine {
+		// Force the FluxVM-side name so kairon-node's existing adoption
+		// path (LookupByName by RuntimeName() when status.runtimeID is
+		// unset) picks up this exact runtime on its next reconcile tick,
+		// instead of creating a second, duplicate VM for the Machine
+		// object below.
+		claimName = model.Machine{Metadata: model.ObjectMeta{Name: req.MachineName, Namespace: ns}}.RuntimeName()
+	}
 	body := struct {
 		Name       string `json:"name,omitempty"`
 		TTLSeconds *int64 `json:"ttl_seconds,omitempty"`
-	}{Name: req.Name, TTLSeconds: req.TTLSeconds}
-	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
-	defer cancel()
+	}{Name: claimName, TTLSeconds: req.TTLSeconds}
 	if s.Log != nil {
-		s.Log.Info("uiapi pool claim requested", "username", usernameFromContext(r.Context()), "node", nodeName, "pool", name)
+		s.Log.Info("uiapi pool claim requested", "username", usernameFromContext(r.Context()), "node", nodeName, "pool", name, "createMachine", req.CreateMachine)
 	}
-	var out map[string]any
-	if err := s.relayToNode(ctx, nodeAddr, "pools/"+name+"/claim", body, &out); err != nil {
+	var claimed map[string]any
+	if err := s.relayToNode(ctx, nodeAddr, "pools/"+name+"/claim", body, &claimed); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	if !req.CreateMachine {
+		writeJSON(w, http.StatusOK, claimed)
+		return
+	}
+
+	spec, err := machineSpecFromPoolTemplate(template)
+	if err != nil {
+		// The claim itself already succeeded and the VM is real, running
+		// state -- report the Machine-creation failure without pretending
+		// the claim didn't happen, so the operator knows to create the
+		// Machine themselves (or retry) rather than assume nothing exists.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"vm": claimed, "machine": nil,
+			"machineError": "parsing pool template for Machine spec: " + err.Error(),
+		})
+		return
+	}
+	machine := model.Machine{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
+		Metadata: model.ObjectMeta{Name: req.MachineName, Namespace: ns},
+		Spec:     spec,
+	}
+	created, err := s.Kube.CreateMachine(ctx, ns, machine)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"vm": claimed, "machine": nil,
+			"machineError": "the pool claim succeeded but creating the Machine object failed: " + err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"vm": claimed, "machine": created})
 }
