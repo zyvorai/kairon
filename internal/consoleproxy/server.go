@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /text-console/{runtimeID}", s.handleTextConsole)
 	mux.HandleFunc("POST /agent-file/put/{runtimeID}", s.handleAgentPutFile)
 	mux.HandleFunc("POST /agent-file/get/{runtimeID}", s.handleAgentGetFile)
+	mux.HandleFunc("POST /agent-exec/{runtimeID}", s.handleAgentExec)
 	mux.HandleFunc("GET /qga-fsfreeze-status/{runtimeID}", s.handleQGAFsfreezeStatus)
 	mux.HandleFunc("POST /qga-firewall/open/{runtimeID}", s.handleQGAFirewallOpen)
 	mux.HandleFunc("POST /qga-firewall/close/{runtimeID}", s.handleQGAFirewallClose)
@@ -257,6 +258,44 @@ func (s *Server) handleAgentGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(agentFileResponse{ContentBase64: result.ContentBase64, Mode: result.Mode})
+}
+
+// agentExecRequest/agentExecResponse mirror internal/fluxvm's AgentExec's
+// own request/result shape -- separate types for the same reason
+// execRequest/execResponse are.
+type agentExecRequest struct {
+	Command        string  `json:"command"`
+	TimeoutSeconds *uint64 `json:"timeoutSeconds,omitempty"`
+}
+
+type agentExecResponse struct {
+	ExitCode int32  `json:"exitCode"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+}
+
+// handleAgentExec forwards a guest-exec request to FluxVM's own bespoke
+// vsock guest agent (POST /v1/vms/{id}/agent) -- a different channel from
+// qemu-guest-agent's handleExec above (backend-agnostic, requiring
+// spec.guestAgent.console rather than spec.guestAgent.enabled). One
+// request, one response, same shape as handleExec.
+func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req agentExecRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	result, err := s.Flux.AgentExec(ctx, r.PathValue("runtimeID"), req.Command, req.TimeoutSeconds)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("agent exec: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(agentExecResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
 }
 
 // vmSnapshotRequest/vmSnapshotResponse mirror the shape of every other

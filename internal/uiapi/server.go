@@ -174,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.handleExec)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.handleAgentPutFile)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/get", s.handleAgentGetFile)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-exec", s.handleAgentExec)
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/qga/fsfreeze-status", s.handleQGAFsfreezeStatus)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/open", s.handleQGAFirewallOpen)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/close", s.handleQGAFirewallClose)

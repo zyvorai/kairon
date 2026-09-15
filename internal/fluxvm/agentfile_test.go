@@ -108,6 +108,65 @@ func TestAgentGetFilePropagatesGuestError(t *testing.T) {
 	}
 }
 
+func TestAgentExec(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "exec", "exit_code": 0, "stdout": "hello\n", "stderr": ""})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	timeout := uint64(30)
+	out, err := c.AgentExec(context.Background(), "vm-1", "echo hello", &timeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/agent" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotBody["command"] != "echo hello" || gotBody["timeout_seconds"] != float64(30) {
+		t.Fatalf("unexpected request body: %+v", gotBody)
+	}
+	if out.ExitCode != 0 || out.Stdout != "hello\n" {
+		t.Fatalf("unexpected result: %+v", out)
+	}
+}
+
+func TestAgentExecOmitsTimeoutWhenNil(t *testing.T) {
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "exec", "exit_code": 0, "stdout": "", "stderr": ""})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	if _, err := c.AgentExec(context.Background(), "vm-1", "true", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasTimeout := gotBody["timeout_seconds"]; hasTimeout {
+		t.Fatalf("did not expect timeout_seconds to be sent when nil, got %+v", gotBody)
+	}
+}
+
+func TestAgentExecPropagatesGuestError(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": "error", "message": "vsock agent unreachable"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	if _, err := c.AgentExec(context.Background(), "vm-1", "true", nil); err == nil {
+		t.Fatal("expected an error when the guest agent reports one")
+	}
+}
+
 func TestAgentFilePropagatesTransportErrors(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)

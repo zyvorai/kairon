@@ -63,3 +63,20 @@ text-only dashboard panel.
   panel assumes UTF-8 text.
 - **One-shot, not a mount.** There's no live, ongoing sync between guest
   and host -- each read or write is a single, independent round trip.
+
+## Related: guest exec over the same vsock agent (API-only)
+
+**`POST /api/v1/machines/{ns}/{name}/agent-exec`** (body:
+`{"command": "...", "timeoutSeconds": 30}`) runs a shell command over this
+exact same vsock channel -- same `spec.guestAgent.console` requirement,
+same admin-only posture, same `internal/consoleproxy` relay shape as file
+access above. This is a genuinely **different** mechanism from
+[guest exec](machine-guest-exec.md)'s `qemu-guest-agent`-based
+`POST .../exec`, despite the similar name: this one is **backend-agnostic**
+(works on Cloud Hypervisor/Firecracker, and FluxVm-backend sandboxes, not
+just QEMU) since it doesn't depend on QEMU's own virtio-serial guest-agent
+device at all. Response shape: `{"exitCode", "stdout", "stderr"}`, the
+same as `.../exec`. Takes a single shell command string, not a real argv
+(no PowerShell mode -- that's specific to `qemu-guest-agent`'s own
+Windows-guest support). No dedicated dashboard button yet -- API-only,
+matching how `qga/fsfreeze-status`/`qga/firewall` first shipped.

@@ -525,6 +525,9 @@ func newFakeFluxAgent(t *testing.T, gotBody *map[string]any) *fluxvm.Client {
 		case "/v1/vms/vm-1/agent/get-file":
 			_ = json.NewDecoder(r.Body).Decode(gotBody)
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": "file-content", "content_base64": "aGVsbG8=", "mode": 420})
+		case "/v1/vms/vm-1/agent":
+			_ = json.NewDecoder(r.Body).Decode(gotBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": "exec", "exit_code": 0, "stdout": "hello\n", "stderr": ""})
 		default:
 			http.Error(w, "bad route", http.StatusNotFound)
 		}
@@ -613,6 +616,75 @@ func TestHandleAgentFilePropagatesFluxVMFailure(t *testing.T) {
 
 	body := strings.NewReader(`{"path":"/etc/x","contentBase64":"aGVsbG8="}`)
 	req, _ := http.NewRequest(http.MethodPost, nodeSrv.URL+"/agent-file/put/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 when FluxVM rejects the request, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleAgentExecRejectsWrongOrMissingToken(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxAgent(t, &got), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"command":"echo hello"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agent-exec/vm-1", body)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with no token, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleAgentExecRelaysRequestAndResponse(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxAgent(t, &got), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"command":"echo hello","timeoutSeconds":30}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agent-exec/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out agentExecResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ExitCode != 0 || out.Stdout != "hello\n" {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if got["command"] != "echo hello" || got["timeout_seconds"] != float64(30) {
+		t.Fatalf("expected the request to be forwarded to FluxVM, got %+v", got)
+	}
+}
+
+func TestHandleAgentExecPropagatesFluxVMFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	s := &Server{Flux: fluxvm.New(srv.URL, ""), Token: "secret"}
+	nodeSrv := httptest.NewServer(s.Handler())
+	defer nodeSrv.Close()
+
+	body := strings.NewReader(`{"command":"echo hello"}`)
+	req, _ := http.NewRequest(http.MethodPost, nodeSrv.URL+"/agent-exec/vm-1", body)
 	req.Header.Set("Authorization", "Bearer secret")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

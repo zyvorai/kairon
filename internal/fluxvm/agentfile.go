@@ -24,6 +24,9 @@ type agentResponse struct {
 	Message       string `json:"message"`
 	ContentBase64 string `json:"content_base64"`
 	Mode          uint32 `json:"mode"`
+	ExitCode      int32  `json:"exit_code"`
+	Stdout        string `json:"stdout"`
+	Stderr        string `json:"stderr"`
 }
 
 func (r agentResponse) err() error {
@@ -85,4 +88,42 @@ func (c *Client) AgentGetFile(ctx context.Context, id, path string) (*AgentFileC
 		return nil, err
 	}
 	return &AgentFileContent{ContentBase64: out.ContentBase64, Mode: out.Mode}, nil
+}
+
+// AgentExecResult is the result of AgentExec.
+type AgentExecResult struct {
+	ExitCode int32
+	Stdout   string
+	Stderr   string
+}
+
+// AgentExec runs a command in the guest over FluxVM's own bespoke vsock
+// guest agent (POST /v1/vms/{id}/agent) -- a genuinely different
+// mechanism from QGAExec's qemu-guest-agent guest-exec, despite both
+// being called "guest exec": this one is backend-agnostic (works on
+// Cloud Hypervisor/Firecracker/FluxVm sandboxes too, anywhere the vsock
+// agent runs, not just QEMU), requires spec.guestAgent.console rather
+// than spec.guestAgent.enabled, and its request/response shape is
+// simpler -- a single shell command string, not a real argv, and no
+// PowerShell mode (that's QGA-exec-specific, for Windows guests). Both
+// exist and are kept distinct rather than merged: they're different
+// FluxVM routes with different backend requirements, not two names for
+// the same thing.
+func (c *Client) AgentExec(ctx context.Context, id, command string, timeoutSeconds *uint64) (*AgentExecResult, error) {
+	payload := map[string]any{"command": command}
+	if timeoutSeconds != nil {
+		payload["timeout_seconds"] = *timeoutSeconds
+	}
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/agent", payload)
+	if err != nil {
+		return nil, err
+	}
+	var out agentResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode agent exec response: %w", err)
+	}
+	if err := out.err(); err != nil {
+		return nil, err
+	}
+	return &AgentExecResult{ExitCode: out.ExitCode, Stdout: out.Stdout, Stderr: out.Stderr}, nil
 }
