@@ -127,6 +127,16 @@ An interactive shell inside the guest -- `browser (xterm.js) -> kairon-ui -> kai
 
 Off by default (`spec.guestAgent.console: false`); the console relay itself (`console.enabled`) must also be configured, the same deployment-level gate VNC and guest-exec both already share.
 
+## Guest file access (`spec.guestAgent.console`)
+
+Reading or writing a file inside a running guest -- `browser -> kairon-ui -> kairon-node -> FluxVM's own bespoke vsock guest agent` -- rides the same `fluxvm-guest-agent` channel the text console above uses (`spec.guestAgent.console`, not `spec.guestAgent.enabled`), relayed through the same `internal/consoleproxy` infrastructure as a plain JSON request/response, the same shape guest exec already has:
+
+- **Admin-only, same posture as guest exec, stricter than text console.** Arbitrary guest file read/write is at least as sensitive as arbitrary command execution -- `handleAgentPutFile`/`handleAgentGetFile` (`internal/uiapi/agentfile.go`) require a `ui.auth.users[].admin` account outright, unlike the text console's any-authenticated-operator-by-default model. The same "no group-to-admin claim mapping" OIDC limitation guest exec already documents applies here too.
+- **Requires `spec.guestAgent.console`**, not `spec.guestAgent.enabled` -- this is FluxVM's proprietary vsock agent, the same dependency the text console needs (`fluxvm-guest-agent` baked into the guest image), not standard `qemu-guest-agent`.
+- **No path restriction of any kind.** An admin who can reach this can read or write any path the guest agent process itself can access inside the guest -- there is no allowlist/denylist of sensitive paths (`/etc/shadow`, guest-side credentials, etc.). Treat this exactly like `kubectl exec`/`cp` into a privileged pod: convenient for a trusted admin team, not something to expose more broadly without a finer permission model this project doesn't have yet.
+- **Response size is capped at kairon-ui's own 4MiB HTTP-response limit** (`internal/fluxvm.Client`'s general response cap) -- a file whose base64 encoding exceeds that (roughly a 3MB file) fails to decode with a clear error rather than returning silently-truncated content.
+- **No content-type or binary-safety guarantee on the dashboard's own UI** -- the browser encodes/decodes content as UTF-8 text; a real binary file only round-trips correctly if the operator handles the base64 payload directly against the API rather than through the dashboard's text-only panel. See `docs/guides/machine-guest-agent-files.md`.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

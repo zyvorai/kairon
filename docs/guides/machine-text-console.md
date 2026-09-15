@@ -1,10 +1,12 @@
 # User guide: interactive text console (`spec.guestAgent.console`)
 
 A real interactive shell inside the guest, rendered in-browser -- Kairon's
-equivalent of `virtctl console`. Distinct from both the graphical
-[VNC console](../../SECURITY.md) (a display, not a shell) and
+equivalent of `virtctl console`. Distinct from the graphical
+[VNC console](../../SECURITY.md) (a display, not a shell),
 [guest exec](machine-guest-exec.md) (one-shot commands, no interactive
-session).
+session), and [guest file access](machine-guest-agent-files.md) (read/write
+a file, no shell) -- the latter shares this feature's own
+`spec.guestAgent.console` dependency.
 
 ## What this needs that nothing else in Kairon does
 

@@ -329,6 +329,117 @@ func TestHandleTextConsolePropagatesFluxVMDialFailure(t *testing.T) {
 	}
 }
 
+// newFakeFluxAgent returns a fake FluxVM server answering
+// POST /v1/vms/vm-1/agent/put-file and /agent/get-file.
+func newFakeFluxAgent(t *testing.T, gotBody *map[string]any) *fluxvm.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/vms/vm-1/agent/put-file":
+			_ = json.NewDecoder(r.Body).Decode(gotBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": "file-written"})
+		case "/v1/vms/vm-1/agent/get-file":
+			_ = json.NewDecoder(r.Body).Decode(gotBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": "file-content", "content_base64": "aGVsbG8=", "mode": 420})
+		default:
+			http.Error(w, "bad route", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return fluxvm.New(srv.URL, "")
+}
+
+func TestHandleAgentPutFileRejectsWrongOrMissingToken(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxAgent(t, &got), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/etc/x","contentBase64":"aGVsbG8="}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agent-file/put/vm-1", body)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with no token, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleAgentPutFileRelaysRequest(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxAgent(t, &got), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/etc/x","contentBase64":"aGVsbG8=","mode":420}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agent-file/put/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if got["path"] != "/etc/x" || got["content_base64"] != "aGVsbG8=" || got["mode"] != float64(420) {
+		t.Fatalf("expected the request to be forwarded to FluxVM, got %+v", got)
+	}
+}
+
+func TestHandleAgentGetFileRelaysResponse(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxAgent(t, &got), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/etc/hostname"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/agent-file/get/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out agentFileResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentBase64 != "aGVsbG8=" || out.Mode != 0o644 {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if got["path"] != "/etc/hostname" {
+		t.Fatalf("expected the request to be forwarded to FluxVM, got %+v", got)
+	}
+}
+
+func TestHandleAgentFilePropagatesFluxVMFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	s := &Server{Flux: fluxvm.New(srv.URL, ""), Token: "secret"}
+	nodeSrv := httptest.NewServer(s.Handler())
+	defer nodeSrv.Close()
+
+	body := strings.NewReader(`{"path":"/etc/x","contentBase64":"aGVsbG8="}`)
+	req, _ := http.NewRequest(http.MethodPost, nodeSrv.URL+"/agent-file/put/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 when FluxVM rejects the request, got %d", resp.StatusCode)
+	}
+}
+
 func TestHandleConsoleRejectsUnknownRuntime(t *testing.T) {
 	// A fake Flux client that always 404s -- exercises the "lookup
 	// runtime" failure path distinct from "no workspace on the record".

@@ -4,6 +4,7 @@ import { Machine } from '../types';
 import { badgeClass } from '../lib/phase';
 import Console from './Console';
 import Exec from './Exec';
+import AgentFiles from './AgentFiles';
 // Lazy-loaded: @xterm/xterm alone adds ~300kB to the bundle, not worth
 // shipping to every visitor when only a Machine with
 // spec.guestAgent.console even shows this button.
@@ -70,6 +71,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [consoleFor, setConsoleFor] = useState<string | null>(null);
   const [textConsoleFor, setTextConsoleFor] = useState<string | null>(null);
   const [execFor, setExecFor] = useState<string | null>(null);
+  const [agentFilesFor, setAgentFilesFor] = useState<string | null>(null);
   // consoleEnabled also gates exec: both ride the exact same kairon-ui ->
   // kairon-node relay (internal/consoleproxy), so a deployment either has
   // that relay configured or it doesn't -- see internal/uiapi/exec.go's
@@ -232,6 +234,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
                     {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
                     {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
+                    {consoleEnabled && isAdmin() && textConsoleEligible(m) && <button onClick={() => setAgentFilesFor(m.metadata.name)}>Files</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
                     <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
@@ -256,6 +259,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
         </Suspense>
       )}
       {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
+      {agentFilesFor && <AgentFiles namespace="default" name={agentFilesFor} onClose={() => setAgentFilesFor(null)} />}
     </div>
   );
 }

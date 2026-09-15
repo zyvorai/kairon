@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSSOCallbackFragment } from './api';
+import { parseSSOCallbackFragment, toBase64, fromBase64 } from './api';
 
 describe('parseSSOCallbackFragment', () => {
   it('extracts token and username on success', () => {
@@ -30,5 +30,20 @@ describe('parseSSOCallbackFragment', () => {
   it('errors on an empty fragment', () => {
     const result = parseSSOCallbackFragment('');
     expect('error' in result).toBe(true);
+  });
+});
+
+describe('toBase64/fromBase64', () => {
+  it('round-trips plain ASCII', () => {
+    expect(fromBase64(toBase64('hello world'))).toBe('hello world');
+  });
+
+  it('round-trips UTF-8 content plain btoa would choke on', () => {
+    const text = 'café — 日本語 — emoji 🚀';
+    expect(fromBase64(toBase64(text))).toBe(text);
+  });
+
+  it('round-trips an empty string', () => {
+    expect(fromBase64(toBase64(''))).toBe('');
   });
 });

@@ -180,3 +180,39 @@ export interface ExecResult {
 export function execInMachine(namespace: string, name: string, req: ExecRequest): Promise<ExecResult> {
   return apiJSON<ExecResult>(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/exec`, 'POST', req);
 }
+
+export interface AgentFileResult {
+  contentBase64?: string;
+  mode?: number;
+}
+
+// putAgentFile/getAgentFile write/read a file inside the guest via
+// kairon-node -> FluxVM's own bespoke vsock guest agent
+// (internal/uiapi/agentfile.go) -- a different channel from guest exec,
+// requiring spec.guestAgent.console (FluxVM's proprietary
+// fluxvm-guest-agent) and an admin account, not spec.guestAgent.enabled.
+export function putAgentFile(namespace: string, name: string, path: string, contentBase64: string, mode?: number): Promise<{ ok: boolean }> {
+  return apiJSON(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/agent-file/put`, 'POST', { path, contentBase64, mode });
+}
+
+export function getAgentFile(namespace: string, name: string, path: string): Promise<AgentFileResult> {
+  return apiJSON(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/agent-file/get`, 'POST', { path });
+}
+
+// toBase64/fromBase64 are UTF-8-safe wrappers around the browser's own
+// binary-string-only btoa/atob -- plain btoa(text) throws on any
+// character outside Latin1, which real file content (UTF-8 source code,
+// configs with non-ASCII comments, etc.) routinely has.
+export function toBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary);
+}
+
+export function fromBase64(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}

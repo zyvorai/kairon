@@ -54,7 +54,10 @@ stdout/stderr once the command completes.
   [`machine-text-console.md`](machine-text-console.md) -- a separate
   opt-in (`spec.guestAgent.console`) with its own, bigger guest-image
   dependency (FluxVM's proprietary `fluxvm-guest-agent`, not the standard
-  `qemu-guest-agent` this feature uses).
+  `qemu-guest-agent` this feature uses). That same `spec.guestAgent.console`
+  opt-in also backs [guest file access](machine-guest-agent-files.md) --
+  reading or writing a file inside the guest directly, rather than via
+  `--command "cat ..."`/shell redirection through exec.
 - **60-second default timeout** (FluxVM's own), overridable per call up to
   whatever your deployment is comfortable with -- a command that runs
   longer than its timeout returns an error, with no way to reconnect to it

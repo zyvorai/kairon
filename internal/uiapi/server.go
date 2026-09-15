@@ -169,6 +169,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/stop", s.handlePowerMachine("Stopped"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.handleConsoleTicket)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.handleExec)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.handleAgentPutFile)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/get", s.handleAgentGetFile)
 
 	api.HandleFunc("GET /api/v1/migrations", s.handleListMigrations)
 	api.HandleFunc("POST /api/v1/migrations", s.handleCreateMigration)

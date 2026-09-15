@@ -48,6 +48,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /console/{runtimeID}", s.handleConsole)
 	mux.HandleFunc("POST /exec/{runtimeID}", s.handleExec)
 	mux.HandleFunc("GET /text-console/{runtimeID}", s.handleTextConsole)
+	mux.HandleFunc("POST /agent-file/put/{runtimeID}", s.handleAgentPutFile)
+	mux.HandleFunc("POST /agent-file/get/{runtimeID}", s.handleAgentGetFile)
 	return mux
 }
 
@@ -102,6 +104,68 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(execResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
+}
+
+// agentPutFileRequest/agentGetFileRequest/agentFileResponse mirror
+// internal/fluxvm's AgentPutFile/AgentGetFile own request/result shapes --
+// separate types for the same reason execRequest/execResponse above are.
+type agentPutFileRequest struct {
+	Path          string  `json:"path"`
+	ContentBase64 string  `json:"contentBase64"`
+	Mode          *uint32 `json:"mode,omitempty"`
+}
+
+type agentGetFileRequest struct {
+	Path string `json:"path"`
+}
+
+type agentFileResponse struct {
+	ContentBase64 string `json:"contentBase64,omitempty"`
+	Mode          uint32 `json:"mode,omitempty"`
+}
+
+// handleAgentPutFile forwards a file write to FluxVM's own bespoke vsock
+// guest agent (POST /v1/vms/{id}/agent/put-file) -- a different channel
+// from qemu-guest-agent's guest-exec above, requiring
+// spec.guestAgent.console rather than spec.guestAgent.enabled. One
+// request, one response, same shape as handleExec.
+func (s *Server) handleAgentPutFile(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req agentPutFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	if err := s.Flux.AgentPutFile(ctx, r.PathValue("runtimeID"), req.Path, req.ContentBase64, req.Mode); err != nil {
+		http.Error(w, fmt.Sprintf("agent put-file: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(agentFileResponse{})
+}
+
+// handleAgentGetFile is handleAgentPutFile's read counterpart, forwarding
+// to FluxVM's own POST /v1/vms/{id}/agent/get-file.
+func (s *Server) handleAgentGetFile(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req agentGetFileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	result, err := s.Flux.AgentGetFile(ctx, r.PathValue("runtimeID"), req.Path)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("agent get-file: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(agentFileResponse{ContentBase64: result.ContentBase64, Mode: result.Mode})
 }
 
 // execRelayTimeout bounds how long this node waits on FluxVM's own
