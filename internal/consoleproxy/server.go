@@ -75,6 +75,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /pools/{name}", s.handleGetPool)
 	mux.HandleFunc("DELETE /pools/{name}", s.handleDeletePool)
 	mux.HandleFunc("POST /pools/{name}/claim", s.handleClaimPool)
+	mux.HandleFunc("GET /capabilities", s.handleRuntimeCapabilities)
+	mux.HandleFunc("GET /pressure/{runtimeID}", s.handlePressure)
+	mux.HandleFunc("GET /cpuset/{runtimeID}", s.handleCPUSet)
+	mux.HandleFunc("POST /freeze/{runtimeID}", s.handleFreeze)
+	mux.HandleFunc("POST /thaw/{runtimeID}", s.handleThaw)
+	mux.HandleFunc("GET /frozen/{runtimeID}", s.handleFrozen)
 	return mux
 }
 

@@ -210,6 +210,12 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/nodes/{node}/pools/{name}", s.handleGetPool)
 	api.HandleFunc("DELETE /api/v1/nodes/{node}/pools/{name}", s.handleDeletePool)
 	api.HandleFunc("POST /api/v1/nodes/{node}/pools/{name}/claim", s.handleClaimPool)
+	api.HandleFunc("GET /api/v1/nodes/{node}/capabilities", s.handleRuntimeCapabilities)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/pressure", s.handlePressure)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/cpuset", s.handleCPUSet)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/freeze", s.handleFreeze)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/thaw", s.handleThaw)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/frozen", s.handleFrozen)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)

@@ -297,6 +297,26 @@ what a sandbox itself already has:
 
 See `docs/guides/machine-sandboxes.md`'s "Warm pools" section.
 
+## Runtime diagnostics (capabilities, pressure, cpuset, freeze/thaw)
+
+Four small FluxVM diagnostics (`internal/uiapi/diagnostics.go`):
+
+- **Runtime capabilities and pressure/cpuset are any-authenticated-operator,
+  read-only visibility** -- a node's static capability manifest and a
+  Machine's own PSI/cpuset readings carry no secrets and reveal nothing
+  an operator with normal dashboard access couldn't already infer.
+- **Freeze/thaw are admin-only**, unlike the read-only three above --
+  halting a Machine's entire cgroup at the kernel level (not just its
+  guest CPUs, the way `spec.powerState: Paused` does) is a materially
+  more disruptive operation, reusing the same admin-gate posture guest
+  exec and VM-state snapshot/restore already have for comparably
+  impactful actions.
+- **No interaction guard against freezing a Machine mid-migration or
+  mid-hotplug** -- the same "between you and FluxVM's own semantics"
+  posture already documented for `Paused`.
+
+See `docs/guides/machine-diagnostics.md`.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:
