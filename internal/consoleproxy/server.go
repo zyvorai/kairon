@@ -81,6 +81,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /freeze/{runtimeID}", s.handleFreeze)
 	mux.HandleFunc("POST /thaw/{runtimeID}", s.handleThaw)
 	mux.HandleFunc("GET /frozen/{runtimeID}", s.handleFrozen)
+	mux.HandleFunc("GET /network-effective/{runtimeID}", s.handleNetworkEffective)
+	mux.HandleFunc("GET /network-stats/{runtimeID}", s.handleNetworkStats)
+	mux.HandleFunc("GET /network-flows/{runtimeID}", s.handleNetworkFlows)
+	mux.HandleFunc("GET /network-drop-reasons/{runtimeID}", s.handleNetworkDropReasons)
 	return mux
 }
 

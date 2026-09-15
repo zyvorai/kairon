@@ -317,6 +317,29 @@ Four small FluxVM diagnostics (`internal/uiapi/diagnostics.go`):
 
 See `docs/guides/machine-diagnostics.md`.
 
+## Network observability (`.../network-effective`, `.../network-stats`, `.../network-flows`, `.../network-drop-reasons`)
+
+Four read-only network troubleshooting endpoints (`internal/uiapi/network_observability.go`):
+
+- **Any authenticated operator**, same posture as the pressure/cpuset
+  diagnostics above -- flow/drop-reason/stats data for a Machine an
+  operator can already view is not more sensitive than the Machine's own
+  status.
+- **Raw JSON passthrough, not a Kairon-defined schema** -- FluxVM's own
+  handlers return a dynamic `serde_json::Value` here, so there is no
+  fixed Rust struct this project could mirror even if it wanted a typed
+  response; Kairon relays bytes, it doesn't validate or reshape them.
+- **Deliberately narrow scope.** FluxVM's own network dataplane exposes a
+  much larger Cilium-style surface (CNP/identity/ipcache management,
+  Hubble flow observability, per-service health/stats/telemetry/conntrack
+  state transfer, L7 Envoy contracts) discovered during the same route
+  audit that added these four -- not wrapped here, since most of it is
+  either internal node-to-node coordination machinery, not an
+  operator-facing capability at all, or substantial enough (Hubble) to
+  need its own dedicated design pass. See
+  `docs/guides/network-policy.md`'s "Troubleshooting" section for the
+  full reasoning.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

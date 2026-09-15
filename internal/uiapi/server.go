@@ -216,6 +216,10 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/freeze", s.handleFreeze)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/thaw", s.handleThaw)
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/frozen", s.handleFrozen)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-effective", s.handleNetworkEffective)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-stats", s.handleNetworkStats)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-flows", s.handleNetworkFlows)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-drop-reasons", s.handleNetworkDropReasons)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)

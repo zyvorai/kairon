@@ -121,6 +121,46 @@ On delete, matched Running Machines on this node are reset to
 4. If `Machine.spec.network.dataplaneRequired` and attach is unhealthy, Machine
    reconcile errors (policy may still attempt apply independently).
 
+## Troubleshooting: why is traffic being allowed/blocked?
+
+Four read-only, any-authenticated-operator API endpoints (API-only, no
+dashboard yet) answer "what is actually happening," as opposed to "what
+was configured":
+
+- **`GET /api/v1/machines/{ns}/{name}/network-effective`** -- the
+  Machine's fully-resolved effective policy, *after*
+  `NetworkSecurityGroup`/label merging -- what's actually enforced right
+  now, not just what the last `MachineNetworkPolicy` apply sent.
+- **`GET .../network-drop-reasons?limit=N`** -- why the eBPF dataplane
+  most recently dropped packets for this Machine. The single most direct
+  answer to "why is my policy blocking traffic I expected to allow" --
+  start here before re-reading your own policy YAML.
+- **`GET .../network-flows?limit=N`** -- the Machine's most recent
+  eBPF-observed network flows (allowed and denied).
+- **`GET .../network-stats`** -- real, eBPF-dataplane-derived byte/packet
+  counters for the Machine.
+
+All four are raw JSON passthroughs of FluxVM's own response (no fixed
+Kairon-side schema) -- FluxVM's own handlers return dynamic, evolving
+shapes here rather than a versioned struct.
+
+**Deliberately not wrapped**, discovered during the same FluxVM route
+audit that added the four endpoints above: FluxVM's own Cilium-style
+network dataplane exposes a much larger surface
+(`/v1/network/cnp`, `/v1/network/identities`, `/v1/network/observe`,
+`/v1/network/health`, `/v1/network/ipcache*`, `/v1/network/hubble/*`,
+`/v1/network/services/*` health/stats/telemetry/conntrack-export-import-
+delta-ack, per-service L7 Envoy contracts). Most of this is either
+cluster-mesh-style internal node-to-node coordination machinery (conntrack
+delta/ack, telemetry export, ipcache federation) FluxVM's own Fabric
+integration uses internally, not something an operator calls directly, or
+a substantial standalone observability product in its own right (Hubble's
+full flow-observability UI) that would need its own dedicated design pass
+rather than a quick wrap alongside four smaller diagnostics. Not
+implementing these for now; the four endpoints above already cover the
+concrete "why isn't my policy working" question this section exists to
+answer.
+
 ## RBAC
 
 `kairon-node` and `kairon-controller` ClusterRoles include

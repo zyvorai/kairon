@@ -223,6 +223,43 @@ func (c *Client) GetVMNetworkEffective(ctx context.Context, id string) (json.Raw
 	return c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/effective", nil)
 }
 
+// GetVMNetworkStats returns a VM's real, eBPF-dataplane-derived network
+// byte/packet counters -- FluxVM's own GET /v1/vms/{id}/network/stats.
+// Kept as raw JSON (like GetVMNetworkEffective above) rather than a typed
+// struct: FluxVM's own handler returns a dynamic serde_json::Value here,
+// not a fixed struct, so there is no stable Rust type to mirror exactly.
+func (c *Client) GetVMNetworkStats(ctx context.Context, id string) (json.RawMessage, error) {
+	return c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/stats", nil)
+}
+
+// GetVMNetworkFlows returns a VM's most recent eBPF-observed network
+// flows (up to limit, FluxVM's own default when limit is 0) -- FluxVM's
+// own GET /v1/vms/{id}/network/flows. Raw JSON, same reasoning as
+// GetVMNetworkStats.
+func (c *Client) GetVMNetworkFlows(ctx context.Context, id string, limit int) (json.RawMessage, error) {
+	path := "/v1/vms/" + url.PathEscape(id) + "/network/flows"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	return c.do(ctx, http.MethodGet, path, nil)
+}
+
+// GetVMNetworkDropReasons returns why the eBPF dataplane most recently
+// dropped packets for a VM (up to limit) -- FluxVM's own
+// GET /v1/vms/{id}/network/drop-reasons. The single most direct
+// troubleshooting tool for "why is my MachineNetworkPolicy/
+// NetworkSecurityGroup blocking traffic I expected to be allowed" --
+// everything else (GetVMNetworkEffective, GetVMNetworkPolicy) shows what
+// policy is configured; this shows what the dataplane is actually doing
+// with real traffic. Raw JSON, same reasoning as GetVMNetworkStats.
+func (c *Client) GetVMNetworkDropReasons(ctx context.Context, id string, limit int) (json.RawMessage, error) {
+	path := "/v1/vms/" + url.PathEscape(id) + "/network/drop-reasons"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	return c.do(ctx, http.MethodGet, path, nil)
+}
+
 func (c *Client) UpsertNetworkGroup(ctx context.Context, group SecurityGroup) (*SecurityGroup, error) {
 	data, err := c.do(ctx, http.MethodPost, "/v1/network/groups", group)
 	if err != nil {
