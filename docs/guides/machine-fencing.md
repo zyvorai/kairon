@@ -56,6 +56,11 @@ host -- if the Kubernetes Node is `Ready` but `kairon-node` has wedged, this
 condition won't catch it (and neither would rescheduling help, since the
 underlying FluxVM instance would still be untouched either way).
 
+An optional, independent second signal closes the *opposite* risk --
+`kaironctl fence` itself cross-checking a still-fresh kairon-node liveness
+Lease against this condition before proceeding, so a kubelet flap doesn't
+get treated as a truly-gone node. See "Operator-attested action" below.
+
 ## Operator-attested action: `kaironctl fence`
 
 ```bash
@@ -82,6 +87,47 @@ running after you've fenced and rescheduled**, you now have two runtimes
 alive for one Machine. Fencing is only safe once you've genuinely confirmed
 the node is gone -- a reboot, a network partition that clears itself, or a
 misdiagnosed outage are not valid reasons to fence.
+
+### Optional cross-check: kairon-node's own liveness Lease
+
+`NodeUnreachable` above is purely kubelet-derived -- it can't tell a truly
+dead node apart from one whose kubelet briefly flapped NotReady while
+`kairon-node`'s own reconcile loop kept running fine. When
+`node.livenessLease.enabled` is set (Helm value, off by default), each
+`kairon-node` renews its own `coordination.k8s.io/v1` Lease
+(`kairon-node-<nodeName>`, in the release namespace) once per reconcile
+tick -- a real, independent "I'm alive and reconciling" signal.
+
+```bash
+kaironctl fence MACHINE --reason "confirmed powered off via iDRAC at 14:02" \
+  --liveness-lease-namespace kairon-system
+```
+
+With `--liveness-lease-namespace` set, `fence` reads that node's own Lease
+before doing anything else: if it was renewed recently despite
+`NodeUnreachable=True`, `fence` **refuses**, since `kairon-node` may still
+be alive and actively managing this Machine -- fencing now would risk
+abandoning a still-live VM rather than a truly dead one.
+
+```
+refusing to fence: kairon-node on node "worker-3" renewed its own liveness
+lease recently, despite NodeUnreachable=True -- kairon-node's reconcile
+loop may still be alive and actively managing this Machine, and fencing
+now risks abandoning a still-live VM instead of a truly dead one; pass
+--force-ignore-liveness if you are certain this is safe
+```
+
+This is an **additional** safety gate on top of the existing
+`NodeUnreachable` check, never a replacement for it -- omitting
+`--liveness-lease-namespace` (the default) skips it entirely, exactly
+`fence`'s behavior before this existed. It also fails open in the other
+direction: a missing Lease (liveness leases disabled on that node, or it
+never came up) or a read error lets `fence` proceed exactly as before,
+logging a warning rather than blocking on infrastructure this check itself
+depends on. `--force-ignore-liveness` overrides a refusal when you've
+independently confirmed the Lease is stale/irrelevant (e.g. you know
+`kairon-node` was already down before the Lease's own
+`node.livenessLease.duration` elapsed).
 
 ## Migration preflight: storage/network domain labels
 
@@ -154,10 +200,17 @@ kubectl label node worker-2 kairon.zyvor.dev/vfio-devices=0000:65:00.0
 
 ## Real limits today (first cut)
 
-- `NodeUnreachable` detection is Node-`Ready`-only, not an independent
-  liveness check of `kairon-node`/FluxVM.
+- `NodeUnreachable` detection itself is still Node-`Ready`-only. The
+  liveness-Lease cross-check above is opt-in (off by default) and only
+  ever makes `fence` *more conservative* (refuse when it otherwise
+  wouldn't) -- it never makes `NodeUnreachable` fire in a case it
+  wouldn't have otherwise (e.g. a wedged `kairon-node` process on an
+  otherwise-`Ready` node still isn't detected by anything in this guide).
 - `kaironctl fence` trusts the operator's `--reason`; Kairon has no way to
-  verify a node is actually gone.
+  verify a node is actually gone. The liveness-Lease check is a real,
+  independent cross-check, but it's still a heuristic (a stale Lease could
+  mean a genuinely dead node, or just liveness leases never having been
+  enabled there) -- not a substitute for real out-of-band confirmation.
 - Migration preflight only checks the two domain labels above -- it doesn't
   and can't verify actual filesystem/network reachability between nodes.
 - Neither behavior has been exercised against a real multi-host failure

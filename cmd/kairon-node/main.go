@@ -66,6 +66,8 @@ func run() int {
 	csiStagingDir := flag.String("csi-staging-dir", env("KAIRON_CSI_STAGING_DIR", "/var/lib/kairon/csi/staging"), "per-node directory kairon-node asks kairon-csi-node to stage CSI volumes under")
 	csiPublishDir := flag.String("csi-publish-dir", env("KAIRON_CSI_PUBLISH_DIR", "/var/lib/kairon/csi/publish"), "per-node directory kairon-node asks kairon-csi-node to publish (bind-mount) CSI volumes under")
 	thirdPartyCSIDriversRaw := flag.String("third-party-csi-drivers", env("KAIRON_THIRD_PARTY_CSI_DRIVERS", ""), "comma-separated driverName=/socket/path list of third-party CSI drivers kairon-node may drive directly for a Machine boot disk (first cut: no secrets, attachRequired: false drivers only -- see docs/guides/machine-storage-thirdparty-csi.md); empty (the default) means only Kairon's own driver can be used, exactly as before this existed")
+	livenessLeaseNamespace := flag.String("liveness-lease-namespace", env("KAIRON_NODE_NAMESPACE", ""), "namespace to hold this node's own coordination.k8s.io/v1 liveness Lease in (internal/nodeliveness), renewed once per reconcile tick; empty (the default) disables this entirely -- no Lease writes, no extra RBAC needed, exactly kairon-node's behavior before this existed. Requires the ServiceAccount to be granted 'leases' get/create/update in this namespace; the Helm chart's node.livenessLease.enabled turns both on together. kaironctl fence cross-checks this Lease against Node Ready before proceeding.")
+	livenessLeaseDuration := flag.Duration("liveness-lease-duration", 0, "override nodeliveness.DefaultLeaseDuration (60s) when non-zero")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -130,22 +132,24 @@ func run() int {
 	configureConsole(ctx, log, fc, *consoleAddr, *consoleToken, *consoleTLSCert, *consoleTLSKey)
 
 	a := &agent.Agent{
-		NodeName:             node,
-		Kube:                 kc,
-		Flux:                 fc,
-		DefaultBackend:       *backend,
-		ImageRoot:            *imageRoot,
-		ImageCacheDir:        *imageCacheDir,
-		VFIOAllowlist:        vfioAllowlist,
-		MigrationPeer:        peer,
-		SourceMigrator:       source,
-		MigrationPort:        *migrationPort,
-		CSISocketPath:        *csiSocket,
-		CSIStagingDir:        *csiStagingDir,
-		CSIPublishDir:        *csiPublishDir,
-		ThirdPartyCSIDrivers: thirdPartyCSIDrivers,
-		Log:                  log,
-		Metrics:              rec,
+		NodeName:               node,
+		Kube:                   kc,
+		Flux:                   fc,
+		DefaultBackend:         *backend,
+		ImageRoot:              *imageRoot,
+		ImageCacheDir:          *imageCacheDir,
+		VFIOAllowlist:          vfioAllowlist,
+		MigrationPeer:          peer,
+		SourceMigrator:         source,
+		MigrationPort:          *migrationPort,
+		CSISocketPath:          *csiSocket,
+		CSIStagingDir:          *csiStagingDir,
+		CSIPublishDir:          *csiPublishDir,
+		ThirdPartyCSIDrivers:   thirdPartyCSIDrivers,
+		LivenessLeaseNamespace: *livenessLeaseNamespace,
+		LivenessLeaseDuration:  *livenessLeaseDuration,
+		Log:                    log,
+		Metrics:                rec,
 	}
 	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("agent stopped", "error", err)

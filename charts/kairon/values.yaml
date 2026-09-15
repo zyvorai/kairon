@@ -107,6 +107,20 @@ node:
   #   thirdPartyCSIDrivers:
   #     rbd.csi.ceph.com: /var/lib/kubelet/plugins/rbd.csi.ceph.com/csi.sock
   thirdPartyCSIDrivers: {}
+  # livenessLease: opt-in, off by default -- when enabled, kairon-node
+  # renews its own coordination.k8s.io/v1 Lease (kairon-node-<nodeName>,
+  # namespaced Role/RoleBinding auto-created alongside this) once per
+  # reconcile tick, and kaironctl fence cross-checks it against Node Ready
+  # before proceeding: a still-fresh Lease despite the node showing
+  # NotReady means kairon-node's own reconcile loop may still be alive,
+  # and fence refuses rather than risk abandoning a still-managed Machine.
+  # See docs/guides/fencing-liveness-lease.md. Disabled means exactly
+  # kairon-node's behavior before this existed -- no Lease writes, no
+  # extra RBAC.
+  livenessLease:
+    enabled: false
+    # Seconds; 0 uses nodeliveness.DefaultLeaseDuration (60s).
+    duration: 0s
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

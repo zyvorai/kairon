@@ -23,6 +23,7 @@ import (
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/nodeliveness"
 )
 
 var pciBDFPattern = regexp.MustCompile(`(?i)^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
@@ -71,6 +72,18 @@ type Agent struct {
 	// naming any driver other than Kairon's own is still refused outright,
 	// exactly as before this existed.
 	ThirdPartyCSIDrivers map[string]string
+	// LivenessLeaseNamespace, when set, makes Run renew this node's own
+	// coordination.k8s.io/v1 Lease (internal/nodeliveness) once per
+	// reconcile tick -- a real "I'm alive and reconciling" signal
+	// kaironctl fence cross-checks against Node Ready before proceeding.
+	// Empty (the default) disables this entirely: no Lease writes, no new
+	// RBAC required, exactly kairon-node's behavior before this existed.
+	// Same opt-in-via-namespace convention kairon-controller's own
+	// leader election already established (KAIRON_CONTROLLER_NAMESPACE).
+	LivenessLeaseNamespace string
+	// LivenessLeaseDuration overrides nodeliveness.DefaultLeaseDuration
+	// when non-zero.
+	LivenessLeaseDuration time.Duration
 	// csiConn caches the dialed connection to kairon-csi-node's local
 	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
 	// same reason guestIPCheckedAt below is: Reconcile only ever runs
@@ -940,6 +953,15 @@ func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 		}
 		if err != nil {
 			a.Log.Error("reconcile failed", "error", err)
+		}
+		if a.LivenessLeaseNamespace != "" {
+			// Best-effort, deliberately after Reconcile and never fatal --
+			// see nodeliveness.Renew's own doc comment for why a transient
+			// apiserver error here must never block the actual VM
+			// reconciliation this Lease is only ever secondary to.
+			if err := nodeliveness.Renew(ctx, a.Kube, a.LivenessLeaseNamespace, a.NodeName, a.LivenessLeaseDuration); err != nil {
+				a.Log.Warn("liveness lease renewal failed", "error", err)
+			}
 		}
 		select {
 		case <-ctx.Done():
