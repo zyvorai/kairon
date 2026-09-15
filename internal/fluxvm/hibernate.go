@@ -31,12 +31,16 @@ func (c *Client) Snapshot(ctx context.Context, id, tag string) error {
 // its record and disk intact -- a completely different operation from
 // Delete (which tears the runtime down entirely; the same one Kairon's
 // own spec.powerState: Stopped already uses). Deliberately unexported:
-// this project doesn't expose a general-purpose "power off but keep the
-// record" capability of its own yet (a real, separate, bigger piece of
-// work than this file's own scope -- see ROADMAP.md), so this only ever
-// exists as RestoreSnapshot's own internal orchestration step and
-// internal/agent's reconcile self-healing branch, never a standalone
-// route a caller can reach directly.
+// this project considered and declined exposing a general-purpose "power
+// off but keep the record" capability of its own -- see ROADMAP.md's
+// "General-purpose 'power off, keep the FluxVM record' primitive" entry
+// for why (in short: start reuses FluxVM's own last-applied config as-is
+// rather than re-deriving it from the current Machine spec the way
+// Stopped->Running does, which is a spec-drift foot-gun, not a real
+// benefit over Stopped/Paused). So this only ever exists as
+// RestoreSnapshot's own internal orchestration step and internal/agent's
+// reconcile self-healing branch, never a standalone route a caller can
+// reach directly.
 func (c *Client) stop(ctx context.Context, id string) (*Record, error) {
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/stop", nil)
 	if err != nil {
