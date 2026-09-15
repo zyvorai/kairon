@@ -10,15 +10,15 @@
 - adopt-only target cutover
 - cold migration, CSI snapshots, DRA/VFIO guard retained
 
-## Network Fabric — FluxVM eBPF edge (in progress)
+## Network Fabric — FluxVM eBPF edge
 
 Kairon declares VM-edge networking; FluxVM owns TAP/TC/eBPF; Fabric proxies dataplane UX.
 See [`docs/network-fabric.md`](docs/network-fabric.md).
 
-- **N1** Machine network create parity (`forwards`, `macvtapMode`, `staticNetwork`, `podUID`) + dataplane status projection
-- **N2** `MachineNetworkPolicy` + `NetworkSecurityGroup` → FluxVM policy/groups/CNP
-- **N3** Live-migration network quiesce / export / restore / resume
-- **N4** Service Fabric VIP membership + `dataplaneRequired` fail-closed readiness
+- [x] **N1** Machine network create parity (`forwards`, `macvtapMode`, `staticNetwork`, `podUID`) + dataplane status projection -- `internal/model/network.go`'s `NetworkSpec`, mapped by `internal/agent/network.go` into FluxVM's own `POST /v1/vms` payload and `status.network.*` projection.
+- [x] **N2** `MachineNetworkPolicy` + `NetworkSecurityGroup` → FluxVM policy/groups/CNP -- `charts/kairon/crds/machinenetworkpolicies.yaml`/`networksecuritygroups.yaml`, upserted per-node by `internal/agent/network.go` against `POST /v1/vms/{id}/network/policy`/`POST /v1/network/groups`.
+- [x] **N3** Live-migration network quiesce / export / restore / resume -- `internal/fluxvm/network.go`'s `NetworkMigrationQuiesce`/`Export`/`Restore`/`Resume` against FluxVM's `…/network/migration/{quiesce,export,restore,resume}`, driven by `internal/migration`'s source/destination adapter around the existing prepare/commit protocol.
+- [x] **N4** Service Fabric VIP membership + `dataplaneRequired` fail-closed readiness -- `internal/agent/network.go`'s `reconcileServiceFabric` registers the resolved guest IP as a named-service backend once known; `spec.network.dataplaneRequired` fails Machine readiness closed rather than silently reporting healthy when the dataplane attach itself is unhealthy.
 
 ## v0.4 — FluxVM live-migration backend
 
@@ -64,7 +64,6 @@ Not originally scoped for a specific version, but small enough to land alongside
 - [x] OIDC/SSO for `kairon-ui` (first cut): `ui.oidc.enabled`, Authorization Code + PKCE against an external identity provider, alongside `ui.auth.users`. The one deliberate exception to Kairon's Go-stdlib-only design (`golang.org/x/oauth2`, `github.com/coreos/go-oidc/v3`) -- real JWT/JWK verification isn't something to hand-roll. No group-to-admin claim mapping, no SP-initiated single-logout, no refresh-token renewal. See `docs/guides/kairon-ui-oidc.md`.
 - [x] multi-replica `kairon-ui` (first cut): `ui.replicaCount > 1` propagates session revocation, login lockout, console tickets, and password changes across replicas via a shared, Kubernetes-native `ConfigMap` (deliberately not Redis) -- eventually-consistent (~15s), not instant; login-lockout's failure count is per-replica, not one cluster-wide atomic counter; concurrent password changes to two different accounts on two different replicas can still race. See `docs/guides/kairon-ui-ha.md`.
 - [x] `kairon-controller` HA (first cut): `controller.replicaCount > 1` closes what was previously this project's clearest single point of failure -- a `coordination.k8s.io/v1` Lease (`internal/leaderelection`, hand-rolled on top of `internal/kube` rather than pulling in `client-go`'s leader-election package) ensures only the elected leader's reconcile loop runs at a time; the admission webhook and health/metrics endpoints are unaffected, serving from every replica regardless. On by default in the Helm chart even at `replicaCount: 1`; off by default at the binary/flag level for backward compatibility with existing bare-metal deployments. Takeover after a lost leader costs up to ~15s, not instant. See `docs/guides/kairon-controller-ha.md`.
-- CRD version-upgrade story beyond today's single `v1alpha1` (no conversion webhook exists)
 - upgrade/scale/failure-injection test suites
 - [x] Backup/restore for Kairon's Kubernetes-level state (first cut): `scripts/backup-crds.sh`/`restore-crds.sh` back up and restore the eight `kairon.zyvor.dev` CRD kinds, plus opt-in chart-managed Secrets -- closing what was previously a real, undocumented gap (no backup/DR story existed at all). Restoring a Machine whose FluxVM runtime is still alive re-adopts it by name (`RuntimeName()`, not `status.runtimeID`); if the runtime is also gone, a fresh VM is created from `spec.image`/`spec.resources` instead -- whether that's a real recovery depends on whether the boot disk itself survived independently. Does not cover VM disk content (the CSI driver's/storage backend's job) or FluxVM's own per-host state. See `docs/runbook-backup-restore.md`.
 - [x] Observability beyond migrations (first cut): Prometheus metrics used to be `kairon-controller`-only and migration-lifecycle-only -- no signal at all if the controller was unhealthy or wedged, no metrics from `kairon-node`/`kairon-ui` at all. Now every component exposes `kairon_apiserver_request_duration_seconds` (every `internal/kube.Client` call, by method/outcome); `kairon-controller`/`kairon-node` also expose `kairon_reconcile_duration_seconds`/`kairon_reconcile_errors_total`; `kairon-controller` also exposes `kairon_webhook_decisions_total` when `webhook.enabled`; `kairon-ui` exposes its own `kairon_ui_request_duration_seconds`. Three new alerts (`charts/kairon/alerts.yaml`'s `kairon-health` group) on reconcile error rate, apiserver error rate, and webhook deny-rate spikes -- the `PrometheusRule` this optionally renders is renamed `kairon-alerts` (from `kairon-migrations`) to match, see `docs/guides/observability.md`.
