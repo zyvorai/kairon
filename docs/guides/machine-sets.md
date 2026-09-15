@@ -67,14 +67,18 @@ current-template replica regardless of phase.
 ## Rollout strategy
 
 - **`RollingUpdate`** (the default): replaces outdated replicas
-  `maxUnavailable`-at-a-time, computed each tick as `(current total) -
-  (replicas - maxUnavailable)` -- i.e. never letting the running total
-  drop further below `replicas` than `maxUnavailable` allows. Replacement
-  creation happens automatically on a later tick, once a deletion has
-  actually dropped the total below `replicas` again (step 3 above picks
-  it up). `maxUnavailable` is an integer or a percentage string (e.g.
-  `"25%"`), same parsing `MachineDisruptionBudget` already uses; empty
-  defaults to `1`.
+  `maxUnavailable`-at-a-time, computed each tick as `(ready current +
+  outdated) - (replicas - maxUnavailable)` -- i.e. never letting actual
+  available capacity drop further below `replicas` than `maxUnavailable`
+  allows. A current-template replica only counts toward that available
+  total once its `status.phase` is `Running`; one that merely exists (just
+  created, not yet scheduled or booted) doesn't -- so a rollout won't tear
+  down another old, healthy replica to make room for a replacement that
+  hasn't actually come up yet. Replacement creation happens automatically
+  on a later tick, once a deletion has actually dropped the total below
+  `replicas` again (step 3 above picks it up). `maxUnavailable` is an
+  integer or a percentage string (e.g. `"25%"`), same parsing
+  `MachineDisruptionBudget` already uses; empty defaults to `1`.
 - **`Recreate`**: terminates every outdated replica first, and creates no
   replacements until none remain -- matches a real Kubernetes
   `Deployment`'s own `Recreate` strategy (full stop, then restart) exactly.
@@ -87,12 +91,15 @@ replaced (not edited in place) by the rollout logic above.
 
 ## Real limits today (first cut)
 
-- **Paced by count, not by health.** This does not wait for a freshly
-  created replacement to actually become `Running` before continuing to
-  replace more outdated replicas -- `maxUnavailable` bounds how many may
-  be simultaneously missing/outdated, not whether a replacement is
-  actually healthy yet. A template with a real, reproducible boot failure
-  could have every replica cycled through it before that becomes obvious.
+- **Gated on `status.phase == Running`, not on deeper application health.**
+  `RollingUpdate` now withholds further replacement until each already-
+  created current-template replica reaches `Running` (see above) -- but
+  that's Kairon's own coarse VM-power-state signal, not a guest-level
+  readiness probe (nothing here waits for a guest agent heartbeat, an HTTP
+  health check, or any other application-defined signal). A template with
+  a boot failure severe enough to never reach `Running` correctly stalls
+  the rollout in place rather than cycling every replica through it; one
+  that boots fine but is application-broken is not caught here.
 - **No `maxSurge`.** A rollout never temporarily exceeds `spec.replicas`
   -- only `maxUnavailable` (a dip below, never a surge above) is offered,
   since Kairon's scheduler (`internal/scheduler`) has no capacity/

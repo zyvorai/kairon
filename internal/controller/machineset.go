@@ -68,11 +68,16 @@ func ownedMachines(ms model.MachineSet, machines []model.Machine) []model.Machin
 // tick -- never the whole rollout in one pass, so a rollout is always
 // paced by (and visible across) real reconcile intervals, the same
 // incremental-progress shape every other reconcile loop in this project
-// already has. Real limits (documented in docs/guides/machine-sets.md,
-// not silently assumed away): this paces purely by count, not by waiting
-// for a freshly created replica to actually become Ready before
-// continuing -- a genuinely more sophisticated health-gated rollout is a
-// real gap, not implemented in this first cut.
+// already has. A RollingUpdate's own pace is gated by how many current-
+// template replicas are actually Ready (see stepMachineSetToward's own
+// comment) -- not just by how many exist, closing what used to be a real
+// gap documented here (a freshly created replica still becoming Ready
+// used to count as available capacity, letting the rollout disrupt an
+// old, healthy replica before its replacement was confirmed healthy).
+// Real limit still true, not silently assumed away: this paces purely by
+// each tick's own snapshot of Phase == "Running", not a live watch or any
+// deeper application-level readiness signal (e.g. a guest agent heartbeat)
+// -- see docs/guides/machine-sets.md.
 func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSet, machines []model.Machine) error {
 	desired := ms.Spec.Replicas
 	if desired < 0 {
@@ -104,7 +109,7 @@ func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSe
 		UpdatedReplicas: len(current),
 	}
 
-	if err := c.stepMachineSetToward(ctx, ms, hash, strategy, desired, current, outdated); err != nil {
+	if err := c.stepMachineSetToward(ctx, ms, hash, strategy, desired, current, outdated, readyCurrent); err != nil {
 		return err
 	}
 	return c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status)
@@ -112,8 +117,13 @@ func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSe
 
 // stepMachineSetToward performs at most one create-or-delete batch per
 // call -- see reconcileMachineSet's own doc comment for why a whole
-// rollout is deliberately never collapsed into a single tick.
-func (c *Controller) stepMachineSetToward(ctx context.Context, ms model.MachineSet, hash, strategy string, desired int, current, outdated []model.Machine) error {
+// rollout is deliberately never collapsed into a single tick. readyCurrent
+// is how many of current are Phase == "Running" -- used only by the
+// RollingUpdate branch below to gate further disruption on actual
+// readiness, not mere existence (a Machine object can exist immediately
+// after CreateMachine returns, long before kairon-node has even scheduled
+// it, let alone booted it to Running).
+func (c *Controller) stepMachineSetToward(ctx context.Context, ms model.MachineSet, hash, strategy string, desired int, current, outdated []model.Machine, readyCurrent int) error {
 	total := len(current) + len(outdated)
 
 	// Under-provisioned (net-new scale-up, or a replica died on its own)
@@ -139,20 +149,27 @@ func (c *Controller) stepMachineSetToward(ctx context.Context, ms model.MachineS
 	}
 
 	// RollingUpdate: replace outdated replicas maxUnavailable-at-a-time,
-	// never letting total (current+outdated still running) drop below
-	// desired-maxUnavailable. Replacement creation happens on a later
-	// tick, once this deletion has actually reduced total below desired
-	// again (the "total < desired" branch above picks it up) -- outdated
-	// replicas count as available capacity right up until the tick that
-	// deletes them, they're still real running Machines, just not on the
-	// current template yet.
+	// never letting available (readyCurrent+outdated still running) drop
+	// below desired-maxUnavailable. Replacement creation happens on a
+	// later tick, once this deletion has actually reduced total below
+	// desired again (the "total < desired" branch above picks it up) --
+	// outdated replicas count as available capacity right up until the
+	// tick that deletes them, they're still real running Machines, just
+	// not on the current template yet. A current-template replica that
+	// exists but hasn't reached Running yet does NOT count as available:
+	// gating on readyCurrent rather than len(current) is what stops the
+	// rollout from tearing down another old, healthy replica before a
+	// just-created replacement has actually come up -- exactly the
+	// health-gating reconcileMachineSet's own comment used to name as a
+	// real, unclosed gap.
 	if len(outdated) > 0 {
 		maxUnavailable, err := resolveMaxUnavailable(ms.Spec.MaxUnavailable, desired)
 		if err != nil {
 			return fmt.Errorf("spec.maxUnavailable: %w", err)
 		}
 		minAvailable := desired - maxUnavailable
-		canDelete := total - minAvailable
+		available := readyCurrent + len(outdated)
+		canDelete := available - minAvailable
 		if canDelete <= 0 {
 			return nil
 		}

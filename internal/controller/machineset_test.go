@@ -153,7 +153,7 @@ func TestStepMachineSetTowardRecreateDeletesOutdatedBeforeCreating(t *testing.T)
 	ms := testMachineSet(2, "Recreate", "")
 	current := []model.Machine{ownedMachine("ms1-a", "newhash", "Running")}
 	outdated := []model.Machine{ownedMachine("ms1-b", "oldhash", "Running")}
-	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "Recreate", 2, current, outdated); err != nil {
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "Recreate", 2, current, outdated, 1); err != nil {
 		t.Fatalf("stepMachineSetToward: %v", err)
 	}
 	if len(fake.deleted) != 1 || fake.deleted[0] != "ms1-b" {
@@ -174,8 +174,8 @@ func TestStepMachineSetTowardRollingUpdateBoundsByMaxUnavailable(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		outdated = append(outdated, ownedMachine("old-"+string(rune('a'+i)), "oldhash", "Running"))
 	}
-	// total=5 (matches desired), maxUnavailable=2 -> canDelete = 5-(5-2) = 2
-	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 5, current, outdated); err != nil {
+	// readyCurrent=3, outdated=2 -> available=5, maxUnavailable=2 -> canDelete = 5-(5-2) = 2
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 5, current, outdated, 3); err != nil {
 		t.Fatalf("stepMachineSetToward: %v", err)
 	}
 	if len(fake.deleted) != 2 {
@@ -192,7 +192,7 @@ func TestStepMachineSetTowardRollingUpdateMakesProgressWhenOutdatedExceedsMaxUna
 	for i := 0; i < 5; i++ {
 		outdated = append(outdated, ownedMachine("old-"+string(rune('a'+i)), "oldhash", "Running"))
 	}
-	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 5, nil, outdated); err != nil {
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 5, nil, outdated, 0); err != nil {
 		t.Fatalf("stepMachineSetToward: %v", err)
 	}
 	if len(fake.deleted) != 1 {
@@ -200,11 +200,48 @@ func TestStepMachineSetTowardRollingUpdateMakesProgressWhenOutdatedExceedsMaxUna
 	}
 }
 
+func TestStepMachineSetTowardRollingUpdateWithholdsDeletionUntilNewReplicaIsReady(t *testing.T) {
+	// desired=3, maxUnavailable=1 -> minAvailable=2. One current-template
+	// replica already exists but hasn't reached Running yet (readyCurrent=0),
+	// and two outdated replicas are still Running. total (3) already
+	// matches desired, so the old total-based check would have allowed
+	// deleting 1 outdated replica here (3-2=1) -- but doing so would drop
+	// actual available capacity (0 ready current + 1 remaining outdated =
+	// 1) below minAvailable (2). Gating on readyCurrent must withhold the
+	// deletion instead.
+	ctl, fake := newMachineSetTestController(t)
+	ms := testMachineSet(3, "RollingUpdate", "1")
+	current := []model.Machine{ownedMachine("cur-a", "newhash", "Pending")}
+	outdated := []model.Machine{ownedMachine("old-a", "oldhash", "Running"), ownedMachine("old-b", "oldhash", "Running")}
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 3, current, outdated, 0); err != nil {
+		t.Fatalf("stepMachineSetToward: %v", err)
+	}
+	if len(fake.deleted) != 0 {
+		t.Fatalf("expected no deletion while the replacement replica isn't Ready yet, got %v", fake.deleted)
+	}
+}
+
+func TestStepMachineSetTowardRollingUpdateResumesOnceReplicaBecomesReady(t *testing.T) {
+	// Same shape as above, but the new replica has now reached Running:
+	// readyCurrent=1, outdated=2 -> available=3, minAvailable=2 ->
+	// canDelete=1. The rollout should make progress again.
+	ctl, fake := newMachineSetTestController(t)
+	ms := testMachineSet(3, "RollingUpdate", "1")
+	current := []model.Machine{ownedMachine("cur-a", "newhash", "Running")}
+	outdated := []model.Machine{ownedMachine("old-a", "oldhash", "Running"), ownedMachine("old-b", "oldhash", "Running")}
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 3, current, outdated, 1); err != nil {
+		t.Fatalf("stepMachineSetToward: %v", err)
+	}
+	if len(fake.deleted) != 1 {
+		t.Fatalf("expected exactly 1 deletion now that the replacement is Ready, got %d: %v", len(fake.deleted), fake.deleted)
+	}
+}
+
 func TestStepMachineSetTowardUnderProvisionedAlwaysCreatesRegardlessOfStrategy(t *testing.T) {
 	ctl, fake := newMachineSetTestController(t)
 	ms := testMachineSet(4, "RollingUpdate", "1")
 	current := []model.Machine{ownedMachine("cur-a", "newhash", "Running")}
-	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 4, current, nil); err != nil {
+	if err := ctl.stepMachineSetToward(context.Background(), ms, "newhash", "RollingUpdate", 4, current, nil, 1); err != nil {
 		t.Fatalf("stepMachineSetToward: %v", err)
 	}
 	if len(fake.created) != 3 {
