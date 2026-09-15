@@ -86,6 +86,36 @@ func usernameFromContext(ctx context.Context) string {
 	return ""
 }
 
+// groupsHolderKey mirrors usernameHolderKey exactly, one level down: an
+// OIDC-issued session token carries the caller's own IdP group membership
+// (see sessionPayload.Groups below), and isAdminIdentity needs it to
+// re-check "is any of these groups currently in ui.oidc.adminGroups" fresh
+// against config on every request -- the same freshness property
+// findUser's own live s.Users lookup already gives the static admin path,
+// rather than baking a computed true/false admin bit into the token at
+// login time (which would go stale until the caller logs in again if
+// ui.oidc.adminGroups changes). Always empty for a password-login session
+// (Groups is only ever set by the OIDC callback).
+const groupsHolderKey contextKey = "kairon-ui-groups-holder"
+
+func withGroupsHolder(r *http.Request) (*http.Request, *[]string) {
+	holder := new([]string)
+	return r.WithContext(context.WithValue(r.Context(), groupsHolderKey, holder)), holder
+}
+
+func setContextGroups(ctx context.Context, groups []string) {
+	if holder, ok := ctx.Value(groupsHolderKey).(*[]string); ok {
+		*holder = groups
+	}
+}
+
+func groupsFromContext(ctx context.Context) []string {
+	if holder, ok := ctx.Value(groupsHolderKey).(*[]string); ok {
+		return *holder
+	}
+	return nil
+}
+
 // sessionPayload is the signed, base64url-encoded JSON body of a session
 // token. It carries no secret material -- forging one requires the HMAC
 // key, not just reading a token, so the payload itself doesn't need to be
@@ -98,17 +128,26 @@ type sessionPayload struct {
 	// resetPassword below), without needing a server-side list of every
 	// outstanding token.
 	IssuedAt int64 `json:"iat"`
+	// Groups is only ever set by the OIDC callback (handleOIDCCallback),
+	// from the ID token's own OIDC.GroupsClaim -- empty/omitted for a
+	// password-login session. isAdminIdentity re-checks these against
+	// OIDC.AdminGroups fresh on every request, not baked into a computed
+	// admin bit here, so a config change to adminGroups takes effect on
+	// the caller's very next request rather than requiring re-login. See
+	// groupsHolderKey's own doc comment.
+	Groups []string `json:"groups,omitempty"`
 }
 
 const sessionTTL = 12 * time.Hour
 
 // signSession builds "base64url(payload).base64url(HMAC-SHA256(payload,key))"
 // -- a minimal hand-rolled equivalent of a JWT HS256 token, without adding a
-// JWT library dependency for a single subject+expiry claim.
-func signSession(key []byte, username string, ttl time.Duration) (token string, expires time.Time, err error) {
+// JWT library dependency for a handful of claims. groups is nil for a
+// password-login session; see sessionPayload.Groups.
+func signSession(key []byte, username string, groups []string, ttl time.Duration) (token string, expires time.Time, err error) {
 	now := time.Now()
 	expires = now.Add(ttl)
-	payload, err := json.Marshal(sessionPayload{Subject: username, Expires: expires.Unix(), IssuedAt: now.Unix()})
+	payload, err := json.Marshal(sessionPayload{Subject: username, Expires: expires.Unix(), IssuedAt: now.Unix(), Groups: groups})
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -119,32 +158,34 @@ func signSession(key []byte, username string, ttl time.Duration) (token string, 
 	return encPayload + "." + sig, expires, nil
 }
 
-// verifySession checks the signature and expiry and returns the subject
-// plus when the token was issued (see sessionPayload.IssuedAt).
-func verifySession(key []byte, token string) (username string, expires time.Time, issuedAt time.Time, err error) {
+// verifySession checks the signature and expiry and returns the subject,
+// its OIDC groups (nil for a password-login session; see
+// sessionPayload.Groups), and when the token was issued (see
+// sessionPayload.IssuedAt).
+func verifySession(key []byte, token string) (username string, groups []string, expires time.Time, issuedAt time.Time, err error) {
 	encPayload, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return "", time.Time{}, time.Time{}, errors.New("malformed session token")
+		return "", nil, time.Time{}, time.Time{}, errors.New("malformed session token")
 	}
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(encPayload))
 	wantSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if len(sig) != len(wantSig) || !hmac.Equal([]byte(sig), []byte(wantSig)) {
-		return "", time.Time{}, time.Time{}, errors.New("invalid session signature")
+		return "", nil, time.Time{}, time.Time{}, errors.New("invalid session signature")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(encPayload)
 	if err != nil {
-		return "", time.Time{}, time.Time{}, err
+		return "", nil, time.Time{}, time.Time{}, err
 	}
 	var p sessionPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", time.Time{}, time.Time{}, err
+		return "", nil, time.Time{}, time.Time{}, err
 	}
 	expires = time.Unix(p.Expires, 0)
 	if time.Now().After(expires) {
-		return "", time.Time{}, time.Time{}, errors.New("session expired")
+		return "", nil, time.Time{}, time.Time{}, errors.New("session expired")
 	}
-	return p.Subject, expires, time.Unix(p.IssuedAt, 0), nil
+	return p.Subject, p.Groups, expires, time.Unix(p.IssuedAt, 0), nil
 }
 
 // revokeSession/isSessionRevoked back POST /api/v1/auth/logout with a
@@ -210,6 +251,55 @@ func (s *Server) findUser(username string) (User, bool) {
 		}
 	}
 	return User{}, false
+}
+
+// isAdminIdentity reports whether username (as already resolved by the
+// caller via usernameFromContext) currently counts as an admin -- either
+// a static ui.auth.users[].admin account (findUser, unchanged), or an
+// OIDC session whose own recorded groups (groupsFromContext -- empty for
+// a password-login session or when ctx carries none) currently intersect
+// s.OIDC.AdminGroups. Both halves are re-checked fresh on every call
+// against current s.Users/s.OIDC state, never cached on the token or
+// context -- an operator changing ui.auth.users[].admin or
+// ui.oidc.adminGroups takes effect on a caller's very next request,
+// matching findUser's own existing freshness property, not requiring
+// re-login either way.
+//
+// Deliberately does NOT special-case an empty username (the legacy
+// shared-token caller) -- findUser("") already returns found=false and no
+// OIDC session exists for that caller either, so this returns false for
+// it, the same as every admin-gated route's own pre-existing
+// `!found || !user.IsAdmin` check already did. Call sites that want the
+// legacy shared token treated as admin (see handleResetPassword's own
+// comment on why) keep doing that themselves, unchanged, around a call to
+// this function -- not every admin-gated route in this codebase makes
+// that same choice today, and this helper doesn't paper over or change
+// that existing inconsistency.
+func (s *Server) isAdminIdentity(ctx context.Context, username string) bool {
+	if user, found := s.findUser(username); found && user.IsAdmin {
+		return true
+	}
+	if s.OIDC == nil {
+		return false
+	}
+	return groupsContainAdmin(groupsFromContext(ctx), s.OIDC.AdminGroups)
+}
+
+// groupsContainAdmin is isAdminIdentity's OIDC-half, factored out so
+// handleOIDCCallback (internal/uiapi/oidc.go) can also compute the same
+// answer directly from a just-decoded claims groups slice, before that
+// slice is ever recorded on a session token/context -- used to report
+// isAdmin back to the frontend in the callback's own redirect, the same
+// way handleLogin's JSON response already does for a password session.
+func groupsContainAdmin(groups, adminGroups []string) bool {
+	for _, g := range groups {
+		for _, admin := range adminGroups {
+			if g == admin {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // persistUsers writes the current in-memory Users list back to the
@@ -374,7 +464,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid username or password")
 		return
 	}
-	token, expires, err := signSession(s.SessionSecret, user.Username, sessionTTL)
+	token, expires, err := signSession(s.SessionSecret, user.Username, nil, sessionTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to issue session")
 		return
@@ -387,7 +477,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if tok := bearerToken(r); tok != "" {
-		if _, expires, _, err := verifySession(s.SessionSecret, tok); err == nil {
+		if _, _, expires, _, err := verifySession(s.SessionSecret, tok); err == nil {
 			s.revokeSession(r.Context(), tok, expires)
 		}
 	}
@@ -458,13 +548,13 @@ type resetPasswordRequest struct {
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	caller := usernameFromContext(r.Context())
 	if caller != "" {
-		// Session-token caller: must be a real admin account. A legacy
+		// Session-token caller: must be a real admin account (static or,
+		// now, OIDC-group-derived -- see isAdminIdentity). A legacy
 		// shared-token caller (caller == "") falls through -- that token
 		// is already root-equivalent for every other route (see
 		// withAuth), so it's treated as admin here too rather than
 		// introducing a second, inconsistent authorization tier.
-		callerUser, found := s.findUser(caller)
-		if !found || !callerUser.IsAdmin {
+		if !s.isAdminIdentity(r.Context(), caller) {
 			writeError(w, http.StatusForbidden, "only an admin account may reset another operator's password")
 			return
 		}

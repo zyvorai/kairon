@@ -79,9 +79,15 @@ credential in this chart already has (`ui.existingSecret`,
    **and nonce** against the provider's published keys.
 4. `ui.oidc.usernameClaim` (default `email`) becomes the session's
    username, and kairon-ui issues a normal session token -- the exact same
-   `signSession` primitive `POST /api/v1/auth/login` already uses. From
-   here on, an OIDC-authenticated session is indistinguishable from a
-   password one to every other route; `withAuth` never had to change.
+   `signSession` primitive `POST /api/v1/auth/login` already uses.
+   If `ui.oidc.adminGroups` is set, the ID token's own `ui.oidc.groupsClaim`
+   (default `groups`) is also recorded on the token, so admin-gated
+   routes (`uiapi.Server.isAdminIdentity`) can re-check it against
+   current config on every later request -- see "Identity and
+   authorization model" below. From here on, an OIDC-authenticated
+   session verifies through the exact same `withAuth` path a password
+   session does either way -- `verifySession` just also returns whatever
+   groups (if any) were recorded at login time.
 5. kairon-ui redirects the browser to `/oidc/callback#token=...` -- a URL
    *fragment*, deliberately, never the query string: a fragment is never
    sent to any server on a subsequent request, so the token never lands in
@@ -100,17 +106,32 @@ desirable (one person, one identity, regardless of how they signed in).
 Choose a username claim whose values won't accidentally collide across
 different real people if that's a concern in your environment.
 
-**OIDC never grants admin.** An OIDC-authenticated session can do
+**OIDC admin capability is opt-in, via group mapping.** By default,
+`ui.oidc.adminGroups` is empty and an OIDC-authenticated session can do
 everything a normal operator can -- create/delete Machines, migrate,
-snapshot, change its own password (wait: it can't, see below) -- but is
-never eligible to reset another operator's password via
-`POST /api/v1/users/{username}/password`, regardless of what groups or
-roles the identity provider reports. This isn't an oversight to be fixed
-later; there's nothing meaningful for an "OIDC admin" to reset in the
-first place, since an OIDC identity has no `PasswordHash` in Kairon at
-all. `POST /api/v1/auth/password` (changing your *own* password) is
-naturally refused the same way, for the same reason -- `findUser` never
-finds an OIDC-only username in `ui.auth.users`.
+snapshot -- but nothing admin-only, exactly Kairon's original OIDC
+behavior. Setting `ui.oidc.adminGroups` (and, if your IdP doesn't call the
+claim `"groups"`, `ui.oidc.groupsClaim`) grants admin capability to any
+OIDC session whose ID token's groups claim contains one of the configured
+names -- including `POST /api/v1/users/{username}/password`, resetting
+another operator's password. This is checked **fresh on every request**
+against the *current* `ui.oidc.adminGroups` config
+(`uiapi.Server.isAdminIdentity`), not baked into the session token at
+login time -- an operator changing `adminGroups` (and rolling the
+deployment) takes effect for an already-signed-in caller's very next
+request, without them needing to log in again. The group membership
+itself, though, is only as fresh as the caller's own last login: it comes
+from the ID token issued at sign-in time, not re-queried from the IdP on
+every request, so a group added to someone's IdP account mid-session
+won't grant admin until they sign in again.
+
+**`POST /api/v1/auth/password` (changing your *own* password) still
+doesn't apply to an OIDC session**, admin group or not -- an OIDC identity
+has no `PasswordHash` in Kairon at all (`findUser` never finds an
+OIDC-only username in `ui.auth.users`), so there's nothing for that route
+to change regardless of admin status. Only `POST /api/v1/users/{username}/password`
+(an admin resetting *someone else's* static-account password) is
+affected by `adminGroups`.
 
 **Logout works normally.** `POST /api/v1/auth/logout` revokes an
 OIDC-issued session token exactly like a password-issued one -- there's
@@ -121,7 +142,18 @@ using it).
 
 ## Real limits today (first cut)
 
-- No group/role claim maps to Kairon-side admin status -- see above.
+- Group-to-admin mapping (`ui.oidc.adminGroups`) is a flat allowlist of
+  group *names* -- no group-to-role hierarchy, no nested/derived groups,
+  and no support for an IdP that only exposes group membership via a
+  separate userinfo/Graph API call instead of the ID token's own claims
+  (this reads only what's already in the verified ID token, deliberately,
+  to avoid an extra network round trip and a second thing to verify).
+- An admin-group membership change on the IdP side only takes effect at
+  the caller's *next login* (the ID token is only ever read at sign-in
+  time) -- see above. A change to `ui.oidc.adminGroups` on the Kairon side
+  takes effect immediately, for every already-signed-in caller, no
+  re-login needed -- the two have different freshness properties, don't
+  confuse them.
 - No provider-initiated (SP-initiated only) logout or single-logout (SLO)
   propagation back to the identity provider.
 - No refresh-token use: a kairon-ui session is a fixed 12-hour token, same

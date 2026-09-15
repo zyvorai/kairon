@@ -55,8 +55,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := usernameFromContext(r.Context())
-	user, found := s.findUser(username)
-	if !found || !user.IsAdmin {
+	if !s.isAdminIdentity(r.Context(), username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi exec denied: not an admin account", "username", username, "namespace", namespace, "name", name)
 		}

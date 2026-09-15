@@ -130,7 +130,8 @@ func run() int {
 	if oidcConfigured {
 		discoverCtx, discoverCancel := context.WithTimeout(ctx, 15*time.Second)
 		oidcAuth, err = newOIDCAuth(discoverCtx, oidcIssuerURL, oidcClientID, os.Getenv("KAIRON_UI_OIDC_CLIENT_SECRET"), oidcRedirectURL,
-			env("KAIRON_UI_OIDC_USERNAME_CLAIM", "email"), strings.Split(env("KAIRON_UI_OIDC_SCOPES", "openid,profile,email"), ","))
+			env("KAIRON_UI_OIDC_USERNAME_CLAIM", "email"), env("KAIRON_UI_OIDC_GROUPS_CLAIM", "groups"),
+			strings.Split(env("KAIRON_UI_OIDC_SCOPES", "openid,profile,email"), ","), splitNonEmpty(env("KAIRON_UI_OIDC_ADMIN_GROUPS", ""), ","))
 		discoverCancel()
 		if err != nil {
 			log.Error("OIDC/SSO setup failed", "error", err)
@@ -229,7 +230,7 @@ func consoleTLSConfig(caPath string) (*tls.Config, error) {
 // login -- a misconfigured issuer fails the container immediately (a
 // visible CrashLoopBackOff), not a confusing 500 the first time an
 // operator actually tries to sign in.
-func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL, usernameClaim string, scopes []string) (*uiapi.OIDCAuth, error) {
+func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL, usernameClaim, groupsClaim string, scopes, adminGroups []string) (*uiapi.OIDCAuth, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery against %s: %w", issuerURL, err)
@@ -248,6 +249,12 @@ func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirec
 		// misconfiguration this needs to refuse.
 		Verifier:      provider.Verifier(&oidc.Config{ClientID: clientID}),
 		UsernameClaim: usernameClaim,
+		// GroupsClaim/AdminGroups both empty (the default) means every
+		// OIDC session stays a normal, non-admin operator identity
+		// regardless of what groups the IdP reports -- exactly Kairon's
+		// behavior before these existed. See uiapi.Server.isAdminIdentity.
+		GroupsClaim: groupsClaim,
+		AdminGroups: adminGroups,
 	}, nil
 }
 
@@ -256,6 +263,22 @@ func env(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// splitNonEmpty splits a comma-separated list and trims/drops empty
+// entries -- unlike a bare strings.Split, an empty input produces an
+// empty (nil) slice rather than []string{""}, so
+// $KAIRON_UI_OIDC_ADMIN_GROUPS unset means len(AdminGroups) == 0
+// (OIDC-derived admin disabled entirely), not a slice holding one
+// spurious empty-string "group".
+func splitNonEmpty(s, sep string) []string {
+	var out []string
+	for _, part := range strings.Split(s, sep) {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // loadUsers builds the operator account list from $KAIRON_UI_USERS_JSON

@@ -981,6 +981,12 @@ spec:
               value: {{ .Values.ui.oidc.usernameClaim | quote }}
             - name: KAIRON_UI_OIDC_SCOPES
               value: {{ .Values.ui.oidc.scopes | quote }}
+{{ if .Values.ui.oidc.adminGroups }}
+            - name: KAIRON_UI_OIDC_GROUPS_CLAIM
+              value: {{ .Values.ui.oidc.groupsClaim | quote }}
+            - name: KAIRON_UI_OIDC_ADMIN_GROUPS
+              value: {{ .Values.ui.oidc.adminGroups | join "," | quote }}
+{{ end }}
 {{ if or .Values.ui.oidc.clientSecret .Values.ui.oidc.existingSecret }}
             - name: KAIRON_UI_OIDC_CLIENT_SECRET
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.oidc.existingSecret | default "kairon-ui-oidc" }}, key: {{ .Values.ui.oidc.existingSecretKey | default "clientSecret" }}}}

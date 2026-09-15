@@ -19,8 +19,7 @@ import (
 // InternalIP on success, having already written a response on failure.
 func (s *Server) requireCatalogAdmin(w http.ResponseWriter, r *http.Request, nodeName string) (nodeAddr string, ok bool) {
 	username := usernameFromContext(r.Context())
-	user, found := s.findUser(username)
-	if !found || !user.IsAdmin {
+	if !s.isAdminIdentity(r.Context(), username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi catalog denied: not an admin account", "username", username, "node", nodeName)
 		}

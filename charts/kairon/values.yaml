@@ -499,11 +499,22 @@ ui:
     # usernameClaim: which ID token claim becomes the kairon-ui session's
     # username -- the same username space ui.auth.users already occupies,
     # so audit log attribution stays consistent regardless of login
-    # method. An OIDC-authenticated username is never treated as an admin
-    # account (that stays exclusively a ui.auth.users[].admin: true
-    # capability) -- see docs/guides/kairon-ui-oidc.md.
+    # method.
     usernameClaim: "email"
     scopes: "openid,profile,email"
+    # groupsClaim/adminGroups: map IdP group membership to admin
+    # capability. Both empty (the default) means an OIDC-authenticated
+    # session is always a normal, non-admin operator identity regardless
+    # of what groups the IdP reports -- exactly Kairon's original OIDC
+    # behavior. Set adminGroups (and, if your IdP doesn't call it
+    # "groups", groupsClaim) to grant admin to any session whose ID
+    # token's groups claim contains one of these names -- re-checked
+    # fresh on every request against current config, not baked into the
+    # session token, so changing this list takes effect on a caller's
+    # very next request without them needing to log in again. See
+    # docs/guides/kairon-ui-oidc.md.
+    groupsClaim: "groups"
+    adminGroups: []
   service:
     type: ClusterIP
     # Also the container's actual internal listen port (-listen=:port) --

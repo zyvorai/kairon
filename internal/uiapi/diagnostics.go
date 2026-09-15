@@ -139,8 +139,7 @@ func (s *Server) requireFreezeAccess(w http.ResponseWriter, r *http.Request, nam
 		return "", "", false
 	}
 	username := usernameFromContext(r.Context())
-	user, found := s.findUser(username)
-	if !found || !user.IsAdmin {
+	if !s.isAdminIdentity(r.Context(), username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi freeze denied: not an admin account", "username", username, "namespace", namespace, "name", name)
 		}

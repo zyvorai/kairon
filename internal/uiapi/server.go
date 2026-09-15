@@ -363,6 +363,10 @@ func (s *Server) withAudit(next http.Handler) http.Handler {
 		// to its issuer) rely on reading it back via usernameFromContext
 		// regardless of method or whether a logger is configured.
 		r, holder := withUsernameHolder(r)
+		// withGroupsHolder mirrors withUsernameHolder exactly, one level
+		// down: an OIDC session's own groups, so isAdminIdentity can read
+		// them back via groupsFromContext downstream.
+		r, _ = withGroupsHolder(r)
 		if r.Method == http.MethodGet || s.Log == nil {
 			next.ServeHTTP(w, r)
 			return
@@ -429,8 +433,9 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			// own sessions here, not fall through to the "wide open"
 			// branch above.
 			if len(s.SessionSecret) > 0 {
-				if username, _, issuedAt, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) && !s.passwordChangedAfter(username, issuedAt) {
+				if username, groups, _, issuedAt, err := verifySession(s.SessionSecret, tok); err == nil && !s.isSessionRevoked(tok) && !s.passwordChangedAfter(username, issuedAt) {
 					setContextUsername(r.Context(), username)
+					setContextGroups(r.Context(), groups)
 					next.ServeHTTP(w, r)
 					return
 				}

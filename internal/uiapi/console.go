@@ -186,7 +186,7 @@ func (s *Server) consoleAuthorized(ctx context.Context, m model.Machine, usernam
 	if username == "" {
 		return false
 	}
-	if user, found := s.findUser(username); found && user.IsAdmin {
+	if s.isAdminIdentity(ctx, username) {
 		return true
 	}
 	for _, u := range strings.Split(allowed, ",") {

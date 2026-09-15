@@ -37,8 +37,7 @@ type egressCheckResponse struct {
 func (s *Server) handleEgressCheck(w http.ResponseWriter, r *http.Request) {
 	nodeName := r.PathValue("node")
 	username := usernameFromContext(r.Context())
-	user, found := s.findUser(username)
-	if !found || !user.IsAdmin {
+	if !s.isAdminIdentity(r.Context(), username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi egress-check denied: not an admin account", "username", username, "node", nodeName)
 		}

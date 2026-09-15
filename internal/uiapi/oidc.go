@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,19 @@ type OIDCAuth struct {
 	// exactly like a password login's -- withAuth's verification path
 	// never had to change for this.
 	UsernameClaim string
+	// GroupsClaim names the ID token claim carrying the caller's IdP
+	// group membership (typically "groups") -- read into the session
+	// token (sessionPayload.Groups) at callback time. Only consulted when
+	// AdminGroups is also non-empty; empty (the default, "") means the
+	// claims map is never even inspected for it, so an IdP that never
+	// returns a groups claim at all costs nothing extra.
+	GroupsClaim string
+	// AdminGroups, when non-empty, are the IdP group names that map to
+	// admin capability -- see Server.isAdminIdentity. Empty (the default)
+	// means every OIDC session stays a normal, non-admin operator
+	// identity regardless of what groups an IdP reports, exactly Kairon's
+	// behavior before this field existed.
+	AdminGroups []string
 }
 
 // oidcStateTTL bounds how long an operator has to complete the redirect
@@ -211,7 +225,11 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		s.redirectOIDCError(w, r, fmt.Sprintf("identity provider did not return a %q claim", s.OIDC.UsernameClaim))
 		return
 	}
-	sessionToken, expires, err := signSession(s.SessionSecret, username, sessionTTL)
+	var groups []string
+	if s.OIDC.GroupsClaim != "" && len(s.OIDC.AdminGroups) > 0 {
+		groups = stringClaimSlice(claims[s.OIDC.GroupsClaim])
+	}
+	sessionToken, expires, err := signSession(s.SessionSecret, username, groups, sessionTTL)
 	if err != nil {
 		s.redirectOIDCError(w, r, "sign-in failed")
 		return
@@ -219,11 +237,36 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if s.Log != nil {
 		s.Log.Info("uiapi oidc login", "username", username, "remoteAddr", r.RemoteAddr)
 	}
-	values := url.Values{"token": {sessionToken}, "username": {username}, "expiresAt": {expires.Format(time.RFC3339)}}
+	isAdmin := groupsContainAdmin(groups, s.OIDC.AdminGroups)
+	values := url.Values{
+		"token": {sessionToken}, "username": {username},
+		"isAdmin": {strconv.FormatBool(isAdmin)}, "expiresAt": {expires.Format(time.RFC3339)},
+	}
 	http.Redirect(w, r, oidcCallbackPath+"#"+values.Encode(), http.StatusFound)
 }
 
 func (s *Server) redirectOIDCError(w http.ResponseWriter, r *http.Request, message string) {
 	values := url.Values{"error": {message}}
 	http.Redirect(w, r, oidcCallbackPath+"#"+values.Encode(), http.StatusFound)
+}
+
+// stringClaimSlice extracts a []string from an ID token claim's own
+// decoded any value -- encoding/json always decodes a JSON array into
+// []any regardless of its element types, so a real "groups": ["a", "b"]
+// claim comes back as []any{"a", "b"}, not []string, and needs this
+// per-element type assertion. A non-array claim, a missing claim (nil),
+// or an array with non-string elements all safely produce an empty
+// slice rather than a panic or a silently-wrong group name.
+func stringClaimSlice(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }

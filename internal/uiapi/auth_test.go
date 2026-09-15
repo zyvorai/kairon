@@ -179,15 +179,15 @@ func TestLogoutRevokesSession(t *testing.T) {
 func TestSessionRejectsExpiredAndTamperedTokens(t *testing.T) {
 	key := []byte("test-session-secret")
 
-	expired, _, err := signSession(key, "alice", -time.Minute)
+	expired, _, err := signSession(key, "alice", nil, -time.Minute)
 	if err != nil {
 		t.Fatalf("signSession: %v", err)
 	}
-	if _, _, _, err := verifySession(key, expired); err == nil {
+	if _, _, _, _, err := verifySession(key, expired); err == nil {
 		t.Fatal("expected expired session to be rejected")
 	}
 
-	valid, _, err := signSession(key, "alice", time.Hour)
+	valid, _, err := signSession(key, "alice", nil, time.Hour)
 	if err != nil {
 		t.Fatalf("signSession: %v", err)
 	}
@@ -195,11 +195,11 @@ func TestSessionRejectsExpiredAndTamperedTokens(t *testing.T) {
 	if tampered == valid {
 		t.Fatal("test setup did not actually tamper the token")
 	}
-	if _, _, _, err := verifySession(key, tampered); err == nil {
+	if _, _, _, _, err := verifySession(key, tampered); err == nil {
 		t.Fatal("expected tampered session to be rejected")
 	}
 
-	if _, _, _, err := verifySession([]byte("wrong-key"), valid); err == nil {
+	if _, _, _, _, err := verifySession([]byte("wrong-key"), valid); err == nil {
 		t.Fatal("expected session signed with a different key to be rejected")
 	}
 }

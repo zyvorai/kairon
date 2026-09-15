@@ -40,8 +40,7 @@ func (s *Server) requireVMSnapshotAccess(w http.ResponseWriter, r *http.Request,
 		return m, "", false
 	}
 	username = usernameFromContext(r.Context())
-	user, found := s.findUser(username)
-	if !found || !user.IsAdmin {
+	if !s.isAdminIdentity(r.Context(), username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi vm-snapshot denied: not an admin account", "username", username, "namespace", namespace, "name", name)
 		}

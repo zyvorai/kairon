@@ -218,7 +218,7 @@ func TestOIDCLoginCallbackRoundTripIssuesASession(t *testing.T) {
 	if token == "" {
 		t.Fatal("expected a non-empty session token")
 	}
-	username, _, _, err := verifySession(s.SessionSecret, token)
+	username, _, _, _, err := verifySession(s.SessionSecret, token)
 	if err != nil {
 		t.Fatalf("expected the issued token to be a valid kairon-ui session: %v", err)
 	}
@@ -349,5 +349,259 @@ func TestWithAuthAcceptsOIDCSessionWithNoUsersConfigured(t *testing.T) {
 	rr2 := doJSON(t, h, http.MethodGet, "/api/v1/machines", token, nil)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("expected the OIDC session to authenticate against an OIDC-only server, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+}
+
+func newTestOIDCAuthWithAdminGroups(t *testing.T, p *fakeOIDCProvider, groupsClaim string, adminGroups []string) *OIDCAuth {
+	t.Helper()
+	auth := newTestOIDCAuth(t, p, "email")
+	auth.GroupsClaim = groupsClaim
+	auth.AdminGroups = adminGroups
+	return auth
+}
+
+// oidcLogin drives a full login/callback round trip and returns the
+// issued session token plus the callback's own isAdmin fragment value --
+// shared by every admin-group test below so each one only has to state
+// its own claims/config, not repeat the whole OIDC dance.
+func oidcLogin(t *testing.T, h http.Handler, p *fakeOIDCProvider, claims map[string]any) (token string, isAdmin bool) {
+	t.Helper()
+	state, nonce := oidcLoginState(t, h)
+	claims["nonce"] = nonce
+	p.withIDTokenClaims(claims)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=c&state="+url.QueryEscape(state), nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d: %s", rr.Code, rr.Body.String())
+	}
+	loc := rr.Header().Get("Location")
+	frag, err := url.ParseQuery(strings.TrimPrefix(loc, oidcCallbackPath+"#"))
+	if err != nil {
+		t.Fatalf("parse callback fragment: %v", err)
+	}
+	if frag.Get("error") != "" {
+		t.Fatalf("expected no error, got %q", frag.Get("error"))
+	}
+	token = frag.Get("token")
+	if token == "" {
+		t.Fatal("expected a non-empty session token")
+	}
+	return token, frag.Get("isAdmin") == "true"
+}
+
+func TestOIDCSessionWithMatchingAdminGroupIsGrantedAdmin(t *testing.T) {
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := &Server{
+		Kube:          mustKubeClientWithHandler(t, fk.handler()),
+		OIDC:          newTestOIDCAuthWithAdminGroups(t, p, "groups", []string{"kairon-admins"}),
+		SessionSecret: []byte("test-session-secret"),
+		Log:           slog.New(slog.DiscardHandler),
+	}
+	h := s.Handler()
+
+	token, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "alice@example.com", "groups": []string{"engineering", "kairon-admins"},
+	})
+	if !isAdmin {
+		t.Fatal("expected the callback's own isAdmin fragment to be true for a member of an admin group")
+	}
+
+	// The session token itself carries the groups, not a baked-in bool --
+	// verifySession round-trips them so isAdminIdentity can re-derive
+	// admin-ness fresh on every request (see its own doc comment).
+	_, groups, _, _, err := verifySession(s.SessionSecret, token)
+	if err != nil {
+		t.Fatalf("verifySession: %v", err)
+	}
+	if !groupsContainAdmin(groups, s.OIDC.AdminGroups) {
+		t.Fatalf("expected the session's own recorded groups %v to contain an admin group", groups)
+	}
+}
+
+func TestOIDCSessionWithoutMatchingAdminGroupStaysNonAdmin(t *testing.T) {
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := &Server{
+		Kube:          mustKubeClientWithHandler(t, fk.handler()),
+		OIDC:          newTestOIDCAuthWithAdminGroups(t, p, "groups", []string{"kairon-admins"}),
+		SessionSecret: []byte("test-session-secret"),
+		Log:           slog.New(slog.DiscardHandler),
+	}
+	h := s.Handler()
+
+	_, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "bob@example.com", "groups": []string{"engineering", "sales"},
+	})
+	if isAdmin {
+		t.Fatal("expected a caller with no matching admin group to stay non-admin")
+	}
+}
+
+func TestOIDCGroupsClaimIsIgnoredWhenNoAdminGroupsConfigured(t *testing.T) {
+	// AdminGroups unset (the default) must mean OIDC sessions stay
+	// non-admin regardless of what groups an IdP reports -- exactly
+	// Kairon's behavior before this feature existed. Also proves the
+	// groups claim is never even inspected in this case (a real IdP
+	// returning a "groups" claim with no admin config set must not
+	// accidentally grant admin via some other match).
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := &Server{
+		Kube:          mustKubeClientWithHandler(t, fk.handler()),
+		OIDC:          newTestOIDCAuth(t, p, "email"), // GroupsClaim/AdminGroups both unset
+		SessionSecret: []byte("test-session-secret"),
+		Log:           slog.New(slog.DiscardHandler),
+	}
+	h := s.Handler()
+
+	_, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "carol@example.com", "groups": []string{"kairon-admins"},
+	})
+	if isAdmin {
+		t.Fatal("expected AdminGroups unset to keep every OIDC session non-admin")
+	}
+}
+
+func TestOIDCAdminGroupConfigChangeAffectsAnAlreadyIssuedSessionImmediately(t *testing.T) {
+	// isAdminIdentity re-checks AdminGroups fresh against current config
+	// on every call rather than baking a computed admin bit into the
+	// token -- proves an operator changing ui.oidc.adminGroups (and
+	// restarting/reconfiguring kairon-ui) takes effect for an
+	// already-issued session's very next request, the same freshness
+	// property findUser's own live s.Users lookup already has for the
+	// static admin path, without the caller needing to log in again.
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := &Server{
+		Kube:          mustKubeClientWithHandler(t, fk.handler()),
+		OIDC:          newTestOIDCAuthWithAdminGroups(t, p, "groups", []string{"kairon-admins"}),
+		SessionSecret: []byte("test-session-secret"),
+		Log:           slog.New(slog.DiscardHandler),
+	}
+	h := s.Handler()
+
+	token, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "dave@example.com", "groups": []string{"kairon-admins"},
+	})
+	if !isAdmin {
+		t.Fatal("expected dave to be admin at login time")
+	}
+
+	_, groups, _, _, err := verifySession(s.SessionSecret, token)
+	if err != nil {
+		t.Fatalf("verifySession: %v", err)
+	}
+	if !groupsContainAdmin(groups, s.OIDC.AdminGroups) {
+		t.Fatal("expected dave's session to still count as admin under the original config")
+	}
+
+	// An operator removes "kairon-admins" from ui.oidc.adminGroups --
+	// dave's already-issued session must lose admin capability on its
+	// very next check, without dave logging in again.
+	s.OIDC.AdminGroups = []string{"platform-team"}
+	if groupsContainAdmin(groups, s.OIDC.AdminGroups) {
+		t.Fatal("expected dave's session to lose admin capability once its group is removed from config")
+	}
+}
+
+func TestOIDCAdminGroupCallerCanResetAnotherOperatorsPassword(t *testing.T) {
+	// End-to-end proof the wiring actually reaches a real admin-gated
+	// route, not just isAdminIdentity in isolation -- mirrors
+	// password_test.go's own TestResetPasswordByAdminRevokesTargetSessions,
+	// but the admin caller here is an OIDC session, not a static
+	// ui.auth.users[].admin account.
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := newUserTestServerWithFake(t, fk, []User{
+		{Username: "bob", PasswordHash: hashFor(t, "bobs-pw")}, // static account, target of the reset
+	}, "test-session-secret")
+	s.OIDC = newTestOIDCAuthWithAdminGroups(t, p, "groups", []string{"kairon-admins"})
+	s.Log = slog.New(slog.DiscardHandler)
+	h := s.Handler()
+
+	adminToken, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "admin@example.com", "groups": []string{"kairon-admins"},
+	})
+	if !isAdmin {
+		t.Fatal("expected the OIDC caller to be admin")
+	}
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/users/bob/password", adminToken, resetPasswordRequest{NewPassword: "new-bob-password"})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr := login(t, h, "bob", "new-bob-password"); rr.Code != http.StatusOK {
+		t.Fatalf("bob's new password should work, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestOIDCNonAdminGroupCallerCannotResetAnotherOperatorsPassword(t *testing.T) {
+	p := newFakeOIDCProvider(t)
+	fk := newFakeKube()
+	s := newUserTestServerWithFake(t, fk, []User{
+		{Username: "bob", PasswordHash: hashFor(t, "bobs-pw")},
+	}, "test-session-secret")
+	s.OIDC = newTestOIDCAuthWithAdminGroups(t, p, "groups", []string{"kairon-admins"})
+	s.Log = slog.New(slog.DiscardHandler)
+	h := s.Handler()
+
+	callerToken, isAdmin := oidcLogin(t, h, p, map[string]any{
+		"email": "alice@example.com", "groups": []string{"engineering"},
+	})
+	if isAdmin {
+		t.Fatal("expected alice to not be admin")
+	}
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/users/bob/password", callerToken, resetPasswordRequest{NewPassword: "new-bob-password"})
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGroupsContainAdmin(t *testing.T) {
+	cases := []struct {
+		name        string
+		groups      []string
+		adminGroups []string
+		want        bool
+	}{
+		{"empty groups", nil, []string{"admins"}, false},
+		{"empty admin groups", []string{"admins"}, nil, false},
+		{"no overlap", []string{"eng", "sales"}, []string{"admins"}, false},
+		{"exact match", []string{"admins"}, []string{"admins"}, true},
+		{"match among several", []string{"eng", "admins", "sales"}, []string{"platform", "admins"}, true},
+	}
+	for _, c := range cases {
+		if got := groupsContainAdmin(c.groups, c.adminGroups); got != c.want {
+			t.Errorf("%s: groupsContainAdmin(%v, %v) = %v, want %v", c.name, c.groups, c.adminGroups, got, c.want)
+		}
+	}
+}
+
+func TestStringClaimSlice(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"not an array", "just-a-string", nil},
+		{"string array", []any{"a", "b"}, []string{"a", "b"}},
+		{"mixed types drop non-strings", []any{"a", 1, "b", true}, []string{"a", "b"}},
+		{"empty array", []any{}, []string{}},
+	}
+	for _, c := range cases {
+		got := stringClaimSlice(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+				break
+			}
+		}
 	}
 }
