@@ -16,6 +16,20 @@ import (
 // MachineSnapshot into a brand-new PersistentVolumeClaim via the standard
 // CSI spec.dataSource restore flow. See model.MachineSnapshotRestore for
 // why this deliberately doesn't also create a Machine.
+//
+// The referenced MachineSnapshot (or its underlying VolumeSnapshot) simply
+// not being ready *yet* is parked as Pending and retried next tick, not
+// treated as an error -- the same "waiting on an external condition"
+// posture reconcileVolumeSnapshots and finishRestoreFromPVCState already
+// use elsewhere in this same feature. Before this, both cases returned a
+// plain error, which the caller (Controller.Reconcile) turns into a
+// permanent status.phase=Failed with no further retries -- so creating a
+// MachineSnapshotRestore even slightly before its MachineSnapshot finished
+// left it stuck Failed forever, even though the snapshot went on to
+// succeed moments later. A genuinely missing/misspelled SnapshotName still
+// fails outright (below) -- there's no way to tell "will exist later" from
+// "will never exist", unlike a snapshot that already exists but is still
+// in progress.
 func (c *Controller) reconcileSnapshotRestore(ctx context.Context, restore model.MachineSnapshotRestore) error {
 	if restore.Status.Phase == "Succeeded" || restore.Status.Phase == "Failed" {
 		return nil
@@ -28,14 +42,14 @@ func (c *Controller) reconcileSnapshotRestore(ctx context.Context, restore model
 		return fmt.Errorf("get MachineSnapshot %s: %w", restore.Spec.SnapshotName, err)
 	}
 	if snapshot.Status.Phase != "Succeeded" || !snapshot.Status.ReadyToUse {
-		return fmt.Errorf("MachineSnapshot %s is not ready to restore from yet (phase=%q)", restore.Spec.SnapshotName, snapshot.Status.Phase)
+		return c.parkRestorePending(ctx, restore, fmt.Sprintf("waiting for MachineSnapshot %s to become ready to restore from (phase=%q)", restore.Spec.SnapshotName, snapshot.Status.Phase))
 	}
 	ref, err := selectSnapshotVolume(snapshot.Status.VolumeSnapshots, restore.Spec.VolumeName)
 	if err != nil {
 		return err
 	}
 	if !ref.ReadyToUse {
-		return fmt.Errorf("VolumeSnapshot %s is not ready to use yet", ref.VolumeSnapshotName)
+		return c.parkRestorePending(ctx, restore, fmt.Sprintf("waiting for VolumeSnapshot %s to become ready to use", ref.VolumeSnapshotName))
 	}
 
 	existing, err := c.Kube.GetPersistentVolumeClaim(ctx, restore.Namespace(), restore.Spec.TargetClaimName)
@@ -96,6 +110,18 @@ func (c *Controller) finishRestoreFromPVCState(ctx context.Context, restore mode
 		status.Phase = "Pending"
 		status.Message = fmt.Sprintf("waiting for PersistentVolumeClaim %s to bind (phase=%q; normal under a WaitForFirstConsumer StorageClass until a Machine references it)", pvc.Metadata.Name, pvc.Status.Phase)
 	}
+	return c.Kube.PatchMachineSnapshotRestoreStatus(ctx, restore.Namespace(), restore.Metadata.Name, status)
+}
+
+// parkRestorePending records message as a Pending status and returns nil
+// (not an error) -- so Controller.Reconcile's own per-item error handling
+// never marks this restore Failed for what's actually a normal,
+// automatically-retried wait, and never counts it against
+// kairon_reconcile_item_errors_total{kind="snapshotrestore"} either.
+func (c *Controller) parkRestorePending(ctx context.Context, restore model.MachineSnapshotRestore, message string) error {
+	status := restore.Status
+	status.Phase = "Pending"
+	status.Message = message
 	return c.Kube.PatchMachineSnapshotRestoreStatus(ctx, restore.Namespace(), restore.Metadata.Name, status)
 }
 

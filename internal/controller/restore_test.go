@@ -45,17 +45,26 @@ func TestSelectSnapshotVolumeRejectsUnknownName(t *testing.T) {
 	}
 }
 
-func TestReconcileSnapshotRestoreRejectsANotYetReadySnapshot(t *testing.T) {
+func TestReconcileSnapshotRestoreParksPendingOnANotYetReadySnapshot(t *testing.T) {
 	snapshot := model.MachineSnapshot{
 		Metadata: model.ObjectMeta{Name: "snap", Namespace: "prod"},
 		Status:   model.MachineSnapshotStatus{Phase: "Pending"},
 	}
+	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
 			_ = json.NewEncoder(w).Encode(snapshot)
-			return
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+			var p struct {
+				Status model.MachineSnapshotRestoreStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			restoreStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
-		http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 	}))
 	defer srv.Close()
 	kc, _ := kube.New(srv.URL, "", "", false)
@@ -65,8 +74,56 @@ func TestReconcileSnapshotRestoreRejectsANotYetReadySnapshot(t *testing.T) {
 		Metadata: model.ObjectMeta{Name: "r1", Namespace: "prod"},
 		Spec:     model.MachineSnapshotRestoreSpec{SnapshotName: "snap", TargetClaimName: "restored-pvc"},
 	}
-	if err := ctl.reconcileSnapshotRestore(context.Background(), restore); err == nil || !strings.Contains(err.Error(), "not ready to restore") {
-		t.Fatalf("err=%v", err)
+	// A snapshot that isn't ready *yet* -- e.g. this restore was created
+	// slightly before its MachineSnapshot finished -- must not become a
+	// permanent Failed with no further retries: reconcileSnapshotRestore
+	// itself patches Pending and returns nil, so Controller.Reconcile's own
+	// per-item error handling never marks it Failed.
+	if err := ctl.reconcileSnapshotRestore(context.Background(), restore); err != nil {
+		t.Fatalf("expected a nil error (parked Pending, not Failed), got %v", err)
+	}
+	if restoreStatus.Phase != "Pending" || !strings.Contains(restoreStatus.Message, "waiting for MachineSnapshot") {
+		t.Fatalf("expected a Pending status naming the wait, got %+v", restoreStatus)
+	}
+}
+
+func TestReconcileSnapshotRestoreParksPendingOnANotYetReadyVolumeSnapshot(t *testing.T) {
+	snapshot := model.MachineSnapshot{
+		Metadata: model.ObjectMeta{Name: "snap", Namespace: "prod"},
+		Status: model.MachineSnapshotStatus{
+			Phase: "Succeeded", ReadyToUse: true,
+			VolumeSnapshots: []model.VolumeSnapshotReference{{VolumeName: "root", VolumeSnapshotName: "snap-root", ReadyToUse: false}},
+		},
+	}
+	var restoreStatus model.MachineSnapshotRestoreStatus
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+			_ = json.NewEncoder(w).Encode(snapshot)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+			var p struct {
+				Status model.MachineSnapshotRestoreStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			restoreStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	restore := model.MachineSnapshotRestore{
+		Metadata: model.ObjectMeta{Name: "r1", Namespace: "prod"},
+		Spec:     model.MachineSnapshotRestoreSpec{SnapshotName: "snap", TargetClaimName: "restored-pvc"},
+	}
+	if err := ctl.reconcileSnapshotRestore(context.Background(), restore); err != nil {
+		t.Fatalf("expected a nil error (parked Pending, not Failed), got %v", err)
+	}
+	if restoreStatus.Phase != "Pending" || !strings.Contains(restoreStatus.Message, "waiting for VolumeSnapshot") {
+		t.Fatalf("expected a Pending status naming the wait, got %+v", restoreStatus)
 	}
 }
 

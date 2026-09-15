@@ -81,7 +81,15 @@ is simpler and works in the disaster-recovery case that actually matters.
 - One volume restored per `MachineSnapshotRestore` -- for a Machine with
   multiple snapshotted volumes, create one restore object per volume you
   need back.
-- No admission-time validation beyond what the CRD schema enforces --
-  `kairon-controller` fails a restore clearly (`status.phase: Failed`) if
-  the referenced `MachineSnapshot` isn't `Succeeded`/ready, but there's no
-  earlier warning at `kubectl apply` time.
+- No admission-time validation beyond what the CRD schema enforces -- there's
+  no earlier warning at `kubectl apply` time if `spec.snapshotName` points at
+  a `MachineSnapshot` that isn't `Succeeded`/ready yet. That's not treated as
+  a failure, though: `status.phase` parks at `Pending` (message names exactly
+  what it's waiting on) and retries automatically every reconcile tick, the
+  same "waiting on an external condition" posture step 1's own PVC-`Pending`
+  case above already has -- so creating the restore slightly before its
+  snapshot finishes just works once the snapshot catches up, no need to
+  delete and recreate it. `status.phase: Failed` is reserved for what
+  actually can't resolve itself: a missing/misspelled `spec.snapshotName` or
+  `spec.targetClaimName`, an ambiguous/unknown `spec.volumeName`, or a real
+  PVC-creation error.
