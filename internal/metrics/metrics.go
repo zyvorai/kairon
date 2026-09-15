@@ -174,10 +174,14 @@ func NewUIRecorder() *Recorder {
 		registry:           reg,
 		apiRequestDuration: newAPIRequestDurationMetric(),
 		uiRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "kairon_ui_request_duration_seconds",
-			Help:    "kairon-ui HTTP request duration, by method and response status class.",
+			Name: "kairon_ui_request_duration_seconds",
+			Help: "kairon-ui HTTP request duration, by method, route, and response status class. " +
+				"route is the registered mux pattern (e.g. \"/api/v1/machines/{namespace}/{name}\"), " +
+				"never the raw request path -- that keeps cardinality bounded against dynamic " +
+				"{namespace}/{name} segments the same way status_class already bounds it against " +
+				"the full HTTP status range.",
 			Buckets: prometheus.DefBuckets,
-		}, []string{"method", "status_class"}),
+		}, []string{"method", "route", "status_class"}),
 	}
 	reg.MustRegister(r.apiRequestDuration, r.uiRequestDuration)
 	return r
@@ -304,8 +308,11 @@ func (r *Recorder) ObserveAPIRequest(method string, d time.Duration, err error) 
 }
 
 // ObserveHTTPRequest records one kairon-ui HTTP request. No-op on any
-// Recorder but NewUIRecorder's.
-func (r *Recorder) ObserveHTTPRequest(method string, status int, d time.Duration) {
+// Recorder but NewUIRecorder's. route must be a registered mux pattern
+// (see internal/uiapi's routePattern), not a raw request path -- an
+// unbounded label value here would defeat the whole reason this is a
+// label instead of a log line.
+func (r *Recorder) ObserveHTTPRequest(method, route string, status int, d time.Duration) {
 	if r.uiRequestDuration == nil {
 		return
 	}
@@ -318,5 +325,5 @@ func (r *Recorder) ObserveHTTPRequest(method string, status int, d time.Duration
 	case status >= 300:
 		class = "3xx"
 	}
-	r.uiRequestDuration.WithLabelValues(method, class).Observe(d.Seconds())
+	r.uiRequestDuration.WithLabelValues(method, route, class).Observe(d.Seconds())
 }

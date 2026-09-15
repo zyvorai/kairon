@@ -155,16 +155,16 @@ func TestObserveAPIRequestCountsOkAndError(t *testing.T) {
 
 func TestObserveHTTPRequestBucketsByStatusClass(t *testing.T) {
 	r := NewUIRecorder()
-	r.ObserveHTTPRequest("GET", 200, time.Millisecond)
-	r.ObserveHTTPRequest("POST", 500, time.Millisecond)
+	r.ObserveHTTPRequest("GET", "/api/v1/machines/{namespace}/{name}", 200, time.Millisecond)
+	r.ObserveHTTPRequest("POST", "/api/v1/machines", 500, time.Millisecond)
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	rec := httptest.NewRecorder()
 	r.Handler().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	if !strings.Contains(body, `kairon_ui_request_duration_seconds_count{method="GET",status_class="2xx"} 1`) {
+	if !strings.Contains(body, `kairon_ui_request_duration_seconds_count{method="GET",route="/api/v1/machines/{namespace}/{name}",status_class="2xx"} 1`) {
 		t.Errorf("missing 2xx sample in:\n%s", body)
 	}
-	if !strings.Contains(body, `kairon_ui_request_duration_seconds_count{method="POST",status_class="5xx"} 1`) {
+	if !strings.Contains(body, `kairon_ui_request_duration_seconds_count{method="POST",route="/api/v1/machines",status_class="5xx"} 1`) {
 		t.Errorf("missing 5xx sample in:\n%s", body)
 	}
 }
@@ -203,7 +203,7 @@ func TestNodeRecorderOmitsControllerOnlyMetrics(t *testing.T) {
 func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 	r := NewUIRecorder()
 	r.ObserveReconcile(time.Millisecond, nil) // no-op: reconcileDuration is nil
-	r.ObserveHTTPRequest("GET", 200, time.Millisecond)
+	r.ObserveHTTPRequest("GET", "/api/v1/overview", 200, time.Millisecond)
 	r.ObserveAPIRequest("GET", time.Millisecond, nil)
 
 	req := httptest.NewRequest("GET", "/metrics", nil)

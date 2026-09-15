@@ -267,7 +267,43 @@ func (s *Server) Handler() http.Handler {
 	// every actual data fetch the page makes goes through the auth-gated
 	// /api/v1/... routes above.
 	top.HandleFunc("/", s.serveWeb)
-	return s.withMetrics(s.withRateLimit(top))
+	return s.withMetrics(top, api, s.withRateLimit(top))
+}
+
+// routePattern reports the registered mux pattern a request matches --
+// e.g. "/api/v1/machines/{namespace}/{name}" -- never the raw request
+// path, so withMetrics's route label stays bounded regardless of how
+// many distinct {namespace}/{name} values ever get requested (the same
+// reasoning status_class already applies to the full HTTP status range).
+// top's own patterns cover /healthz, /readyz, /metrics, the
+// unauthenticated auth/oidc/console routes, and the "/" SPA catch-all
+// directly; everything under the api sub-mux (mounted at top's own
+// "/api/v1/" prefix pattern) needs a second lookup against api itself to
+// get the specific route rather than that one prefix -- a sub-lookup
+// that finds nothing there is a genuine 404 inside /api/v1/, reported as
+// "unmatched" rather than falsely collapsing onto the outer "/api/v1/"
+// prefix pattern (which would otherwise conflate every unknown API path
+// with the different, real case of something actually registered at
+// exactly that prefix). A leading "METHOD " a pattern may carry (Go's
+// ServeMux includes it verbatim in the pattern string for method-scoped
+// registrations) is stripped -- method is already its own separate
+// label, so keeping it here would only duplicate it inside route.
+func routePattern(top, api *http.ServeMux, r *http.Request) string {
+	_, pattern := top.Handler(r)
+	if pattern == "/api/v1/" {
+		_, sub := api.Handler(r)
+		if sub == "" {
+			return "unmatched"
+		}
+		pattern = sub
+	}
+	if pattern == "" {
+		return "unmatched"
+	}
+	if i := strings.IndexByte(pattern, ' '); i >= 0 {
+		pattern = pattern[i+1:]
+	}
+	return pattern
 }
 
 // withRateLimit rejects a request with 429 (Retry-After set, same
@@ -358,15 +394,19 @@ func (s *Server) clientIP(r *http.Request) string {
 // unauthenticated call (a failed login, a probe) is real signal too, not
 // just successful API calls. No-op wrapper when Metrics isn't configured,
 // so this changes nothing about behavior or performance without it.
-func (s *Server) withMetrics(next http.Handler) http.Handler {
+// top/api are passed through only to resolve the request's route label
+// (see routePattern) -- next is the already-composed rate-limit/mux
+// chain those two build, still what actually serves the request.
+func (s *Server) withMetrics(top, api *http.ServeMux, next http.Handler) http.Handler {
 	if s.Metrics == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		route := routePattern(top, api, r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		s.Metrics.ObserveHTTPRequest(r.Method, rec.status, time.Since(start))
+		s.Metrics.ObserveHTTPRequest(r.Method, route, rec.status, time.Since(start))
 	})
 }
 

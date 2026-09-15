@@ -74,11 +74,14 @@ Prometheus `rule_files` config directly.
   production-readiness review as a design decision to make explicitly if
   it comes up, not something to add by default (it would be a third
   deliberate exception to Go-stdlib-only, after OIDC and CSI).
-- No per-route latency breakdown for `kairon-ui`'s
-  `kairon_ui_request_duration_seconds` -- labeled by method and status
-  class only, not path, to keep cardinality bounded (dynamic path
-  parameters like `{namespace}/{name}` would otherwise multiply label
-  combinations unbounded).
+- `kairon-ui`'s `kairon_ui_request_duration_seconds` now carries a
+  `route` label -- the registered mux *pattern* a request matched (e.g.
+  `/api/v1/machines/{namespace}/{name}`), never the raw request path, so
+  cardinality stays bounded regardless of how many distinct
+  Machines/namespaces are ever actually requested, the same way
+  `status_class` already bounds it against the full HTTP status range
+  instead of the raw numeric code. A request matching nothing registered
+  under `/api/v1/` (a genuine 404) reports `route="unmatched"`.
 - `kairon_reconcile_errors_total` counts a whole reconcile tick failing,
   not which specific Machine/migration/snapshot inside that tick caused
   it -- check the accompanying "reconcile failed"/"agent stopped" log

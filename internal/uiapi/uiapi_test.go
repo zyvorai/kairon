@@ -281,6 +281,8 @@ func TestAuditLogsMutatingRequestsNotReads(t *testing.T) {
 
 func TestMetricsRouteAndRequestObservationAreOptIn(t *testing.T) {
 	fk := newFakeKube()
+	fk.machines["a"] = model.Machine{Metadata: model.ObjectMeta{Name: "a", Namespace: "default"}}
+	fk.machines["b"] = model.Machine{Metadata: model.ObjectMeta{Name: "b", Namespace: "default"}}
 	s := newTestServer(t, fk, "")
 	h := s.Handler()
 
@@ -297,6 +299,16 @@ func TestMetricsRouteAndRequestObservationAreOptIn(t *testing.T) {
 	h = s.Handler()
 
 	doJSON(t, h, http.MethodGet, "/api/v1/overview", "", nil)
+	// Two distinct real Machine paths under the same dynamic
+	// {namespace}/{name} pattern -- must collapse into one route label,
+	// not blow up cardinality one bucket per Machine.
+	doJSON(t, h, http.MethodGet, "/api/v1/machines/default/a", "", nil)
+	doJSON(t, h, http.MethodGet, "/api/v1/machines/default/b", "", nil)
+	// Matches top's own "/api/v1/" prefix pattern (dispatching into the
+	// api sub-mux) but nothing registered inside api itself -- unlike
+	// "/does/not/exist", which the top-level "/" SPA catch-all would
+	// itself report as a real, if generic, route.
+	doJSON(t, h, http.MethodGet, "/api/v1/this-route-does-not-exist", "", nil)
 
 	rr = doJSON(t, h, http.MethodGet, "/metrics", "", nil)
 	if rr.Code != http.StatusOK {
@@ -305,6 +317,15 @@ func TestMetricsRouteAndRequestObservationAreOptIn(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "kairon_ui_request_duration_seconds") {
 		t.Errorf("missing kairon_ui_request_duration_seconds in:\n%s", body)
+	}
+	if !strings.Contains(body, `route="/api/v1/overview"`) {
+		t.Errorf("missing overview route label in:\n%s", body)
+	}
+	if !strings.Contains(body, `kairon_ui_request_duration_seconds_count{method="GET",route="/api/v1/machines/{namespace}/{name}",status_class="2xx"} 2`) {
+		t.Errorf("expected both distinct Machine paths to collapse into one route label with count 2, got:\n%s", body)
+	}
+	if !strings.Contains(body, `route="unmatched"`) {
+		t.Errorf("expected a 404 to report route=\"unmatched\", got:\n%s", body)
 	}
 }
 
