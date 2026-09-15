@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, apiJSON, getConfig, isAdmin } from '../api';
 import { Machine } from '../types';
-import { badgeClass } from '../lib/phase';
+import { badgeClass, formatBytes } from '../lib/phase';
 import Console from './Console';
 import Exec from './Exec';
 import AgentFiles from './AgentFiles';
@@ -224,8 +224,18 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                 <td>
                   <span className={badgeClass(m.status?.phase || '')}>{m.status?.phase || 'Unknown'}</span>
                 </td>
-                <td>{m.spec.resources.cpu}</td>
-                <td>{m.spec.resources.memory}</td>
+                <td>
+                  {m.spec.resources.cpu}
+                  {m.status?.resourceUsage?.cpuPercent !== undefined && (
+                    <span className="usageHint"> ({m.status.resourceUsage.cpuPercent.toFixed(0)}%)</span>
+                  )}
+                </td>
+                <td>
+                  {m.spec.resources.memory}
+                  {m.status?.resourceUsage?.memoryBytes !== undefined && (
+                    <span className="usageHint"> ({formatBytes(m.status.resourceUsage.memoryBytes)})</span>
+                  )}
+                </td>
                 <td>{m.status?.guestIP || '-'}</td>
                 <td>
                   <div className="rowactions">

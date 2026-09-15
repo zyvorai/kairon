@@ -286,6 +286,11 @@ table.datatable .rowactions button {
 .badge-error { background: var(--apple-danger-bg); color: #b42318; }
 .badge-idle { background: #eee; color: #555; }
 
+.usageHint {
+  font-size: 11px;
+  color: #888;
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

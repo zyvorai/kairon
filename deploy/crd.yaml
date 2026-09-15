@@ -408,6 +408,20 @@ spec:
                   pidsMax:
                     type: integer
                     format: int64
+              resourceUsage:
+                type: object
+                properties:
+                  cpuPercent:
+                    type: number
+                  memoryBytes:
+                    type: integer
+                    format: int64
+                  diskReadBytes:
+                    type: integer
+                    format: int64
+                  diskWriteBytes:
+                    type: integer
+                    format: int64
               volumeStagingPath:
                 type: string
               volumePublishPath:

@@ -285,6 +285,20 @@ type ResourceLimits struct {
 	PIDsMax *uint64 `json:"pidsMax,omitempty"`
 }
 
+// ResourceUsage mirrors FluxVM's own VmMetrics exactly (GET
+// /v1/vms/{id}/stats) -- see MachineStatus.ResourceUsage's own doc
+// comment.
+type ResourceUsage struct {
+	// CPUPercent is a percentage of one core, averaged over the VMM
+	// process's entire lifetime (not an instantaneous rate) -- can
+	// exceed 100 for a multi-vCPU Machine using more than one core's
+	// worth of time.
+	CPUPercent     float64 `json:"cpuPercent"`
+	MemoryBytes    uint64  `json:"memoryBytes"`
+	DiskReadBytes  uint64  `json:"diskReadBytes"`
+	DiskWriteBytes uint64  `json:"diskWriteBytes"`
+}
+
 type RuntimeSpec struct {
 	Backend string `json:"backend,omitempty"`
 	Kernel  string `json:"kernel,omitempty"`
@@ -428,6 +442,12 @@ type MachineStatus struct {
 	// purely so internal/agent/resourcelimits.go can skip a redundant FluxVM
 	// call when nothing has actually changed since the last reconcile tick.
 	AppliedResourceLimits *ResourceLimits `json:"appliedResourceLimits,omitempty"`
+	// ResourceUsage is this Machine's live, cgroup-derived resource usage
+	// as of the last reconcile tick (FluxVM's own GET /v1/vms/{id}/stats,
+	// backend-agnostic) -- a point-in-time snapshot refreshed every tick,
+	// not a time series; nil until the first successful reconcile after
+	// the runtime exists. See docs/guides/machine-resource-limits.md.
+	ResourceUsage *ResourceUsage `json:"resourceUsage,omitempty"`
 	// VolumeStagingPath/VolumePublishPath record that kairon-node has
 	// already called NodeStageVolume/NodePublishVolume (see
 	// internal/agent/storage.go, internal/csinode) for this Machine's

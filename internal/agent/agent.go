@@ -221,6 +221,15 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		a.Log.Error("resource limits reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", limitsErr)
 		status.Message = limitsErr.Error()
 	}
+	// Best-effort, purely observational -- a stats read failing (e.g. a
+	// FluxVM predating this endpoint) never blocks the rest of
+	// reconcile; status.resourceUsage just stays at its last known value.
+	if usage, err := a.Flux.GetStats(ctx, rec.ID()); err == nil {
+		status.ResourceUsage = &model.ResourceUsage{
+			CPUPercent: usage.CPUUsagePercent, MemoryBytes: usage.MemoryUsageBytes,
+			DiskReadBytes: usage.DiskReadBytes, DiskWriteBytes: usage.DiskWriteBytes,
+		}
+	}
 	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
 		return err
 	}

@@ -24,6 +24,7 @@ export interface Machine {
     nodeName?: string;
     guestIP?: string;
     message?: string;
+    resourceUsage?: { cpuPercent?: number; memoryBytes?: number; diskReadBytes?: number; diskWriteBytes?: number };
   };
 }
 

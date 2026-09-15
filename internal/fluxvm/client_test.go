@@ -326,6 +326,42 @@ func TestLookupArray(t *testing.T) {
 	}
 }
 
+func TestGetStats(t *testing.T) {
+	var gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cpu_usage_percent": 42.5, "memory_usage_bytes": 123456, "disk_read_bytes": 111, "disk_write_bytes": 222,
+		})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	stats, err := c.GetStats(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/stats" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if stats.CPUUsagePercent != 42.5 || stats.MemoryUsageBytes != 123456 || stats.DiskReadBytes != 111 || stats.DiskWriteBytes != 222 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestGetStatsPropagatesErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "VM not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.GetStats(context.Background(), "vm-1"); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+}
+
 func TestPauseAndResume(t *testing.T) {
 	var gotPath string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

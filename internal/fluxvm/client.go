@@ -384,6 +384,43 @@ func (c *Client) SetResourceLimits(ctx context.Context, id string, limits model.
 	return err
 }
 
+// Stats is a running VM's live cgroup-derived resource usage --
+// FluxVM's GET /v1/vms/{id}/stats, backend-agnostic (cgroup-based, like
+// SetResourceLimits above, not a backend-specific API).
+type Stats struct {
+	// CPUUsagePercent is a percentage of one core, averaged over the
+	// VMM process's entire lifetime (not an instantaneous rate) -- can
+	// exceed 100 for a multi-vCPU Machine using more than one core's
+	// worth of time.
+	CPUUsagePercent  float64 `json:"cpuUsagePercent"`
+	MemoryUsageBytes uint64  `json:"memoryUsageBytes"`
+	DiskReadBytes    uint64  `json:"diskReadBytes"`
+	DiskWriteBytes   uint64  `json:"diskWriteBytes"`
+}
+
+// GetStats reads a running VM's current resource usage.
+func (c *Client) GetStats(ctx context.Context, id string) (*Stats, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/stats", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		CPUUsagePercent  float64 `json:"cpu_usage_percent"`
+		MemoryUsageBytes uint64  `json:"memory_usage_bytes"`
+		DiskReadBytes    uint64  `json:"disk_read_bytes"`
+		DiskWriteBytes   uint64  `json:"disk_write_bytes"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode vm stats: %w", err)
+	}
+	return &Stats{
+		CPUUsagePercent:  out.CPUUsagePercent,
+		MemoryUsageBytes: out.MemoryUsageBytes,
+		DiskReadBytes:    out.DiskReadBytes,
+		DiskWriteBytes:   out.DiskWriteBytes,
+	}, nil
+}
+
 // Pause suspends a running VM's guest CPUs via FluxVM's real QMP
 // stop/cont (or the equivalent on Cloud Hypervisor/Firecracker --
 // backend-agnostic, unlike hotplug/NUMA/hugepages) -- RAM and device

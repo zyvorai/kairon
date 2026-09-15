@@ -40,6 +40,28 @@ Machine takes effect on the next reconcile tick, and unlike hotplug it can
 be **raised or lowered freely at any time**: a cgroup limit change has none
 of hotplug's "can't unplug a vCPU" one-way asymmetry.
 
+## Watching live usage (`status.resourceUsage`)
+
+Every reconcile tick, `kairon-node` also reads FluxVM's own
+`GET /v1/vms/{id}/stats` (the same cgroup-derived, backend-agnostic
+mechanism `limits` above enforces against) and projects it into
+`status.resourceUsage`:
+
+```yaml
+status:
+  resourceUsage:
+    cpuPercent: 42.5       # % of one core, averaged over the process's whole lifetime
+    memoryBytes: 2147483648
+    diskReadBytes: 10485760
+    diskWriteBytes: 5242880
+```
+
+The dashboard shows this inline next to each Machine's CPU/Memory
+columns. It's a point-in-time snapshot refreshed every tick, not a time
+series -- for historical graphs, use `kairon_reconcile_duration_seconds`-
+style Prometheus metrics or your own external monitoring against the
+guest itself, not this field.
+
 ## Why this exists
 
 Every Machine here runs as a bare process on the host, not inside a Pod --
