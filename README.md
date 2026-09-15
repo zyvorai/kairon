@@ -115,6 +115,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **DRA → VFIO** — an allocated `ResourceClaim`'s PCI BDF against the node's `vfio_devices` administrator allowlist, fail-closed (an empty allowlist denies all passthrough)
 - **CPU/memory hotplug** — grow a running Machine's `spec.resources` via FluxVM's real QMP `device_add`/`object-add`, no reboot — [guide](docs/guides/machine-hotplug.md)
 - **Guest agent** (`spec.guestAgent`) — real `qemu-guest-agent`-reported `status.guestIP`, including for `user`/SLIRP networking, which has no DHCP lease to parse at all — [guide](docs/guides/machine-guest-agent.md)
+- **Guest exec** (`spec.guestAgent.enabled`, admin-only) — run a one-shot command inside the guest via `kairon-ui`'s dashboard, no SSH/console needed — real `qemu-guest-agent` guest-exec, synchronous, exit code + stdout/stderr — [guide](docs/guides/machine-guest-exec.md)
 
 **Migration**
 - **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API

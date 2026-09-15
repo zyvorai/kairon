@@ -64,6 +64,11 @@ can't tell you which one it picked -- read `status.guestIPs` (or
   on the next reconcile tick -- not a hard error.
 - This is unrelated to FluxVM's own bespoke `spec.agent` (a different,
   vsock-based protocol requiring its own FluxVM-specific guest binary,
-  powering `kaironctl exec`-style features Kairon doesn't expose yet) --
-  `spec.guestAgent` here is specifically the real, upstream
-  `qemu-guest-agent` over virtio-serial.
+  `fluxvm-guest-agent`, powering an interactive text console Kairon
+  doesn't expose yet -- see `docs/architecture.md`) -- `spec.guestAgent`
+  here is specifically the real, upstream `qemu-guest-agent` over
+  virtio-serial. This same flag also gates two other, separately
+  documented capabilities built on that same channel: application-
+  consistent `MachineSnapshot` quiesce
+  ([guide](machine-snapshot-quiesce.md)) and running a one-shot command
+  inside the guest ([guide](machine-guest-exec.md)).

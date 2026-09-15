@@ -77,10 +77,20 @@ A graphical VNC console is available (`console.enabled`, off by default):
 `kairon-ui` relays a browser WebSocket through `kairon-node` to the VM's
 local, otherwise-unreachable QEMU VNC socket (`<workspace>/vnc.sock`,
 QEMU-backend only) -- see SECURITY.md's "VNC console" section for the
-trust model before enabling it. Text console (FluxVM's own vsock-based
-`GET /v1/vms/{id}/console` shell) and guest-exec (`/qga/*`) are a
-different transport entirely and remain unwrapped, as does live resize
-(`POST /v1/vms/{id}/resources`) -- tracked as future work.
+trust model before enabling it. Guest-exec (`POST /v1/vms/{id}/qga/exec`,
+FluxVM's real qemu-guest-agent) is now wrapped the same way -- one
+synchronous request/response relay, not a long-lived connection --
+requiring `spec.guestAgent.enabled` and an admin account; see SECURITY.md's
+"Guest exec" section. FluxVM's own vsock-based interactive text console
+(`GET /v1/vms/{id}/console`, `virtctl console`'s equivalent) remains
+unwrapped: it needs FluxVM's own proprietary in-guest agent binary
+(`fluxvm-guest-agent`, a separate systemd service from qemu-guest-agent)
+baked into the guest image, a new dependency this project hasn't asked of
+users before, plus a new spec field and a browser terminal UI -- tracked as
+future work, not started. Live cgroup resize (`POST /v1/vms/{id}/resources`)
+also remains unwrapped, and is lower priority: it's a different mechanism
+from the QMP hotplug Kairon already wraps (`internal/agent/hotplug.go`),
+which already covers growing a running Machine's live resources.
 
 ## Operational visibility
 

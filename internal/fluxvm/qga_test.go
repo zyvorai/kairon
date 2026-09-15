@@ -65,3 +65,77 @@ func TestQGAFsfreezePropagatesErrors(t *testing.T) {
 		t.Fatal("expected an error when the server rejects the request")
 	}
 }
+
+func TestQGAExecWithPathAndArgs(t *testing.T) {
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/vms/vm-1/qga/exec" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": "hello\n", "stderr": ""})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	res, err := c.QGAExec(context.Background(), "vm-1", QGAExecRequest{Path: "/bin/echo", Args: []string{"hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 || res.Stdout != "hello\n" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if gotBody["path"] != "/bin/echo" {
+		t.Fatalf("expected path in request body, got %+v", gotBody)
+	}
+	if _, hasPowershell := gotBody["powershell"]; hasPowershell {
+		t.Fatalf("did not expect a powershell key alongside path, got %+v", gotBody)
+	}
+}
+
+func TestQGAExecWithPowershell(t *testing.T) {
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 1, "stdout": "", "stderr": "boom"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	timeout := uint64(30)
+	res, err := c.QGAExec(context.Background(), "vm-1", QGAExecRequest{Powershell: "Get-Process", TimeoutSeconds: &timeout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 1 || res.Stderr != "boom" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if gotBody["powershell"] != "Get-Process" || gotBody["timeout_seconds"] != float64(30) {
+		t.Fatalf("unexpected request body: %+v", gotBody)
+	}
+}
+
+func TestQGAExecRejectsAmbiguousOrEmptyRequest(t *testing.T) {
+	c := New("http://unused", "")
+	if _, err := c.QGAExec(context.Background(), "vm-1", QGAExecRequest{}); err == nil {
+		t.Fatal("expected an error when neither Path nor Powershell is set")
+	}
+	if _, err := c.QGAExec(context.Background(), "vm-1", QGAExecRequest{Path: "/bin/echo", Powershell: "Get-Process"}); err == nil {
+		t.Fatal("expected an error when both Path and Powershell are set")
+	}
+}
+
+func TestQGAExecPropagatesErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.QGAExec(context.Background(), "vm-1", QGAExecRequest{Path: "/bin/echo"}); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+}

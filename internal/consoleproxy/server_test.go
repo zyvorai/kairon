@@ -133,6 +133,92 @@ func TestHandleConsoleRelaysBytesToVNCSocket(t *testing.T) {
 	}
 }
 
+// newFakeFluxExec returns a fake FluxVM server that answers
+// POST /v1/vms/vm-1/qga/exec, capturing the decoded request body for the
+// caller to inspect.
+func newFakeFluxExec(t *testing.T, gotBody *map[string]any, exitCode int64, stdout, stderr string) *fluxvm.Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/vms/vm-1/qga/exec" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": exitCode, "stdout": stdout, "stderr": stderr})
+	}))
+	t.Cleanup(srv.Close)
+	return fluxvm.New(srv.URL, "")
+}
+
+func TestHandleExecRejectsWrongOrMissingToken(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxExec(t, &got, 0, "", ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/bin/echo"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/exec/vm-1", body)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with no token, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleExecRelaysRequestAndResponse(t *testing.T) {
+	var got map[string]any
+	s := &Server{Flux: newFakeFluxExec(t, &got, 0, "hello\n", ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/bin/echo","args":["hello"]}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/exec/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out execResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ExitCode != 0 || out.Stdout != "hello\n" {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if got["path"] != "/bin/echo" {
+		t.Fatalf("expected the request to be forwarded to FluxVM, got %+v", got)
+	}
+}
+
+func TestHandleExecPropagatesFluxVMFailure(t *testing.T) {
+	srv404 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer srv404.Close()
+	s := &Server{Flux: fluxvm.New(srv404.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"path":"/bin/echo"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/exec/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 when FluxVM rejects the exec, got %d", resp.StatusCode)
+	}
+}
+
 func TestHandleConsoleRejectsUnknownRuntime(t *testing.T) {
 	// A fake Flux client that always 404s -- exercises the "lookup
 	// runtime" failure path distinct from "no workspace on the record".

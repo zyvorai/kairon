@@ -52,3 +52,69 @@ func (c *Client) QGAFsfreezeThaw(ctx context.Context, id string) (int64, error) 
 	}
 	return out.Thawed, nil
 }
+
+// QGAExecResult is the outcome of a guest-exec call -- run to completion
+// (or until timeoutSeconds elapses) by FluxVM itself before this returns,
+// never a fire-and-poll handle. QEMU's own guest-exec/guest-exec-status
+// QGA commands are the polling pair underneath; FluxVM does that polling
+// internally so Kairon (and its callers) only ever see one synchronous
+// round trip.
+type QGAExecResult struct {
+	ExitCode int64  `json:"exitCode"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+}
+
+// QGAExecRequest names what to run: either Path+Args (a real argv, no
+// shell involved -- QGA's guest-exec never invokes a shell, so there's no
+// injection surface from Args), or Powershell as a convenience for a
+// Windows guest (`powershell.exe -Command <Powershell>`, FluxVM's own
+// shorthand). Exactly one of Path or Powershell must be set. TimeoutSeconds
+// defaults to FluxVM's own 60s when nil.
+type QGAExecRequest struct {
+	Path           string
+	Args           []string
+	Powershell     string
+	TimeoutSeconds *uint64
+}
+
+// QGAExec calls FluxVM's real qemu-guest-agent guest-exec (+ its own
+// guest-exec-status polling, done entirely on FluxVM's side) to run a
+// command inside the guest and return its exit code and captured
+// stdout/stderr -- no SSH key, no network path into the guest, and no
+// interactive shell required, unlike a VNC/serial console. Only meaningful
+// for a VM created with spec.guestAgent.enabled; FluxVM returns a clear
+// error otherwise. A command that outlives TimeoutSeconds (or FluxVM's own
+// 60s default) returns an error from this call -- there is no partial
+// result or way to attach to it afterward, since FluxVM's own guest-exec
+// wrapper doesn't expose one either.
+func (c *Client) QGAExec(ctx context.Context, id string, req QGAExecRequest) (*QGAExecResult, error) {
+	if (req.Path == "") == (req.Powershell == "") {
+		return nil, fmt.Errorf("qga exec requires exactly one of Path or Powershell")
+	}
+	payload := map[string]any{}
+	if req.Path != "" {
+		payload["path"] = req.Path
+		if len(req.Args) > 0 {
+			payload["args"] = req.Args
+		}
+	} else {
+		payload["powershell"] = req.Powershell
+	}
+	if req.TimeoutSeconds != nil {
+		payload["timeout_seconds"] = *req.TimeoutSeconds
+	}
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/qga/exec", payload)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		ExitCode int64  `json:"exit_code"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode qga exec: %w", err)
+	}
+	return &QGAExecResult{ExitCode: out.ExitCode, Stdout: out.Stdout, Stderr: out.Stderr}, nil
+}

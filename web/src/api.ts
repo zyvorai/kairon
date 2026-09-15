@@ -147,3 +147,25 @@ export async function getConsoleWebSocketURL(namespace: string, name: string): P
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${window.location.host}/api/v1/machines/${namespace}/${encodeURIComponent(name)}/console?ticket=${encodeURIComponent(out.ticket)}`;
 }
+
+export interface ExecRequest {
+  path?: string;
+  args?: string[];
+  powershell?: string;
+  timeoutSeconds?: number;
+}
+
+export interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+// execInMachine runs a command inside the guest via kairon-node ->
+// FluxVM's real qemu-guest-agent guest-exec (internal/uiapi/exec.go) --
+// requires spec.guestAgent.enabled and an admin account server-side; this
+// call surfaces whatever plain-text/JSON error the server returns on
+// either failure the same way every other api() call does.
+export function execInMachine(namespace: string, name: string, req: ExecRequest): Promise<ExecResult> {
+  return apiJSON<ExecResult>(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/exec`, 'POST', req);
+}

@@ -505,6 +505,31 @@ table.datatable .rowactions button {
 }
 .consoleScreen canvas { display: block; margin: auto; }
 
+.execBody {
+  flex: 1;
+  overflow: auto;
+  padding: 18px;
+  color: #f5f5f7;
+  font-size: 13px;
+}
+.execForm { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+.execForm input { flex: 1; min-width: 160px; }
+.execModeRow { display: flex; gap: 16px; width: 100%; margin-bottom: 4px; }
+.execError { color: #ff6961; margin-bottom: 12px; }
+.execExitCode { margin-bottom: 8px; }
+.execStreamLabel { color: #999; margin-bottom: 4px; }
+.execStream {
+  background: #000;
+  color: #f5f5f7;
+  padding: 10px;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 40vh;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 12px;
+}
+
 @media (max-width: 900px) {
   .nav { align-items: flex-start; gap: 12px; overflow: auto; }
   .navlinks { min-width: max-content; }

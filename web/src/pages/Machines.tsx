@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { api, apiJSON, getConfig } from '../api';
+import { api, apiJSON, getConfig, isAdmin } from '../api';
 import { Machine } from '../types';
 import { badgeClass } from '../lib/phase';
 import Console from './Console';
+import Exec from './Exec';
 
 // QEMU is the only backend FluxVM gives a VNC display to at all (Cloud
 // Hypervisor/Firecracker have no display device) -- an empty/"auto"
@@ -10,6 +11,17 @@ import Console from './Console';
 function consoleEligible(m: Machine): boolean {
   const backend = m.spec.runtime?.backend;
   return m.status?.phase === 'Running' && (!backend || backend === 'qemu' || backend === 'auto');
+}
+
+// execEligible mirrors internal/uiapi/exec.go's own server-side checks
+// that don't depend on the caller's identity (Running + guestAgent
+// enabled) -- the admin-only check is applied separately via isAdmin(),
+// since that's a property of who's looking at this page, not of the
+// Machine. Unlike the VNC console, exec works for every backend: it rides
+// FluxVM's real qemu-guest-agent channel, not a QEMU-specific display
+// device.
+function execEligible(m: Machine): boolean {
+  return m.status?.phase === 'Running' && !!m.spec.guestAgent?.enabled;
 }
 
 interface CreateForm {
@@ -44,6 +56,11 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [consoleFor, setConsoleFor] = useState<string | null>(null);
+  const [execFor, setExecFor] = useState<string | null>(null);
+  // consoleEnabled also gates exec: both ride the exact same kairon-ui ->
+  // kairon-node relay (internal/consoleproxy), so a deployment either has
+  // that relay configured or it doesn't -- see internal/uiapi/exec.go's
+  // own doc comment.
   const [consoleEnabled, setConsoleEnabled] = useState(false);
 
   const refresh = () =>
@@ -200,6 +217,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
                     <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
                     {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
+                    {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
                     <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
@@ -218,6 +236,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
         </table>
       </div>
       {consoleFor && <Console namespace="default" name={consoleFor} onClose={() => setConsoleFor(null)} />}
+      {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
     </div>
   );
 }
