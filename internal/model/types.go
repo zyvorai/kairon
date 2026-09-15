@@ -164,6 +164,22 @@ type CloudInitSpec struct {
 	SSHAuthorizedKeys []string `json:"sshAuthorizedKeys,omitempty"`
 	Packages          []string `json:"packages,omitempty"`
 	RunCmd            []string `json:"runCmd,omitempty"`
+	// WriteFiles drops files into the guest before first boot via
+	// cloud-init's own write_files module -- e.g. a systemd unit or an
+	// app config file, without a custom image build. Forwarded verbatim
+	// to FluxVM's own CloudInitSpec.write_files, which already existed
+	// and was simply never surfaced here until now.
+	WriteFiles []CloudInitFile `json:"writeFiles,omitempty"`
+}
+
+// CloudInitFile is one entry of CloudInitSpec.WriteFiles, mirroring
+// FluxVM's own CloudInitFile exactly.
+type CloudInitFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	// Permissions is an octal file mode string, e.g. "0644" -- defaults to
+	// cloud-init's own default (0644) when unset.
+	Permissions string `json:"permissions,omitempty"`
 }
 
 type ImageSpec struct {

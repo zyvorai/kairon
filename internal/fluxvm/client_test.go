@@ -240,6 +240,57 @@ func TestCreateUserForwards(t *testing.T) {
 	}
 }
 
+func TestCreateWiresCloudInitWriteFiles(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"},
+			CloudInit: model.CloudInitSpec{WriteFiles: []model.CloudInitFile{
+				{Path: "/etc/app/config.yaml", Content: "key: value\n", Permissions: "0600"},
+			}},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if got.CloudInit == nil || len(got.CloudInit.WriteFiles) != 1 {
+		t.Fatalf("expected write_files to be forwarded, got %+v", got.CloudInit)
+	}
+	f := got.CloudInit.WriteFiles[0]
+	if f.Path != "/etc/app/config.yaml" || f.Content != "key: value\n" || f.Permissions != "0600" {
+		t.Fatalf("unexpected write_files entry: %+v", f)
+	}
+}
+
+func TestCreateOmitsCloudInitWhenNothingSet(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if got.CloudInit != nil {
+		t.Fatalf("expected no cloud_init payload when nothing is set, got %+v", got.CloudInit)
+	}
+}
+
 func TestSetVMNetworkPolicy(t *testing.T) {
 	var path string
 	var body WireVmNetworkPolicy

@@ -93,11 +93,22 @@ spec:
       - nginx
     runCmd:
       - systemctl enable --now nginx
+    writeFiles:
+      - path: /etc/nginx/conf.d/app.conf
+        content: |
+          server { listen 8080; location / { proxy_pass http://127.0.0.1:3000; } }
+        permissions: "0644"
 ```
 
+`writeFiles` drops a file into the guest before first boot via
+cloud-init's own `write_files` module -- e.g. a systemd unit or an app
+config -- without needing a custom-baked image. `permissions` is an octal
+mode string (defaults to cloud-init's own `0644` when unset).
+
 Equivalent flags: `kaironctl create ... --hostname web-01 --user ops --ssh-key "ssh-ed25519 AAAA..." --package nginx --runcmd "systemctl enable --now nginx"`
-(`--ssh-key`/`--package`/`--runcmd` are repeatable). The dashboard's create
-form exposes a hostname field and a single SSH key field.
+(`--ssh-key`/`--package`/`--runcmd` are repeatable) -- `writeFiles` has no
+`kaironctl create` flag yet, only the YAML/kubectl path. The dashboard's
+create form exposes a hostname field and a single SSH key field.
 
 Like `forwards` above, `cloudInit` only takes effect when the FluxVM runtime
 is first created -- it has no effect on an already-running Machine. It

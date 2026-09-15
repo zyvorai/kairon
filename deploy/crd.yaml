@@ -198,6 +198,20 @@ spec:
                     type: array
                     items:
                       type: string
+                  writeFiles:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - path
+                      - content
+                      properties:
+                        path:
+                          type: string
+                        content:
+                          type: string
+                        permissions:
+                          type: string
               powerState:
                 type: string
                 enum:

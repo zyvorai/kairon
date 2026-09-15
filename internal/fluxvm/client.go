@@ -63,15 +63,25 @@ func (r Record) ID() string {
 }
 
 // CloudInitSpec mirrors FluxVM's own cloud-init NoCloud datasource fields
-// (fluxvm-core/src/model.rs CloudInitSpec) that Kairon currently exposes.
-// FluxVM also has a write_files field; not yet surfaced here.
+// (fluxvm-core/src/model.rs CloudInitSpec) that Kairon exposes.
 type CloudInitSpec struct {
-	Hostname          string   `json:"hostname,omitempty"`
-	User              string   `json:"user,omitempty"`
-	SSHAuthorizedKeys []string `json:"ssh_authorized_keys,omitempty"`
-	Packages          []string `json:"packages,omitempty"`
-	RunCmd            []string `json:"runcmd,omitempty"`
-	StaticNetwork     bool     `json:"static_network,omitempty"`
+	Hostname          string          `json:"hostname,omitempty"`
+	User              string          `json:"user,omitempty"`
+	SSHAuthorizedKeys []string        `json:"ssh_authorized_keys,omitempty"`
+	Packages          []string        `json:"packages,omitempty"`
+	RunCmd            []string        `json:"runcmd,omitempty"`
+	StaticNetwork     bool            `json:"static_network,omitempty"`
+	WriteFiles        []CloudInitFile `json:"write_files,omitempty"`
+}
+
+// CloudInitFile mirrors FluxVM's own CloudInitFile exactly (fluxvm-core's
+// cloud-init write_files module) -- drops a file into the guest before
+// first boot, e.g. a systemd unit or an app config, with no custom image
+// build needed.
+type CloudInitFile struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Permissions string `json:"permissions,omitempty"`
 }
 
 type CreateRequest struct {
@@ -289,7 +299,11 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		payload.Agent = &AgentSpec{Enabled: true}
 	}
 	ci := m.Spec.CloudInit
-	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 {
+	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 || len(ci.WriteFiles) > 0 {
+		var writeFiles []CloudInitFile
+		for _, f := range ci.WriteFiles {
+			writeFiles = append(writeFiles, CloudInitFile{Path: f.Path, Content: f.Content, Permissions: f.Permissions})
+		}
 		payload.CloudInit = &CloudInitSpec{
 			Hostname:          ci.Hostname,
 			User:              ci.User,
@@ -297,6 +311,7 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 			Packages:          ci.Packages,
 			RunCmd:            ci.RunCmd,
 			StaticNetwork:     m.Spec.Network.StaticNetwork,
+			WriteFiles:        writeFiles,
 		}
 	}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
