@@ -275,11 +275,19 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 	}
 	tenant := m.Namespace()
 	network := BuildNetworkMap(m.Spec.Network)
+	image := m.Spec.Image.Path
+	if m.Spec.Image.CatalogName != "" {
+		// FluxVM's own CreateVmRequest.image field already accepts a
+		// catalog alias interchangeably with a raw path -- passed through
+		// as-is, never fenced against --image-root (it was never a
+		// filesystem path Kairon itself resolved).
+		image = m.Spec.Image.CatalogName
+	}
 	payload := CreateRequest{
 		Name:         m.RuntimeName(),
 		Tenant:       tenant,
 		Backend:      backend,
-		Image:        m.Spec.Image.Path,
+		Image:        image,
 		Kernel:       m.Spec.Runtime.Kernel,
 		VCPUs:        cpu,
 		MemoryMiB:    mem,

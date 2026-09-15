@@ -208,6 +208,37 @@ through:
 
 See `docs/guides/machine-sandboxes.md`.
 
+## Image catalog (`spec.image.catalogName`)
+
+FluxVM's own node-local image catalog -- a named, checksummed (and
+optionally signed) alias `spec.image.catalogName` or any `CreateVmRequest.image`
+field can reference instead of a raw path:
+
+- **Every mutating operation is admin-only**: registering, removing,
+  renaming, cloning, exporting, or toggling read-only on a catalog entry
+  (`internal/uiapi/catalog.go`) -- the same posture sandbox template
+  building already has, and for the same reason: registering an entry
+  triggers a real image download and checksum pass on the target node, a
+  real resource cost an operator shouldn't trigger freely. Listing
+  (`GET`) is any-authenticated-operator, read-only visibility.
+- **No path restriction on `source` (register) or `path` (export)** --
+  an admin who can reach this can point FluxVM at any local path or
+  `http(s)://` URL the FluxVM process itself can reach/write, the same
+  trust level as `kubectl exec`/`cp` into a privileged pod.
+- **Kairon never generates or verifies signatures itself** -- FluxVM's
+  own catalog signing (`fluxvm catalog sign`, run out of band on the
+  node) is the only way an entry gets one; Kairon only ever relays
+  whatever FluxVM already reports (`signatureValid`), the same "not
+  Kairon's problem" posture the text console's vsock-agent token already
+  has.
+- **`spec.image.catalogName` bypasses `--image-root` path fencing
+  entirely** -- deliberately, since it was never a filesystem path
+  `validateImagePath` could meaningfully fence in the first place (the
+  same exemption `spec.image.source`-resolved paths already have, for
+  the analogous reason).
+
+See `docs/guides/machine-image-catalog.md`.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

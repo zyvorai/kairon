@@ -224,6 +224,17 @@ type ImageSpec struct {
 	Path   string       `json:"path,omitempty"`
 	Digest string       `json:"digest,omitempty"`
 	Source *ImageSource `json:"source,omitempty"`
+	// CatalogName references a FluxVM image-catalog entry (registered via
+	// the node-scoped catalog admin API, see docs/guides/machine-image-catalog.md)
+	// by name instead of a raw disk path -- FluxVM's own CreateVmRequest.image
+	// field already accepts either interchangeably, so this is passed
+	// through as-is rather than resolved by kairon-node itself the way
+	// Source is. Mutually exclusive with Path/Source in practice (whichever
+	// is checked first at reconcile time wins); exempt from --image-root
+	// path fencing since it was never a filesystem path to begin with --
+	// FluxVM's own catalog integrity checks (mandatory SHA-256, optional
+	// Ed25519 signature) are the trust boundary here instead.
+	CatalogName string `json:"catalogName,omitempty"`
 }
 
 // ImageSource names a golden image kairon-node itself downloads into a

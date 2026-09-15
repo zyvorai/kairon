@@ -79,6 +79,9 @@ spec:
                       httpURL:
                         type: string
                         minLength: 1
+                  catalogName:
+                    type: string
+                    minLength: 1
               resources:
                 type: object
                 properties:

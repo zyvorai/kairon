@@ -61,6 +61,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /templates", s.handleListTemplates)
 	mux.HandleFunc("POST /templates", s.handleBuildTemplate)
 	mux.HandleFunc("/sandbox-proxy/{runtimeID}/{port}/{rest...}", s.handleSandboxHTTPProxy)
+	mux.HandleFunc("GET /catalog", s.handleListCatalog)
+	mux.HandleFunc("POST /catalog", s.handleAddCatalogEntry)
+	mux.HandleFunc("DELETE /catalog/{name}", s.handleRemoveCatalogEntry)
+	mux.HandleFunc("POST /catalog/{name}/rename", s.handleRenameCatalogEntry)
+	mux.HandleFunc("POST /catalog/{name}/clone", s.handleCloneCatalogEntry)
+	mux.HandleFunc("POST /catalog/{name}/export", s.handleExportCatalogEntry)
+	mux.HandleFunc("POST /catalog/{name}/read-only", s.handleSetCatalogReadOnly)
+	mux.HandleFunc("POST /catalog/clean", s.handleCleanCatalogDownloads)
 	return mux
 }
 

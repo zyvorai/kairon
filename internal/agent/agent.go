@@ -146,10 +146,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	// spec, not spec.image/spec.volumes at all -- skip resolving a boot
 	// disk entirely rather than demanding one that would just be ignored.
 	// A plain (non-template) sandbox still needs one, same as any other
-	// Machine.
+	// Machine. Likewise, spec.image.catalogName is a FluxVM catalog alias,
+	// never a filesystem path kairon-node itself needs to resolve or fence
+	// against --image-root.
 	usingSandboxTemplate := m.Spec.Sandbox != nil && m.Spec.Sandbox.TemplateName != ""
+	usingCatalogImage := m.Spec.Image.CatalogName != ""
 	var volStatus csiVolumeStatus
-	if !usingSandboxTemplate {
+	if !usingSandboxTemplate && !usingCatalogImage {
 		if m.Spec.Image.Source != nil {
 			cachedPath, err := a.resolveImageSource(ctx, m)
 			if err != nil {
