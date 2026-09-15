@@ -2,13 +2,15 @@
 
 ## v0.3 — secure migration control plane
 
-- mTLS node-to-node prepare/commit/abort protocol
-- atomic destination session journal and idempotency
-- no user-supplied migration transport URI
-- local Unix-socket migration adapter contract
-- rollback before commit and `NeedsRecovery` after ambiguous commit
-- adopt-only target cutover
-- cold migration, CSI snapshots, DRA/VFIO guard retained
+All shipped -- predates the `[x]` convention adopted later in this file, not an open milestone.
+
+- [x] mTLS node-to-node prepare/commit/abort protocol
+- [x] atomic destination session journal and idempotency
+- [x] no user-supplied migration transport URI
+- [x] local Unix-socket migration adapter contract
+- [x] rollback before commit and `NeedsRecovery` after ambiguous commit
+- [x] adopt-only target cutover
+- [x] cold migration, CSI snapshots, DRA/VFIO guard retained
 
 ## Network Fabric — FluxVM eBPF edge
 
@@ -33,13 +35,13 @@ See [`docs/network-fabric.md`](docs/network-fabric.md).
 
 Not originally scoped for a specific version, but small enough to land alongside the v0.4 work above:
 
-- Prometheus metrics + example alert rules (`internal/metrics`, `charts/kairon/alerts.yaml`)
-- `kairon-ui` web dashboard (`cmd/kairon-ui`, `internal/uiapi`, `web/`)
-- `kairon-ui` real per-operator username/password login (bcrypt accounts, signed sessions, audit attribution, Helm-generated default admin, rate-limited/lockout on repeated failed attempts) — closes what was the dashboard's longest-standing known auth gap; see SECURITY.md
-- `spec.cloudInit` and `spec.network.forwards` ergonomics (`kaironctl create --hostname/--ssh-key/--forward/...`, matching dashboard fields) — see `docs/guides/machine-network.md`
-- Graphical VNC console (`console.enabled`): `kairon-ui` → `kairon-node` → the VM's local QEMU VNC socket, rendered in-browser via noVNC — FluxVM exposes no remote VNC endpoint of its own, so this is a real relay Kairon built, not a wrapper. Tickets are bound to the requesting username with a full open/close audit trail, the button hides itself when ineligible, the kairon-ui↔kairon-node hop optionally runs over one-way TLS (`console.tls.enabled`), and `scripts/deploy-remote.sh --with-console` covers the bare-metal install path — see SECURITY.md's "VNC console" section
-- `internal/integration`: a CI-runnable controller+agent pipeline test
-- multi-host migration test and `NeedsRecovery` drill runbooks (`docs/runbook-multi-host-migration-test.md`, `docs/runbook-recovery-drill.md`) — documented and scripted, not yet run against real hardware in this repo's own CI
+- [x] Prometheus metrics + example alert rules (`internal/metrics`, `charts/kairon/alerts.yaml`)
+- [x] `kairon-ui` web dashboard (`cmd/kairon-ui`, `internal/uiapi`, `web/`)
+- [x] `kairon-ui` real per-operator username/password login (bcrypt accounts, signed sessions, audit attribution, Helm-generated default admin, rate-limited/lockout on repeated failed attempts) — closes what was the dashboard's longest-standing known auth gap; see SECURITY.md
+- [x] `spec.cloudInit` and `spec.network.forwards` ergonomics (`kaironctl create --hostname/--ssh-key/--forward/...`, matching dashboard fields) — see `docs/guides/machine-network.md`
+- [x] Graphical VNC console (`console.enabled`): `kairon-ui` → `kairon-node` → the VM's local QEMU VNC socket, rendered in-browser via noVNC — FluxVM exposes no remote VNC endpoint of its own, so this is a real relay Kairon built, not a wrapper. Tickets are bound to the requesting username with a full open/close audit trail, the button hides itself when ineligible, the kairon-ui↔kairon-node hop optionally runs over one-way TLS (`console.tls.enabled`), and `scripts/deploy-remote.sh --with-console` covers the bare-metal install path — see SECURITY.md's "VNC console" section
+- [x] `internal/integration`: a CI-runnable controller+agent pipeline test -- since extended with scale/failure-injection/upgrade suites, see the "upgrade/scale/failure-injection test suites" entry below
+- [x] multi-host migration test and `NeedsRecovery` drill runbooks (`docs/runbook-multi-host-migration-test.md`, `docs/runbook-recovery-drill.md`) — documented and scripted; still not yet run against real hardware in this repo's own CI, which remains a real, named gap, not a false completion claim
 
 ## v0.5+
 
