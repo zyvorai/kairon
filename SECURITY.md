@@ -137,6 +137,42 @@ Reading or writing a file inside a running guest -- `browser -> kairon-ui -> kai
 - **Response size is capped at kairon-ui's own 4MiB HTTP-response limit** (`internal/fluxvm.Client`'s general response cap) -- a file whose base64 encoding exceeds that (roughly a 3MB file) fails to decode with a clear error rather than returning silently-truncated content.
 - **No content-type or binary-safety guarantee on the dashboard's own UI** -- the browser encodes/decodes content as UTF-8 text; a real binary file only round-trips correctly if the operator handles the base64 payload directly against the API rather than through the dashboard's text-only panel. See `docs/guides/machine-guest-agent-files.md`.
 
+## VM-state snapshot/restore
+
+Checkpointing and restoring a Machine's full hypervisor state -- `browser/API
+client -> kairon-ui -> kairon-node -> FluxVM's own POST /v1/vms/{id}/snapshot`,
+`/start-from-snapshot`, and `/stop` -- relayed through the same
+`internal/consoleproxy` infrastructure as guest exec and guest file access,
+the same plain JSON request/response shape. Distinct from `MachineSnapshot`
+(CSI's disk-content-only snapshot, `internal/csinode`) -- this captures RAM,
+CPU, and device state via FluxVM's real QEMU `savevm`/Cloud Hypervisor
+snapshot, restoring back into the *same* Machine rather than a new PVC.
+
+- **Admin-only, same posture as guest exec and guest file access.**
+  `handleVMSnapshot`/`handleVMRestoreSnapshot`
+  (`internal/uiapi/vmsnapshot.go`) require a `ui.auth.users[].admin`
+  account outright; the same "no group-to-admin claim mapping" OIDC
+  limitation applies.
+- **No guest-agent dependency at all** -- unlike every other guest-agent
+  feature in this list, this operates entirely at the QEMU/Cloud
+  Hypervisor level against FluxVM itself, so it needs neither
+  `spec.guestAgent.enabled` nor `spec.guestAgent.console`.
+- **Restoring is genuinely destructive to the Machine's current running
+  state**: `RestoreSnapshot` always stops the Machine first (FluxVM's own
+  `start-from-snapshot` silently ignores the requested tag on an
+  already-running VM), then starts it back up from the checkpoint --
+  whatever the Machine was doing at the moment of the call is interrupted,
+  not preserved. If the restore's own start step fails after the stop
+  already succeeded, `internal/agent`'s own reconcile loop notices the
+  runtime is FluxVM-stopped while `spec.powerState` still wants it running
+  and starts it back up from its last-known-good disk state as a safety
+  net -- not a second automatic restore attempt, and not the snapshot
+  itself.
+- **No snapshot enumeration or deletion, and no path/size restriction on
+  tags** -- FluxVM itself owns tag storage; Kairon has no endpoint to list
+  or prune what's been saved on a Machine. See
+  `docs/guides/machine-vm-state-snapshot.md`.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

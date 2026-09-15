@@ -99,6 +99,20 @@ distinct from the QMP hotplug Kairon already wraps (`internal/agent/hotplug.go`,
 which grows what the *guest* sees); see
 [guides/machine-resource-limits.md](guides/machine-resource-limits.md).
 
+A full hypervisor-level VM-state checkpoint/restore
+(`POST /v1/vms/{id}/snapshot`/`start-from-snapshot`/`stop`) is now wrapped
+too, admin-only and API-only (`internal/uiapi/vmsnapshot.go` ->
+`internal/consoleproxy` -> `internal/fluxvm/hibernate.go`) -- RAM, CPU, and
+device state via QEMU's real `savevm` or a Cloud Hypervisor snapshot,
+restored back into the *same* Machine, unrelated to `MachineSnapshot`'s
+disk-content-only CSI snapshot. Restoring always stops the Machine first,
+since FluxVM's own `start-from-snapshot` silently ignores the requested tag
+on an already-running VM; `internal/agent`'s reconcile loop self-heals a
+Machine left FluxVM-stopped mid-restore back to its last-known-good disk
+state, not a second automatic restore attempt. See
+[guides/machine-vm-state-snapshot.md](guides/machine-vm-state-snapshot.md)
+and SECURITY.md's "VM-state snapshot/restore" section.
+
 ## Operational visibility
 
 `kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane; each links to [`runbook-migration-failures.md`](runbook-migration-failures.md).

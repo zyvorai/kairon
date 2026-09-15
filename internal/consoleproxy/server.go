@@ -54,6 +54,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /qga-firewall/open/{runtimeID}", s.handleQGAFirewallOpen)
 	mux.HandleFunc("POST /qga-firewall/close/{runtimeID}", s.handleQGAFirewallClose)
 	mux.HandleFunc("GET /logs/{runtimeID}", s.handleLogs)
+	mux.HandleFunc("POST /vm-snapshot/{runtimeID}", s.handleVMSnapshot)
+	mux.HandleFunc("POST /vm-restore-snapshot/{runtimeID}", s.handleVMRestoreSnapshot)
 	return mux
 }
 
@@ -255,6 +257,75 @@ func (s *Server) handleAgentGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(agentFileResponse{ContentBase64: result.ContentBase64, Mode: result.Mode})
+}
+
+// vmSnapshotRequest/vmSnapshotResponse mirror the shape of every other
+// request/response pair in this package -- a separate wire type from
+// internal/fluxvm's own Snapshot/RestoreSnapshot signatures for the same
+// reason execRequest/execResponse are.
+type vmSnapshotRequest struct {
+	Tag string `json:"tag"`
+}
+
+type vmSnapshotResponse struct {
+	Status string `json:"status"`
+}
+
+// handleVMSnapshot forwards to FluxVM's own POST /v1/vms/{id}/snapshot --
+// a full hypervisor-level checkpoint of the VM's running state (RAM, CPU,
+// device state), never a disk-content-only copy (that's CSI's own
+// CreateSnapshot, internal/csinode, unrelated to this route). The VM is
+// never stopped or restarted by this call.
+func (s *Server) handleVMSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req vmSnapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.Tag == "" {
+		http.Error(w, "tag is required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	if err := s.Flux.Snapshot(ctx, r.PathValue("runtimeID"), req.Tag); err != nil {
+		http.Error(w, fmt.Sprintf("vm snapshot: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(vmSnapshotResponse{Status: "ok"})
+}
+
+// handleVMRestoreSnapshot forwards to fluxvm.Client.RestoreSnapshot, which
+// itself orchestrates FluxVM's own stop -> start-from-snapshot sequence
+// (see internal/fluxvm/hibernate.go's own doc comments for why a plain
+// start-from-snapshot call alone isn't enough). Unlike handleVMSnapshot,
+// this always stops the VM first -- the caller (internal/uiapi) gates this
+// behind admin authorization given that risk, the same posture as guest
+// exec and agent file access.
+func (s *Server) handleVMRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req vmSnapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.Tag == "" {
+		http.Error(w, "tag is required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	rec, err := s.Flux.RestoreSnapshot(ctx, r.PathValue("runtimeID"), req.Tag)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("vm restore snapshot: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(vmSnapshotResponse{Status: rec.Status})
 }
 
 // execRelayTimeout bounds how long this node waits on FluxVM's own

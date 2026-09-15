@@ -198,6 +198,25 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
+	} else if normalizePhase(rec.Status) == "Stopped" && m.DesiredPowerState() != "Stopped" {
+		// Self-healing safety net, not the primary path for anything:
+		// spec.powerState: Stopped tears the runtime down entirely
+		// (ensureStopped's own Delete), so a *found* runtime reporting
+		// "stopped"/"exited" while spec still wants Running/Paused means
+		// something else stopped FluxVM's own record without deleting it
+		// -- today, only fluxvm.Client.RestoreSnapshot's own internal
+		// stop-then-start-from-snapshot orchestration does that
+		// deliberately (recovering here if that process crashed between
+		// the two steps, restarting from the VM's last-known-good disk
+		// state, not the snapshot itself -- RestoreSnapshot isn't retried
+		// automatically). A real external crash the VMM process itself
+		// dying, if FluxVM ever reports that the same way, would end up
+		// here too, and restarting it is the correct reconcile-loop
+		// response regardless of which of the two caused it.
+		rec, err = a.Flux.Start(ctx, rec.ID())
+		if err != nil {
+			return err
+		}
 	}
 	status := m.Status
 	status.Phase = normalizePhase(rec.Status)

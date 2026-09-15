@@ -642,3 +642,168 @@ func TestHandleConsoleRejectsUnknownRuntime(t *testing.T) {
 		t.Fatal("expected dial for an unknown runtime to fail")
 	}
 }
+
+func TestHandleVMSnapshotRejectsWrongOrMissingToken(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("FluxVM should not be dialed when the token check fails")
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"tag":"before-upgrade"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer wrong")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleVMSnapshotRelaysRequest(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"tag":"before-upgrade"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if gotPath != "/v1/vms/vm-1/snapshot" || gotBody["tag"] != "before-upgrade" {
+		t.Fatalf("unexpected upstream request: path=%q body=%+v", gotPath, gotBody)
+	}
+}
+
+func TestHandleVMSnapshotPropagatesFluxVMFailure(t *testing.T) {
+	srv400 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "snapshot not supported for backend Firecracker", http.StatusBadRequest)
+	}))
+	defer srv400.Close()
+	s := &Server{Flux: fluxvm.New(srv400.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"tag":"t"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 when FluxVM rejects the snapshot, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleVMSnapshotRequiresTag(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("FluxVM should not be dialed without a tag")
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 without a tag, got %d", resp.StatusCode)
+	}
+}
+
+func TestHandleVMRestoreSnapshotOrchestratesStopThenStartFromSnapshot(t *testing.T) {
+	var calls []string
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/vms/vm-1/stop":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Stopped"})
+		case "/v1/vms/vm-1/start-from-snapshot":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Running"})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"tag":"before-upgrade"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-restore-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out vmSnapshotResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "Running" {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if len(calls) != 2 || calls[0] != "POST /v1/vms/vm-1/stop" || calls[1] != "POST /v1/vms/vm-1/start-from-snapshot" {
+		t.Fatalf("expected stop then start-from-snapshot in order, got %v", calls)
+	}
+}
+
+func TestHandleVMRestoreSnapshotPropagatesFluxVMFailure(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/vms/vm-1/stop":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Stopped"})
+		case "/v1/vms/vm-1/start-from-snapshot":
+			http.Error(w, "no such snapshot", http.StatusNotFound)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body := strings.NewReader(`{"tag":"missing-tag"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/vm-restore-snapshot/vm-1", body)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 when start-from-snapshot fails, got %d", resp.StatusCode)
+	}
+}

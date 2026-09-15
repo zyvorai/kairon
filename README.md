@@ -122,6 +122,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Text console** (`spec.guestAgent.console`) — an interactive shell in-browser (xterm.js), Kairon's `virtctl console` equivalent, working on every backend — requires FluxVM's own proprietary `fluxvm-guest-agent` baked into the guest image — [guide](docs/guides/machine-text-console.md)
 - **Guest file access** (`spec.guestAgent.console`, admin-only) — read or write a file inside a `Running` guest at runtime, no SSH/shared volume needed — same `fluxvm-guest-agent` channel as the text console — [guide](docs/guides/machine-guest-agent-files.md)
 - **Machine logs** — `kubectl logs`/`-f` equivalent: the VM's real captured serial console output, with a live-tailing **Follow** toggle, same any-operator authorization as the VNC console — [guide](docs/guides/machine-logs.md)
+- **VM-state snapshot/restore** (admin-only, API-only) — a full hypervisor-level checkpoint of a running Machine's RAM/CPU/device state via FluxVM's real `savevm`/Cloud Hypervisor snapshot, restored back into the same Machine in place; distinct from `MachineSnapshot`'s disk-content-only CSI snapshot — [guide](docs/guides/machine-vm-state-snapshot.md)
 
 **Migration**
 - **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API

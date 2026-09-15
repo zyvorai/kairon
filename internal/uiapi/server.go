@@ -177,6 +177,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/open", s.handleQGAFirewallOpen)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/close", s.handleQGAFirewallClose)
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/logs", s.handleLogs)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-snapshot", s.handleVMSnapshot)
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-restore-snapshot", s.handleVMRestoreSnapshot)
 
 	api.HandleFunc("GET /api/v1/migrations", s.handleListMigrations)
 	api.HandleFunc("POST /api/v1/migrations", s.handleCreateMigration)
