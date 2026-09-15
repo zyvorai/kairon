@@ -116,7 +116,19 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 				if m.Status.RuntimeID == "" {
 					continue
 				}
-				_ = a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, model.VmNetworkPolicy{DefaultAllow: true})
+				// Fail closed on a real reset error -- matches
+				// NetworkSecurityGroup's own delete-error handling.
+				// Removing the finalizer here regardless would let this
+				// object vanish from Kubernetes while a selected Machine's
+				// VM keeps running under this policy's now-stale
+				// restriction, with nothing left in Kubernetes to retry the
+				// reset through. SetVMNetworkPolicy itself tolerates a 404
+				// (the VM is already gone) as nothing-to-reset, so this
+				// only ever blocks the finalizer's removal on a genuine
+				// failure, retried automatically next tick.
+				if err := a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, model.VmNetworkPolicy{DefaultAllow: true}); err != nil {
+					return fmt.Errorf("reset network policy on %s/%s: %w", m.Namespace(), m.Metadata.Name, err)
+				}
 			}
 			finals := model.RemoveFinalizer(p.Metadata.Finalizers, model.FinalizerNetworkPolicy)
 			return a.Kube.PatchMachineNetworkPolicy(ctx, p.Namespace(), p.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}})

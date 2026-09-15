@@ -480,3 +480,144 @@ func TestReconcileSecurityGroupDeletionToleratesAlreadyDeleted(t *testing.T) {
 		t.Fatal("expected the finalizer to be removed once the FluxVM-side group is confirmed already gone")
 	}
 }
+
+func deletingMachineNetworkPolicyAndMachine() (model.MachineNetworkPolicy, model.Machine) {
+	now := time.Now().UTC()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9"},
+	}
+	p := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{
+			Name:              "web-edge",
+			Namespace:         "default",
+			Finalizers:        []string{model.FinalizerNetworkPolicy},
+			DeletionTimestamp: &now,
+		},
+		Spec: model.MachineNetworkPolicySpec{Selector: map[string]string{"app": "web"}},
+	}
+	return p, m
+}
+
+// TestReconcileMachineNetworkPolicyDeletionKeepsFinalizerOnResetError
+// proves reconcileMachineNetworkPolicy now fails closed on the deletion
+// path: a genuine FluxVM-side reset error must leave the finalizer in
+// place (no finalizer-removal Patch observed) rather than letting the
+// MachineNetworkPolicy vanish from Kubernetes while a selected Machine's
+// VM keeps running under its now-stale restriction.
+func TestReconcileMachineNetworkPolicyDeletionKeepsFinalizerOnResetError(t *testing.T) {
+	var finalizerPatchSeen bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+			finalizerPatchSeen = true
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	p, m := deletingMachineNetworkPolicyAndMachine()
+	err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m})
+	if err == nil {
+		t.Fatal("expected an error from a failed FluxVM policy reset")
+	}
+	if finalizerPatchSeen {
+		t.Fatal("finalizer must not be removed when the FluxVM-side reset failed")
+	}
+}
+
+// TestReconcileMachineNetworkPolicyDeletionRemovesFinalizerOnSuccess is
+// the positive case: a successful FluxVM reset still removes the
+// finalizer, so a healthy deletion completes exactly as before this fix.
+func TestReconcileMachineNetworkPolicyDeletionRemovesFinalizerOnSuccess(t *testing.T) {
+	var patchedFinalizers []string
+	var sawFinalizerPatch bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+			sawFinalizerPatch = true
+			var body struct {
+				Metadata struct {
+					Finalizers []string `json:"finalizers"`
+				} `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patchedFinalizers = body.Metadata.Finalizers
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	var resetHit bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			resetHit = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	p, m := deletingMachineNetworkPolicyAndMachine()
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m}); err != nil {
+		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
+	}
+	if !resetHit {
+		t.Fatal("expected FluxVM's SetVMNetworkPolicy reset to have been called")
+	}
+	if !sawFinalizerPatch || len(patchedFinalizers) != 0 {
+		t.Fatalf("expected the finalizer removed, got sawFinalizerPatch=%v patchedFinalizers=%v", sawFinalizerPatch, patchedFinalizers)
+	}
+}
+
+// TestReconcileMachineNetworkPolicyDeletionToleratesAlreadyGoneVM proves
+// a FluxVM-side 404 (the VM is already gone) still lets the finalizer
+// clear -- without this, SetVMNetworkPolicy's own 404 tolerance combined
+// with a naive non-idempotent caller could still deadlock a retry.
+func TestReconcileMachineNetworkPolicyDeletionToleratesAlreadyGoneVM(t *testing.T) {
+	var sawFinalizerPatch bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+			sawFinalizerPatch = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	p, m := deletingMachineNetworkPolicyAndMachine()
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m}); err != nil {
+		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
+	}
+	if !sawFinalizerPatch {
+		t.Fatal("expected the finalizer to be removed once the FluxVM-side VM is confirmed already gone")
+	}
+}

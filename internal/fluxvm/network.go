@@ -4,6 +4,7 @@
 package fluxvm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -245,9 +246,40 @@ func (c *Client) NetworkStatus(ctx context.Context, id string) (*DataplaneStatus
 	return &st, nil
 }
 
+// SetVMNetworkPolicy tolerates a 404 as success (nothing to set on a VM
+// that's already gone) rather than folding it into a generic error like
+// c.do does -- required so internal/agent/network.go's own
+// MachineNetworkPolicy-deletion reset can fail closed on a genuine error
+// while still treating "the VM is already gone" as nothing left to do, the
+// same distinction Delete/DeleteNetworkGroup already draw for their own
+// callers.
 func (c *Client) SetVMNetworkPolicy(ctx context.Context, id string, policy model.VmNetworkPolicy) error {
-	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/network/policy", ToWirePolicy(policy))
-	return err
+	body, err := json.Marshal(ToWirePolicy(policy))
+	if err != nil {
+		return err
+	}
+	path := "/v1/vms/" + url.PathEscape(id) + "/network/policy"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("fluxvm POST %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return nil
 }
 
 func (c *Client) GetVMNetworkEffective(ctx context.Context, id string) (json.RawMessage, error) {

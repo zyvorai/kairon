@@ -364,3 +364,33 @@ func TestDeleteNetworkGroupPropagatesRealErrors(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+// TestSetVMNetworkPolicyToleratesAlreadyGoneVM proves a 404 is treated as
+// success -- required for the caller (internal/agent/network.go's
+// reconcileMachineNetworkPolicy, resetting a Machine's policy on
+// MachineNetworkPolicy deletion) to fail closed on a genuine reset error
+// without deadlocking on a VM that's already gone.
+func TestSetVMNetworkPolicyToleratesAlreadyGoneVM(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if err := c.SetVMNetworkPolicy(context.Background(), "already-gone", model.VmNetworkPolicy{DefaultAllow: true}); err != nil {
+		t.Fatalf("expected a 404 to be tolerated as success, got: %v", err)
+	}
+}
+
+func TestSetVMNetworkPolicyPropagatesRealErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	err := c.SetVMNetworkPolicy(context.Background(), "vm-9", model.VmNetworkPolicy{DefaultAllow: true})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("err=%v", err)
+	}
+}
