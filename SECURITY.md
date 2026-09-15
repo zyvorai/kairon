@@ -265,6 +265,38 @@ There is no way to change the underlying allowlist/credential vault
 through this or any Kairon API -- it's static, node-local FluxVM config,
 not a runtime-mutable resource.
 
+## Warm pools (`POST/GET/DELETE /api/v1/nodes/{node}/pools/...`)
+
+FluxVM's own node-local warm-VM pools -- `size` VMs pre-booted and kept
+`Paused`, ready for an instant claim -- add one trust boundary beyond
+what a sandbox itself already has:
+
+- **Creating or deleting a pool is admin-only** (`internal/uiapi/pool.go`,
+  reusing `requireCatalogAdmin`'s exact gate) -- creating one commits real,
+  ongoing node resources (`size` resident VMs, whether ever claimed or
+  not); deleting one destroys every member VM it currently holds, claimed
+  or not, not just the pool's own bookkeeping. Listing is any
+  authenticated operator (read-only visibility).
+- **Claiming is admin-only too**, even though it just resumes an
+  already-authorized, already-built VM -- the claimed VM's `name`/
+  `ttlSeconds` overrides are attacker-influenceable inputs the same way
+  any other Machine-creation-adjacent field is.
+- **A claimed VM is not automatically a Kairon-managed `Machine`** --
+  Kairon hands back FluxVM's own raw VM record; there is no automatic
+  admission/ownership step, so a claimed VM sits outside every other
+  admission-time guard (`MachineQuota`, the webhook, RBAC subresource
+  checks) until an operator explicitly creates a corresponding `Machine`
+  themselves. Not a bypass of anything -- FluxVM's own claim isn't gated
+  by Kairon's admission path in the first place -- but worth knowing
+  before assuming pool claims are already subject to the same policy
+  Machine creation is.
+- **If FluxVM's own `fluxvm-microvm` operator (`MicroVMPool` CRD) is also
+  deployed against the same nodes**, it reconciles against the identical
+  `/v1/pools` state this API wraps, with no coordination between the two.
+  Don't manage the same pool name from both.
+
+See `docs/guides/machine-sandboxes.md`'s "Warm pools" section.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

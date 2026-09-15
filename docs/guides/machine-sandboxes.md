@@ -112,13 +112,50 @@ the literal secret value that would be injected for a matching host
 (`inject_authorization`), and Kairon deliberately never returns that value
 to a caller. See SECURITY.md's "Egress check" section for why.
 
-## Listing sandboxes
+## Warm pools
 
-**`GET /api/v1/nodes/{node}/sandboxes`** lists every FluxVM sandbox on a
-node -- node-scoped, not Machine-scoped, since it reflects FluxVM's own
-real state (including a sandbox created directly against FluxVM outside
-Kairon entirely), the same posture `GET /api/v1/nodes` itself has for
-node visibility. Any authenticated operator, since this is read-only.
+FluxVM keeps `size` VMs pre-booted and `Paused`, ready for an instant
+claim -- much faster than a cold create, at the cost of keeping those VMs'
+resident RAM committed on the node the whole time, whether claimed or not.
+Node-scoped admin API, no dashboard yet:
+
+- **`POST /api/v1/nodes/{node}/pools`** (body `{"name", "size", "template"}`,
+  `template` a full FluxVM `CreateVmRequest` -- the same shape a sandbox's
+  own `spec` field takes) creates a pool. FluxVM immediately starts
+  booting `size` VMs to `Paused` in the background; the call itself
+  returns as soon as the pool record exists, not once every member is
+  ready.
+- **`GET /api/v1/nodes/{node}/pools`** / **`GET .../pools/{name}`** list
+  pools or show one's current `members` (VM UUIDs, any authenticated
+  operator, read-only).
+- **`POST .../pools/{name}/claim`** (body `{"name", "ttlSeconds"}`, both
+  optional overrides) pops one ready member, resumes it, and returns the
+  now-`Running` VM. FluxVM triggers its own background backfill to
+  replace the claimed member; Kairon doesn't wait for that to finish.
+  Fails with a clear error if the pool has no ready members right now
+  (rather than silently falling back to a slow synchronous create) --
+  retry shortly, or make the pool bigger.
+- **`DELETE .../pools/{name}`** (admin-only) deletes the pool **and every
+  member VM it currently holds**, claimed or not -- a genuinely
+  destructive operation, not just removing the pool's own bookkeeping.
+
+**A claimed VM is real FluxVM state, not automatically a Kairon Machine.**
+Claiming hands back FluxVM's own VM record (UUID, name, `guest_ip`,
+status) directly -- there is no automatic step that creates a
+corresponding Kubernetes `Machine` object for it. Managing a claimed VM
+as an ordinary Kairon Machine afterward (power state, disruption budgets,
+quota accounting, the dashboard) needs a manual follow-up you do
+yourself; this is a real, currently-open gap, not a hidden assumption.
+
+**A note on overlap with FluxVM's own Kubernetes integration**: FluxVM
+ships its own `MicroVMPool` CRD (part of `fluxvm-microvm`, a node-local
+controller that reconciles against the exact same `/v1/pools` API this
+section wraps) as part of a separate scheduler-native fleet story
+("not KubeVirt -- no live migration/CDI/virtctl"). If your cluster also
+runs FluxVM's own `fluxvm-microvm` operator against the same nodes,
+**don't manage the same pool name from both** -- neither coordinates with
+the other, and both would independently create/delete/claim against the
+identical underlying FluxVM state.
 
 ## Real limits today (first cut)
 

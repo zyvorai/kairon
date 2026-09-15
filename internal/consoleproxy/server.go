@@ -70,6 +70,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /catalog/{name}/read-only", s.handleSetCatalogReadOnly)
 	mux.HandleFunc("POST /catalog/clean", s.handleCleanCatalogDownloads)
 	mux.HandleFunc("POST /egress-check", s.handleEgressCheck)
+	mux.HandleFunc("POST /pools", s.handleCreatePool)
+	mux.HandleFunc("GET /pools", s.handleListPools)
+	mux.HandleFunc("GET /pools/{name}", s.handleGetPool)
+	mux.HandleFunc("DELETE /pools/{name}", s.handleDeletePool)
+	mux.HandleFunc("POST /pools/{name}/claim", s.handleClaimPool)
 	return mux
 }
 

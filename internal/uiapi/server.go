@@ -205,6 +205,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog/{name}/read-only", s.handleSetCatalogReadOnly)
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog/clean", s.handleCleanCatalogDownloads)
 	api.HandleFunc("POST /api/v1/nodes/{node}/egress-check", s.handleEgressCheck)
+	api.HandleFunc("GET /api/v1/nodes/{node}/pools", s.handleListPools)
+	api.HandleFunc("POST /api/v1/nodes/{node}/pools", s.handleCreatePool)
+	api.HandleFunc("GET /api/v1/nodes/{node}/pools/{name}", s.handleGetPool)
+	api.HandleFunc("DELETE /api/v1/nodes/{node}/pools/{name}", s.handleDeletePool)
+	api.HandleFunc("POST /api/v1/nodes/{node}/pools/{name}/claim", s.handleClaimPool)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
