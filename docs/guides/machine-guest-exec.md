@@ -30,10 +30,12 @@ console:
   -- exec rides the exact same `kairon-ui` &harr; `kairon-node` relay
   infrastructure, see [SECURITY.md](../../SECURITY.md)'s "VNC console"
   section for that trust chain).
-- **The calling operator must be a `ui.auth.users[].admin` account.**
-  Unlike the console (any authenticated operator by default), there is no
-  per-Machine allowlist opt-out for exec today -- see SECURITY.md's "Guest
-  exec" section for exactly why, and its real limits.
+- **The calling operator must be an admin identity** -- a `ui.auth.users[].admin`
+  account, or an OIDC session in `ui.oidc.adminGroups` (opt-in, empty by
+  default; see [`kairon-ui-oidc.md`](kairon-ui-oidc.md)). Unlike the
+  console (any authenticated operator by default), there is no per-Machine
+  allowlist opt-out for exec today -- see SECURITY.md's "Guest exec"
+  section for exactly why, and its real limits.
 - The target Machine must be `Running`, have `spec.guestAgent.enabled:
   true`, and actually be running `qemu-guest-agent` in the guest.
 

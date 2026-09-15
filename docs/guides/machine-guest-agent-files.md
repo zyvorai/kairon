@@ -31,10 +31,13 @@ spec:
 
 - The console relay must be configured (`console.enabled`) -- the same
   deployment-level gate the text console and guest exec both share.
-- The calling operator must be a `ui.auth.users[].admin` account --
-  stricter than the text console's any-authenticated-operator default,
-  the same posture guest exec already has. See
-  [SECURITY.md](../../SECURITY.md)'s "Guest file access" section for why.
+- The calling operator must be an admin identity -- a
+  `ui.auth.users[].admin` account, or an OIDC session in
+  `ui.oidc.adminGroups` (opt-in, empty by default; see
+  [`kairon-ui-oidc.md`](kairon-ui-oidc.md)) -- stricter than the text
+  console's any-authenticated-operator default, the same posture guest
+  exec already has. See [SECURITY.md](../../SECURITY.md)'s "Guest file
+  access" section for why.
 - The target Machine must be `Running` with `spec.guestAgent.console: true`.
 
 ## Using it
