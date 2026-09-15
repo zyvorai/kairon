@@ -384,6 +384,40 @@ func (c *Client) SetResourceLimits(ctx context.Context, id string, limits model.
 	return err
 }
 
+// Pause suspends a running VM's guest CPUs via FluxVM's real QMP
+// stop/cont (or the equivalent on Cloud Hypervisor/Firecracker --
+// backend-agnostic, unlike hotplug/NUMA/hugepages) -- RAM and device
+// state stay fully resident, the guest simply stops executing, distinct
+// from Delete/Stopped (which tears the runtime down entirely) or the
+// cgroup-freezer-based fsfreeze QGA already wraps (which freezes the
+// guest's own filesystem I/O, not its CPUs, and needs the guest to
+// cooperate). Returns the updated Record (its Status now "Paused").
+func (c *Client) Pause(ctx context.Context, id string) (*Record, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/pause", nil)
+	if err != nil {
+		return nil, err
+	}
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("decode pause response: %w", err)
+	}
+	return &rec, nil
+}
+
+// Resume reverses Pause -- FluxVM's real QMP cont (or backend
+// equivalent), resuming guest CPU execution exactly where it left off.
+func (c *Client) Resume(ctx context.Context, id string) (*Record, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/resume", nil)
+	if err != nil {
+		return nil, err
+	}
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("decode resume response: %w", err)
+	}
+	return &rec, nil
+}
+
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/vms/"+url.PathEscape(id), nil)
 	if err != nil {

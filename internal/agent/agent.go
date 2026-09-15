@@ -136,6 +136,9 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
+	if m.DesiredPowerState() == "Paused" {
+		return a.ensurePaused(ctx, m)
+	}
 	if m.Spec.Image.Source != nil {
 		cachedPath, err := a.resolveImageSource(ctx, m)
 		if err != nil {
@@ -187,6 +190,14 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			return err
 		}
 		a.Log.Info("created runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID(), "vfioDevices", vfioDevices)
+	} else if strings.EqualFold(rec.Status, "Paused") && m.DesiredPowerState() == "Running" {
+		// The only path back from Paused: ensurePaused above only ever
+		// pauses, it's this branch (reached once spec.powerState is
+		// edited back to Running) that resumes.
+		rec, err = a.Flux.Resume(ctx, rec.ID())
+		if err != nil {
+			return err
+		}
 	}
 	status := m.Status
 	status.Phase = normalizePhase(rec.Status)
@@ -267,6 +278,42 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 	status.Network = nil
 	status.Message = ""
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "PoweredOff", LastTransitionTime: time.Now().UTC()}}
+	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+}
+
+// ensurePaused suspends an already-running Machine's guest CPUs via
+// FluxVM's real QMP pause (or backend equivalent -- backend-agnostic,
+// unlike hotplug) -- RAM and device state stay fully resident, unlike
+// ensureStopped's full teardown. Deliberately does not create a runtime
+// that doesn't exist yet: pausing is only meaningful for a Machine
+// that's already been realized against FluxVM at least once (the same
+// "pause an existing VMI" semantics KubeVirt's own virtctl pause has,
+// not "create one paused from the start").
+func (a *Agent) ensurePaused(ctx context.Context, m model.Machine) error {
+	rec, err := a.current(ctx, m)
+	if err != nil {
+		return err
+	}
+	status := m.Status
+	if rec == nil {
+		status.Phase = "Pending"
+		status.NodeName = a.NodeName
+		status.Message = "cannot pause: no existing runtime -- set powerState to Running first, then Paused"
+		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
+		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	}
+	if !strings.EqualFold(rec.Status, "Paused") {
+		rec, err = a.Flux.Pause(ctx, rec.ID())
+		if err != nil {
+			return err
+		}
+	}
+	status.Phase = normalizePhase(rec.Status)
+	status.NodeName = a.NodeName
+	status.RuntimeID = rec.ID()
+	status.GuestIP = rec.GuestIP
+	status.Message = ""
+	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Paused", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
 

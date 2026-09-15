@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/model"
@@ -322,6 +323,52 @@ func TestLookupArray(t *testing.T) {
 	r, err := c.LookupByName(context.Background(), "vm")
 	if err != nil || r == nil || r.ID() != "id1" {
 		t.Fatalf("r=%+v err=%v", r, err)
+	}
+}
+
+func TestPauseAndResume(t *testing.T) {
+	var gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		status := "Paused"
+		if strings.HasSuffix(r.URL.Path, "/resume") {
+			status = "Running"
+		}
+		_ = json.NewEncoder(w).Encode(Record{UUID: "vm-1", Status: status})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	rec, err := c.Pause(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/pause" || rec.Status != "Paused" {
+		t.Fatalf("unexpected pause result: path=%q rec=%+v", gotPath, rec)
+	}
+
+	rec, err = c.Resume(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/resume" || rec.Status != "Running" {
+		t.Fatalf("unexpected resume result: path=%q rec=%+v", gotPath, rec)
+	}
+}
+
+func TestPauseAndResumePropagateErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "VM not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.Pause(context.Background(), "vm-1"); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+	if _, err := c.Resume(context.Background(), "vm-1"); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
 	}
 }
 

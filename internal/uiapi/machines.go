@@ -106,8 +106,8 @@ func (s *Server) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePowerMachine returns a handler for the given desired powerState --
-// shared by the start/stop routes, mirroring cmdPower's single
-// spec.powerState merge-patch (internal/kube.Client.PatchMachine).
+// shared by the start/stop/pause/resume routes, mirroring cmdPower's
+// single spec.powerState merge-patch (internal/kube.Client.PatchMachine).
 func (s *Server) handlePowerMachine(state string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		patch := map[string]any{"spec": map[string]any{"powerState": state}}

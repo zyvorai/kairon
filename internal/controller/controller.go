@@ -231,7 +231,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 func countAssigned(machines []model.Machine) map[string]int {
 	assigned := map[string]int{}
 	for _, m := range machines {
-		if m.Spec.NodeName != "" && m.Metadata.DeletionTimestamp == nil && m.DesiredPowerState() == "Running" {
+		// Running and Paused both keep a real FluxVM runtime (and its
+		// resident RAM) alive on the node -- only Stopped actually tears
+		// the runtime down and frees the capacity it held. A Paused
+		// Machine's guest CPUs are suspended, but the process, and the
+		// host memory backing it, are not.
+		desired := m.DesiredPowerState()
+		if m.Spec.NodeName != "" && m.Metadata.DeletionTimestamp == nil && (desired == "Running" || desired == "Paused") {
 			assigned[m.Spec.NodeName]++
 		}
 	}

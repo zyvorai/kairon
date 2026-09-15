@@ -167,6 +167,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/machines/{namespace}/{name}", s.handleDeleteMachine)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/start", s.handlePowerMachine("Running"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/stop", s.handlePowerMachine("Stopped"))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/pause", s.handlePowerMachine("Paused"))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/resume", s.handlePowerMachine("Running"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.handleConsoleTicket)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.handleExec)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.handleAgentPutFile)

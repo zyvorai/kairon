@@ -231,6 +231,7 @@ spec:
                 enum:
                 - Running
                 - Stopped
+                - Paused
                 default: Running
               tenant:
                 type: string
