@@ -27,6 +27,18 @@ controller:
     # and health/metrics server are unaffected -- they're stateless
     # per-request reads, served from every replica regardless.
     enabled: true
+  cordonEvacuation:
+    # Automatically creates a MachineMigration for every Machine on a Node
+    # whose spec.unschedulable transitions to true -- kaironctl evacuate
+    # NODE, automatically, mirroring KubeVirt's LiveMigrateIfPossible
+    # eviction strategy. Off by default: unlike leaderElection above, this
+    # is never a no-op -- see internal/controller/cordon.go's own doc
+    # comment. Requires the controller ServiceAccount to be granted
+    # "create" on machinemigrations, added automatically below when
+    # enabled.
+    enabled: false
+    strategy: cold # cold|auto -- never live, see CordonEvacuation's own doc comment
+    minRetryInterval: 2m
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 250m, memory: 128Mi}
@@ -66,6 +78,12 @@ node:
   fluxvmURL: http://127.0.0.1:7788
   defaultBackend: qemu
   imageRoot: /var/lib/fluxvm/images
+  # Directory kairon-node downloads/caches spec.image.source images into,
+  # keyed by digest -- see docs/guides/machine-image-import.md. Off by
+  # default (empty): a Machine setting spec.image.source is refused with
+  # a clear error rather than silently failing; spec.image.path and
+  # spec.volumes are entirely unaffected either way.
+  imageCacheDir: ""
   # Comma-separated PCI BDFs, e.g. 0000:65:00.0. Empty is fail-closed for DeviceClaims.
   vfioAllowlist: ""
   nodeSelector:
@@ -399,6 +417,16 @@ ui:
     # externally-managed signing key.
     existingSessionSecret: ""
     existingSessionSecretKey: "sessionSecret"
+    # rbacConsoleCheck, when true, additionally requires a real Kubernetes
+    # SubjectAccessReview (verb "get" on the machines/console subresource)
+    # to open a Machine's console -- layered alongside, never instead of,
+    # the kairon.zyvor.dev/console-allowed-users annotation allowlist.
+    # Off by default: unchanged, annotation-only behavior. Only meaningful
+    # for an oidc-authenticated identity whose claims are also mapped into
+    # kube-apiserver's own OIDC config -- a local ui.auth.users[] account
+    # has no real Kubernetes User to check RBAC against, so it's denied
+    # outright when this is true. See docs/guides/kairon-ui-console-rbac.md.
+    rbacConsoleCheck: false
   oidc:
     # "Sign in with SSO" against an external OpenID Connect identity
     # provider (Authorization Code + PKCE), alongside -- not instead of --

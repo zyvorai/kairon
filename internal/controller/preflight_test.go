@@ -66,3 +66,35 @@ func TestDomainMismatchIgnoresEmptyLabelValue(t *testing.T) {
 		t.Fatalf("got reason %q, want none for an empty label value", reason)
 	}
 }
+
+func machineWithDeviceClaim() model.Machine {
+	return model.Machine{Spec: model.MachineSpec{DeviceClaims: []model.DeviceClaimReference{{Name: "gpu-0"}}}}
+}
+
+func TestDeviceClaimsPreflightAllowsMachineWithoutDeviceClaims(t *testing.T) {
+	target := readyCapableNode("worker-2")
+	if blocker := deviceClaimsPreflight(model.Machine{}, target, "live"); blocker != "" {
+		t.Fatalf("got blocker %q, want none for a Machine with no deviceClaims", blocker)
+	}
+}
+
+func TestDeviceClaimsPreflightBlocksLiveMigrationUnconditionally(t *testing.T) {
+	target := nodeWithLabels("worker-2", map[string]string{VFIODevicesLabel: "0000:65:00.0"})
+	if blocker := deviceClaimsPreflight(machineWithDeviceClaim(), target, "live"); blocker == "" {
+		t.Fatal("expected live migration of a deviceClaims Machine to always be blocked, even with a matching target label")
+	}
+}
+
+func TestDeviceClaimsPreflightBlocksColdMigrationWithoutTargetLabel(t *testing.T) {
+	target := readyCapableNode("worker-2")
+	if blocker := deviceClaimsPreflight(machineWithDeviceClaim(), target, "cold"); blocker == "" {
+		t.Fatal("expected cold migration of a deviceClaims Machine to be blocked when the target has no VFIODevicesLabel")
+	}
+}
+
+func TestDeviceClaimsPreflightAllowsColdMigrationWithTargetLabel(t *testing.T) {
+	target := nodeWithLabels("worker-2", map[string]string{VFIODevicesLabel: "0000:65:00.0"})
+	if blocker := deviceClaimsPreflight(machineWithDeviceClaim(), target, "cold"); blocker != "" {
+		t.Fatalf("got blocker %q, want none for cold migration to a target asserting an equivalent device", blocker)
+	}
+}

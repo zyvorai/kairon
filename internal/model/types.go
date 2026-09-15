@@ -24,6 +24,15 @@ const (
 	// this is opt-in, never a behavior change for a Machine that doesn't
 	// set it.
 	AnnotationConsoleAllowedUsers = "kairon.zyvor.dev/console-allowed-users"
+	// AnnotationCordonEvacuateAttemptedAt records the last time
+	// kairon-controller's opt-in cordon-evacuation reconcile step (see
+	// internal/controller/cordon.go) created, or tried and was
+	// disruption-budget-blocked from creating, a MachineMigration for
+	// this Machine because its node was cordoned -- a per-Machine
+	// cooldown so a controller reconciling every few seconds doesn't
+	// create (or attempt) a new MachineMigration every single tick for a
+	// Machine a budget is currently blocking. RFC3339 UTC.
+	AnnotationCordonEvacuateAttemptedAt = "kairon.zyvor.dev/cordon-evacuate-attempted-at"
 	// ConditionNodeUnreachable is a MachineStatus.Conditions[].Type
 	// kairon-controller sets/clears every reconcile tick to reflect
 	// whether spec.nodeName currently names a Ready, present Kubernetes
@@ -70,21 +79,29 @@ type MachineList struct {
 }
 
 type MachineSpec struct {
-	NodeName      string                 `json:"nodeName,omitempty"`
-	Image         ImageSpec              `json:"image"`
-	Resources     ResourceSpec           `json:"resources"`
-	Runtime       RuntimeSpec            `json:"runtime,omitempty"`
-	Network       NetworkSpec            `json:"network,omitempty"`
-	CloudInit     CloudInitSpec          `json:"cloudInit,omitempty"`
-	ServiceFabric ServiceFabricSpec      `json:"serviceFabric,omitempty"`
-	PowerState    string                 `json:"powerState,omitempty"`
-	Tenant        string                 `json:"tenant,omitempty"`
-	TTLSeconds    int64                  `json:"ttlSeconds,omitempty"`
-	Placement     PlacementSpec          `json:"placement,omitempty"`
-	Security      SecuritySpec           `json:"security,omitempty"`
-	Volumes       []MachineVolume        `json:"volumes,omitempty"`
-	DeviceClaims  []DeviceClaimReference `json:"deviceClaims,omitempty"`
-	GuestAgent    GuestAgentSpec         `json:"guestAgent,omitempty"`
+	NodeName string `json:"nodeName,omitempty"`
+	// InstanceTypeName optionally names a MachineInstanceType (same
+	// namespace) kairon-controller resolves into Resources exactly once
+	// -- see internal/controller/instancetype.go and
+	// docs/guides/machine-instance-types.md. Only takes effect the first
+	// time this is set while Resources is still empty; editing either
+	// field afterward never re-resolves, matching every other
+	// creation-time-only field in this project.
+	InstanceTypeName string                 `json:"instanceTypeName,omitempty"`
+	Image            ImageSpec              `json:"image"`
+	Resources        ResourceSpec           `json:"resources"`
+	Runtime          RuntimeSpec            `json:"runtime,omitempty"`
+	Network          NetworkSpec            `json:"network,omitempty"`
+	CloudInit        CloudInitSpec          `json:"cloudInit,omitempty"`
+	ServiceFabric    ServiceFabricSpec      `json:"serviceFabric,omitempty"`
+	PowerState       string                 `json:"powerState,omitempty"`
+	Tenant           string                 `json:"tenant,omitempty"`
+	TTLSeconds       int64                  `json:"ttlSeconds,omitempty"`
+	Placement        PlacementSpec          `json:"placement,omitempty"`
+	Security         SecuritySpec           `json:"security,omitempty"`
+	Volumes          []MachineVolume        `json:"volumes,omitempty"`
+	DeviceClaims     []DeviceClaimReference `json:"deviceClaims,omitempty"`
+	GuestAgent       GuestAgentSpec         `json:"guestAgent,omitempty"`
 }
 
 // GuestAgentSpec opts a Machine into FluxVM's real qemu-guest-agent
@@ -113,13 +130,52 @@ type CloudInitSpec struct {
 }
 
 type ImageSpec struct {
-	Path   string `json:"path"`
-	Digest string `json:"digest,omitempty"`
+	// Path is the boot disk's real path on the target node -- required
+	// unless Source is set, in which case kairon-node fills this in
+	// itself (see internal/agent/imageimport.go) after resolving Source
+	// into its local image cache; a Machine author never needs to know
+	// or predict that path themselves.
+	Path   string       `json:"path,omitempty"`
+	Digest string       `json:"digest,omitempty"`
+	Source *ImageSource `json:"source,omitempty"`
+}
+
+// ImageSource names a golden image kairon-node itself downloads into a
+// node-local, digest-keyed cache instead of requiring an operator to have
+// already placed a file at Path -- see internal/agent/imageimport.go.
+// Digest is mandatory whenever Source is set: it's the cache key, so
+// without it two Machines naming the same (mutable) HTTPURL would have no
+// way to know whether they mean the same bytes.
+type ImageSource struct {
+	// HTTPURL is a plain http(s):// URL to a qcow2/raw image file.
+	// OCI/container-registry references are a deliberate non-goal --
+	// see docs/guides/machine-image-import.md.
+	HTTPURL string `json:"httpURL,omitempty"`
 }
 
 type ResourceSpec struct {
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
+	// Hugepages, NUMANode, and CPUSet are direct, opt-in passthroughs to
+	// FluxVM's own existing QEMU-backend-only support for the same
+	// (fluxvm-core's CreateVmRequest already has hugepages/numa_node/
+	// cpuset -- this is genuinely new plumbing on Kairon's side, not
+	// something blocked upstream the way VFIO-through-live-migration
+	// was). See docs/guides/machine-cpu-numa.md for exactly what each
+	// does and doesn't guarantee, and internal/fluxvm.Client.CreateWithVFIO
+	// for the qemu-backend-only enforcement.
+	//
+	// Deliberately no dedicatedCpuPlacement/exclusive-host-core-pinning
+	// field here -- FluxVM separately supports real host cgroup cpuset
+	// pinning (its own resize/ResourcePatch.cpuset_cpus), but allocating
+	// *specific*, non-overlapping host CPU numbers across every Machine
+	// competing for them on one node is a real capacity-allocator problem
+	// (the same shape VFIODevicesLabel's own doc comment already flags as
+	// out of scope for this project's current "no capacity model at all"
+	// scheduler) -- a bigger, separate design, not attempted here.
+	Hugepages bool   `json:"hugepages,omitempty"`
+	NUMANode  *int   `json:"numaNode,omitempty"`
+	CPUSet    string `json:"cpuSet,omitempty"`
 }
 
 type RuntimeSpec struct {
@@ -541,6 +597,43 @@ type Node struct {
 type NodeAddress struct {
 	Type    string `json:"type"`
 	Address string `json:"address"`
+}
+
+// SubjectAccessReview hand-rolls just the slice of the built-in
+// authorization.k8s.io/v1 SubjectAccessReview wire format
+// internal/uiapi's own console-access RBAC check needs (see
+// internal/kube.Client.SubjectAccessReview) -- this project has no
+// client-go/k8s.io/api dependency at all, the same reasoning
+// internal/admission's own doc comment gives for hand-rolling
+// AdmissionReview. Deliberately SubjectAccessReview, not
+// SelfSubjectAccessReview: the caller (kairon-ui's own ServiceAccount
+// token) and the subject being checked (an app-level kairon-ui operator
+// identity, local account or OIDC claim) are different.
+type SubjectAccessReview struct {
+	TypeMeta `json:",inline"`
+	Spec     SubjectAccessReviewSpec   `json:"spec"`
+	Status   SubjectAccessReviewStatus `json:"status,omitempty"`
+}
+
+type SubjectAccessReviewSpec struct {
+	User               string              `json:"user,omitempty"`
+	Groups             []string            `json:"groups,omitempty"`
+	ResourceAttributes *ResourceAttributes `json:"resourceAttributes,omitempty"`
+}
+
+type ResourceAttributes struct {
+	Namespace   string `json:"namespace,omitempty"`
+	Verb        string `json:"verb,omitempty"`
+	Group       string `json:"group,omitempty"`
+	Resource    string `json:"resource,omitempty"`
+	Subresource string `json:"subresource,omitempty"`
+	Name        string `json:"name,omitempty"`
+}
+
+type SubjectAccessReviewStatus struct {
+	Allowed bool   `json:"allowed"`
+	Denied  bool   `json:"denied,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 type NodeCondition struct {

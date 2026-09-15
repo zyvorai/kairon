@@ -42,6 +42,102 @@ func TestCreateMapping(t *testing.T) {
 	}
 }
 
+func TestCreatePassesNUMACPUSetHugepagesForQEMU(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Name: got.Name, Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	numaNode := 1
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi", NUMANode: &numaNode, CPUSet: "0-1", Hugepages: true},
+			Runtime:   model.RuntimeSpec{Backend: "qemu"},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if got.NUMANode == nil || *got.NUMANode != 1 || got.CPUSet != "0-1" || !got.Hugepages {
+		t.Fatalf("expected NUMA/cpuset/hugepages to pass through, got %+v", got)
+	}
+}
+
+func TestCreateRejectsNUMAForNonQEMUBackend(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("expected the request to be rejected before it ever reached FluxVM")
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	numaNode := 0
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi", NUMANode: &numaNode},
+			Runtime:   model.RuntimeSpec{Backend: "cloud-hypervisor"},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err == nil {
+		t.Fatal("expected an error for spec.resources.numaNode on a non-qemu backend")
+	}
+}
+
+func TestCreateAllowsNoNUMAFieldsForNonQEMUBackend(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "cloud-hypervisor"},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatalf("expected no error when no NUMA/cpuset/hugepages fields are set, got %v", err)
+	}
+}
+
+func TestCreateRejectsSecureBootAndTPM(t *testing.T) {
+	cases := []model.SecuritySpec{
+		{SecureBoot: true},
+		{TPM: true},
+		{SecureBoot: true, TPM: true},
+	}
+	for _, sec := range cases {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("expected the request to be rejected before it ever reached FluxVM")
+		}))
+		c := New(s.URL, "")
+		c.HTTP = s.Client()
+		m := model.Machine{
+			Metadata: model.ObjectMeta{Name: "win", Namespace: "prod"},
+			Spec: model.MachineSpec{
+				Image:     model.ImageSpec{Path: "/images/win.qcow2"},
+				Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"},
+				Runtime:   model.RuntimeSpec{Backend: "qemu"},
+				Security:  sec,
+			},
+		}
+		_, err := c.Create(context.Background(), m, "qemu")
+		s.Close()
+		if err == nil {
+			t.Fatalf("expected an error for %+v (no FluxVM backend supports UEFI/vTPM today)", sec)
+		}
+	}
+}
+
 func TestCreateUserForwards(t *testing.T) {
 	var got CreateRequest
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

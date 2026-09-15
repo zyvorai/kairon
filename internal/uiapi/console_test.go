@@ -207,10 +207,10 @@ func TestHandleConsoleTicketBindsToTheAuthenticatedUsername(t *testing.T) {
 func TestConsoleAuthorizedUnsetAnnotationAllowsAll(t *testing.T) {
 	s := &Server{}
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
-	if !s.consoleAuthorized(m, "") {
+	if !s.consoleAuthorized(context.Background(), m, "") {
 		t.Fatal("expected an unset console-allowed-users annotation to allow even an empty (unauthenticated) username")
 	}
-	if !s.consoleAuthorized(m, "anyone") {
+	if !s.consoleAuthorized(context.Background(), m, "anyone") {
 		t.Fatal("expected an unset console-allowed-users annotation to allow any authenticated username")
 	}
 }
@@ -221,13 +221,13 @@ func TestConsoleAuthorizedRestrictsToAllowlist(t *testing.T) {
 		Name: "vm1", Namespace: "default",
 		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice, bob"},
 	}}
-	if !s.consoleAuthorized(m, "alice") {
+	if !s.consoleAuthorized(context.Background(), m, "alice") {
 		t.Fatal("expected alice to be authorized (listed)")
 	}
-	if !s.consoleAuthorized(m, "bob") {
+	if !s.consoleAuthorized(context.Background(), m, "bob") {
 		t.Fatal("expected bob to be authorized (listed, with surrounding whitespace trimmed)")
 	}
-	if s.consoleAuthorized(m, "carol") {
+	if s.consoleAuthorized(context.Background(), m, "carol") {
 		t.Fatal("expected carol to be denied (not listed)")
 	}
 }
@@ -238,7 +238,7 @@ func TestConsoleAuthorizedDeniesEmptyUsernameWhenRestricted(t *testing.T) {
 		Name: "vm1", Namespace: "default",
 		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice"},
 	}}
-	if s.consoleAuthorized(m, "") {
+	if s.consoleAuthorized(context.Background(), m, "") {
 		t.Fatal("expected an empty (legacy shared-token or dev-mode) username to be denied once a Machine restricts console access")
 	}
 }
@@ -249,8 +249,89 @@ func TestConsoleAuthorizedAdminBypassesAllowlist(t *testing.T) {
 		Name: "vm1", Namespace: "default",
 		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "alice"},
 	}}
-	if !s.consoleAuthorized(m, "root") {
+	if !s.consoleAuthorized(context.Background(), m, "root") {
 		t.Fatal("expected an admin account to bypass the console allowlist for break-glass access")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckOffByDefaultUnaffected(t *testing.T) {
+	fk := newFakeKube() // fk.sar is nil -- a call would fail the test loudly
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL)}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if !s.consoleAuthorized(context.Background(), m, "alice") {
+		t.Fatal("expected RBACConsoleCheck false (the default) to leave annotation-only behavior unchanged")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckAllowed(t *testing.T) {
+	fk := newFakeKube()
+	fk.sar = func(sar model.SubjectAccessReview) model.SubjectAccessReviewStatus {
+		if sar.Spec.User != "alice" || sar.Spec.ResourceAttributes.Subresource != "console" {
+			t.Fatalf("unexpected SubjectAccessReview: %+v", sar.Spec)
+		}
+		return model.SubjectAccessReviewStatus{Allowed: true}
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL), RBACConsoleCheck: true}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if !s.consoleAuthorized(context.Background(), m, "alice") {
+		t.Fatal("expected a SubjectAccessReview Allowed=true with no annotation set to grant access")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckDenied(t *testing.T) {
+	fk := newFakeKube()
+	fk.sar = func(model.SubjectAccessReview) model.SubjectAccessReviewStatus {
+		return model.SubjectAccessReviewStatus{Allowed: false}
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL), RBACConsoleCheck: true}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if s.consoleAuthorized(context.Background(), m, "alice") {
+		t.Fatal("expected a SubjectAccessReview Allowed=false to deny access even with no annotation set")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckErrorFailsClosed(t *testing.T) {
+	fk := newFakeKube() // fk.sar left nil -- the endpoint itself errors
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL), RBACConsoleCheck: true}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if s.consoleAuthorized(context.Background(), m, "alice") {
+		t.Fatal("expected a SubjectAccessReview call failure to fail closed")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckDeniesEmptyUsernameWithoutCallingOut(t *testing.T) {
+	fk := newFakeKube() // fk.sar left nil -- must not be called for an empty username
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL), RBACConsoleCheck: true}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}
+	if s.consoleAuthorized(context.Background(), m, "") {
+		t.Fatal("expected an empty username to be denied without a SubjectAccessReview call")
+	}
+}
+
+func TestConsoleAuthorizedRBACCheckAndAllowlistBothRequired(t *testing.T) {
+	fk := newFakeKube()
+	fk.sar = func(model.SubjectAccessReview) model.SubjectAccessReviewStatus {
+		return model.SubjectAccessReviewStatus{Allowed: true}
+	}
+	kubeSrv := httptest.NewServer(fk.handler())
+	defer kubeSrv.Close()
+	s := &Server{Kube: mustKubeClientAt(t, kubeSrv.URL), RBACConsoleCheck: true}
+	m := model.Machine{Metadata: model.ObjectMeta{
+		Name: "vm1", Namespace: "default",
+		Annotations: map[string]string{model.AnnotationConsoleAllowedUsers: "someone-else"},
+	}}
+	if s.consoleAuthorized(context.Background(), m, "alice") {
+		t.Fatal("expected RBAC-allowed but allowlist-excluded to still deny -- both checks must pass when both are configured")
 	}
 }
 

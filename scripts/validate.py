@@ -44,14 +44,25 @@ try:
         "machinedisruptionbudgets.kairon.zyvor.dev",
         "machinequotas.kairon.zyvor.dev",
         "machinesnapshotrestores.kairon.zyvor.dev",
+        "machinesets.kairon.zyvor.dev",
+        "machineinstancetypes.kairon.zyvor.dev",
+        "migrationpolicies.kairon.zyvor.dev",
     }
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")
+    # MachineInstanceType is pure reference/config data (a named
+    # cpu/memory shape a Machine looks up, nothing kairon-controller
+    # itself ever observes or reports back) -- no status subresource, the
+    # same real-world precedent a StorageClass/PriorityClass already sets
+    # among Kubernetes' own built-in CRD-shaped resources.
+    no_status = {"machineinstancetypes.kairon.zyvor.dev"}
     for d in crds:
         if d["spec"]["group"] != "kairon.zyvor.dev":
             fail(f"unexpected group for {d['metadata']['name']}")
         v = d["spec"]["versions"][0]
-        if v["name"] != "v1alpha1" or "status" not in v.get("subresources", {}):
+        if v["name"] != "v1alpha1":
+            fail(f"{d['metadata']['name']} must expose v1alpha1")
+        elif d["metadata"]["name"] not in no_status and "status" not in v.get("subresources", {}):
             fail(f"{d['metadata']['name']} must expose v1alpha1 + status")
     migration = next(d for d in crds if d["metadata"]["name"] == "machinemigrations.kairon.zyvor.dev")
     props = migration["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]

@@ -42,6 +42,9 @@ func run() int {
 	requireLabel := flag.Bool("require-capable-label", true, "only schedule onto nodes labeled kairon.zyvor.dev/capable=true")
 	maxPerNode := flag.Int("migration-max-concurrent-per-node", 0, "max concurrent non-terminal migrations touching a single node (0 = unlimited)")
 	maxCluster := flag.Int("migration-max-concurrent-cluster", 0, "max concurrent non-terminal migrations cluster-wide (0 = unlimited)")
+	cordonEvacuate := flag.Bool("cordon-evacuate", false, "automatically create a MachineMigration for every Machine on a Node whose spec.unschedulable transitions to true (see internal/controller/cordon.go) -- off by default, since unlike -leader-elect this is never a no-op: enabling it means a cordoned node's Machines start migrating on their own")
+	cordonEvacuateStrategy := flag.String("cordon-evacuate-strategy", "cold", "migration strategy used by -cordon-evacuate: cold|auto (never live -- see CordonEvacuation's own doc comment)")
+	cordonEvacuateMinRetryInterval := flag.Duration("cordon-evacuate-min-retry-interval", controller.DefaultCordonEvacuateMinRetryInterval, "minimum time between -cordon-evacuate retry attempts for a Machine currently blocked by a MachineDisruptionBudget")
 	webhookAddr := flag.String("webhook-addr", ":8443", "validating admission webhook listen address (see -webhook-tls-cert/-key)")
 	webhookTLSCert := flag.String("webhook-tls-cert", "", "TLS certificate PEM for the admission webhook; must be set together with -webhook-tls-key. Empty (the default) disables the webhook -- MachineQuota/MachineDisruptionBudget enforcement stays reconcile-loop/kaironctl-only, same as before this flag existed")
 	webhookTLSKey := flag.String("webhook-tls-key", "", "TLS private key PEM for the admission webhook; must be set together with -webhook-tls-cert")
@@ -95,6 +98,11 @@ func run() int {
 		Metrics:              rec,
 		MaxConcurrentPerNode: *maxPerNode,
 		MaxConcurrentCluster: *maxCluster,
+		CordonEvacuation: controller.CordonEvacuation{
+			Enabled:          *cordonEvacuate,
+			Strategy:         *cordonEvacuateStrategy,
+			MinRetryInterval: *cordonEvacuateMinRetryInterval,
+		},
 	}
 	if webhookTLSConfig != nil {
 		go func() {

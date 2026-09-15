@@ -53,6 +53,13 @@ type Agent struct {
 	CSISocketPath string
 	CSIStagingDir string
 	CSIPublishDir string
+	// ImageCacheDir configures spec.image.source support -- see
+	// internal/agent/imageimport.go. Empty (the default) means a Machine
+	// setting spec.image.source is refused with a clear error rather than
+	// silently failing; spec.image.path and spec.volumes are entirely
+	// unaffected either way. Same fail-closed convention as
+	// CSISocketPath above.
+	ImageCacheDir string
 	// csiConn caches the dialed connection to kairon-csi-node's local
 	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
 	// same reason guestIPCheckedAt below is: Reconcile only ever runs
@@ -129,6 +136,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Stopped" {
 		return a.ensureStopped(ctx, m)
 	}
+	if m.Spec.Image.Source != nil {
+		cachedPath, err := a.resolveImageSource(ctx, m)
+		if err != nil {
+			return err
+		}
+		m.Spec.Image.Path = cachedPath
+	}
 	bootDisk, volStatus, err := a.resolveBootDiskPath(ctx, m)
 	if err != nil {
 		return err
@@ -136,12 +150,14 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if bootDisk == "" {
 		return fmt.Errorf("spec.image.path or spec.volumes[0] is required")
 	}
-	if len(m.Spec.Volumes) == 0 {
+	if len(m.Spec.Volumes) == 0 && m.Spec.Image.Source == nil {
 		// Only fence plain spec.image.path against ImageRoot -- a
 		// PVC-resolved path already went through a stronger gate (the PVC
 		// had to exist and be Bound, not just be a string any Machine
-		// author could type in) so the same node-local directory allowlist
-		// doesn't apply to it.
+		// author could type in), and a Source-resolved path is
+		// kairon-node's own cache directory, not something a Machine
+		// author supplied, so the same node-local directory allowlist
+		// doesn't apply to either.
 		if err := a.validateImagePath(m); err != nil {
 			return err
 		}

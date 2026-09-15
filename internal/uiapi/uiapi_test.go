@@ -36,6 +36,11 @@ type fakeKube struct {
 	// to exercise Client.PatchSecretStringData (see
 	// uiapi.Server.persistUsers) without modeling a full core/v1 Secret.
 	secrets map[string]map[string]string
+	// sar scripts every SubjectAccessReview response this fake returns --
+	// nil (the default) makes the endpoint respond with an HTTP error, so
+	// a test that doesn't expect a SAR call at all still fails loudly
+	// rather than silently allowing.
+	sar func(model.SubjectAccessReview) model.SubjectAccessReviewStatus
 }
 
 func newFakeKube() *fakeKube {
@@ -175,6 +180,16 @@ func (f *fakeKube) handler() http.Handler {
 			}
 			f.secrets[key] = existing
 			w.WriteHeader(http.StatusOK)
+
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/authorization.k8s.io/v1/subjectaccessreviews":
+			if f.sar == nil {
+				http.Error(w, "unexpected SubjectAccessReview call", http.StatusNotFound)
+				return
+			}
+			var sar model.SubjectAccessReview
+			_ = json.NewDecoder(r.Body).Decode(&sar)
+			sar.Status = f.sar(sar)
+			_ = json.NewEncoder(w).Encode(sar)
 
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

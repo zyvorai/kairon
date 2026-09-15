@@ -181,6 +181,37 @@ func TestValidateMachineResizeDeniesGrowthOverMaxTotalMemory(t *testing.T) {
 	}
 }
 
+func TestValidateMachineDeniesCreateWithMalformedImageSource(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec: model.MachineSpec{Image: model.ImageSpec{
+			Source: &model.ImageSource{HTTPURL: "http://example.invalid/x.qcow2"},
+			// Digest deliberately unset.
+		}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected a spec.image.source with no digest to be denied")
+	}
+}
+
+func TestValidateMachineAllowsCreateWithWellFormedImageSource(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec: model.MachineSpec{Image: model.ImageSpec{
+			Source: &model.ImageSource{HTTPURL: "https://example.invalid/x.qcow2"},
+			Digest: "sha256:" + strings.Repeat("a", 64),
+		}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected a well-formed spec.image.source to be allowed, got denied: %s", d.Reason)
+	}
+}
+
 func TestValidateMachineAllowsCreateWithNoQuotasConfigured(t *testing.T) {
 	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
 	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}})

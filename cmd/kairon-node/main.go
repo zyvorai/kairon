@@ -48,6 +48,7 @@ func run() int {
 	fluxURL := flag.String("fluxvm-url", env("FLUXVM_URL", "http://127.0.0.1:7788"), "node-local FluxVM URL")
 	backend := flag.String("default-backend", env("KAIRON_DEFAULT_BACKEND", "qemu"), "backend used when Machine runtime.backend is auto")
 	imageRoot := flag.String("image-root", env("KAIRON_IMAGE_ROOT", "/var/lib/fluxvm/images"), "allowed root for Machine image paths")
+	imageCacheDir := flag.String("image-cache-dir", env("KAIRON_IMAGE_CACHE_DIR", ""), "directory kairon-node downloads/caches spec.image.source images into, keyed by digest -- empty (the default) refuses any Machine that sets spec.image.source; see docs/guides/machine-image-import.md")
 	vfioAllowlistRaw := flag.String("vfio-allowlist", env("KAIRON_VFIO_ALLOWLIST", ""), "comma-separated PCI BDFs this node permits for DRA-backed VFIO passthrough")
 	migrationAddr := flag.String("migration-addr", env("KAIRON_MIGRATION_ADDR", ":9443"), "mTLS migration peer listen address")
 	migrationCA := flag.String("migration-ca", env("KAIRON_MIGRATION_CA", ""), "CA PEM used to verify Kairon node peers")
@@ -128,6 +129,7 @@ func run() int {
 		Flux:           fc,
 		DefaultBackend: *backend,
 		ImageRoot:      *imageRoot,
+		ImageCacheDir:  *imageCacheDir,
 		VFIOAllowlist:  vfioAllowlist,
 		MigrationPeer:  peer,
 		SourceMigrator: source,

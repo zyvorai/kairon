@@ -1,0 +1,224 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package controller
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+
+	"github.com/zyvorai/kairon/internal/model"
+)
+
+// defaultMachineSetMaxUnavailable is MachineSetSpec.MaxUnavailable's
+// fallback when unset -- matches Kubernetes' own Deployment default.
+const defaultMachineSetMaxUnavailable = "1"
+
+// reconcileMachineSets creates/deletes Machine objects to bring every
+// MachineSet's owned replicas in line with its spec -- see
+// reconcileMachineSet for the per-object logic. Uses the machines this
+// tick's Reconcile already listed; no separate API call for them.
+func (c *Controller) reconcileMachineSets(ctx context.Context, machineSets []model.MachineSet, machines []model.Machine) {
+	for _, ms := range machineSets {
+		if ms.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if err := c.reconcileMachineSet(ctx, ms, machines); err != nil {
+			c.Log.Error("machineset reconcile failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "error", err)
+			status := ms.Status
+			status.Message = err.Error()
+			if statusErr := c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("machineset status patch failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "error", statusErr)
+			}
+		}
+	}
+}
+
+// machineSetTemplateHash fingerprints spec.template so reconcileMachineSet
+// can tell a Machine created from the current template apart from one
+// created before the last template change -- the same "revision marker on
+// each owned object" idea a real Kubernetes ReplicaSet's own
+// pod-template-hash label captures, computed here instead of trusted from
+// an external controller since this project has none to delegate to.
+func machineSetTemplateHash(t model.MachineTemplate) string {
+	b, _ := json.Marshal(t) // Marshal on a plain struct of strings/maps never errors
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// ownedMachines returns machines carrying ms's LabelMachineSet label,
+// excluding any already being deleted (deletion is already in flight;
+// counting it toward "current" would double-book capacity that's about
+// to disappear on its own).
+func ownedMachines(ms model.MachineSet, machines []model.Machine) []model.Machine {
+	var owned []model.Machine
+	for _, m := range machines {
+		if m.Namespace() == ms.Namespace() && m.Metadata.Labels[model.LabelMachineSet] == ms.Metadata.Name && m.Metadata.DeletionTimestamp == nil {
+			owned = append(owned, m)
+		}
+	}
+	return owned
+}
+
+// reconcileMachineSet advances one MachineSet by exactly one step per
+// tick -- never the whole rollout in one pass, so a rollout is always
+// paced by (and visible across) real reconcile intervals, the same
+// incremental-progress shape every other reconcile loop in this project
+// already has. Real limits (documented in docs/guides/machine-sets.md,
+// not silently assumed away): this paces purely by count, not by waiting
+// for a freshly created replica to actually become Ready before
+// continuing -- a genuinely more sophisticated health-gated rollout is a
+// real gap, not implemented in this first cut.
+func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSet, machines []model.Machine) error {
+	desired := ms.Spec.Replicas
+	if desired < 0 {
+		desired = 0
+	}
+	strategy := ms.Spec.Strategy
+	if strategy == "" {
+		strategy = "RollingUpdate"
+	}
+	hash := machineSetTemplateHash(ms.Spec.Template)
+	owned := ownedMachines(ms, machines)
+
+	var current, outdated []model.Machine
+	readyCurrent := 0
+	for _, m := range owned {
+		if m.Metadata.Labels[model.LabelMachineSetTemplateHash] == hash {
+			current = append(current, m)
+			if m.Status.Phase == "Running" {
+				readyCurrent++
+			}
+		} else {
+			outdated = append(outdated, m)
+		}
+	}
+
+	status := model.MachineSetStatus{
+		Replicas:        len(owned),
+		ReadyReplicas:   readyCurrent,
+		UpdatedReplicas: len(current),
+	}
+
+	if err := c.stepMachineSetToward(ctx, ms, hash, strategy, desired, current, outdated); err != nil {
+		return err
+	}
+	return c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status)
+}
+
+// stepMachineSetToward performs at most one create-or-delete batch per
+// call -- see reconcileMachineSet's own doc comment for why a whole
+// rollout is deliberately never collapsed into a single tick.
+func (c *Controller) stepMachineSetToward(ctx context.Context, ms model.MachineSet, hash, strategy string, desired int, current, outdated []model.Machine) error {
+	total := len(current) + len(outdated)
+
+	// Under-provisioned (net-new scale-up, or a replica died on its own)
+	// always takes priority over any rollout concern: fill the gap with
+	// current-template replicas regardless of strategy.
+	if total < desired {
+		return c.createMachineSetReplicas(ctx, ms, hash, desired-total)
+	}
+
+	if strategy == "Recreate" {
+		// Terminate every outdated replica before creating any
+		// replacement -- matches a real Kubernetes Deployment's own
+		// Recreate strategy (full stop, then restart), the simplest
+		// correct behavior and the one requiring no maxUnavailable
+		// bookkeeping at all.
+		if len(outdated) > 0 {
+			return c.deleteMachines(ctx, ms, outdated)
+		}
+		if len(current) > desired {
+			return c.deleteMachines(ctx, ms, current[:len(current)-desired])
+		}
+		return nil
+	}
+
+	// RollingUpdate: replace outdated replicas maxUnavailable-at-a-time,
+	// never letting total (current+outdated still running) drop below
+	// desired-maxUnavailable. Replacement creation happens on a later
+	// tick, once this deletion has actually reduced total below desired
+	// again (the "total < desired" branch above picks it up) -- outdated
+	// replicas count as available capacity right up until the tick that
+	// deletes them, they're still real running Machines, just not on the
+	// current template yet.
+	if len(outdated) > 0 {
+		maxUnavailable, err := resolveMaxUnavailable(ms.Spec.MaxUnavailable, desired)
+		if err != nil {
+			return fmt.Errorf("spec.maxUnavailable: %w", err)
+		}
+		minAvailable := desired - maxUnavailable
+		canDelete := total - minAvailable
+		if canDelete <= 0 {
+			return nil
+		}
+		if canDelete > len(outdated) {
+			canDelete = len(outdated)
+		}
+		return c.deleteMachines(ctx, ms, outdated[:canDelete])
+	}
+	if len(current) > desired {
+		return c.deleteMachines(ctx, ms, current[:len(current)-desired])
+	}
+	return nil
+}
+
+func resolveMaxUnavailable(spec string, desired int) (int, error) {
+	if spec == "" {
+		spec = defaultMachineSetMaxUnavailable
+	}
+	n, err := model.ParseIntOrPercent(spec, desired)
+	if err != nil {
+		return 0, err
+	}
+	if n < 1 {
+		n = 1 // matches Kubernetes' own Deployment: a 0 rounds up to make progress possible at all
+	}
+	return n, nil
+}
+
+func (c *Controller) deleteMachines(ctx context.Context, ms model.MachineSet, machines []model.Machine) error {
+	for _, m := range machines {
+		if err := c.Kube.DeleteMachine(ctx, m.Namespace(), m.Metadata.Name); err != nil {
+			return fmt.Errorf("delete machine %s/%s: %w", m.Namespace(), m.Metadata.Name, err)
+		}
+		c.Log.Info("machineset deleted replica", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "machine", m.Metadata.Name)
+	}
+	return nil
+}
+
+func (c *Controller) createMachineSetReplicas(ctx context.Context, ms model.MachineSet, hash string, n int) error {
+	for i := 0; i < n; i++ {
+		labels := map[string]string{}
+		for k, v := range ms.Spec.Template.Labels {
+			labels[k] = v
+		}
+		labels[model.LabelMachineSet] = ms.Metadata.Name
+		labels[model.LabelMachineSetTemplateHash] = hash
+		machine := model.Machine{
+			TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
+			Metadata: model.ObjectMeta{Name: generateMachineSetChildName(ms.Metadata.Name), Namespace: ms.Namespace(), Labels: labels},
+			Spec:     ms.Spec.Template.Spec,
+		}
+		if _, err := c.Kube.CreateMachine(ctx, ms.Namespace(), machine); err != nil {
+			return fmt.Errorf("create machine for machineset %s/%s: %w", ms.Namespace(), ms.Metadata.Name, err)
+		}
+		c.Log.Info("machineset created replica", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "machine", machine.Metadata.Name)
+	}
+	return nil
+}
+
+// generateMachineSetChildName mirrors a real ReplicaSet's own
+// <name>-<random suffix> convention -- random rather than sequential so
+// two controller replicas racing to create a replica (which should never
+// happen given leader election, but costs nothing to make safe anyway)
+// can't collide on the same generated name.
+func generateMachineSetChildName(machineSetName string) string {
+	buf := make([]byte, 4)
+	_, _ = rand.Read(buf)
+	return machineSetName + "-" + hex.EncodeToString(buf)
+}

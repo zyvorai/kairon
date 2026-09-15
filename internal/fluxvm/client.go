@@ -88,6 +88,14 @@ type CreateRequest struct {
 	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
 	VFIODevices []string       `json:"vfio_devices,omitempty"`
 	Qga         *QgaSpec       `json:"qga,omitempty"`
+	// NUMANode/CPUSet/Hugepages mirror FluxVM's own CreateVmRequest
+	// fields of the same name (fluxvm-core/src/model.rs) exactly --
+	// QEMU-backend-only there (silently ignored for Cloud Hypervisor/
+	// Firecracker), enforced instead at CreateWithVFIO so an operator
+	// gets a clear error rather than a silent no-op.
+	NUMANode  *int   `json:"numa_node,omitempty"`
+	CPUSet    string `json:"cpuset,omitempty"`
+	Hugepages bool   `json:"hugepages,omitempty"`
 }
 
 // QgaSpec mirrors FluxVM's own qemu-guest-agent (virtio-serial) opt-in --
@@ -189,6 +197,15 @@ func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend str
 }
 
 func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string) (*Record, error) {
+	// Refused outright rather than silently accepted-and-ignored: no
+	// FluxVM backend Kairon talks to (QEMU, Cloud Hypervisor, Firecracker)
+	// implements UEFI/OVMF firmware or a vTPM device today -- confirmed
+	// against FluxVM's own source, not assumed. See
+	// docs/guides/machine-windows-guests.md and ROADMAP.md for this
+	// tracked upstream dependency.
+	if m.Spec.Security.SecureBoot || m.Spec.Security.TPM {
+		return nil, fmt.Errorf("spec.security.secureBoot/tpm are not yet supported -- no FluxVM backend implements UEFI/OVMF firmware or a vTPM device today")
+	}
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
 		return nil, err
@@ -204,6 +221,9 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	if backend == "" {
 		backend = "qemu"
 	}
+	if r := m.Spec.Resources; (r.NUMANode != nil || r.CPUSet != "" || r.Hugepages) && backend != "qemu" {
+		return nil, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
+	}
 	tenant := m.Namespace()
 	network := BuildNetworkMap(m.Spec.Network)
 	payload := CreateRequest{
@@ -218,6 +238,9 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		TTLSeconds:  m.Spec.TTLSeconds,
 		VFIODevices: vfioDevices,
 		PodUID:      m.Spec.Network.PodUID,
+		NUMANode:    m.Spec.Resources.NUMANode,
+		CPUSet:      m.Spec.Resources.CPUSet,
+		Hugepages:   m.Spec.Resources.Hugepages,
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}

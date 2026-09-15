@@ -172,8 +172,11 @@ func run() int {
 		ConsoleToken: os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"),
 		ConsolePort:  env("KAIRON_NODE_CONSOLE_PORT", "8090"),
 		ConsoleTLS:   consoleTLS,
-		Metrics:      rec,
-		RateLimit:    rateLimiter,
+		// RBACConsoleCheck false (the default) is unchanged, annotation-
+		// only console authorization -- see uiapi.Server's own doc comment.
+		RBACConsoleCheck: env("KAIRON_UI_RBAC_CONSOLE_CHECK", "false") == "true",
+		Metrics:          rec,
+		RateLimit:        rateLimiter,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,

@@ -46,26 +46,41 @@ spec:
         properties:
           spec:
             type: object
-            required:
-            - resources
             properties:
               nodeName:
                 type: string
+              instanceTypeName:
+                type: string
+                description: Names a MachineInstanceType (same namespace)
+                  kairon-controller resolves into spec.resources exactly
+                  once, the first time this is set and spec.resources is
+                  still empty -- see docs/guides/machine-instance-types.md.
+                  Either resources or instanceTypeName must resolve to a
+                  real cpu/memory shape; enforced by kairon-controller/
+                  kairon-node, not this schema, the same way spec.volumes
+                  can substitute for image entirely.
               image:
                 type: object
-                required:
-                - path
+                description: Either path (an already-present file/PVC-resolved
+                  disk) or source (a URL kairon-node downloads into its own
+                  cache -- see docs/guides/machine-image-import.md) must be
+                  set; enforced by kairon-node/the admission webhook, not
+                  this schema, the same way spec.volumes can substitute for
+                  image entirely.
                 properties:
                   path:
                     type: string
                     minLength: 1
                   digest:
                     type: string
+                  source:
+                    type: object
+                    properties:
+                      httpURL:
+                        type: string
+                        minLength: 1
               resources:
                 type: object
-                required:
-                - cpu
-                - memory
                 properties:
                   cpu:
                     type: string
@@ -73,6 +88,13 @@ spec:
                   memory:
                     type: string
                     minLength: 1
+                  hugepages:
+                    type: boolean
+                  numaNode:
+                    type: integer
+                    minimum: 0
+                  cpuSet:
+                    type: string
               runtime:
                 type: object
                 properties:
@@ -263,6 +285,10 @@ spec:
                           enum: ["DoNotSchedule", "ScheduleAnyway"]
               security:
                 type: object
+                description: secureBoot/tpm are refused at creation time
+                  (not silently ignored) -- no FluxVM backend implements
+                  UEFI/OVMF firmware or a vTPM device today, see
+                  docs/guides/machine-windows-guests.md.
                 properties:
                   secureBoot:
                     type: boolean

@@ -33,6 +33,12 @@ type Controller struct {
 	// for an unschedulable Machine or an ineligible target.
 	MaxConcurrentPerNode int
 	MaxConcurrentCluster int
+	// CordonEvacuation, when Enabled, automatically migrates Machines off
+	// a Node whose spec.unschedulable transitions to true -- see
+	// internal/controller/cordon.go. Zero value (Enabled: false) is
+	// today's unchanged behavior: cordoning a node does nothing to
+	// already-running Machines.
+	CordonEvacuation CordonEvacuation
 }
 
 // isActiveMigrationPhase reports whether a migration in this phase is
@@ -89,6 +95,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	machines = c.resolveInstanceTypes(ctx, machines)
 	nodes, err := c.Kube.ListNodes(ctx)
 	if err != nil {
 		return err
@@ -104,8 +111,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Metrics.ObserveMigrations(migrations)
 	}
 	load := newMigrationLoad(migrations)
+	policyStates := c.loadMigrationPolicyStates(ctx, machines, migrations)
 	for _, migration := range migrations {
-		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, assigned, load); err != nil {
+		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, assigned, load, policyStates); err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
@@ -115,6 +123,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	c.patchMigrationPolicyStatuses(ctx, policyStates)
 
 	snapshots, err := c.Kube.ListMachineSnapshots(ctx)
 	if err != nil && !kube.IsNotFound(err) {
@@ -148,6 +157,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+
+	machineSets, err := c.Kube.ListMachineSets(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	c.reconcileMachineSets(ctx, machineSets, machines)
 
 	quotas, err := c.Kube.ListMachineQuotas(ctx)
 	if err != nil && !kube.IsNotFound(err) {
@@ -208,6 +223,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Log.Error("machine disruption budget status computation failed", "error", err)
 	}
 
+	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)
 	return nil
 }
@@ -230,7 +246,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 	return out
 }
 
-func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad) error {
+func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad, policyStates []*MigrationPolicyState) error {
 	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" {
 		return nil
 	}
@@ -257,16 +273,26 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if c.MaxConcurrentPerNode > 0 && load.byNode[machine.Spec.NodeName] >= c.MaxConcurrentPerNode {
 			return c.blockMigration(ctx, migration, fmt.Sprintf("source node %s has reached its concurrent migration limit (%d active, max %d)", machine.Spec.NodeName, load.byNode[machine.Spec.NodeName], c.MaxConcurrentPerNode))
 		}
-		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, nodes, machineList, assigned)
+		if blocker := AdmitMigrationPolicy(policyStates, machine); blocker != "" {
+			return c.blockMigration(ctx, migration, blocker)
+		}
+		strategy, err := effectiveStrategy(machine, migration)
+		if err != nil {
+			return c.blockMigration(ctx, migration, err.Error())
+		}
+		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, strategy, nodes, machineList, assigned)
 		if err != nil {
 			return c.blockMigration(ctx, migration, err.Error())
 		}
 		if c.MaxConcurrentPerNode > 0 && load.byNode[target] >= c.MaxConcurrentPerNode {
 			return c.blockMigration(ctx, migration, fmt.Sprintf("target node %s has reached its concurrent migration limit (%d active, max %d)", target, load.byNode[target], c.MaxConcurrentPerNode))
 		}
-		strategy, err := effectiveStrategy(machine, migration)
-		if err != nil {
-			return c.blockMigration(ctx, migration, err.Error())
+		if migration.Spec.BandwidthMbps == 0 {
+			if bw := bandwidthMbpsFromPolicies(policyStates, machine); bw > 0 {
+				if err := c.Kube.PatchMachineMigration(ctx, migration.Namespace(), migration.Metadata.Name, map[string]any{"spec": map[string]any{"bandwidthMbps": bw}}); err != nil {
+					c.Log.Error("migration policy bandwidth default patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+				}
+			}
 		}
 		status.SourceNode = machine.Spec.NodeName
 		status.TargetNode = target
@@ -377,7 +403,7 @@ func liveBackendEligible(backend string) bool {
 	return backend == "" || backend == "auto" || backend == "qemu"
 }
 
-func (c *Controller) migrationTarget(machine model.Machine, requested string, nodes []model.Node, machineList []model.Machine, assigned map[string]int) (string, error) {
+func (c *Controller) migrationTarget(machine model.Machine, requested, strategy string, nodes []model.Node, machineList []model.Machine, assigned map[string]int) (string, error) {
 	var candidates []model.Node
 	for _, n := range nodes {
 		if n.Metadata.Name == machine.Spec.NodeName {
@@ -409,6 +435,9 @@ func (c *Controller) migrationTarget(machine model.Machine, requested string, no
 	if sourceNode, ok := nodeByName(nodes, machine.Spec.NodeName); ok {
 		if targetNode, ok := nodeByName(nodes, target); ok {
 			if blocker := migrationPreflight(sourceNode, targetNode); blocker != "" {
+				return "", fmt.Errorf("migration preflight failed: %s", blocker)
+			}
+			if blocker := deviceClaimsPreflight(machine, targetNode, strategy); blocker != "" {
 				return "", fmt.Errorf("migration preflight failed: %s", blocker)
 			}
 		}

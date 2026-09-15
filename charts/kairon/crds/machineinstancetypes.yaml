@@ -1,0 +1,57 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machineinstancetypes.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machineinstancetypes
+    singular: machineinstancetype
+    kind: MachineInstanceType
+    shortNames:
+    - mit
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    additionalPrinterColumns:
+    - name: CPU
+      type: string
+      jsonPath: .spec.resources.cpu
+    - name: Memory
+      type: string
+      jsonPath: .spec.resources.memory
+    schema:
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - resources
+            properties:
+              resources:
+                type: object
+                required:
+                - cpu
+                - memory
+                properties:
+                  cpu:
+                    type: string
+                    minLength: 1
+                  memory:
+                    type: string
+                    minLength: 1
+                  hugepages:
+                    type: boolean
+                  numaNode:
+                    type: integer
+                    minimum: 0
+                  cpuSet:
+                    type: string

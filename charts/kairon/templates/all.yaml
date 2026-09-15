@@ -21,8 +21,30 @@ rules:
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status"]
+    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status", "machinesets", "machinesets/status", "migrationpolicies", "migrationpolicies/status"]
     verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # Read-only: MachineInstanceType is pure reference data
+    # kairon-controller looks up to resolve spec.instanceTypeName, never
+    # writes -- see internal/controller/instancetype.go.
+    resources: ["machineinstancetypes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # MachineSet is the only reason kairon-controller itself ever
+    # creates/deletes a Machine directly -- see
+    # internal/controller/machineset.go. Every other Machine lifecycle
+    # action (create via kaironctl/kairon-ui, delete via the same) stays
+    # exactly as it was; this only covers replicas a MachineSet owns.
+    resources: ["machines"]
+    verbs: ["create", "delete"]
+{{ if .Values.controller.cordonEvacuation.enabled }}
+  - apiGroups: ["kairon.zyvor.dev"]
+    # cordonEvacuation is the only reason kairon-controller itself ever
+    # creates a MachineMigration -- see internal/controller/cordon.go.
+    # Without this enabled, only kaironctl/kairon-ui do.
+    resources: ["machinemigrations"]
+    verbs: ["create"]
+{{ end }}
   - apiGroups: ["kairon.zyvor.dev"]
     # Read-only on the spec, deliberately no patch here: the admission
     # webhook (webhook.yaml) and kaironctl evacuate both only ever list
@@ -131,6 +153,9 @@ spec:
             - "--webhook-tls-key=/etc/kairon/webhook-tls/tls.key"
 {{ end }}
             - "--leader-elect={{ .Values.controller.leaderElection.enabled }}"
+            - "--cordon-evacuate={{ .Values.controller.cordonEvacuation.enabled }}"
+            - "--cordon-evacuate-strategy={{ .Values.controller.cordonEvacuation.strategy }}"
+            - "--cordon-evacuate-min-retry-interval={{ .Values.controller.cordonEvacuation.minRetryInterval }}"
           env:
             - name: KAIRON_CONTROLLER_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
@@ -255,6 +280,7 @@ spec:
             - "--fluxvm-url={{ .Values.node.fluxvmURL }}"
             - "--default-backend={{ .Values.node.defaultBackend }}"
             - "--image-root={{ .Values.node.imageRoot }}"
+            - "--image-cache-dir={{ .Values.node.imageCacheDir }}"
             - "--vfio-allowlist={{ .Values.node.vfioAllowlist }}"
 {{ if .Values.migration.enabled }}
             - "--migration-addr=:{{ .Values.migration.port }}"
@@ -300,7 +326,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.node.resources | indent 12 }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir }}
           volumeMounts:
 {{ if .Values.migration.enabled }}
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
@@ -319,8 +345,17 @@ spec:
             # DaemonSet via the same hostPath.
             - {name: csi-socket-dir, mountPath: /kairon-csi, readOnly: true}
 {{ end }}
+{{ if .Values.node.imageCacheDir }}
+            # Writable, unlike csi-socket-dir above: kairon-node itself
+            # downloads spec.image.source images here (see
+            # internal/agent/imageimport.go) -- mounted at the identical
+            # host path so the file lands where FluxVM (a separate
+            # process on the same host) will look for it when this
+            # Machine's spec.image.path is set to the cache path.
+            - {name: image-cache, mountPath: {{ .Values.node.imageCacheDir | quote }}}
 {{ end }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled }}
+{{ end }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir }}
       volumes:
 {{ if .Values.migration.enabled }}
         - name: migration-tls
@@ -358,6 +393,12 @@ spec:
         - name: csi-socket-dir
           hostPath:
             path: {{ .Values.node.csi.socketDir | quote }}
+            type: DirectoryOrCreate
+{{ end }}
+{{ if .Values.node.imageCacheDir }}
+        - name: image-cache
+          hostPath:
+            path: {{ .Values.node.imageCacheDir | quote }}
             type: DirectoryOrCreate
 {{ end }}
 {{ end }}
@@ -694,6 +735,13 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshots"]
     verbs: ["get", "list", "watch", "create"]
+{{ if .Values.ui.auth.rbacConsoleCheck }}
+  - apiGroups: ["authorization.k8s.io"]
+    # ui.auth.rbacConsoleCheck's own SubjectAccessReview call -- see
+    # internal/uiapi/console.go's rbacAllowsConsole.
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -864,6 +912,10 @@ spec:
             - name: KAIRON_NODE_CONSOLE_CA
               value: /etc/kairon/console-tls/ca.crt
 {{ end }}
+{{ end }}
+{{ if .Values.ui.auth.rbacConsoleCheck }}
+            - name: KAIRON_UI_RBAC_CONSOLE_CHECK
+              value: "true"
 {{ end }}
           ports: [{name: http, containerPort: {{ .Values.ui.service.port }}}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}

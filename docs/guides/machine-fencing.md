@@ -123,6 +123,35 @@ against the one chosen migration target only, not searched across every
 candidate node -- if the winning candidate fails preflight, the migration is
 blocked rather than silently retried against a different node.
 
+## Migration preflight: VFIO device claims
+
+A Machine with `spec.deviceClaims` set (GPU/SR-IOV passthrough --
+[`docs/guides/machine-placement.md`](machine-placement.md)) gets a separate,
+stricter check (`deviceClaimsPreflight`, same file):
+
+- **Live migration of a `deviceClaims` Machine is always blocked**, no
+  label can change that -- VFIO passthrough is boot-time-only, and QEMU's
+  live-migration RAM transfer fundamentally cannot carry a passthrough PCI
+  device's in-flight state across hosts. FluxVM has no hot-unplug/hot-plug
+  API for this today (it does for CPU/memory, not VFIO devices) -- a real
+  upstream dependency, tracked in `ROADMAP.md`, not something this preflight
+  can work around.
+- **Cold migration is allowed once the target asserts an equivalent
+  device**, the same opt-in-label pattern as storage/network domains above:
+
+```bash
+kubectl label node worker-2 kairon.zyvor.dev/vfio-devices=0000:65:00.0
+```
+
+  Cold migration has none of live migration's state-transfer problem --
+  the guest is stopped and a fresh runtime created at the target exactly
+  like initial creation -- so it only needs the target to actually have a
+  compatible device, which is exactly what this label lets you assert
+  (Kairon has no other way to know a node's `KAIRON_VFIO_ALLOWLIST`
+  without it). Cold migration of a `deviceClaims` Machine to an
+  un-labeled target is blocked, closing what used to be a silent gap: the
+  device was simply left behind with no explicit error.
+
 ## Real limits today (first cut)
 
 - `NodeUnreachable` detection is Node-`Ready`-only, not an independent

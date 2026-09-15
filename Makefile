@@ -44,12 +44,14 @@ build:
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kairon-controller ./cmd/kairon-controller
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kairon-node ./cmd/kairon-node
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kaironctl ./cmd/kaironctl
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kubectl-kairon ./cmd/kubectl-kairon
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kairon-ui ./cmd/kairon-ui
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kairon-csi-node ./cmd/kairon-csi-node
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o bin/kairon-csi-controller ./cmd/kairon-csi-controller
 
 smoke: build
 	test "$$($(CURDIR)/bin/kaironctl version)" = "$(VERSION)"
+	test "$$($(CURDIR)/bin/kubectl-kairon version)" = "$(VERSION)"
 	test "$$($(CURDIR)/bin/kairon-controller --version)" = "$(VERSION)"
 	test "$$($(CURDIR)/bin/kairon-node --version)" = "$(VERSION)"
 	test "$$($(CURDIR)/bin/kairon-ui --version)" = "$(VERSION)"

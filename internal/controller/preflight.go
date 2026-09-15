@@ -5,6 +5,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -22,6 +23,13 @@ const (
 	// "incompatible."
 	StorageDomainLabel = "kairon.zyvor.dev/storage-domain"
 	NetworkDomainLabel = "kairon.zyvor.dev/network-domain"
+
+	// VFIODevicesLabel is an opt-in, operator-asserted node label naming
+	// the PCI BDFs (or vendor:device IDs) a node's VFIO allowlist
+	// (KAIRON_VFIO_ALLOWLIST) actually permits -- see
+	// deviceClaimsPreflight's own doc comment for why this exists.
+	// Comma-separated, same shape as KAIRON_VFIO_ALLOWLIST itself.
+	VFIODevicesLabel = "kairon.zyvor.dev/vfio-devices"
 )
 
 // migrationPreflight closes part of the "storage/network migration
@@ -48,6 +56,38 @@ func migrationPreflight(source, target model.Node) string {
 	}
 	if reason := domainMismatch(NetworkDomainLabel, "network", source, target); reason != "" {
 		return reason
+	}
+	return ""
+}
+
+// deviceClaimsPreflight refuses migrating a Machine with spec.deviceClaims
+// set, unless it's a cold migration to a target asserted (via
+// VFIODevicesLabel) to have an equivalent device. This is stricter than
+// domainMismatch's "can't confirm either way, so allow it" posture,
+// deliberately: VFIO passthrough is boot-time-only (internal/agent's
+// resolveVFIODevices runs once, at CreateWithVFIO -- see
+// internal/fluxvm.Client), and QEMU's live-migration RAM/state transfer
+// (internal/migration) fundamentally cannot carry a passthrough PCI
+// device's in-flight state across hosts -- there is no FluxVM API to
+// hot-unplug/hot-plug one around a migration today (compare
+// HotplugCPU/HotplugMemory, which do exist), so a *live* migration of a
+// deviceClaims Machine can never work, label or no label, until FluxVM
+// gains that capability (tracked in ROADMAP.md). A *cold* migration has
+// no such problem -- the guest is stopped and a fresh runtime is created
+// at the target exactly like initial creation, so it only needs the
+// target to actually have a compatible device, which is exactly what
+// VFIODevicesLabel lets an operator assert (Kairon has no other source of
+// truth for a node's VFIO allowlist, the same limitation
+// StorageDomainLabel/NetworkDomainLabel already document).
+func deviceClaimsPreflight(machine model.Machine, target model.Node, strategy string) string {
+	if len(machine.Spec.DeviceClaims) == 0 {
+		return ""
+	}
+	if strategy == "live" {
+		return "Machine has spec.deviceClaims set -- live migration cannot carry a VFIO passthrough device's state across hosts (FluxVM has no hot-unplug/hot-plug API for this yet, see ROADMAP.md); use strategy: cold instead"
+	}
+	if strings.TrimSpace(target.Metadata.Labels[VFIODevicesLabel]) == "" {
+		return fmt.Sprintf("Machine has spec.deviceClaims set, and target node %q is not asserted (via %s) to have an equivalent device", target.Metadata.Name, VFIODevicesLabel)
 	}
 	return ""
 }

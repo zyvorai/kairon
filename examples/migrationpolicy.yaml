@@ -1,0 +1,13 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: MigrationPolicy
+metadata:
+  name: web-tier
+  namespace: default
+spec:
+  selector:
+    tier: web
+  bandwidthMbps: 500
+  maxConcurrent: 2

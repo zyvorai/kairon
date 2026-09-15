@@ -356,6 +356,38 @@ func (c *Client) PatchMachineQuotaStatus(ctx context.Context, ns, name string, s
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinequotas", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) ListMachineSets(ctx context.Context) ([]model.MachineSet, error) {
+	var list model.MachineSetList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesets", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineSetsNamespace(ctx context.Context, ns string) ([]model.MachineSet, error) {
+	var list model.MachineSetList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinesets"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) PatchMachineSetStatus(ctx context.Context, ns, name string, status model.MachineSetStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesets", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
+	var list model.MachineInstanceTypeList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMigrationPolicies(ctx context.Context) ([]model.MigrationPolicy, error) {
+	var list model.MigrationPolicyList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/migrationpolicies", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) PatchMigrationPolicyStatus(ctx context.Context, ns, name string, status model.MigrationPolicyStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "migrationpolicies", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")
@@ -473,4 +505,20 @@ func (c *Client) UpdateLease(ctx context.Context, ns string, lease model.Lease) 
 	var out model.Lease
 	err := c.request(ctx, http.MethodPut, leasePath(ns, lease.Metadata.Name), lease, &out, "")
 	return out, err
+}
+
+// SubjectAccessReview posts a built-in authorization.k8s.io/v1
+// SubjectAccessReview and returns its Status -- the caller's own
+// ServiceAccount (this Client's Token) must hold "create" on
+// subjectaccessreviews.authorization.k8s.io for this to succeed. See
+// model.SubjectAccessReview's own doc comment for why this is a real
+// SubjectAccessReview, not a SelfSubjectAccessReview.
+func (c *Client) SubjectAccessReview(ctx context.Context, sar model.SubjectAccessReview) (model.SubjectAccessReviewStatus, error) {
+	sar.TypeMeta = model.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"}
+	var out model.SubjectAccessReview
+	err := c.request(ctx, http.MethodPost, "/apis/authorization.k8s.io/v1/subjectaccessreviews", sar, &out, "")
+	if err != nil {
+		return model.SubjectAccessReviewStatus{}, err
+	}
+	return out.Status, nil
 }

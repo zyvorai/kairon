@@ -4,17 +4,22 @@ Caps how many Machines `kaironctl evacuate` is willing to disrupt at once.
 
 ## Why this exists, and what it isn't
 
-`node.spec.unschedulable` only blocks *new* placements -- nothing moves
-already-running Machines off a node being decommissioned just because it's
-cordoned, the same as real Kubernetes (`kubectl cordon` alone never evicts
-anything either). The operator-invoked action that actually moves Machines
-off a node is `kaironctl evacuate NODE`, which creates a `MachineMigration`
-for each one. `MachineDisruptionBudget` makes `evacuate` throttle itself
-against those, instead of firing everything simultaneously; `evacuate
---wait` (below) additionally keeps retrying until the node is actually
-empty, the closest thing to an automatic drain Kairon has -- deliberately
-still something an operator starts, not something that begins on its own
-the moment a node is cordoned for whatever reason.
+By default, `node.spec.unschedulable` only blocks *new* placements --
+nothing moves already-running Machines off a node being decommissioned just
+because it's cordoned, the same as real Kubernetes (`kubectl cordon` alone
+never evicts anything either). The operator-invoked action that actually
+moves Machines off a node is `kaironctl evacuate NODE`, which creates a
+`MachineMigration` for each one. `MachineDisruptionBudget` makes `evacuate`
+throttle itself against those, instead of firing everything simultaneously;
+`evacuate --wait` (below) additionally keeps retrying until the node is
+actually empty.
+
+**Opt-in exception**: `controller.cordonEvacuation.enabled` (off by
+default) makes `kairon-controller` itself do this automatically -- every
+reconcile tick, any Machine on a newly-cordoned node gets the same
+`MachineDisruptionBudget`-throttled `MachineMigration` `evacuate` would
+create, mirroring KubeVirt's `LiveMigrateIfPossible` eviction strategy.
+See "Automatic cordon-triggered evacuation" below.
 
 **Enforcement is still client-side by default, not a server-side admission
 guarantee.** With the admission webhook below disabled (the default),
@@ -114,21 +119,45 @@ kaironctl evacuate worker-3 --wait [--timeout 15m] [--poll-interval 10s]
 
 `--wait` re-runs the same pass on `--poll-interval` (default 10s) until
 every Machine has actually left the node (`spec.nodeName != worker-3`) or
-`--timeout` (default 15m) elapses -- the closest thing to an automatic
-node-drain Kairon has, matching `kubectl drain`'s own retry model. It's
-still deliberately an **operator-invoked** action, not something that
-starts on its own the moment `node.spec.unschedulable` is set (by
-`kaironctl` or anything else) -- the same "operator attests, Kairon then
-follows through automatically" shape as `kaironctl fence`/`recover`,
-chosen over a background controller that would silently start migrating
-every Machine on a node the instant *anything* cordons it, for whatever
-reason.
+`--timeout` (default 15m) elapses, matching `kubectl drain`'s own retry
+model. This remains an **operator-invoked** action, not something that
+starts on its own the moment `node.spec.unschedulable` is set -- unless
+`controller.cordonEvacuation.enabled` is also on (see below), the same
+"operator attests, Kairon then follows through automatically" shape as
+`kaironctl fence`/`recover`.
 
 Each pass also now skips (never duplicates) a Machine that already has a
 non-terminal `MachineMigration` in flight -- a real gap `--wait` needed
 closed to avoid creating a second, conflicting migration for the same
 Machine on its next retry, and one plain (non-`--wait`) `evacuate` shares
 the fix too.
+
+## Automatic cordon-triggered evacuation
+
+`controller.cordonEvacuation.enabled` (Helm value; `-cordon-evacuate` on
+the `kairon-controller` binary, off by default) makes `kairon-controller`
+itself create a `MachineMigration` for every Machine on a Node whose
+`spec.unschedulable` transitions to true -- no `kaironctl evacuate`
+invocation needed, mirroring KubeVirt's `LiveMigrateIfPossible` eviction
+strategy. It reuses the exact `MachineDisruptionBudget` check `evacuate`
+and the admission webhook already share (`internal/controller/cordon.go`):
+
+- A Machine a budget currently blocks is skipped, not force-migrated --
+  the same throttling `evacuate` already does, just triggered by the
+  cordon itself instead of an operator running a command.
+- A blocked or already-attempted Machine is retried at most once per
+  `controller.cordonEvacuation.minRetryInterval` (default `2m`), recorded
+  via the `kairon.zyvor.dev/cordon-evacuate-attempted-at` annotation --
+  otherwise a controller reconciling every few seconds would attempt a
+  new migration every tick.
+- `controller.cordonEvacuation.strategy` (default `cold`) is `cold` or
+  `auto` -- deliberately never `live`: automatic *live* migration
+  triggered with no operator watching is a bigger step than automatic
+  cold, so it isn't offered here.
+- Turning this on requires the `kairon-controller` ServiceAccount to be
+  granted `create` on `machinemigrations` -- the Helm chart adds this
+  automatically when `controller.cordonEvacuation.enabled` is true, since
+  today only `kaironctl`/`kairon-ui` ever create one.
 
 ## Real limits today (v1 of this feature)
 
@@ -140,10 +169,10 @@ the fix too.
   until the next tick).
 - A Machine matching zero `MachineDisruptionBudget`s is never blocked --
   budgets are opt-in per selector, not a cluster-wide default.
-- No background/automatic drain triggered by `node.spec.unschedulable` or
-  anything else -- `evacuate --wait` (above) is the closest thing to
-  automatic node-drain, and it's still an explicit operator action to
-  start, by design.
+- No background/automatic drain triggered by `node.spec.unschedulable`
+  unless `controller.cordonEvacuation.enabled` is turned on (see
+  "Automatic cordon-triggered evacuation" above) -- off by default,
+  `evacuate --wait` remains an explicit operator action to start.
 - `--wait`'s timeout is wall-clock, not "N more retries" -- a
   `MachineDisruptionBudget` that can genuinely never be satisfied (e.g.
   `minAvailable` higher than the selector will ever match) just retries

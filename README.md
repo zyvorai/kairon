@@ -104,7 +104,13 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 
 **Machine lifecycle & placement**
 - **Machine CRD** — CPU, memory, image, network, power state, volumes, DRA device claims
+- **`MachineSet`** — a Deployment/ReplicaSet-shaped fleet of identical Machines from one template, with `RollingUpdate`/`Recreate` rollout — [guide](docs/guides/machine-sets.md)
+- **`MachineInstanceType`** — a reusable named CPU/memory shape (`spec.instanceTypeName`), resolved into `spec.resources` once instead of inlining it every time — [guide](docs/guides/machine-instance-types.md)
+- **NUMA topology, CPU set, hugepages** (`spec.resources.numaNode`/`.cpuSet`/`.hugepages`, qemu-only) — direct passthroughs to FluxVM's own existing support, refused with a clear error on a non-qemu backend rather than silently ignored — [guide](docs/guides/machine-cpu-numa.md)
+- **Windows guests** — legacy-BIOS Windows Server/10 with a pre-built, virtio-driver + cloudbase-init image works today (`spec.cloudInit` unchanged); `spec.security.secureBoot`/`.tpm` (Windows 11) are now refused with a clear error instead of silently doing nothing — no FluxVM backend implements UEFI/vTPM yet — [guide](docs/guides/machine-windows-guests.md)
+- **`MigrationPolicy`** — scopes migration bandwidth/concurrency to Machines matching a selector, independent of the global `migration.maxConcurrentPerNode`/`maxConcurrentCluster` caps — [guide](docs/guides/migration-policies.md)
 - **PVC-backed boot disk** — `spec.volumes[0]` resolves through a Bound `PersistentVolumeClaim` to a real host directory (`hostPath`/`local` `PersistentVolume`s directly, or a network-block volume via Kairon's own first-cut CSI driver) instead of a hand-placed image file — [guide](docs/guides/machine-storage.md) · [CSI guide](docs/guides/machine-storage-csi.md)
+- **Image import** (`spec.image.source`, opt-in via `node.imageCacheDir`) — `kairon-node` downloads a remote qcow2/raw image URL into its own digest-keyed cache instead of requiring a hand-placed file, shared across every Machine naming the same digest — [guide](docs/guides/machine-image-import.md)
 - **Placement** — least-loaded scheduling across Ready, capable-labeled nodes, deterministic tie-break, required (hard) `spec.placement.affinity`/`antiAffinity`, weighted soft scoring (`preferredAffinity`/`preferredAntiAffinity`, `topologySpreadConstraints`), a best-effort DRA topology-awareness hint, and `topologySpreadConstraints.maxSkew` hard enforcement via `whenUnsatisfiable: DoNotSchedule` — [guide](docs/guides/machine-placement.md)
 - **DRA → VFIO** — an allocated `ResourceClaim`'s PCI BDF against the node's `vfio_devices` administrator allowlist, fail-closed (an empty allowlist denies all passthrough)
 - **CPU/memory hotplug** — grow a running Machine's `spec.resources` via FluxVM's real QMP `device_add`/`object-add`, no reboot — [guide](docs/guides/machine-hotplug.md)
@@ -119,6 +125,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 
 **Guarding the fleet**
 - **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once; `kairon-controller` now reconciles real `status` every tick too (`kaironctl get budgets`/`kubectl get mdb`), purely observational — [guide](docs/guides/machine-disruption-budgets.md)
+- **Cordon-triggered automatic evacuation** (`controller.cordonEvacuation.enabled`, opt-in) — `kairon-controller` itself migrates every Machine off a Node the moment it's cordoned, budget-throttled exactly like `kaironctl evacuate`, mirroring KubeVirt's `LiveMigrateIfPossible` — [guide](docs/guides/machine-disruption-budgets.md#automatic-cordon-triggered-evacuation)
 - **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap — [guide](docs/guides/machine-quotas.md)
 - **Admission webhook** (`webhook.enabled`, opt-in) — both of the above can now be enforced *at admission*, not just in the reconcile loop or `kaironctl`: a `Machine` create that would blow a quota, or a `MachineMigration` create that would violate a budget, gets rejected outright instead of just parked `Pending` or silently allowed. See [Guarding the fleet](#guarding-the-fleet) below.
 - **Network Fabric** — `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge — [reference](docs/network-fabric.md)
@@ -299,6 +306,8 @@ kaironctl version
 
 Point at a cluster with `KAIRON_KUBE_URL` (e.g. after `kubectl proxy`), or run in-cluster with the mounted service account.
 
+**`kubectl kairon ...`** works identically once `kubectl-kairon` (built by `make build` alongside `kaironctl`) is on `$PATH` — a real kubectl plugin sharing kaironctl's exact command dispatch (`internal/kaironctl`), not a shim shelling out to a separate binary. `kubectl kairon evacuate worker-1` is exactly `kaironctl evacuate worker-1`.
+
 ---
 
 ## Operability
@@ -352,9 +361,19 @@ npm --prefix web run build
 | [`docs/guides/observability.md`](docs/guides/observability.md) | What each component's `/metrics` exposes, the `kairon-health` alert group, and the renamed `PrometheusRule` |
 | [`docs/guides/machine-migration-tls.md`](docs/guides/machine-migration-tls.md) | Control-plane vs. data-plane migration TLS, and real per-node data-plane identity via `migration.dataplaneTlsSecretName` |
 | [`docs/guides/kairon-ui-oidc.md`](docs/guides/kairon-ui-oidc.md) | OIDC/SSO setup, the Authorization Code + PKCE flow, and why it breaks Go-stdlib-only |
+| [`docs/guides/kairon-ui-console-rbac.md`](docs/guides/kairon-ui-console-rbac.md) | Real Kubernetes RBAC (`machines/console` + `SubjectAccessReview`) for console access, opt-in alongside the annotation allowlist |
 | [`docs/guides/machine-storage.md`](docs/guides/machine-storage.md) · [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md) | PVC-backed boot disks; Kairon's own first-cut iSCSI CSI driver and why it breaks Go-stdlib-only |
+| [`docs/guides/machine-image-import.md`](docs/guides/machine-image-import.md) | `spec.image.source`: downloading a remote image URL into `kairon-node`'s own digest-keyed cache |
+| [`docs/guides/machine-sets.md`](docs/guides/machine-sets.md) | `MachineSet`: replica reconciliation, `RollingUpdate`/`Recreate` rollout strategy |
+| [`docs/guides/machine-instance-types.md`](docs/guides/machine-instance-types.md) | `MachineInstanceType`: a reusable named CPU/memory shape resolved into `spec.resources` once |
+| [`docs/guides/machine-cpu-numa.md`](docs/guides/machine-cpu-numa.md) | `spec.resources.numaNode`/`.cpuSet`/`.hugepages`: qemu-only NUMA/hugepage passthroughs, and what they don't guarantee (no real host-core pinning) |
+| [`docs/guides/machine-windows-guests.md`](docs/guides/machine-windows-guests.md) | What Windows guest support actually covers today (legacy-BIOS + cloudbase-init) and what's blocked on FluxVM (UEFI/Secure Boot/vTPM) |
+| [`docs/guides/migration-policies.md`](docs/guides/migration-policies.md) | `MigrationPolicy`: selector-scoped migration bandwidth defaulting and concurrency caps |
 | [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) · [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
 | [`docs/runbook-backup-restore.md`](docs/runbook-backup-restore.md) | Backing up/restoring Kairon's CRD state (`scripts/backup-crds.sh`/`restore-crds.sh`), and what it doesn't cover (VM disk content, FluxVM host state) |
+| [`docs/runbook-velero-backup.md`](docs/runbook-velero-backup.md) | Using generic Velero (no Kairon-specific plugin) instead — what works out of the box, and the one real gap (no disk-content snapshot without a real CSI storage backend) |
+| [`docs/runbook-vm-export.md`](docs/runbook-vm-export.md) | Getting a Machine's disk content out of the cluster entirely, with standard Kubernetes primitives (no new Kairon-specific export tooling) |
+| [`docs/design-cluster-api-provider.md`](docs/design-cluster-api-provider.md) | Scoped, not built: what a real Cluster API infrastructure provider would take, and the real `ownerReferences` gap that blocks it today |
 | [`ROADMAP.md`](ROADMAP.md) · [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
 | [`SECURITY.md`](SECURITY.md) | Threat model, vulnerability reporting |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | PR checklist, coverage floor, frontend checks |

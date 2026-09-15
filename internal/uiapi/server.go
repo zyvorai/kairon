@@ -104,6 +104,19 @@ type Server struct {
 	// shared ConsoleToken already authenticates kairon-ui to kairon-node,
 	// so a client certificate would be redundant.
 	ConsoleTLS *tls.Config
+	// RBACConsoleCheck, when true, additionally requires a real
+	// Kubernetes SubjectAccessReview (verb "get" on the machines/console
+	// subresource) to allow console access -- layered alongside, never
+	// instead of, the kairon.zyvor.dev/console-allowed-users annotation
+	// allowlist consoleAuthorized already enforces. False (the default)
+	// is today's unchanged, annotation-only behavior. Only meaningful for
+	// an OIDC-authenticated identity whose claims are also mapped into
+	// kube-apiserver's own OIDC config -- a local ui.auth.users[] account
+	// has no real Kubernetes User to check RBAC against, so it's denied
+	// outright when this is true (fail closed, matching consoleAuthorized's
+	// own existing "no real identity" precedent for the empty-username
+	// case). See docs/guides/kairon-ui-console-rbac.md.
+	RBACConsoleCheck bool
 	// consoleTickets backs the console feature's single-use WebSocket
 	// tickets; zero value is ready to use.
 	consoleTickets sync.Map

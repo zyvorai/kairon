@@ -133,7 +133,7 @@ func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := usernameFromContext(r.Context())
-	if !s.consoleAuthorized(m, username) {
+	if !s.consoleAuthorized(r.Context(), m, username) {
 		if s.Log != nil {
 			s.Log.Warn("uiapi console ticket denied", "username", username, "namespace", namespace, "name", name)
 		}
@@ -155,7 +155,16 @@ func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 // neither does fully unauthenticated dev mode -- is denied whenever the
 // Machine restricts console access, since there's no real identity to
 // check against an allowlist: fail closed rather than silently allow.
-func (s *Server) consoleAuthorized(m model.Machine, username string) bool {
+//
+// When s.RBACConsoleCheck is also true, a real Kubernetes
+// SubjectAccessReview (see rbacAllowsConsole) must additionally allow it
+// -- checked first, so a real Kubernetes RBAC denial can't be overridden
+// by the annotation allowlist or an admin account, and so "RBAC alone,
+// no annotation set" is enough on its own to grant access.
+func (s *Server) consoleAuthorized(ctx context.Context, m model.Machine, username string) bool {
+	if s.RBACConsoleCheck && !s.rbacAllowsConsole(ctx, m, username) {
+		return false
+	}
 	allowed := strings.TrimSpace(m.Metadata.Annotations[model.AnnotationConsoleAllowedUsers])
 	if allowed == "" {
 		return true
@@ -172,6 +181,40 @@ func (s *Server) consoleAuthorized(m model.Machine, username string) bool {
 		}
 	}
 	return false
+}
+
+// rbacAllowsConsole posts a SubjectAccessReview checking "get" on the
+// machines/console subresource for username -- a subresource this
+// project's CRD can't actually serve (see model.SubjectAccessReview's own
+// doc comment), but RBAC resource strings with a subresource suffix are
+// just strings the authorizer compares (the same nodes/proxy precedent
+// real Kubernetes RBAC already uses), so `kubectl create clusterrole
+// --resource=machines/console --verb=get` is meaningful with zero CRD
+// changes. An empty username (no real per-operator identity at all) is
+// denied without even calling out -- there's nothing for a
+// SubjectAccessReview to check. Any SAR error also denies (fail closed,
+// matching every other auth-adjacent error path in this file) --
+// including for a local ui.auth.users[] account with no real Kubernetes
+// User to check against, since kube-apiserver simply reports no matching
+// RoleBinding for an unrecognized subject rather than erroring.
+func (s *Server) rbacAllowsConsole(ctx context.Context, m model.Machine, username string) bool {
+	if username == "" {
+		return false
+	}
+	status, err := s.Kube.SubjectAccessReview(ctx, model.SubjectAccessReview{Spec: model.SubjectAccessReviewSpec{
+		User: username,
+		ResourceAttributes: &model.ResourceAttributes{
+			Verb: "get", Group: "kairon.zyvor.dev", Resource: "machines",
+			Subresource: "console", Namespace: m.Namespace(), Name: m.Metadata.Name,
+		},
+	}})
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Warn("uiapi console RBAC check failed", "username", username, "namespace", m.Namespace(), "name", m.Metadata.Name, "error", err)
+		}
+		return false
+	}
+	return status.Allowed
 }
 
 // handleConfig reports small, non-sensitive feature toggles the frontend
