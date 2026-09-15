@@ -5,7 +5,7 @@ Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the s
 ## Components
 
 - `kairon-controller`: Machine placement, `MachineMigration` state and `MachineSnapshot` -> CSI `VolumeSnapshot` orchestration. Exposes Prometheus metrics and a migration concurrency quota (see Operational visibility below).
-- `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, exposes the mTLS migration peer API, and optionally (`console.enabled`) a shared-token-gated VNC relay to each VM's local QEMU socket.
+- `kairon-node`: one per VM node; reconciles assigned Machines into FluxVM, resolves DRA/VFIO, exposes the mTLS migration peer API, and optionally (`console.enabled`) a shared-token-gated relay (`internal/consoleproxy`) kairon-ui dials for everything that needs a network path only this node has -- VNC/text console, guest exec (both channels), guest file access, logs, VM-state snapshot/restore, sandboxes/templates/HTTP-proxy, the image catalog, warm pools, and the runtime/network diagnostics -- see "Day-2 operations on a running Machine" below for the full list.
 - migration peer: TLS 1.3, mandatory client certificate, target prepare/commit/abort and a local atomic session journal.
 - migration adapter: optional HTTP-over-Unix-socket component that implements VMM-specific target/source migration operations.
 - `kaironctl`: thin Kubernetes API client; it never bypasses the controllers.
@@ -112,6 +112,64 @@ Machine left FluxVM-stopped mid-restore back to its last-known-good disk
 state, not a second automatic restore attempt. See
 [guides/machine-vm-state-snapshot.md](guides/machine-vm-state-snapshot.md)
 and SECURITY.md's "VM-state snapshot/restore" section.
+
+A `spec.powerState: Halted` value now sits alongside `Running`/`Stopped`/
+`Paused` -- FluxVM's own `stop`/`start` (`internal/fluxvm/hibernate.go`),
+powering the VMM process off while FluxVM keeps its own record/disk
+intact, so resume reuses FluxVM's own last-applied config instead of a
+full Kairon-side recreate the way `Stopped` -> `Running` does. Resume
+reuses the exact reconcile branch that already handled `RestoreSnapshot`'s
+own crash-recovery self-heal, since both leave FluxVM reporting the
+runtime Stopped-with-record-kept; `status.phase` reports `Halted`,
+deliberately distinct from `Stopped`, and both scheduler capacity
+accounting and `MachineQuota` treat it the same way they already treat
+`Stopped`. See [guides/machine-halt.md](guides/machine-halt.md).
+
+A second, backend-agnostic guest-exec channel is now wrapped too:
+`POST /v1/vms/{id}/agent` (`internal/fluxvm.Client.AgentExec`) rides the
+same bespoke vsock guest agent guest file access already uses
+(`spec.guestAgent.console`), a genuinely different mechanism from the
+QEMU-only `qemu-guest-agent` exec above -- the only guest-exec path that
+works on Cloud Hypervisor, Firecracker, or a FluxVm-backend sandbox. See
+[guides/machine-guest-agent-files.md](guides/machine-guest-agent-files.md).
+
+FluxVM's own agent-sandbox track -- a lightweight, fast-boot in-tree
+hypervisor (`BackendKind::FluxVm`) for short-lived ephemeral workloads --
+is wrapped via `spec.sandbox`: `kairon-node` calls FluxVM's real
+`POST /v1/sandboxes` instead of `POST /v1/vms` when set
+(`internal/fluxvm.Client.CreateSandboxForMachine`), optionally booting
+from a pre-built template (`spec.sandbox.templateName`, a node-scoped
+admin API wrapping FluxVM's own `GET`/`POST /v1/templates`) instead of
+`spec.image`. An HTTP proxy relay
+(`ANY /api/v1/machines/{ns}/{name}/sandbox-http/{port}/{path}`) reaches a
+service running inside the sandbox directly. See
+[guides/machine-sandboxes.md](guides/machine-sandboxes.md) and
+SECURITY.md's "Sandboxes" section.
+
+FluxVM's own node-local image catalog (`spec.image.catalogName`) and
+warm-VM pools (node-scoped admin API under `/api/v1/nodes/{node}/pools`)
+are wrapped the same way as sandbox templates -- both are per-node FluxVM
+state, not a new Kairon CRD with its own reconcile loop; warm pools in
+particular were deliberately kept API-only rather than a competing
+controller, since FluxVM already ships its own `MicroVMPool` CRD/node-local
+operator reconciling the identical `/v1/pools` state. See
+[guides/machine-image-catalog.md](guides/machine-image-catalog.md) and
+[guides/machine-sandboxes.md](guides/machine-sandboxes.md)'s "Warm pools"
+section.
+
+Four runtime diagnostics round out the FluxVM route audit this session
+worked through: a node's real capability manifest
+(`GET /api/v1/nodes/{node}/capabilities`), a Machine's cgroup-derived PSI
+pressure stats and effective host CPU set, and a cgroup-v2-freezer-backed
+freeze/thaw distinct from `spec.powerState: Paused` (a host-kernel
+operation that works even when a VM's own control channel is
+unresponsive). Alongside these, four network-observability endpoints
+(effective policy, stats, flows, drop-reasons) wrap FluxVM's own
+eBPF-dataplane diagnostics -- `network-drop-reasons` is the most direct
+answer to "why is my `MachineNetworkPolicy` blocking traffic I expected to
+allow." See [guides/machine-diagnostics.md](guides/machine-diagnostics.md)
+and [guides/network-policy.md](guides/network-policy.md)'s
+"Troubleshooting" section.
 
 ## Operational visibility
 

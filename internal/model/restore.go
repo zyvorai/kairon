@@ -12,7 +12,7 @@ const KindMachineSnapshotRestore = "MachineSnapshotRestore"
 // the fact -- so "restore" and "clone-from-snapshot" are the same operation
 // here: point a new Machine's spec.volumes[0].claimName at
 // status.restoredClaimName once this reaches Succeeded (see
-// docs/guides/machine-snapshots.md). Deliberately doesn't also create the
+// docs/guides/machine-snapshot-restore.md). Deliberately doesn't also create the
 // Machine itself -- that's already a solved, separate problem
 // (docs/guides/machine-storage.md), and duplicating Machine-spec templating
 // here would be real, avoidable scope creep.
