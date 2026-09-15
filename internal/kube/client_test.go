@@ -42,6 +42,31 @@ func TestListAndPatchMachine(t *testing.T) {
 	}
 }
 
+func TestListMachineInstanceTypesNamespaceAndListMigrationPoliciesNamespace(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machineinstancetypes":
+			_ = json.NewEncoder(w).Encode(model.MachineInstanceTypeList{Items: []model.MachineInstanceType{{Metadata: model.ObjectMeta{Name: "large", Namespace: "prod"}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/migrationpolicies":
+			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: []model.MigrationPolicy{{Metadata: model.ObjectMeta{Name: "default", Namespace: "prod"}}}})
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "", "", false)
+	c.HTTP = s.Client()
+
+	types, err := c.ListMachineInstanceTypesNamespace(context.Background(), "prod")
+	if err != nil || len(types) != 1 || types[0].Metadata.Name != "large" {
+		t.Fatalf("types=%v err=%v", types, err)
+	}
+	policies, err := c.ListMigrationPoliciesNamespace(context.Background(), "prod")
+	if err != nil || len(policies) != 1 || policies[0].Metadata.Name != "default" {
+		t.Fatalf("policies=%v err=%v", policies, err)
+	}
+}
+
 func TestLeaseCreateGetUpdateAndConflict(t *testing.T) {
 	const wantPath = "/apis/coordination.k8s.io/v1/namespaces/kairon-system/leases/kairon-controller"
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

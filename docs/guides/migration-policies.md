@@ -25,7 +25,9 @@ This applies to every `Machine` in the `prod` namespace labeled
 (`kaironctl evacuate`, the dashboard, a direct `kubectl apply`, or
 `controller.cordonEvacuation`) -- the same "applies automatically to
 anything matching, not just one caller's own code path" shape
-`MachineDisruptionBudget` already has.
+`MachineDisruptionBudget` already has. `kaironctl get migrationpolicies`
+(or `kubectl get migrationpolicies`) lists what's configured, including
+each policy's current `status.activeMigrations` count.
 
 ## How it's enforced
 

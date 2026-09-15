@@ -209,9 +209,50 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		for _, b := range items {
 			fmt.Printf("%s\t%s\t%s\t%d\t%d\t%d\t%d\n", b.Metadata.Name, dash(b.Spec.MinAvailable), dash(b.Spec.MaxUnavailable), b.Status.ExpectedMachines, b.Status.CurrentHealthy, b.Status.DesiredHealthy, b.Status.DisruptionsAllowed)
 		}
+	case "machineset", "machinesets":
+		items, err := kc.ListMachineSetsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tSTRATEGY\tREPLICAS\tREADY\tUPDATED\n")
+		for _, s := range items {
+			fmt.Printf("%s\t%s\t%d\t%d\t%d\n", s.Metadata.Name, dash(defaultStrategy(s.Spec.Strategy)), s.Spec.Replicas, s.Status.ReadyReplicas, s.Status.UpdatedReplicas)
+		}
+	case "instancetype", "instancetypes", "machineinstancetypes":
+		items, err := kc.ListMachineInstanceTypesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tCPU\tMEMORY\n")
+		for _, it := range items {
+			fmt.Printf("%s\t%s\t%s\n", it.Metadata.Name, dash(it.Spec.Resources.CPU), dash(it.Spec.Resources.Memory))
+		}
+	case "migrationpolicy", "migrationpolicies":
+		items, err := kc.ListMigrationPoliciesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tBANDWIDTHMBPS\tACTIVEMIGRATIONS\n")
+		for _, p := range items {
+			bw := "-"
+			if p.Spec.BandwidthMbps != 0 {
+				bw = strconv.FormatUint(p.Spec.BandwidthMbps, 10)
+			}
+			fmt.Printf("%s\t%s\t%d\n", p.Metadata.Name, bw, p.Status.ActiveMigrations)
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
+}
+
+// defaultStrategy names the MachineSet rollout strategy the reconciler
+// itself defaults to when spec.strategy is left empty, so `kaironctl get
+// machinesets` never prints a bare "-" for the common case.
+func defaultStrategy(strategy string) string {
+	if strategy == "" {
+		return "RollingUpdate"
+	}
+	return strategy
 }
 
 func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
@@ -720,7 +761,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe | create | delete | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

@@ -40,7 +40,10 @@ Every replica is a completely ordinary `Machine` object once created --
 selectors (match on `spec.template.labels`, e.g. `{app: web}`, to throttle
 disruption across a MachineSet's own replicas the same way they'd throttle
 any other Machines), and everything else that already operates on Machines
-keeps working exactly as it does today.
+keeps working exactly as it does today. `kaironctl get machinesets` (or
+`kubectl get machinesets`) lists the `MachineSet`s themselves --
+`STRATEGY`/`REPLICAS`/`READY`/`UPDATED` at a glance, without having to
+separately count matching Machines by hand.
 
 ## How replicas are reconciled
 

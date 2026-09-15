@@ -378,9 +378,21 @@ func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineI
 	return list.Items, err
 }
 
+func (c *Client) ListMachineInstanceTypesNamespace(ctx context.Context, ns string) ([]model.MachineInstanceType, error) {
+	var list model.MachineInstanceTypeList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machineinstancetypes"), nil, &list, "")
+	return list.Items, err
+}
+
 func (c *Client) ListMigrationPolicies(ctx context.Context) ([]model.MigrationPolicy, error) {
 	var list model.MigrationPolicyList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/migrationpolicies", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMigrationPoliciesNamespace(ctx context.Context, ns string) ([]model.MigrationPolicy, error) {
+	var list model.MigrationPolicyList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "migrationpolicies"), nil, &list, "")
 	return list.Items, err
 }
 
