@@ -224,11 +224,12 @@ func (c *Client) Get(ctx context.Context, id string) (*Record, error) {
 	return &r, nil
 }
 
-func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
-	return c.CreateWithVFIO(ctx, m, defaultBackend, nil)
-}
-
-func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string) (*Record, error) {
+// buildCreateRequest maps a Machine spec onto FluxVM's own CreateVmRequest
+// wire shape -- the one place this translation happens, shared by
+// CreateWithVFIO (POST /v1/vms) and CreateSandboxForMachine
+// (POST /v1/sandboxes' embedded spec field), so the two creation paths
+// can never drift apart on what a given Machine field maps to.
+func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []string) (CreateRequest, error) {
 	// Refused outright rather than silently accepted-and-ignored: no
 	// FluxVM backend Kairon talks to (QEMU, Cloud Hypervisor, Firecracker)
 	// implements UEFI/OVMF firmware or a vTPM device today -- confirmed
@@ -236,21 +237,21 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	// docs/guides/machine-windows-guests.md and ROADMAP.md for this
 	// tracked upstream dependency.
 	if m.Spec.Security.SecureBoot || m.Spec.Security.TPM {
-		return nil, fmt.Errorf("spec.security.secureBoot/tpm are not yet supported -- no FluxVM backend implements UEFI/OVMF firmware or a vTPM device today")
+		return CreateRequest{}, fmt.Errorf("spec.security.secureBoot/tpm are not yet supported -- no FluxVM backend implements UEFI/OVMF firmware or a vTPM device today")
 	}
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
-		return nil, err
+		return CreateRequest{}, err
 	}
 	mem, err := model.ParseMemoryMiB(m.Spec.Resources.Memory)
 	if err != nil {
-		return nil, err
+		return CreateRequest{}, err
 	}
 	var maxVCPUs *uint32
 	if m.Spec.Resources.MaxCPU != "" {
 		v, err := model.ParseVCPUs(m.Spec.Resources.MaxCPU)
 		if err != nil {
-			return nil, fmt.Errorf("spec.resources.maxCpu: %w", err)
+			return CreateRequest{}, fmt.Errorf("spec.resources.maxCpu: %w", err)
 		}
 		maxVCPUs = &v
 	}
@@ -258,7 +259,7 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	if m.Spec.Resources.MaxMemory != "" {
 		v, err := model.ParseMemoryMiB(m.Spec.Resources.MaxMemory)
 		if err != nil {
-			return nil, fmt.Errorf("spec.resources.maxMemory: %w", err)
+			return CreateRequest{}, fmt.Errorf("spec.resources.maxMemory: %w", err)
 		}
 		maxMemoryMiB = &v
 	}
@@ -270,7 +271,7 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 		backend = "qemu"
 	}
 	if r := m.Spec.Resources; (r.NUMANode != nil || r.CPUSet != "" || r.Hugepages) && backend != "qemu" {
-		return nil, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
+		return CreateRequest{}, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
 	}
 	tenant := m.Namespace()
 	network := BuildNetworkMap(m.Spec.Network)
@@ -313,6 +314,18 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 			StaticNetwork:     m.Spec.Network.StaticNetwork,
 			WriteFiles:        writeFiles,
 		}
+	}
+	return payload, nil
+}
+
+func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
+	return c.CreateWithVFIO(ctx, m, defaultBackend, nil)
+}
+
+func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string) (*Record, error) {
+	payload, err := buildCreateRequest(m, defaultBackend, vfioDevices)
+	if err != nil {
+		return nil, err
 	}
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {

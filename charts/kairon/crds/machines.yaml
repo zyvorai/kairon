@@ -363,6 +363,17 @@ spec:
                     type: boolean
                   console:
                     type: boolean
+              sandbox:
+                type: object
+                properties:
+                  templateName:
+                    type: string
+                  httpProxyPorts:
+                    type: array
+                    items:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
               serviceFabric:
                 type: object
                 properties:

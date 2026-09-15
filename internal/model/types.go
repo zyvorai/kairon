@@ -130,6 +130,39 @@ type MachineSpec struct {
 	Volumes          []MachineVolume        `json:"volumes,omitempty"`
 	DeviceClaims     []DeviceClaimReference `json:"deviceClaims,omitempty"`
 	GuestAgent       GuestAgentSpec         `json:"guestAgent,omitempty"`
+	// Sandbox opts this Machine into FluxVM's own agent-sandbox track
+	// (BackendKind::FluxVm, its own in-tree lightweight hypervisor) --
+	// see SandboxSpec's own doc comment. Nil for every other Machine.
+	Sandbox *SandboxSpec `json:"sandbox,omitempty"`
+}
+
+// SandboxSpec creates the Machine as a FluxVM "sandbox" (POST
+// /v1/sandboxes) instead of a plain VM (POST /v1/vms) -- FluxVM's own
+// lightweight, fast-boot in-tree hypervisor track for short-lived,
+// ephemeral workloads (e.g. running an AI agent's own generated code),
+// distinct from the qemu/cloud-hypervisor/firecracker backends every
+// other Machine uses. FluxVM always force-enables its own vsock guest
+// agent for a sandbox regardless of spec.guestAgent -- set
+// spec.guestAgent.console: true anyway to unlock Kairon's own guest file
+// access/agent-exec/text console features for it, which still gate on
+// that flag client-side even though FluxVM itself doesn't require it.
+type SandboxSpec struct {
+	// TemplateName references a template built via the templates admin
+	// API (see docs/guides/machine-sandboxes.md) instead of booting from
+	// spec.image directly -- FluxVM loads the template's own pre-baked
+	// spec (image, resources, kernel) and ignores spec.image/
+	// spec.resources/spec.runtime.kernel entirely when this is set. Kept
+	// separate from spec.image.source (image import): a template is a
+	// pre-built, ready-to-boot rootfs snapshot, not just a cached disk
+	// image.
+	TemplateName string `json:"templateName,omitempty"`
+	// HTTPProxyPorts are the sandbox's own guest TCP ports reachable
+	// through Kairon's HTTP proxy relay (see machine-sandboxes.md) --
+	// e.g. a webhook receiver or dev server running inside the sandbox.
+	// Requires spec.network to actually give the sandbox a guest IP
+	// (tap/bridge networking, not user/SLIRP -- FluxVM's own proxy needs
+	// to dial the guest directly).
+	HTTPProxyPorts []uint16 `json:"httpProxyPorts,omitempty"`
 }
 
 // GuestAgentSpec opts a Machine into FluxVM's real qemu-guest-agent

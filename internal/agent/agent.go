@@ -142,33 +142,43 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Halted" {
 		return a.ensureHalted(ctx, m)
 	}
-	if m.Spec.Image.Source != nil {
-		cachedPath, err := a.resolveImageSource(ctx, m)
+	// A template-based sandbox boots from FluxVM's own pre-baked template
+	// spec, not spec.image/spec.volumes at all -- skip resolving a boot
+	// disk entirely rather than demanding one that would just be ignored.
+	// A plain (non-template) sandbox still needs one, same as any other
+	// Machine.
+	usingSandboxTemplate := m.Spec.Sandbox != nil && m.Spec.Sandbox.TemplateName != ""
+	var volStatus csiVolumeStatus
+	if !usingSandboxTemplate {
+		if m.Spec.Image.Source != nil {
+			cachedPath, err := a.resolveImageSource(ctx, m)
+			if err != nil {
+				return err
+			}
+			m.Spec.Image.Path = cachedPath
+		}
+		bootDisk, vs, err := a.resolveBootDiskPath(ctx, m)
 		if err != nil {
 			return err
 		}
-		m.Spec.Image.Path = cachedPath
-	}
-	bootDisk, volStatus, err := a.resolveBootDiskPath(ctx, m)
-	if err != nil {
-		return err
-	}
-	if bootDisk == "" {
-		return fmt.Errorf("spec.image.path or spec.volumes[0] is required")
-	}
-	if len(m.Spec.Volumes) == 0 && m.Spec.Image.Source == nil {
-		// Only fence plain spec.image.path against ImageRoot -- a
-		// PVC-resolved path already went through a stronger gate (the PVC
-		// had to exist and be Bound, not just be a string any Machine
-		// author could type in), and a Source-resolved path is
-		// kairon-node's own cache directory, not something a Machine
-		// author supplied, so the same node-local directory allowlist
-		// doesn't apply to either.
-		if err := a.validateImagePath(m); err != nil {
-			return err
+		if bootDisk == "" {
+			return fmt.Errorf("spec.image.path or spec.volumes[0] is required")
 		}
+		if len(m.Spec.Volumes) == 0 && m.Spec.Image.Source == nil {
+			// Only fence plain spec.image.path against ImageRoot -- a
+			// PVC-resolved path already went through a stronger gate (the PVC
+			// had to exist and be Bound, not just be a string any Machine
+			// author could type in), and a Source-resolved path is
+			// kairon-node's own cache directory, not something a Machine
+			// author supplied, so the same node-local directory allowlist
+			// doesn't apply to either.
+			if err := a.validateImagePath(m); err != nil {
+				return err
+			}
+		}
+		m.Spec.Image.Path = bootDisk
+		volStatus = vs
 	}
-	m.Spec.Image.Path = bootDisk
 
 	rec, err := a.current(ctx, m)
 	if err != nil {
@@ -183,7 +193,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 	}
 	freshlyCreated := rec == nil
-	if freshlyCreated {
+	if freshlyCreated && m.Spec.Sandbox != nil {
+		rec, err = a.Flux.CreateSandboxForMachine(ctx, m)
+		if err != nil {
+			return err
+		}
+		a.Log.Info("created sandbox runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID())
+	} else if freshlyCreated {
 		vfioDevices, err := a.resolveVFIODevices(ctx, m)
 		if err != nil {
 			return err

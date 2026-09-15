@@ -174,6 +174,40 @@ snapshot, restoring back into the *same* Machine rather than a new PVC.
   or prune what's been saved on a Machine. See
   `docs/guides/machine-vm-state-snapshot.md`.
 
+## Sandboxes (`spec.sandbox`)
+
+FluxVM's own agent-sandbox track -- a lightweight, fast-boot in-tree
+hypervisor for short-lived ephemeral workloads -- adds three new trust
+boundaries beyond the VM lifecycle every other Machine already goes
+through:
+
+- **Template building is admin-only and a real resource cost.**
+  `POST /api/v1/nodes/{node}/templates` (`internal/uiapi/sandboxes.go`)
+  pulls and exports an arbitrary caller-named OCI image on the target
+  node (via FluxVM's own `skopeo`/`umoci`-backed `build_oci_template`) --
+  same admin-only gate FluxVM's own `build_template` handler already
+  enforces, kept here too rather than relying on FluxVM alone.
+- **The HTTP proxy relay (`.../sandbox-http/{port}/{path...}`) is the
+  broadest capability in this list.** It passes an arbitrary HTTP
+  method/path/body/headers straight through to whatever the guest's own
+  web server does with them -- materially more than guest exec (one
+  command, synchronous, logged who/when) or file access (one path at a
+  time). Admin-only, and deliberately *not* gated on
+  `spec.guestAgent.console`, since it never touches the vsock agent at
+  all -- it dials the guest's own network IP directly, so it needs
+  `spec.network` to actually give the guest a real IP (`tap`/bridge, not
+  `user`/SLIRP). Whatever the guest's own web application does with a
+  proxied request (auth, input validation, rate limiting) is entirely the
+  guest's own responsibility -- Kairon relays bytes, it doesn't inspect
+  them.
+- **`spec.deviceClaims` is refused outright for a sandbox Machine** at
+  creation time (`internal/fluxvm.Client.CreateSandboxForMachine`) --
+  FluxVM's lightweight sandbox hypervisor has no VFIO passthrough support,
+  so silently ignoring a device claim here would be worse than a clear
+  upfront error.
+
+See `docs/guides/machine-sandboxes.md`.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

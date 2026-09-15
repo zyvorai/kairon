@@ -192,6 +192,10 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)
 
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
+	api.HandleFunc("GET /api/v1/nodes/{node}/sandboxes", s.handleListNodeSandboxes)
+	api.HandleFunc("GET /api/v1/nodes/{node}/templates", s.handleListTemplates)
+	api.HandleFunc("POST /api/v1/nodes/{node}/templates", s.handleBuildTemplate)
+	api.HandleFunc("/api/v1/machines/{namespace}/{name}/sandbox-http/{port}/{rest...}", s.handleSandboxHTTPProxy)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)

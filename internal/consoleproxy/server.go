@@ -57,6 +57,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /logs/{runtimeID}", s.handleLogs)
 	mux.HandleFunc("POST /vm-snapshot/{runtimeID}", s.handleVMSnapshot)
 	mux.HandleFunc("POST /vm-restore-snapshot/{runtimeID}", s.handleVMRestoreSnapshot)
+	mux.HandleFunc("GET /sandboxes", s.handleListSandboxes)
+	mux.HandleFunc("GET /templates", s.handleListTemplates)
+	mux.HandleFunc("POST /templates", s.handleBuildTemplate)
+	mux.HandleFunc("/sandbox-proxy/{runtimeID}/{port}/{rest...}", s.handleSandboxHTTPProxy)
 	return mux
 }
 
