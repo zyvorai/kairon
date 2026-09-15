@@ -33,6 +33,34 @@ const (
 	// create (or attempt) a new MachineMigration every single tick for a
 	// Machine a budget is currently blocking. RFC3339 UTC.
 	AnnotationCordonEvacuateAttemptedAt = "kairon.zyvor.dev/cordon-evacuate-attempted-at"
+	// AnnotationQuiesceRequest/AnnotationQuiesceStatus are a request/
+	// response pair kairon-controller and kairon-node use to coordinate
+	// guest filesystem quiesce (real guest-fsfreeze/-thaw) around a
+	// MachineSnapshot -- kairon-controller has no direct network path to
+	// a Machine's FluxVM instance (only the node it's scheduled on does),
+	// so this is the same "durable request in the API, not memory"
+	// pattern AnnotationAdoptOnly/AnnotationMigrationRef already
+	// establish for controller<->node coordination, rather than a new
+	// RPC of its own. See internal/controller/snapshot.go and
+	// internal/agent/quiesce.go.
+	//
+	// AnnotationQuiesceRequest is "<MachineSnapshot name>@<RFC3339
+	// request time>", set by kairon-controller on the Machine to ask its
+	// node to freeze the guest for that specific snapshot (the timestamp
+	// lets the controller give up waiting after a timeout and fall back
+	// to a crash-consistent snapshot, without needing a separate status
+	// field to track it), and cleared (removed) by kairon-controller once
+	// it's done capturing the snapshot, as the request to thaw.
+	// AnnotationQuiesceStatus is the same "<name>@<time>" value, set by
+	// kairon-node once it has confirmed the freeze actually happened, and
+	// removed by kairon-node once it has confirmed the thaw did.
+	// kairon-node treats "request present, status doesn't match" as
+	// "freeze this," and "request absent, status still present" as "thaw
+	// this" -- retried every reconcile tick, indefinitely, for thaw in
+	// particular: a stuck-frozen guest filesystem is a real, guest-visible
+	// failure mode kairon-node must never silently abandon.
+	AnnotationQuiesceRequest = "kairon.zyvor.dev/quiesce-request"
+	AnnotationQuiesceStatus  = "kairon.zyvor.dev/quiesce-status"
 	// ConditionNodeUnreachable is a MachineStatus.Conditions[].Type
 	// kairon-controller sets/clears every reconcile tick to reflect
 	// whether spec.nodeName currently names a Ready, present Kubernetes

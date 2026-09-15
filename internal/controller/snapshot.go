@@ -1,0 +1,216 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/model"
+)
+
+// quiesceFreezeTimeout bounds how long reconcileSnapshot waits for
+// kairon-node to confirm a guest freeze before giving up and falling back
+// to a crash-consistent snapshot -- a guest-agent that's unreachable
+// (guest not booted with it, network partition, guest hung) must never
+// block a snapshot forever. There is no equivalent timeout on the thaw
+// side -- see awaitGuestThaw's own doc comment for why.
+const quiesceFreezeTimeout = 30 * time.Second
+
+// reconcileSnapshot drives a MachineSnapshot to Succeeded, and -- when
+// the target Machine has spec.guestAgent.enabled -- coordinates a real
+// guest filesystem freeze/thaw around the underlying VolumeSnapshot
+// creation for an application-consistent snapshot instead of a merely
+// crash-consistent one. kairon-controller has no direct network path to
+// a Machine's FluxVM instance (only the node it's scheduled on does), so
+// this coordinates with kairon-node via a request/response annotation
+// pair on the Machine itself (AnnotationQuiesceRequest/
+// AnnotationQuiesceStatus, internal/model) rather than a new RPC of its
+// own -- see internal/agent/quiesce.go for kairon-node's own half.
+func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {
+	if snapshot.Status.Phase == "Succeeded" || snapshot.Status.Phase == "Failed" {
+		return nil
+	}
+	if strings.TrimSpace(snapshot.Spec.MachineName) == "" {
+		return fmt.Errorf("spec.machineName is required")
+	}
+	machine, ok := machines[snapshot.Namespace()+"/"+snapshot.Spec.MachineName]
+	if !ok {
+		return fmt.Errorf("machine %s/%s not found", snapshot.Namespace(), snapshot.Spec.MachineName)
+	}
+	if len(machine.Spec.Volumes) == 0 {
+		return fmt.Errorf("machine has no PVC-backed spec.volumes to snapshot")
+	}
+
+	quiesce := machine.Spec.GuestAgent.Enabled
+	switch {
+	case quiesce && snapshot.Status.Phase == "":
+		return c.requestGuestFreeze(ctx, snapshot, machine)
+	case quiesce && snapshot.Status.Phase == "Freezing":
+		return c.awaitGuestFreeze(ctx, snapshot, machine)
+	case quiesce && snapshot.Status.Phase == "Thawing":
+		return c.awaitGuestThaw(ctx, snapshot, machine)
+	}
+
+	return c.reconcileVolumeSnapshots(ctx, snapshot, machine)
+}
+
+// requestGuestFreeze is reconcileSnapshot's first step for a
+// guestAgent-enabled Machine: patches AnnotationQuiesceRequest onto the
+// Machine (kairon-node's own reconcile picks this up independently, see
+// internal/agent/quiesce.go), and parks the snapshot in a new Freezing
+// phase until awaitGuestFreeze sees it confirmed or times out.
+func (c *Controller) requestGuestFreeze(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	ref := model.FormatQuiesceRef(snapshot.Metadata.Name, time.Now())
+	patch := map[string]any{"metadata": map[string]any{"annotations": map[string]string{model.AnnotationQuiesceRequest: ref}}}
+	if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, patch); err != nil {
+		return fmt.Errorf("request guest quiesce on machine %s/%s: %w", machine.Namespace(), machine.Metadata.Name, err)
+	}
+	status := snapshot.Status
+	status.Phase = "Freezing"
+	status.Message = "requested a guest filesystem freeze for an application-consistent snapshot"
+	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+}
+
+// awaitGuestFreeze checks whether kairon-node has confirmed the freeze
+// this snapshot requested (AnnotationQuiesceStatus matching the same
+// ref requestGuestFreeze set) -- if so, proceeds straight into creating
+// the VolumeSnapshots while the guest is held frozen. If
+// quiesceFreezeTimeout has elapsed with no confirmation (guest agent
+// unreachable, guest not actually running it despite the spec flag, a
+// slow/stuck freeze), gives up waiting, clears the request (so a late
+// freeze from kairon-node doesn't land after the fact and get stuck with
+// nothing left to thaw it), and falls back to an unquiesced,
+// crash-consistent snapshot -- never blocks a snapshot forever on a
+// guest agent that isn't cooperating.
+func (c *Controller) awaitGuestFreeze(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	requested, requestedAt, ok := model.ParseQuiesceRef(machine.Metadata.Annotations[model.AnnotationQuiesceRequest])
+	confirmed, _, _ := model.ParseQuiesceRef(machine.Metadata.Annotations[model.AnnotationQuiesceStatus])
+	if !ok || requested != snapshot.Metadata.Name {
+		// Our own request annotation is gone or now names something
+		// else (e.g. a different MachineSnapshot for the same Machine
+		// raced ahead) -- re-request rather than assume anything.
+		return c.requestGuestFreeze(ctx, snapshot, machine)
+	}
+	if confirmed == snapshot.Metadata.Name {
+		return c.reconcileVolumeSnapshots(ctx, snapshot, machine)
+	}
+	if time.Since(requestedAt) < quiesceFreezeTimeout {
+		return nil // keep waiting, retried next tick
+	}
+	c.Log.Warn("guest quiesce freeze timed out, falling back to a crash-consistent snapshot", "namespace", snapshot.Namespace(), "snapshot", snapshot.Metadata.Name, "machine", machine.Metadata.Name, "timeout", quiesceFreezeTimeout)
+	clear := map[string]any{"metadata": map[string]any{"annotations": map[string]any{model.AnnotationQuiesceRequest: nil}}}
+	if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, clear); err != nil {
+		return fmt.Errorf("clear timed-out guest quiesce request on machine %s/%s: %w", machine.Namespace(), machine.Metadata.Name, err)
+	}
+	status := snapshot.Status
+	status.Message = fmt.Sprintf("guest quiesce freeze did not confirm within %s; proceeding with a crash-consistent snapshot", quiesceFreezeTimeout)
+	if err := c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status); err != nil {
+		return err
+	}
+	return c.reconcileVolumeSnapshots(ctx, snapshot, machine)
+}
+
+// requestGuestThaw is called once every VolumeSnapshot this pass needed
+// to create has had its create call issued (not once they're ready to
+// use -- holding the guest frozen through CSI's own, potentially slow,
+// async provisioning would be an unbounded, guest-visible stall). Clears
+// AnnotationQuiesceRequest, which kairon-node's own reconcile reads as
+// "thaw now" (see internal/agent/quiesce.go) -- the request/response
+// pair's other direction from requestGuestFreeze/awaitGuestFreeze above.
+func (c *Controller) requestGuestThaw(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	clear := map[string]any{"metadata": map[string]any{"annotations": map[string]any{model.AnnotationQuiesceRequest: nil}}}
+	if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, clear); err != nil {
+		return fmt.Errorf("request guest thaw on machine %s/%s: %w", machine.Namespace(), machine.Metadata.Name, err)
+	}
+	status := snapshot.Status
+	status.Phase = "Thawing"
+	status.Message = "VolumeSnapshots requested; waiting for the guest filesystem to thaw"
+	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+}
+
+// awaitGuestThaw waits for kairon-node to confirm the thaw (removing
+// AnnotationQuiesceStatus) before letting the snapshot reach Succeeded --
+// deliberately never gives up here, unlike awaitGuestFreeze's own
+// timeout: a snapshot that quietly reports done while the guest is still
+// frozen would leave an operator with no explanation for a hung VM, and a
+// guest-fsfreeze-thaw retry is safe (idempotent) to keep attempting
+// indefinitely, the same "never silently abandon" posture
+// MachineMigration's own NeedsRecovery phase already has.
+func (c *Controller) awaitGuestThaw(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	if _, _, ok := model.ParseQuiesceRef(machine.Metadata.Annotations[model.AnnotationQuiesceStatus]); ok {
+		return nil // kairon-node hasn't confirmed the thaw yet -- retried next tick, indefinitely
+	}
+	return c.reconcileVolumeSnapshots(ctx, snapshot, machine)
+}
+
+// reconcileVolumeSnapshots is the storage-level half of a MachineSnapshot
+// -- creating/polling the real CSI VolumeSnapshots underneath it. Called
+// directly (no quiesce) when the target Machine has no guest agent, and
+// as the continuation of the freeze/thaw dance above when it does.
+func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	refs := make([]model.VolumeSnapshotReference, 0, len(machine.Spec.Volumes))
+	allReady := true
+	created := false
+	for _, volume := range machine.Spec.Volumes {
+		if strings.TrimSpace(volume.Name) == "" || strings.TrimSpace(volume.ClaimName) == "" {
+			return fmt.Errorf("machine volume requires name and claimName")
+		}
+		name := snapshotVolumeName(snapshot.Metadata.Name, volume.Name)
+		vs, err := c.Kube.GetVolumeSnapshot(ctx, snapshot.Namespace(), name)
+		if err != nil {
+			if !kube.IsNotFound(err) {
+				return err
+			}
+			claim := volume.ClaimName
+			vs = model.VolumeSnapshot{
+				TypeMeta: model.TypeMeta{APIVersion: "snapshot.storage.k8s.io/v1", Kind: "VolumeSnapshot"},
+				Metadata: model.ObjectMeta{Name: name, Namespace: snapshot.Namespace(), Labels: map[string]string{
+					"kairon.zyvor.dev/machine":  machine.Metadata.Name,
+					"kairon.zyvor.dev/snapshot": snapshot.Metadata.Name,
+				}},
+				Spec: model.VolumeSnapshotSpec{Source: model.VolumeSnapshotSource{PersistentVolumeClaimName: &claim}},
+			}
+			if snapshot.Spec.VolumeSnapshotClassName != "" {
+				className := snapshot.Spec.VolumeSnapshotClassName
+				vs.Spec.VolumeSnapshotClassName = &className
+			}
+			vs, err = c.Kube.CreateVolumeSnapshot(ctx, snapshot.Namespace(), vs)
+			if err != nil {
+				return err
+			}
+			created = true
+		}
+		if vs.Status.Error != nil && vs.Status.Error.Message != nil && *vs.Status.Error.Message != "" {
+			return fmt.Errorf("VolumeSnapshot %s failed: %s", name, *vs.Status.Error.Message)
+		}
+		ready := vs.Status.ReadyToUse != nil && *vs.Status.ReadyToUse
+		if !ready {
+			allReady = false
+		}
+		refs = append(refs, model.VolumeSnapshotReference{VolumeName: volume.Name, VolumeSnapshotName: name, ReadyToUse: ready})
+	}
+
+	if created && machine.Spec.GuestAgent.Enabled && snapshot.Status.Phase == "Freezing" {
+		// Every VolumeSnapshot this pass needed has had its create call
+		// issued -- thaw now rather than holding the guest frozen through
+		// the (potentially slow, async) wait for CSI readiness below.
+		return c.requestGuestThaw(ctx, snapshot, machine)
+	}
+
+	status := snapshot.Status
+	status.VolumeSnapshots = refs
+	status.ReadyToUse = allReady
+	if allReady {
+		status.Phase = "Succeeded"
+		status.Message = "all CSI VolumeSnapshots are ready to use"
+	} else {
+		status.Phase = "Pending"
+		status.Message = "waiting for CSI VolumeSnapshots"
+	}
+	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+}

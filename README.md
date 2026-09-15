@@ -132,6 +132,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 
 **Snapshots**
 - **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates a standard snapshot object; `MachineSnapshotRestore` restores one into a *new* `PersistentVolumeClaim` via the standard CSI `dataSource` flow (deliberately doesn't also create a Machine — see the guide for why) — [guide](docs/guides/machine-snapshot-restore.md)
+- **Guest quiesce for snapshots** (`spec.guestAgent.enabled`) — a real `guest-fsfreeze`/`-thaw` around `MachineSnapshot`'s VolumeSnapshot creation for an application-consistent snapshot, coordinated between `kairon-controller` and `kairon-node` since only the node has a network path to the Machine's FluxVM instance — [guide](docs/guides/machine-snapshot-quiesce.md)
 
 **Operate it**
 - **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
@@ -369,6 +370,7 @@ npm --prefix web run build
 | [`docs/guides/machine-cpu-numa.md`](docs/guides/machine-cpu-numa.md) | `spec.resources.numaNode`/`.cpuSet`/`.hugepages`: qemu-only NUMA/hugepage passthroughs, and what they don't guarantee (no real host-core pinning) |
 | [`docs/guides/machine-windows-guests.md`](docs/guides/machine-windows-guests.md) | What Windows guest support actually covers today (legacy-BIOS + cloudbase-init) and what's blocked on FluxVM (UEFI/Secure Boot/vTPM) |
 | [`docs/guides/migration-policies.md`](docs/guides/migration-policies.md) | `MigrationPolicy`: selector-scoped migration bandwidth defaulting and concurrency caps |
+| [`docs/guides/machine-snapshot-quiesce.md`](docs/guides/machine-snapshot-quiesce.md) | Real guest `fsfreeze`/`fsthaw` around `MachineSnapshot`, and the controller↔node coordination protocol behind it |
 | [`docs/runbook-multi-host-migration-test.md`](docs/runbook-multi-host-migration-test.md) · [`docs/runbook-recovery-drill.md`](docs/runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
 | [`docs/runbook-backup-restore.md`](docs/runbook-backup-restore.md) | Backing up/restoring Kairon's CRD state (`scripts/backup-crds.sh`/`restore-crds.sh`), and what it doesn't cover (VM disk content, FluxVM host state) |
 | [`docs/runbook-velero-backup.md`](docs/runbook-velero-backup.md) | Using generic Velero (no Kairon-specific plugin) instead — what works out of the box, and the one real gap (no disk-content snapshot without a real CSI storage backend) |

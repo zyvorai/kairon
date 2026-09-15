@@ -207,6 +207,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
 		return err
 	}
+	a.reconcileGuestQuiesce(ctx, m, rec)
 	if err := a.reconcileServiceFabric(ctx, m, status.GuestIP); err != nil {
 		return err
 	}
