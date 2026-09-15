@@ -306,6 +306,9 @@ spec:
             - "--csi-staging-dir={{ .Values.node.csi.stagingDir }}"
             - "--csi-publish-dir={{ .Values.node.csi.publishDir }}"
 {{ end }}
+{{ if .Values.node.thirdPartyCSIDrivers }}
+            - "--third-party-csi-drivers={{ range $name, $socket := .Values.node.thirdPartyCSIDrivers }}{{ $name }}={{ $socket }},{{ end }}"
+{{ end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
@@ -326,7 +329,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.node.resources | indent 12 }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers }}
           volumeMounts:
 {{ if .Values.migration.enabled }}
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
@@ -354,8 +357,19 @@ spec:
             # Machine's spec.image.path is set to the cache path.
             - {name: image-cache, mountPath: {{ .Values.node.imageCacheDir | quote }}}
 {{ end }}
+{{ if .Values.node.thirdPartyCSIDrivers }}
+            # Read-only, mounted at the identical host path: a third-party
+            # driver's socket path (node.thirdPartyCSIDrivers's own map
+            # values) is normally already under
+            # /var/lib/kubelet/plugins/<driver>/ -- mounting the whole
+            # plugins directory at its own real path means whatever socket
+            # path an operator configures there just works, with no
+            # per-driver volume/mount to template. See
+            # docs/guides/machine-storage-thirdparty-csi.md.
+            - {name: kubelet-plugins-dir, mountPath: /var/lib/kubelet/plugins, readOnly: true}
 {{ end }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir }}
+{{ end }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers }}
       volumes:
 {{ if .Values.migration.enabled }}
         - name: migration-tls
@@ -400,6 +414,12 @@ spec:
           hostPath:
             path: {{ .Values.node.imageCacheDir | quote }}
             type: DirectoryOrCreate
+{{ end }}
+{{ if .Values.node.thirdPartyCSIDrivers }}
+        - name: kubelet-plugins-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins
+            type: Directory
 {{ end }}
 {{ end }}
 {{ if .Values.csiNode.enabled }}

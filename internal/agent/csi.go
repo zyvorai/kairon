@@ -23,6 +23,10 @@ type csiVolumeStatus struct {
 	StagingPath string
 	PublishPath string
 	VolumeID    string
+	// Driver is empty for Kairon's own driver (csinode.DriverName) -- see
+	// MachineStatus.VolumeDriver's own doc comment -- or a third-party
+	// driver name (see resolveThirdPartyCSIVolume).
+	Driver string
 }
 
 // csiNodeClient lazily dials CSISocketPath and caches the connection on
@@ -55,17 +59,24 @@ func (a *Agent) csiNodeClient() (csi.NodeClient, error) {
 // NodeStageVolume/NodePublishVolume are themselves safe to call again
 // even if this level of caching were bypassed.
 //
-// Only Kairon's own driver (csinode.DriverName) is ever resolvable --
-// see model.CSIPersistentVolumeSource's own doc comment.
-func (a *Agent) resolveCSIVolume(ctx context.Context, status model.MachineStatus, pv model.PersistentVolume) (string, csiVolumeStatus, error) {
+// A PV naming Kairon's own driver (csinode.DriverName) resolves here; one
+// naming any other driver present in Agent.ThirdPartyCSIDrivers resolves
+// via resolveThirdPartyCSIVolume instead (see its own doc comment for the
+// real, narrower scope that path has); any other driver name is still
+// refused outright, exactly as before third-party support existed.
+func (a *Agent) resolveCSIVolume(ctx context.Context, m model.Machine, pv model.PersistentVolume) (string, csiVolumeStatus, error) {
 	src := pv.Spec.CSI
 	if src.Driver != csinode.DriverName {
-		return "", csiVolumeStatus{}, fmt.Errorf("PersistentVolume %s names CSI driver %q -- only Kairon's own driver (%q) can be used as a Machine boot disk", pv.Metadata.Name, src.Driver, csinode.DriverName)
+		if _, ok := a.ThirdPartyCSIDrivers[src.Driver]; ok {
+			return a.resolveThirdPartyCSIVolume(ctx, m, pv)
+		}
+		return "", csiVolumeStatus{}, fmt.Errorf("PersistentVolume %s names CSI driver %q -- only Kairon's own driver (%q) or a driver listed in this node's third-party allowlist can be used as a Machine boot disk", pv.Metadata.Name, src.Driver, csinode.DriverName)
 	}
 	if a.CSIStagingDir == "" || a.CSIPublishDir == "" {
 		return "", csiVolumeStatus{}, fmt.Errorf("this node has no CSI staging/publish directory configured -- see docs/guides/machine-storage-csi.md")
 	}
 
+	status := m.Status
 	if status.VolumeStagingPath != "" && status.VolumePublishPath != "" && status.VolumeHandle == src.VolumeHandle {
 		return filepath.Join(status.VolumePublishPath, bootDiskFileName), csiVolumeStatus{
 			StagingPath: status.VolumeStagingPath, PublishPath: status.VolumePublishPath, VolumeID: status.VolumeHandle,
@@ -118,10 +129,16 @@ func (a *Agent) resolveCSIVolume(ctx context.Context, status model.MachineStatus
 // call. A no-op (nil error) when the Machine never staged/published a
 // CSI volume in the first place (the overwhelmingly common case: plain
 // spec.image.path, or a hostPath/local-backed volume, neither of which
-// this ever touches).
+// this ever touches). Routes to teardownThirdPartyCSIVolume when
+// status.volumeDriver names one -- see MachineStatus.VolumeDriver's own
+// doc comment for why that's tracked in status rather than re-derived
+// from the PV (which may already be gone by teardown time).
 func (a *Agent) teardownCSIVolume(ctx context.Context, m model.Machine) error {
 	if m.Status.VolumeStagingPath == "" && m.Status.VolumePublishPath == "" {
 		return nil
+	}
+	if m.Status.VolumeDriver != "" {
+		return a.teardownThirdPartyCSIVolume(ctx, m)
 	}
 	client, err := a.csiNodeClient()
 	if err != nil {

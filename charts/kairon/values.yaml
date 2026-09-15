@@ -96,6 +96,17 @@ node:
     socketDir: /var/lib/kubelet/plugins/csi.kairon.zyvor.dev
     stagingDir: /var/lib/kairon/csi/staging
     publishDir: /var/lib/kairon/csi/publish
+  # thirdPartyCSIDrivers: an explicit, operator-configured map of CSI
+  # driver name -> its own Unix socket path kairon-node may dial directly
+  # as a generic CSI client for a Machine boot disk -- see
+  # docs/guides/machine-storage-thirdparty-csi.md for the real, narrow
+  # first-cut scope this covers (attachRequired: false drivers only, no
+  # secret-based node auth) and why. Empty (the default) means only
+  # Kairon's own driver can be used, exactly as before this existed.
+  # Example:
+  #   thirdPartyCSIDrivers:
+  #     rbd.csi.ceph.com: /var/lib/kubelet/plugins/rbd.csi.ceph.com/csi.sock
+  thirdPartyCSIDrivers: {}
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

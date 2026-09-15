@@ -60,11 +60,27 @@ type Agent struct {
 	// unaffected either way. Same fail-closed convention as
 	// CSISocketPath above.
 	ImageCacheDir string
+	// ThirdPartyCSIDrivers maps a CSI driver name (e.g.
+	// "rbd.csi.ceph.com") to the Unix socket path kairon-node should dial
+	// as its own generic CSI client for a spec.volumes[0] PV naming that
+	// driver -- an explicit, operator-configured allowlist, never
+	// automatic /var/lib/kubelet/plugins_registry/ discovery. See
+	// docs/guides/machine-storage-thirdparty-csi.md for the real, narrow
+	// scope this covers (attachRequired: false drivers only, no
+	// secret-based auth) and why. Empty/nil (the default) means a PV
+	// naming any driver other than Kairon's own is still refused outright,
+	// exactly as before this existed.
+	ThirdPartyCSIDrivers map[string]string
 	// csiConn caches the dialed connection to kairon-csi-node's local
 	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
 	// same reason guestIPCheckedAt below is: Reconcile only ever runs
 	// single-goroutine, sequential.
 	csiConn *grpc.ClientConn
+	// thirdPartyCSIConns caches dialed connections to third-party CSI
+	// driver sockets, keyed by driver name -- the same caching reasoning
+	// csiConn has, just one connection per configured driver instead of a
+	// single fixed one.
+	thirdPartyCSIConns map[string]*grpc.ClientConn
 	// guestIPCheckedAt tracks, per "namespace/name", the last time
 	// projectNetworkStatus actually queried the guest agent for a Machine
 	// that already has a resolved guestIP -- see guestAgentRecheckInterval
@@ -252,6 +268,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	status.VolumeStagingPath = volStatus.StagingPath
 	status.VolumePublishPath = volStatus.PublishPath
 	status.VolumeHandle = volStatus.VolumeID
+	status.VolumeDriver = volStatus.Driver
 	appliedVCPUs, appliedMemoryMiB, hotplugErr := a.reconcileHotplug(ctx, m, rec, freshlyCreated)
 	status.AppliedVCPUs = appliedVCPUs
 	status.AppliedMemoryMiB = appliedMemoryMiB
@@ -512,6 +529,28 @@ func ParseVFIOAllowlist(raw string) (map[string]struct{}, error) {
 			return nil, err
 		}
 		out[bdf] = struct{}{}
+	}
+	return out, nil
+}
+
+// ParseThirdPartyCSIDrivers parses "-third-party-csi-drivers"/
+// $KAIRON_THIRD_PARTY_CSI_DRIVERS -- a comma-separated
+// "driverName=/socket/path" list, mirroring ParseVFIOAllowlist's own
+// simple format. See Agent.ThirdPartyCSIDrivers's own doc comment for
+// what this actually authorizes.
+func ParseThirdPartyCSIDrivers(raw string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		driver, socket, ok := strings.Cut(item, "=")
+		driver, socket = strings.TrimSpace(driver), strings.TrimSpace(socket)
+		if !ok || driver == "" || socket == "" {
+			return nil, fmt.Errorf("invalid third-party CSI driver entry %q -- expected driverName=/socket/path", item)
+		}
+		out[driver] = socket
 	}
 	return out, nil
 }

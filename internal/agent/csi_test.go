@@ -106,7 +106,7 @@ func TestResolveCSIVolumeStagesAndPublishes(t *testing.T) {
 	a := &Agent{CSISocketPath: socketPath, CSIStagingDir: t.TempDir(), CSIPublishDir: t.TempDir()}
 
 	pv := testCSIPV("pv-1", "iscsi|10.0.0.1:3260|iqn.test:disk|0")
-	path, volStatus, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv)
+	path, volStatus, err := a.resolveCSIVolume(context.Background(), model.Machine{}, pv)
 	if err != nil {
 		t.Fatalf("resolveCSIVolume: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestResolveCSIVolumeIsIdempotentAgainstExistingStatus(t *testing.T) {
 	status := model.MachineStatus{
 		VolumeStagingPath: "/already/staged", VolumePublishPath: "/already/published", VolumeHandle: pv.Spec.CSI.VolumeHandle,
 	}
-	path, volStatus, err := a.resolveCSIVolume(context.Background(), status, pv)
+	path, volStatus, err := a.resolveCSIVolume(context.Background(), model.Machine{Status: status}, pv)
 	if err != nil {
 		t.Fatalf("resolveCSIVolume: %v", err)
 	}
@@ -155,15 +155,15 @@ func TestResolveCSIVolumeIsIdempotentAgainstExistingStatus(t *testing.T) {
 func TestResolveCSIVolumeRejectsUnknownDriver(t *testing.T) {
 	a := &Agent{CSISocketPath: "/unused", CSIStagingDir: "/x", CSIPublishDir: "/y"}
 	pv := model.PersistentVolume{Spec: model.PersistentVolumeSpec{CSI: &model.CSIPersistentVolumeSource{Driver: "some-other-driver.example.com"}}}
-	if _, _, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv); err == nil {
-		t.Fatal("expected an error for a CSI driver that isn't Kairon's own")
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.Machine{}, pv); err == nil {
+		t.Fatal("expected an error for a CSI driver that isn't Kairon's own or listed in the third-party allowlist")
 	}
 }
 
 func TestResolveCSIVolumeRequiresSocketConfigured(t *testing.T) {
 	a := &Agent{CSIStagingDir: "/x", CSIPublishDir: "/y"} // CSISocketPath unset
 	pv := testCSIPV("pv-1", "iscsi|p|i|0")
-	if _, _, err := a.resolveCSIVolume(context.Background(), model.MachineStatus{}, pv); err == nil {
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.Machine{}, pv); err == nil {
 		t.Fatal("expected an error when no CSI socket is configured")
 	}
 }

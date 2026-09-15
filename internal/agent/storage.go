@@ -49,7 +49,7 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 		return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): volumeMode %q is not supported as a Machine boot disk; only Filesystem-mode PersistentVolumes are", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, pv.Spec.VolumeMode)
 	}
 	if pv.Spec.CSI != nil {
-		path, volStatus, err := a.resolveCSIVolume(ctx, m.Status, pv)
+		path, volStatus, err := a.resolveCSIVolume(ctx, m, pv)
 		if err != nil {
 			return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): %w", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, err)
 		}

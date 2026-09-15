@@ -525,6 +525,15 @@ type MachineStatus struct {
 	// PVC/PV has already been deleted by the time the Machine itself
 	// finishes tearing down.
 	VolumeHandle string `json:"volumeHandle,omitempty"`
+	// VolumeDriver names which CSI driver staged/published this Machine's
+	// volume -- Kairon's own (csinode.DriverName) when empty, for backward
+	// compatibility with every Machine created before third-party CSI
+	// support existed; a third-party driver name (see
+	// docs/guides/machine-storage-thirdparty-csi.md) otherwise. Recorded
+	// for the same reason VolumeHandle is kept here rather than re-derived
+	// from the PV: teardown must route to the correct driver's own socket
+	// even if the PVC/PV is already gone by the time cleanup runs.
+	VolumeDriver string `json:"volumeDriver,omitempty"`
 }
 
 type Condition struct {

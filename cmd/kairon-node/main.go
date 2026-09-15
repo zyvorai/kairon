@@ -65,6 +65,7 @@ func run() int {
 	csiSocket := flag.String("csi-socket", env("KAIRON_CSI_SOCKET", ""), "kairon-csi-node's local Unix socket path (default: $KAIRON_CSI_SOCKET); empty refuses any CSI-backed (network-block) Machine volume with a clear error rather than silently failing -- see docs/guides/machine-storage-csi.md")
 	csiStagingDir := flag.String("csi-staging-dir", env("KAIRON_CSI_STAGING_DIR", "/var/lib/kairon/csi/staging"), "per-node directory kairon-node asks kairon-csi-node to stage CSI volumes under")
 	csiPublishDir := flag.String("csi-publish-dir", env("KAIRON_CSI_PUBLISH_DIR", "/var/lib/kairon/csi/publish"), "per-node directory kairon-node asks kairon-csi-node to publish (bind-mount) CSI volumes under")
+	thirdPartyCSIDriversRaw := flag.String("third-party-csi-drivers", env("KAIRON_THIRD_PARTY_CSI_DRIVERS", ""), "comma-separated driverName=/socket/path list of third-party CSI drivers kairon-node may drive directly for a Machine boot disk (first cut: no secrets, attachRequired: false drivers only -- see docs/guides/machine-storage-thirdparty-csi.md); empty (the default) means only Kairon's own driver can be used, exactly as before this existed")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -88,6 +89,11 @@ func run() int {
 	vfioAllowlist, err := agent.ParseVFIOAllowlist(*vfioAllowlistRaw)
 	if err != nil {
 		log.Error("invalid VFIO allowlist", "error", err)
+		return 2
+	}
+	thirdPartyCSIDrivers, err := agent.ParseThirdPartyCSIDrivers(*thirdPartyCSIDriversRaw)
+	if err != nil {
+		log.Error("invalid third-party CSI driver list", "error", err)
 		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -124,21 +130,22 @@ func run() int {
 	configureConsole(ctx, log, fc, *consoleAddr, *consoleToken, *consoleTLSCert, *consoleTLSKey)
 
 	a := &agent.Agent{
-		NodeName:       node,
-		Kube:           kc,
-		Flux:           fc,
-		DefaultBackend: *backend,
-		ImageRoot:      *imageRoot,
-		ImageCacheDir:  *imageCacheDir,
-		VFIOAllowlist:  vfioAllowlist,
-		MigrationPeer:  peer,
-		SourceMigrator: source,
-		MigrationPort:  *migrationPort,
-		CSISocketPath:  *csiSocket,
-		CSIStagingDir:  *csiStagingDir,
-		CSIPublishDir:  *csiPublishDir,
-		Log:            log,
-		Metrics:        rec,
+		NodeName:             node,
+		Kube:                 kc,
+		Flux:                 fc,
+		DefaultBackend:       *backend,
+		ImageRoot:            *imageRoot,
+		ImageCacheDir:        *imageCacheDir,
+		VFIOAllowlist:        vfioAllowlist,
+		MigrationPeer:        peer,
+		SourceMigrator:       source,
+		MigrationPort:        *migrationPort,
+		CSISocketPath:        *csiSocket,
+		CSIStagingDir:        *csiStagingDir,
+		CSIPublishDir:        *csiPublishDir,
+		ThirdPartyCSIDrivers: thirdPartyCSIDrivers,
+		Log:                  log,
+		Metrics:              rec,
 	}
 	if err := a.Run(ctx, *interval); err != nil && ctx.Err() == nil {
 		log.Error("agent stopped", "error", err)

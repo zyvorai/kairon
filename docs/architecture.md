@@ -93,6 +93,27 @@ CPU Manager state file (a known, fragile, unsupported community pattern)
 -- the operator-asserted label already carries that responsibility. See
 [guides/machine-cpu-pinning.md](guides/machine-cpu-pinning.md).
 
+## Third-party CSI client
+
+`kairon-node` gained a second CSI-client path
+(`internal/agent/csi_thirdparty.go`) alongside its own iSCSI driver's
+existing one: `node.thirdPartyCSIDrivers` maps a driver name to a socket
+path, an explicit operator allowlist rather than reimplementing kubelet's
+own `plugins_registry/` registration listener -- the same fail-closed
+posture DRA/VFIO's own allowlist already has, applied to CSI.
+`resolveCSIVolume` branches to the third-party path when a PV's
+`spec.csi.driver` is listed; requests are built directly from the PV's own
+fields, with staging/publish paths keyed by the Machine's own
+`RuntimeName()` in place of kubelet's Pod-UID convention (there is no Pod
+here for one to come from). `Secrets` is always sent empty, the same
+tradeoff Kairon's own driver already made to avoid granting `kairon-node`
+cluster-wide Secret-read RBAC -- this is why first-cut compatibility is
+scoped to `attachRequired: false`, no-secret drivers (Ceph-CSI/RBD is the
+validated reference case) rather than "any CSI driver." `status.volumeDriver`
+records which driver staged a Machine's volume so teardown routes
+correctly later even after the PV/PVC is gone. See
+[guides/machine-storage-thirdparty-csi.md](guides/machine-storage-thirdparty-csi.md).
+
 ## Day-2 operations on a running Machine
 
 `spec.cloudInit` (SSH keys, hostname, packages, first-boot commands) and
