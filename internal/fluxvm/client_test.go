@@ -209,3 +209,47 @@ func TestDeleteNotFoundIsIdempotent(t *testing.T) {
 		t.Fatalf("delete should be idempotent: %v", err)
 	}
 }
+
+func TestSetResourceLimitsOnlySendsSetFields(t *testing.T) {
+	var gotBody map[string]any
+	var gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	cpu := uint32(200)
+	mem := uint64(1 << 30)
+	if err := c.SetResourceLimits(context.Background(), "vm-1", model.ResourceLimits{CPUQuotaPercent: &cpu, MemoryMaxBytes: &mem}); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/resources" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotBody["cpu_quota_percent"] != float64(200) || gotBody["memory_max_bytes"] != float64(1<<30) {
+		t.Fatalf("unexpected body: %+v", gotBody)
+	}
+	if _, hasIOWeight := gotBody["io_weight"]; hasIOWeight {
+		t.Fatalf("did not expect io_weight to be sent when unset, got %+v", gotBody)
+	}
+	if _, hasPidsMax := gotBody["pids_max"]; hasPidsMax {
+		t.Fatalf("did not expect pids_max to be sent when unset, got %+v", gotBody)
+	}
+}
+
+func TestSetResourceLimitsPropagatesErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "VM has no cgroup (not running)", http.StatusBadRequest)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	cpu := uint32(50)
+	if err := c.SetResourceLimits(context.Background(), "vm-1", model.ResourceLimits{CPUQuotaPercent: &cpu}); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+}

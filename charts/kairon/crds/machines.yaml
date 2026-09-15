@@ -95,6 +95,24 @@ spec:
                     minimum: 0
                   cpuSet:
                     type: string
+                  limits:
+                    type: object
+                    properties:
+                      cpuQuotaPercent:
+                        type: integer
+                        minimum: 1
+                      memoryMaxBytes:
+                        type: integer
+                        format: int64
+                        minimum: 1
+                      ioWeight:
+                        type: integer
+                        minimum: 1
+                        maximum: 10000
+                      pidsMax:
+                        type: integer
+                        format: int64
+                        minimum: 1
               runtime:
                 type: object
                 properties:
@@ -370,6 +388,19 @@ spec:
               appliedMemoryMiB:
                 type: integer
                 format: int64
+              appliedResourceLimits:
+                type: object
+                properties:
+                  cpuQuotaPercent:
+                    type: integer
+                  memoryMaxBytes:
+                    type: integer
+                    format: int64
+                  ioWeight:
+                    type: integer
+                  pidsMax:
+                    type: integer
+                    format: int64
               volumeStagingPath:
                 type: string
               volumePublishPath:

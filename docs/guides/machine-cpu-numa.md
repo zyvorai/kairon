@@ -68,8 +68,13 @@ specific, non-overlapping host CPU numbers across every Machine competing
 for them on one node is a real capacity-allocation problem Kairon's
 scheduler (`internal/scheduler`, still pure count-based bin-packing with
 no capacity model at all -- see [`machine-placement.md`](machine-placement.md))
-doesn't solve today. That's a bigger, separate feature, not implemented
-here.
+doesn't solve today. That's a bigger, separate feature, still not
+implemented here, and deliberately excluded from `spec.resources.limits`
+([`machine-resource-limits.md`](machine-resource-limits.md)) for the exact
+same reason, even though that field wraps the very same FluxVM resize API
+this paragraph describes -- `limits` only exposes the cgroup controls that
+don't need cross-Machine coordination (CPU quota %, memory ceiling, I/O
+weight, PID count).
 
 ## Real limits today (first cut)
 

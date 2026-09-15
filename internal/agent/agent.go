@@ -204,6 +204,12 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		a.Log.Error("hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", hotplugErr)
 		status.Message = hotplugErr.Error()
 	}
+	appliedLimits, limitsErr := a.reconcileResourceLimits(ctx, m, rec)
+	status.AppliedResourceLimits = appliedLimits
+	if limitsErr != nil {
+		a.Log.Error("resource limits reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", limitsErr)
+		status.Message = limitsErr.Error()
+	}
 	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
 		return err
 	}

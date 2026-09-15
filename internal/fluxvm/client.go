@@ -301,6 +301,31 @@ func (c *Client) HotplugMemory(ctx context.Context, id string, addMemoryMiB uint
 	return out.MemoryMiB, nil
 }
 
+// SetResourceLimits applies a partial cgroup v2 resource-control patch to a
+// running VM's own VMM process cgroup -- FluxVM's POST /v1/vms/{id}/resources,
+// backend-agnostic (it operates on the cgroup the VMM process runs in, not a
+// backend-specific API, unlike HotplugCPU/HotplugMemory above). Only the
+// fields set in limits are touched; a nil field leaves that cgroup control
+// exactly as it already was. Returns FluxVM's own error unmodified when the
+// VM isn't running (no cgroup exists yet) or the cgroup call itself fails.
+func (c *Client) SetResourceLimits(ctx context.Context, id string, limits model.ResourceLimits) error {
+	payload := map[string]any{}
+	if limits.CPUQuotaPercent != nil {
+		payload["cpu_quota_percent"] = *limits.CPUQuotaPercent
+	}
+	if limits.MemoryMaxBytes != nil {
+		payload["memory_max_bytes"] = *limits.MemoryMaxBytes
+	}
+	if limits.IOWeight != nil {
+		payload["io_weight"] = *limits.IOWeight
+	}
+	if limits.PIDsMax != nil {
+		payload["pids_max"] = *limits.PIDsMax
+	}
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/resources", payload)
+	return err
+}
+
 func (c *Client) Delete(ctx context.Context, id string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/vms/"+url.PathEscape(id), nil)
 	if err != nil {

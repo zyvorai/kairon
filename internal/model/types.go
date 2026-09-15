@@ -204,6 +204,47 @@ type ResourceSpec struct {
 	Hugepages bool   `json:"hugepages,omitempty"`
 	NUMANode  *int   `json:"numaNode,omitempty"`
 	CPUSet    string `json:"cpuSet,omitempty"`
+	// Limits is a live, mutable host-side cap on the Machine's already-running
+	// VMM process cgroup -- a ceiling the host enforces, distinct from CPU/
+	// Memory above (which describe what the *guest* sees, realized via boot-time
+	// sizing plus internal/agent/hotplug.go's live grow-only hotplug). Backed by
+	// FluxVM's own POST /v1/vms/{id}/resources (cgroup v2 CPU quota/memory.max/
+	// io.weight/pids.max), which is backend-agnostic (it operates on the cgroup
+	// the VMM process itself runs in, not a backend-specific API) -- unlike
+	// Hugepages/NUMANode/CPUSet above, Limits works for every backend, not just
+	// qemu. Reconciled continuously (internal/agent/resourcelimits.go), and
+	// -- unlike hotplug -- can be raised or lowered freely at any time, since a
+	// cgroup limit change has no "can't unplug a vCPU" asymmetry to worry about.
+	Limits *ResourceLimits `json:"limits,omitempty"`
+}
+
+// ResourceLimits are host cgroup v2 controls for an already-running Machine
+// -- see ResourceSpec.Limits's own doc comment for why this is a separate,
+// live-mutable field rather than a creation-time-only one. Deliberately no
+// CPUSetCPUs field here, matching ResourceSpec's own already-documented
+// reasoning for excluding cpuset pinning: allocating *specific*,
+// non-overlapping host CPU numbers across every Machine competing for them
+// on one node is a real capacity-allocator problem internal/scheduler
+// doesn't solve today, not something to expose here just because FluxVM's
+// own ResourcePatch happens to support it.
+type ResourceLimits struct {
+	// CPUQuotaPercent caps CPU as a percentage of one host core (200 = 2
+	// full cores) -- FluxVM's own cgroup v2 cpu.max, translated from a
+	// percentage the same way its ResourcePatch::cpu_quota_percent already
+	// is.
+	CPUQuotaPercent *uint32 `json:"cpuQuotaPercent,omitempty"`
+	// MemoryMaxBytes caps the VMM process's own cgroup memory.max -- a
+	// hard host-enforced ceiling, distinct from spec.resources.memory
+	// (what the guest is told it has).
+	MemoryMaxBytes *uint64 `json:"memoryMaxBytes,omitempty"`
+	// IOWeight is a relative cgroup v2 io.weight (1-10000, FluxVM's own
+	// default 100) against other cgroups competing for the same block
+	// device -- a priority, not an absolute cap.
+	IOWeight *uint32 `json:"ioWeight,omitempty"`
+	// PIDsMax caps the number of processes/threads inside the VMM
+	// process's own cgroup (pids.max) -- a containment bound against a
+	// runaway guest/VMM process tree, not a guest-visible limit.
+	PIDsMax *uint64 `json:"pidsMax,omitempty"`
 }
 
 type RuntimeSpec struct {
@@ -341,6 +382,14 @@ type MachineStatus struct {
 	// resource, since they're not part of the boot-time -smp/-m args).
 	AppliedVCPUs     uint32 `json:"appliedVCPUs,omitempty"`
 	AppliedMemoryMiB uint64 `json:"appliedMemoryMiB,omitempty"`
+	// AppliedResourceLimits records the last spec.resources.limits Kairon
+	// successfully applied to the live FluxVM cgroup -- unlike
+	// AppliedVCPUs/AppliedMemoryMiB (a running tally of monotonically-grown
+	// hotplug additions), this is a straight copy of the last-applied desired
+	// state, since cgroup limits can be raised or lowered freely; it exists
+	// purely so internal/agent/resourcelimits.go can skip a redundant FluxVM
+	// call when nothing has actually changed since the last reconcile tick.
+	AppliedResourceLimits *ResourceLimits `json:"appliedResourceLimits,omitempty"`
 	// VolumeStagingPath/VolumePublishPath record that kairon-node has
 	// already called NodeStageVolume/NodePublishVolume (see
 	// internal/agent/storage.go, internal/csinode) for this Machine's

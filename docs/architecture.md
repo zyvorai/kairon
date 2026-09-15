@@ -87,10 +87,12 @@ unwrapped: it needs FluxVM's own proprietary in-guest agent binary
 (`fluxvm-guest-agent`, a separate systemd service from qemu-guest-agent)
 baked into the guest image, a new dependency this project hasn't asked of
 users before, plus a new spec field and a browser terminal UI -- tracked as
-future work, not started. Live cgroup resize (`POST /v1/vms/{id}/resources`)
-also remains unwrapped, and is lower priority: it's a different mechanism
-from the QMP hotplug Kairon already wraps (`internal/agent/hotplug.go`),
-which already covers growing a running Machine's live resources.
+future work, not started. Live cgroup resize
+(`POST /v1/vms/{id}/resources`) is now wrapped too, as `spec.resources.limits`
+(`internal/agent/resourcelimits.go`) -- a real, kernel-enforced host-side cap
+distinct from the QMP hotplug Kairon already wraps (`internal/agent/hotplug.go`,
+which grows what the *guest* sees); see
+[guides/machine-resource-limits.md](guides/machine-resource-limits.md).
 
 ## Operational visibility
 
