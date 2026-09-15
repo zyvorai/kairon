@@ -27,21 +27,22 @@ func (c *Client) Snapshot(ctx context.Context, id, tag string) error {
 	return err
 }
 
-// stop powers a VM off via FluxVM's own POST /v1/vms/{id}/stop, keeping
+// Stop powers a VM off via FluxVM's own POST /v1/vms/{id}/stop, keeping
 // its record and disk intact -- a completely different operation from
 // Delete (which tears the runtime down entirely; the same one Kairon's
-// own spec.powerState: Stopped already uses). Deliberately unexported:
-// this project considered and declined exposing a general-purpose "power
-// off but keep the record" capability of its own -- see ROADMAP.md's
-// "General-purpose 'power off, keep the FluxVM record' primitive" entry
-// for why (in short: start reuses FluxVM's own last-applied config as-is
-// rather than re-deriving it from the current Machine spec the way
-// Stopped->Running does, which is a spec-drift foot-gun, not a real
-// benefit over Stopped/Paused). So this only ever exists as
-// RestoreSnapshot's own internal orchestration step and internal/agent's
-// reconcile self-healing branch, never a standalone route a caller can
-// reach directly.
-func (c *Client) stop(ctx context.Context, id string) (*Record, error) {
+// own spec.powerState: Stopped already uses). Used by RestoreSnapshot's
+// own internal orchestration step, internal/agent's reconcile
+// self-healing branch, and -- as of spec.powerState: Halted --
+// ensureHalted (internal/agent/hibernate.go) as a first-class,
+// user-facing power state in its own right. See ROADMAP.md's "Halted
+// power state" entry for the real caveat that comes with exposing this:
+// Start (below) reuses FluxVM's own last-applied VM config as-is rather
+// than re-deriving it from the current Machine spec the way
+// Stopped->Running does, so a spec edit made while Halted won't apply on
+// resume -- the same "read only once" caveat spec.cloudInit/
+// spec.network.forwards already carry for an already-running Machine,
+// not a new kind of gap.
+func (c *Client) Stop(ctx context.Context, id string) (*Record, error) {
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/stop", nil)
 	if err != nil {
 		return nil, err
@@ -53,15 +54,15 @@ func (c *Client) stop(ctx context.Context, id string) (*Record, error) {
 	return &rec, nil
 }
 
-// Start resumes a VM FluxVM itself has stopped (via stop above -- never
+// Start resumes a VM FluxVM itself has stopped (via Stop above -- never
 // one Kairon deleted, which has no record left to start) from its
-// existing disk, unchanged -- FluxVM's own POST /v1/vms/{id}/start.
-// Exported for internal/agent's reconcile self-healing branch (a Machine
-// whose FluxVM record reports Stopped while spec.powerState still wants
-// Running/Paused -- the recovery path if a RestoreSnapshot call's own
-// process crashes between its stop and start-from-snapshot steps); not
-// wired to any standalone route of its own, for the same reason stop
-// above isn't.
+// existing disk, unchanged -- FluxVM's own POST /v1/vms/{id}/start. Used
+// by internal/agent's reconcile self-healing branch (a Machine whose
+// FluxVM record reports Stopped while spec.powerState still wants
+// Running -- the recovery path if a RestoreSnapshot call's own process
+// crashes between its stop and start-from-snapshot steps, or the normal
+// resume path from spec.powerState: Halted) and, directly, by
+// ensureHalted's own no-op check.
 func (c *Client) Start(ctx context.Context, id string) (*Record, error) {
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/start", nil)
 	if err != nil {
@@ -106,7 +107,7 @@ func (c *Client) startFromSnapshot(ctx context.Context, id, tag string) (*Record
 // (unrestored, from its plain last-known-good state, not the snapshot)
 // as a safety net, not a second automatic restore attempt.
 func (c *Client) RestoreSnapshot(ctx context.Context, id, tag string) (*Record, error) {
-	if _, err := c.stop(ctx, id); err != nil {
+	if _, err := c.Stop(ctx, id); err != nil {
 		return nil, fmt.Errorf("stop before restore: %w", err)
 	}
 	rec, err := c.startFromSnapshot(ctx, id, tag)

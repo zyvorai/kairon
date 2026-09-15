@@ -139,6 +139,9 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.DesiredPowerState() == "Paused" {
 		return a.ensurePaused(ctx, m)
 	}
+	if m.DesiredPowerState() == "Halted" {
+		return a.ensureHalted(ctx, m)
+	}
 	if m.Spec.Image.Source != nil {
 		cachedPath, err := a.resolveImageSource(ctx, m)
 		if err != nil {
@@ -199,20 +202,23 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			return err
 		}
 	} else if normalizePhase(rec.Status) == "Stopped" && m.DesiredPowerState() != "Stopped" {
-		// Self-healing safety net, not the primary path for anything:
-		// spec.powerState: Stopped tears the runtime down entirely
-		// (ensureStopped's own Delete), so a *found* runtime reporting
-		// "stopped"/"exited" while spec still wants Running/Paused means
-		// something else stopped FluxVM's own record without deleting it
-		// -- today, only fluxvm.Client.RestoreSnapshot's own internal
-		// stop-then-start-from-snapshot orchestration does that
-		// deliberately (recovering here if that process crashed between
-		// the two steps, restarting from the VM's last-known-good disk
-		// state, not the snapshot itself -- RestoreSnapshot isn't retried
-		// automatically). A real external crash the VMM process itself
-		// dying, if FluxVM ever reports that the same way, would end up
-		// here too, and restarting it is the correct reconcile-loop
-		// response regardless of which of the two caused it.
+		// Reached only with DesiredPowerState() == "Running" -- Stopped,
+		// Paused, and Halted all early-return above, before this chain.
+		// Two distinct real callers land here:
+		//  1. The normal Halted -> Running resume path: ensureHalted left
+		//     the runtime FluxVM-stopped with its record kept, and the
+		//     Machine spec was edited back to powerState: Running.
+		//  2. A self-healing safety net: fluxvm.Client.RestoreSnapshot's
+		//     own internal stop-then-start-from-snapshot orchestration
+		//     also leaves a runtime FluxVM-stopped-with-record-kept if it
+		//     crashes between the two steps -- recovering here restarts
+		//     from the VM's last-known-good disk state, not the snapshot
+		//     itself (RestoreSnapshot isn't retried automatically). A
+		//     real external VMM crash, if FluxVM ever reports that the
+		//     same way, would end up here too.
+		// Both cases call the exact same FluxVM route (plain Start,
+		// reusing FluxVM's own kept config) -- there is no way, or need,
+		// to distinguish which of the three actually happened.
 		rec, err = a.Flux.Start(ctx, rec.ID())
 		if err != nil {
 			return err
@@ -342,6 +348,56 @@ func (a *Agent) ensurePaused(ctx context.Context, m model.Machine) error {
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Paused", LastTransitionTime: time.Now().UTC()}}
+	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+}
+
+// ensureHalted powers a Machine off via FluxVM's real Stop (the VMM
+// process terminates, guest RAM is lost) while FluxVM keeps its own VM
+// record and disk intact -- a genuinely different operation from
+// ensureStopped's full teardown (FluxVM DELETE, status.runtimeID
+// cleared, the runtime rebuilt from spec on the next Running). Frees the
+// node's resident RAM/CPU the same way Stopped does (unlike Paused,
+// which keeps the VMM process alive and still counts against scheduler
+// capacity -- see countAssigned in internal/controller/controller.go),
+// but keeps FluxVM's own last-applied VM config so the reconcile
+// self-healing branch above (rec.Status normalizes to Stopped, desired
+// is Running) can bring it back via a plain Start rather than a full
+// Kairon-side recreate. Only a single-hop resume back to Running is
+// handled directly -- the same convention ensurePaused's own doc comment
+// establishes for Paused; Halted -> Paused isn't special-cased here, go
+// through Running first.
+func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
+	rec, err := a.current(ctx, m)
+	if err != nil {
+		return err
+	}
+	status := m.Status
+	if rec == nil {
+		status.Phase = "Pending"
+		status.NodeName = a.NodeName
+		status.Message = "cannot halt: no existing runtime -- set powerState to Running first, then Halted"
+		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
+		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	}
+	if normalizePhase(rec.Status) != "Stopped" {
+		rec, err = a.Flux.Stop(ctx, rec.ID())
+		if err != nil {
+			return err
+		}
+	}
+	// Deliberately not normalizePhase(rec.Status) -- FluxVM's own Stop
+	// reports the same raw status ("stopped"/"exited") ensureStopped's
+	// full-teardown path does, but Halted keeps the runtime record (and
+	// is resumable via a plain Start, not a full recreate), so it needs
+	// its own distinct Machine-level phase rather than reading as
+	// "Stopped" to callers/the dashboard/scheduler capacity accounting.
+	status.Phase = "Halted"
+	status.NodeName = a.NodeName
+	status.RuntimeID = rec.ID()
+	status.GuestIP = ""
+	status.Network = nil
+	status.Message = ""
+	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Halted", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
 

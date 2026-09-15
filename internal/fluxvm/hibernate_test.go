@@ -122,6 +122,37 @@ func TestRestoreSnapshotNeverCallsStartFromSnapshotWhenStopFails(t *testing.T) {
 	}
 }
 
+func TestStop(t *testing.T) {
+	var gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(Record{UUID: "vm-1", Status: "Stopped"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	rec, err := c.Stop(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/stop" || rec.Status != "Stopped" {
+		t.Fatalf("unexpected result: path=%q rec=%+v", gotPath, rec)
+	}
+}
+
+func TestStopPropagatesErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "VM not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.Stop(context.Background(), "vm-1"); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+}
+
 func TestStart(t *testing.T) {
 	var gotPath string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

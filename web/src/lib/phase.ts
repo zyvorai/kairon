@@ -27,6 +27,7 @@ export function badgeClass(phase: string): string {
     case 'Error':
       return 'badge badge-error';
     case 'Stopped':
+    case 'Halted':
       return 'badge badge-idle';
     default:
       return 'badge badge-idle';

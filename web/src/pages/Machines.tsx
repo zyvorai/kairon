@@ -124,7 +124,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     }
   }
 
-  async function power(name: string, action: 'start' | 'stop' | 'pause' | 'resume') {
+  async function power(name: string, action: 'start' | 'stop' | 'pause' | 'resume' | 'halt') {
     setMsg('');
     try {
       await api(`/api/v1/machines/default/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
@@ -253,6 +253,8 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
                     {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'pause')}>Pause</button>}
                     {m.status?.phase === 'Paused' && <button onClick={() => power(m.metadata.name, 'resume')}>Resume</button>}
+                    {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'halt')}>Halt</button>}
+                    {m.status?.phase === 'Halted' && <button onClick={() => power(m.metadata.name, 'start')}>Resume</button>}
                     {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
                     {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
                     {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}

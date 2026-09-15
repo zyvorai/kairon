@@ -125,3 +125,25 @@ func TestAdmitQuotaDoesNotCountUnscheduledOrStoppedMachinesAsUsed(t *testing.T) 
 		t.Fatalf("expected quota headroom since neither existing machine is actually running, got %q", blocker)
 	}
 }
+
+// TestAdmitQuotaDoesNotCountHaltedMachinesAsUsed is Halted's own version of
+// the Stopped case above -- both genuinely free the runtime/host footprint
+// (see machineCountsTowardQuota's own doc comment), so neither should count
+// against MaxMachines.
+func TestAdmitQuotaDoesNotCountHaltedMachinesAsUsed(t *testing.T) {
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "q", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxMachines: intPtr(1)},
+	}
+	halted := model.Machine{
+		Metadata: model.ObjectMeta{Name: "halted", Namespace: "prod"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Halted", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	trackers, err := buildQuotaTrackers([]model.MachineQuota{quota}, []model.Machine{halted})
+	if err != nil {
+		t.Fatalf("buildQuotaTrackers: %v", err)
+	}
+	if blocker := admitQuota(trackers, unscheduledMachine("new")); blocker != "" {
+		t.Fatalf("expected quota headroom since the existing machine is Halted, got %q", blocker)
+	}
+}

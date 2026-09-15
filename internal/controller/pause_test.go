@@ -20,11 +20,12 @@ func TestCountAssignedCountsPausedAlongsideRunning(t *testing.T) {
 		{Metadata: model.ObjectMeta{Name: "running"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}},
 		{Metadata: model.ObjectMeta{Name: "paused"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Paused"}},
 		{Metadata: model.ObjectMeta{Name: "stopped"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Stopped"}},
+		{Metadata: model.ObjectMeta{Name: "halted"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Halted"}},
 		{Metadata: model.ObjectMeta{Name: "unscheduled"}, Spec: model.MachineSpec{PowerState: "Running"}},
 	}
 	assigned := countAssigned(machines)
 	if assigned["worker-1"] != 2 {
-		t.Fatalf("expected Running+Paused to count (2), Stopped and unscheduled not to, got %+v", assigned)
+		t.Fatalf("expected Running+Paused to count (2), Stopped/Halted/unscheduled not to, got %+v", assigned)
 	}
 }
 

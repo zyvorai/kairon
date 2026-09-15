@@ -17,13 +17,16 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
-// TestReconcileSelfHealsAFluxVMStoppedRuntime covers the safety net
-// fluxvm.Client.RestoreSnapshot's own doc comment describes: if a
-// stop->start-from-snapshot orchestration is interrupted after the stop
-// succeeds, FluxVM is left reporting the runtime Stopped while
-// spec.powerState still wants Running. Reconcile must notice the mismatch
-// and call Start (not start-from-snapshot -- this recovers to the VM's
-// last-known-good disk state, it never re-attempts the restore itself).
+// TestReconcileSelfHealsAFluxVMStoppedRuntime covers the safety-net half
+// of reconcileMachine's Start branch: fluxvm.Client.RestoreSnapshot's own
+// doc comment describes a stop->start-from-snapshot orchestration
+// interrupted after the stop succeeds, leaving FluxVM reporting the
+// runtime Stopped while spec.powerState still wants Running. Reconcile
+// must notice the mismatch and call Start (not start-from-snapshot --
+// this recovers to the VM's last-known-good disk state, it never
+// re-attempts the restore itself). The exact same branch also handles
+// the *intended* Halted -> Running resume path -- see
+// TestReconcileResumesFromHaltedWhenPowerStateIsRunning below.
 func TestReconcileSelfHealsAFluxVMStoppedRuntime(t *testing.T) {
 	m := pausedMachine("Running")
 	var gotStatus model.MachineStatus
@@ -96,6 +99,151 @@ func TestReconcileNeverStartsAnIntentionallyStoppedMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	if gotStatus.Phase != "Stopped" {
+		t.Fatalf("unexpected status: %+v", gotStatus)
+	}
+}
+
+func TestEnsureHaltedStopsARunningMachine(t *testing.T) {
+	m := pausedMachine("Halted")
+	var gotStatus model.MachineStatus
+	ks := fakeKubeForMachine(t, &m, &gotStatus)
+	defer ks.Close()
+
+	var stopCalled bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Running"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/stop":
+			stopCalled = true
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Stopped"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !stopCalled {
+		t.Fatal("expected Stop to be called against FluxVM")
+	}
+	// Deliberately not "Stopped" -- see ensureHalted's own doc comment on
+	// why Halted needs a distinct Machine-level phase from the full
+	// teardown ensureStopped reports.
+	if gotStatus.Phase != "Halted" || gotStatus.RuntimeID != "vm-1" {
+		t.Fatalf("unexpected status: %+v", gotStatus)
+	}
+}
+
+func TestEnsureHaltedIsANoOpWhenAlreadyStopped(t *testing.T) {
+	m := pausedMachine("Halted")
+	var gotStatus model.MachineStatus
+	ks := fakeKubeForMachine(t, &m, &gotStatus)
+	defer ks.Close()
+
+	var stopCalled bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Stopped"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/stop":
+			stopCalled = true
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Stopped"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if stopCalled {
+		t.Fatal("expected no Stop call when the runtime already reports Stopped")
+	}
+	if gotStatus.Phase != "Halted" {
+		t.Fatalf("unexpected status: %+v", gotStatus)
+	}
+}
+
+func TestEnsureHaltedWithNoRuntimeReportsPending(t *testing.T) {
+	m := pausedMachine("Halted")
+	m.Status.RuntimeID = "" // never created
+	var gotStatus model.MachineStatus
+	ks := fakeKubeForMachine(t, &m, &gotStatus)
+	defer ks.Close()
+
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms" && r.URL.Query().Get("name") == "kairon-prod-db":
+			_ = json.NewEncoder(w).Encode([]fluxvm.Record{})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotStatus.Phase != "Pending" || gotStatus.Message == "" {
+		t.Fatalf("expected a Pending status with an explanatory message, got %+v", gotStatus)
+	}
+}
+
+func TestReconcileResumesFromHaltedWhenPowerStateIsRunning(t *testing.T) {
+	m := pausedMachine("Running")
+	var gotStatus model.MachineStatus
+	ks := fakeKubeForMachine(t, &m, &gotStatus)
+	defer ks.Close()
+
+	var startCalled bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			status := "Stopped"
+			if startCalled {
+				status = "Running"
+			}
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: status})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/start":
+			startCalled = true
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Status: "Running"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !startCalled {
+		t.Fatal("expected Start to be called against FluxVM to resume a Halted machine")
+	}
+	if gotStatus.Phase != "Running" {
 		t.Fatalf("unexpected status: %+v", gotStatus)
 	}
 }

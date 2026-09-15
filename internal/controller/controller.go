@@ -178,7 +178,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 
 	for _, m := range machines {
-		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || m.DesiredPowerState() == "Stopped" {
+		// A never-yet-assigned Machine desired Stopped or Halted has
+		// nothing to schedule -- ensureStopped/ensureHalted (internal/agent)
+		// both no-op without an existing runtime anyway, so there is no
+		// point choosing it a node here.
+		desired := m.DesiredPowerState()
+		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || desired == "Stopped" || desired == "Halted" {
 			continue
 		}
 		node, err := c.Scheduler.Choose(m, nodes, machines, assigned, draHints[m.Namespace()+"/"+m.Metadata.Name])
@@ -232,10 +237,11 @@ func countAssigned(machines []model.Machine) map[string]int {
 	assigned := map[string]int{}
 	for _, m := range machines {
 		// Running and Paused both keep a real FluxVM runtime (and its
-		// resident RAM) alive on the node -- only Stopped actually tears
-		// the runtime down and frees the capacity it held. A Paused
-		// Machine's guest CPUs are suspended, but the process, and the
-		// host memory backing it, are not.
+		// resident RAM) alive on the node -- only they count here. A
+		// Paused Machine's guest CPUs are suspended, but the process, and
+		// the host memory backing it, are not. Stopped (full teardown)
+		// and Halted (VMM process terminated, FluxVM's own record kept)
+		// both genuinely free the capacity they held, so neither counts.
 		desired := m.DesiredPowerState()
 		if m.Spec.NodeName != "" && m.Metadata.DeletionTimestamp == nil && (desired == "Running" || desired == "Paused") {
 			assigned[m.Spec.NodeName]++

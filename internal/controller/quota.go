@@ -70,9 +70,12 @@ func machineFootprint(m model.Machine) (cpu uint32, memMiB uint64) {
 // UPDATE handling (see admitQuotaResize) so the two can never drift apart
 // on what "already counted" means. Matches quota blocking *new*
 // scheduling, not evicting or retroactively un-admitting anything: not
-// deleted, not desired-Stopped, and already scheduled.
+// deleted, not desired-Stopped-or-Halted (both genuinely free the
+// runtime/host footprint the same way, see countAssigned's own comment
+// in internal/controller/controller.go), and already scheduled.
 func machineCountsTowardQuota(m model.Machine) bool {
-	return m.Metadata.DeletionTimestamp == nil && m.DesiredPowerState() != "Stopped" && m.Spec.NodeName != ""
+	desired := m.DesiredPowerState()
+	return m.Metadata.DeletionTimestamp == nil && desired != "Stopped" && desired != "Halted" && m.Spec.NodeName != ""
 }
 
 // admitQuota returns a non-empty blocker reason if scheduling m would push

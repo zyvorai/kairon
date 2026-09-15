@@ -108,6 +108,8 @@ func Run(args []string, version string) int {
 		cmdPower(ctx, kc, args[1:], "Paused")
 	case "resume":
 		cmdPower(ctx, kc, args[1:], "Running")
+	case "halt":
+		cmdPower(ctx, kc, args[1:], "Halted")
 	case "migrate":
 		cmdMigrate(ctx, kc, args[1:])
 	case "evacuate":
@@ -689,7 +691,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | pause | resume | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas] | describe | create | delete | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
