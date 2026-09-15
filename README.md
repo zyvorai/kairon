@@ -308,12 +308,13 @@ More worked examples: [`examples/`](examples/).
 ## CLI
 
 ```text
-kaironctl get [machines|migrations|snapshots|quotas|restores] [-n NS]
-kaironctl describe NAME
+kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] [-n NS]
+kaironctl describe [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
                  [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # repeatable/cloud-init, see docs/guides/machine-network.md
-kaironctl start|stop|delete NAME
+kaironctl start|stop NAME
+kaironctl delete [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-interval 10s]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]

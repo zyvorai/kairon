@@ -255,16 +255,63 @@ func defaultStrategy(strategy string) string {
 	return strategy
 }
 
+// resourceKindAndName splits describe/delete's positional args into a
+// resource kind and a NAME, recognizing exactly the same resource-type
+// aliases cmdGet already does -- reused here so all three verbs treat
+// "snapshot"/"machineset"/etc. identically. KIND is always optional and
+// disambiguated purely by argument count, never by matching NAME itself
+// against the alias list: 1 positional arg is NAME alone (kind defaults
+// to "machine", preserving the exact prior calling convention of
+// `describe NAME`/`delete NAME`), 2 positional args are KIND NAME. This
+// avoids the alternative of guessing from NAME's own text, which would
+// silently misfire for the (rare but real) case of a Machine actually
+// named "snapshot" or "budget".
+func resourceKindAndName(verb string, args []string) (kind, name string) {
+	switch len(args) {
+	case 1:
+		return "machine", args[0]
+	case 2:
+		return strings.ToLower(args[0]), args[1]
+	default:
+		fatal(fmt.Errorf("usage: kaironctl %s [RESOURCE] NAME", verb))
+		return "", ""
+	}
+}
+
 func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	ns, args := nsFlag(args)
-	if len(args) != 1 {
-		fatal(fmt.Errorf("describe requires NAME"))
+	kind, name := resourceKindAndName("describe", args)
+	var (
+		out any
+		err error
+	)
+	switch kind {
+	case "machine", "machines", "vm", "vms":
+		out, err = kc.GetMachine(ctx, ns, name)
+	case "migration", "migrations", "machinemigrations":
+		out, err = kc.GetMachineMigration(ctx, ns, name)
+	case "snapshot", "snapshots", "machinesnapshots":
+		out, err = kc.GetMachineSnapshot(ctx, ns, name)
+	case "restore", "restores", "machinesnapshotrestores":
+		out, err = kc.GetMachineSnapshotRestore(ctx, ns, name)
+	case "quota", "quotas", "machinequotas":
+		out, err = kc.GetMachineQuota(ctx, ns, name)
+	case "budget", "budgets", "machinedisruptionbudgets":
+		out, err = kc.GetMachineDisruptionBudget(ctx, ns, name)
+	case "machineset", "machinesets":
+		out, err = kc.GetMachineSet(ctx, ns, name)
+	case "instancetype", "instancetypes", "machineinstancetypes":
+		out, err = kc.GetMachineInstanceType(ctx, ns, name)
+	case "migrationpolicy", "migrationpolicies":
+		out, err = kc.GetMigrationPolicy(ctx, ns, name)
+	default:
+		fatal(fmt.Errorf("unknown resource %q", kind))
+		return
 	}
-	m, err := kc.GetMachine(ctx, ns, args[0])
 	if err != nil {
 		fatal(err)
 	}
-	b, _ := json.MarshalIndent(m, "", "  ")
+	b, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(b))
 }
 
@@ -326,13 +373,38 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 
 func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
 	ns, args := nsFlag(args)
-	if len(args) != 1 {
-		fatal(fmt.Errorf("delete requires NAME"))
+	kind, name := resourceKindAndName("delete", args)
+	var (
+		canonical string
+		err       error
+	)
+	switch kind {
+	case "machine", "machines", "vm", "vms":
+		canonical, err = "machine", kc.DeleteMachine(ctx, ns, name)
+	case "migration", "migrations", "machinemigrations":
+		canonical, err = "migration", kc.DeleteMachineMigration(ctx, ns, name)
+	case "snapshot", "snapshots", "machinesnapshots":
+		canonical, err = "snapshot", kc.DeleteMachineSnapshot(ctx, ns, name)
+	case "restore", "restores", "machinesnapshotrestores":
+		canonical, err = "restore", kc.DeleteMachineSnapshotRestore(ctx, ns, name)
+	case "quota", "quotas", "machinequotas":
+		canonical, err = "quota", kc.DeleteMachineQuota(ctx, ns, name)
+	case "budget", "budgets", "machinedisruptionbudgets":
+		canonical, err = "budget", kc.DeleteMachineDisruptionBudget(ctx, ns, name)
+	case "machineset", "machinesets":
+		canonical, err = "machineset", kc.DeleteMachineSet(ctx, ns, name)
+	case "instancetype", "instancetypes", "machineinstancetypes":
+		canonical, err = "instancetype", kc.DeleteMachineInstanceType(ctx, ns, name)
+	case "migrationpolicy", "migrationpolicies":
+		canonical, err = "migrationpolicy", kc.DeleteMigrationPolicy(ctx, ns, name)
+	default:
+		fatal(fmt.Errorf("unknown resource %q", kind))
+		return
 	}
-	if err := kc.DeleteMachine(ctx, ns, args[0]); err != nil {
+	if err != nil {
 		fatal(err)
 	}
-	fmt.Printf("machine/%s deleted\n", args[0])
+	fmt.Printf("%s/%s deleted\n", canonical, name)
 }
 
 // cmdFence is the operator-attested recovery action for a Machine whose
@@ -761,7 +833,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe | create | delete | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe [RESOURCE] NAME | create | delete [RESOURCE] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

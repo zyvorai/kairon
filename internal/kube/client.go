@@ -223,6 +223,10 @@ func (c *Client) PatchMachineMigration(ctx context.Context, ns, name string, pat
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinemigrations", name), patch, nil, "application/merge-patch+json")
 }
 
+func (c *Client) DeleteMachineMigration(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinemigrations", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) ListMachineSnapshots(ctx context.Context) ([]model.MachineSnapshot, error) {
 	var list model.MachineSnapshotList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots", nil, &list, "")
@@ -251,6 +255,10 @@ func (c *Client) PatchMachineSnapshotStatus(ctx context.Context, ns, name string
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) DeleteMachineSnapshot(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinesnapshots", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) ListMachineSnapshotRestores(ctx context.Context) ([]model.MachineSnapshotRestore, error) {
 	var list model.MachineSnapshotRestoreList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotrestores", nil, &list, "")
@@ -271,6 +279,16 @@ func (c *Client) CreateMachineSnapshotRestore(ctx context.Context, ns string, r 
 
 func (c *Client) PatchMachineSnapshotRestoreStatus(ctx context.Context, ns, name string, status model.MachineSnapshotRestoreStatus) error {
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotrestores", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) GetMachineSnapshotRestore(ctx context.Context, ns, name string) (model.MachineSnapshotRestore, error) {
+	var r model.MachineSnapshotRestore
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinesnapshotrestores", name), nil, &r, "")
+	return r, err
+}
+
+func (c *Client) DeleteMachineSnapshotRestore(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinesnapshotrestores", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
 func (c *Client) ListMachineNetworkPolicies(ctx context.Context) ([]model.MachineNetworkPolicy, error) {
@@ -356,6 +374,16 @@ func (c *Client) PatchMachineQuotaStatus(ctx context.Context, ns, name string, s
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinequotas", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) GetMachineQuota(ctx context.Context, ns, name string) (model.MachineQuota, error) {
+	var q model.MachineQuota
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinequotas", name), nil, &q, "")
+	return q, err
+}
+
+func (c *Client) DeleteMachineQuota(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinequotas", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) ListMachineSets(ctx context.Context) ([]model.MachineSet, error) {
 	var list model.MachineSetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesets", nil, &list, "")
@@ -372,6 +400,16 @@ func (c *Client) PatchMachineSetStatus(ctx context.Context, ns, name string, sta
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesets", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) GetMachineSet(ctx context.Context, ns, name string) (model.MachineSet, error) {
+	var s model.MachineSet
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinesets", name), nil, &s, "")
+	return s, err
+}
+
+func (c *Client) DeleteMachineSet(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinesets", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
 	var list model.MachineInstanceTypeList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")
@@ -382,6 +420,16 @@ func (c *Client) ListMachineInstanceTypesNamespace(ctx context.Context, ns strin
 	var list model.MachineInstanceTypeList
 	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machineinstancetypes"), nil, &list, "")
 	return list.Items, err
+}
+
+func (c *Client) GetMachineInstanceType(ctx context.Context, ns, name string) (model.MachineInstanceType, error) {
+	var it model.MachineInstanceType
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machineinstancetypes", name), nil, &it, "")
+	return it, err
+}
+
+func (c *Client) DeleteMachineInstanceType(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machineinstancetypes", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
 func (c *Client) ListMigrationPolicies(ctx context.Context) ([]model.MigrationPolicy, error) {
@@ -400,6 +448,16 @@ func (c *Client) PatchMigrationPolicyStatus(ctx context.Context, ns, name string
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "migrationpolicies", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) GetMigrationPolicy(ctx context.Context, ns, name string) (model.MigrationPolicy, error) {
+	var p model.MigrationPolicy
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "migrationpolicies", name), nil, &p, "")
+	return p, err
+}
+
+func (c *Client) DeleteMigrationPolicy(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "migrationpolicies", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")
@@ -414,6 +472,16 @@ func (c *Client) ListMachineDisruptionBudgetsNamespace(ctx context.Context, ns s
 
 func (c *Client) PatchMachineDisruptionBudgetStatus(ctx context.Context, ns, name string, status model.MachineDisruptionBudgetStatus) error {
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinedisruptionbudgets", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) GetMachineDisruptionBudget(ctx context.Context, ns, name string) (model.MachineDisruptionBudget, error) {
+	var b model.MachineDisruptionBudget
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinedisruptionbudgets", name), nil, &b, "")
+	return b, err
+}
+
+func (c *Client) DeleteMachineDisruptionBudget(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinedisruptionbudgets", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
 func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, ns string, pvc model.PersistentVolumeClaim) (model.PersistentVolumeClaim, error) {

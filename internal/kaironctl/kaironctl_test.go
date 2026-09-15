@@ -196,3 +196,24 @@ func TestEvacuatePassIgnoresMachinesOnOtherNodes(t *testing.T) {
 		t.Fatalf("created=%d skipped=%d remaining=%d, want 0/0/0", created, skipped, remaining)
 	}
 }
+
+func TestResourceKindAndName(t *testing.T) {
+	// A single positional arg is NAME alone, kind defaults to "machine" --
+	// preserves the exact prior `describe NAME`/`delete NAME` calling
+	// convention untouched by this change.
+	kind, name := resourceKindAndName("delete", []string{"my-vm"})
+	if kind != "machine" || name != "my-vm" {
+		t.Fatalf("kind=%q name=%q, want machine/my-vm", kind, name)
+	}
+	// Two positional args are KIND NAME -- disambiguated purely by count,
+	// never by matching NAME's own text against the alias list, so a
+	// Machine literally named e.g. "snapshot" is never misrouted.
+	kind, name = resourceKindAndName("delete", []string{"snapshot", "my-snap"})
+	if kind != "snapshot" || name != "my-snap" {
+		t.Fatalf("kind=%q name=%q, want snapshot/my-snap", kind, name)
+	}
+	kind, name = resourceKindAndName("describe", []string{"snapshot", "snapshot"})
+	if kind != "snapshot" || name != "snapshot" {
+		t.Fatalf("kind=%q name=%q, want snapshot/snapshot (a resource literally named after its own kind)", kind, name)
+	}
+}

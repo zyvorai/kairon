@@ -162,3 +162,91 @@ func TestObserveCalledForEverySuccessfulAndFailedRequest(t *testing.T) {
 		t.Errorf("call[1] = %+v, want errored GET", calls[1])
 	}
 }
+
+func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
+	var deleted []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		switch r.URL.Path {
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/mig1":
+			_ = json.NewEncoder(w).Encode(model.MachineMigration{Metadata: model.ObjectMeta{Name: "mig1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap1":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshot{Metadata: model.ObjectMeta{Name: "snap1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/restore1":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotRestore{Metadata: model.ObjectMeta{Name: "restore1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/quota1":
+			_ = json.NewEncoder(w).Encode(model.MachineQuota{Metadata: model.ObjectMeta{Name: "quota1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/budget1":
+			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudget{Metadata: model.ObjectMeta{Name: "budget1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesets/set1":
+			_ = json.NewEncoder(w).Encode(model.MachineSet{Metadata: model.ObjectMeta{Name: "set1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machineinstancetypes/type1":
+			_ = json.NewEncoder(w).Encode(model.MachineInstanceType{Metadata: model.ObjectMeta{Name: "type1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/migrationpolicies/policy1":
+			_ = json.NewEncoder(w).Encode(model.MigrationPolicy{Metadata: model.ObjectMeta{Name: "policy1", Namespace: "prod"}})
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "", "", false)
+	c.HTTP = s.Client()
+	ctx := context.Background()
+
+	if got, err := c.GetMachineMigration(ctx, "prod", "mig1"); err != nil || got.Metadata.Name != "mig1" {
+		t.Fatalf("GetMachineMigration: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineSnapshot(ctx, "prod", "snap1"); err != nil || got.Metadata.Name != "snap1" {
+		t.Fatalf("GetMachineSnapshot: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineSnapshotRestore(ctx, "prod", "restore1"); err != nil || got.Metadata.Name != "restore1" {
+		t.Fatalf("GetMachineSnapshotRestore: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineQuota(ctx, "prod", "quota1"); err != nil || got.Metadata.Name != "quota1" {
+		t.Fatalf("GetMachineQuota: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineDisruptionBudget(ctx, "prod", "budget1"); err != nil || got.Metadata.Name != "budget1" {
+		t.Fatalf("GetMachineDisruptionBudget: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineSet(ctx, "prod", "set1"); err != nil || got.Metadata.Name != "set1" {
+		t.Fatalf("GetMachineSet: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMachineInstanceType(ctx, "prod", "type1"); err != nil || got.Metadata.Name != "type1" {
+		t.Fatalf("GetMachineInstanceType: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetMigrationPolicy(ctx, "prod", "policy1"); err != nil || got.Metadata.Name != "policy1" {
+		t.Fatalf("GetMigrationPolicy: got=%v err=%v", got, err)
+	}
+
+	if err := c.DeleteMachineMigration(ctx, "prod", "mig1"); err != nil {
+		t.Fatalf("DeleteMachineMigration: %v", err)
+	}
+	if err := c.DeleteMachineSnapshot(ctx, "prod", "snap1"); err != nil {
+		t.Fatalf("DeleteMachineSnapshot: %v", err)
+	}
+	if err := c.DeleteMachineSnapshotRestore(ctx, "prod", "restore1"); err != nil {
+		t.Fatalf("DeleteMachineSnapshotRestore: %v", err)
+	}
+	if err := c.DeleteMachineQuota(ctx, "prod", "quota1"); err != nil {
+		t.Fatalf("DeleteMachineQuota: %v", err)
+	}
+	if err := c.DeleteMachineDisruptionBudget(ctx, "prod", "budget1"); err != nil {
+		t.Fatalf("DeleteMachineDisruptionBudget: %v", err)
+	}
+	if err := c.DeleteMachineSet(ctx, "prod", "set1"); err != nil {
+		t.Fatalf("DeleteMachineSet: %v", err)
+	}
+	if err := c.DeleteMachineInstanceType(ctx, "prod", "type1"); err != nil {
+		t.Fatalf("DeleteMachineInstanceType: %v", err)
+	}
+	if err := c.DeleteMigrationPolicy(ctx, "prod", "policy1"); err != nil {
+		t.Fatalf("DeleteMigrationPolicy: %v", err)
+	}
+	if len(deleted) != 8 {
+		t.Fatalf("deleted=%v, want 8 DELETE calls", deleted)
+	}
+}
