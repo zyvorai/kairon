@@ -121,6 +121,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Guest exec** (`spec.guestAgent.enabled`, admin-only) — run a one-shot command inside the guest via `kairon-ui`'s dashboard, no SSH/console needed — real `qemu-guest-agent` guest-exec, synchronous, exit code + stdout/stderr — [guide](docs/guides/machine-guest-exec.md)
 - **Text console** (`spec.guestAgent.console`) — an interactive shell in-browser (xterm.js), Kairon's `virtctl console` equivalent, working on every backend — requires FluxVM's own proprietary `fluxvm-guest-agent` baked into the guest image — [guide](docs/guides/machine-text-console.md)
 - **Guest file access** (`spec.guestAgent.console`, admin-only) — read or write a file inside a `Running` guest at runtime, no SSH/shared volume needed — same `fluxvm-guest-agent` channel as the text console — [guide](docs/guides/machine-guest-agent-files.md)
+- **Machine logs** — `kubectl logs`/`-f` equivalent: the VM's real captured serial console output, with a live-tailing **Follow** toggle, same any-operator authorization as the VNC console — [guide](docs/guides/machine-logs.md)
 
 **Migration**
 - **Cold migrate & evacuate** — stop → reassign → restart, restart-safe in the API

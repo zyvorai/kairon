@@ -5,6 +5,7 @@ import { badgeClass, formatBytes } from '../lib/phase';
 import Console from './Console';
 import Exec from './Exec';
 import AgentFiles from './AgentFiles';
+import Logs from './Logs';
 // Lazy-loaded: @xterm/xterm alone adds ~300kB to the bundle, not worth
 // shipping to every visitor when only a Machine with
 // spec.guestAgent.console even shows this button.
@@ -35,6 +36,14 @@ function textConsoleEligible(m: Machine): boolean {
 // device.
 function execEligible(m: Machine): boolean {
   return m.status?.phase === 'Running' && !!m.spec.guestAgent?.enabled;
+}
+
+// logsEligible mirrors internal/uiapi/logs.go's own server-side check:
+// a runtime just needs to have existed (Running or Paused), not
+// currently Running specifically -- a Paused Machine's log file is still
+// there on the node.
+function logsEligible(m: Machine): boolean {
+  return m.status?.phase === 'Running' || m.status?.phase === 'Paused';
 }
 
 interface CreateForm {
@@ -72,6 +81,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [textConsoleFor, setTextConsoleFor] = useState<string | null>(null);
   const [execFor, setExecFor] = useState<string | null>(null);
   const [agentFilesFor, setAgentFilesFor] = useState<string | null>(null);
+  const [logsFor, setLogsFor] = useState<string | null>(null);
   // consoleEnabled also gates exec: both ride the exact same kairon-ui ->
   // kairon-node relay (internal/consoleproxy), so a deployment either has
   // that relay configured or it doesn't -- see internal/uiapi/exec.go's
@@ -247,6 +257,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
                     {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
                     {consoleEnabled && isAdmin() && textConsoleEligible(m) && <button onClick={() => setAgentFilesFor(m.metadata.name)}>Files</button>}
+                    {consoleEnabled && logsEligible(m) && <button onClick={() => setLogsFor(m.metadata.name)}>Logs</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
                     <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
@@ -272,6 +283,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
       )}
       {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
       {agentFilesFor && <AgentFiles namespace="default" name={agentFilesFor} onClose={() => setAgentFilesFor(null)} />}
+      {logsFor && <Logs namespace="default" name={logsFor} onClose={() => setLogsFor(null)} />}
     </div>
   );
 }

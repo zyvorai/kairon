@@ -199,6 +199,18 @@ export function getAgentFile(namespace: string, name: string, path: string): Pro
   return apiJSON(`/api/v1/machines/${namespace}/${encodeURIComponent(name)}/agent-file/get`, 'POST', { path });
 }
 
+// logsURL/authHeaders back the Logs panel's own streaming fetch()
+// (internal/uiapi/logs.go) -- a plain chunked text/plain response, not
+// JSON, so it can't go through api()'s own r.json() call; the component
+// reads resp.body's stream directly instead.
+export function logsURL(namespace: string, name: string, lines: number, follow: boolean): string {
+  return `/api/v1/machines/${namespace}/${encodeURIComponent(name)}/logs?lines=${lines}&follow=${follow}`;
+}
+
+export function authHeaders(): Record<string, string> {
+  return token() ? { Authorization: `Bearer ${token()}` } : {};
+}
+
 // toBase64/fromBase64 are UTF-8-safe wrappers around the browser's own
 // binary-string-only btoa/atob -- plain btoa(text) throws on any
 // character outside Latin1, which real file content (UTF-8 source code,

@@ -176,6 +176,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/qga/fsfreeze-status", s.handleQGAFsfreezeStatus)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/open", s.handleQGAFirewallOpen)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/close", s.handleQGAFirewallClose)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/logs", s.handleLogs)
 
 	api.HandleFunc("GET /api/v1/migrations", s.handleListMigrations)
 	api.HandleFunc("POST /api/v1/migrations", s.handleCreateMigration)
@@ -354,6 +355,20 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+// Flush lets statusRecorder satisfy http.Flusher by delegating to the
+// ResponseWriter it wraps, when that one supports it -- without this, a
+// streaming handler behind withMetrics (e.g. handleLogs' follow=true
+// tail) would silently lose incremental flushing: a `w.(http.Flusher)`
+// type assertion on a bare *statusRecorder never succeeds on its own,
+// since embedding the http.ResponseWriter *interface* only promotes that
+// interface's own methods, not Flush (a separate, optional interface),
+// regardless of what the concrete value underneath actually implements.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // withAuth accepts either credential: the legacy shared static token

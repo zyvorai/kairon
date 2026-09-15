@@ -53,6 +53,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /qga-fsfreeze-status/{runtimeID}", s.handleQGAFsfreezeStatus)
 	mux.HandleFunc("POST /qga-firewall/open/{runtimeID}", s.handleQGAFirewallOpen)
 	mux.HandleFunc("POST /qga-firewall/close/{runtimeID}", s.handleQGAFirewallClose)
+	mux.HandleFunc("GET /logs/{runtimeID}", s.handleLogs)
 	return mux
 }
 
@@ -359,6 +360,65 @@ func (s *Server) handleTextConsole(w http.ResponseWriter, r *http.Request) {
 		websocket.NetConn(r.Context(), upstream, websocket.MessageBinary),
 	)
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+// handleLogs streams a VM's captured serial console output straight
+// through from FluxVM's own GET /v1/vms/{id}/logs -- Kairon's `kubectl
+// logs` equivalent. Unlike every other route in this package, this one
+// deliberately isn't a WebSocket: FluxVM's own endpoint is already a
+// plain chunked text/plain stream (`?follow=true` never terminates on
+// FluxVM's side until the client disconnects), so relaying it as a plain
+// HTTP response with periodic flushing is the simplest thing that
+// actually preserves that shape -- no framing, no upgrade handshake
+// needed for what's inherently a unidirectional text stream. Bounded
+// entirely by r.Context(): when the browser tab closes or the fetch is
+// aborted, that cancellation propagates through kairon-ui and this hop
+// straight to FluxVM's own stream, with no server-side timeout of its own.
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	upstreamURL := s.Flux.BaseURL + "/v1/vms/" + url.PathEscape(r.PathValue("runtimeID")) + "/logs"
+	if q := r.URL.RawQuery; q != "" {
+		upstreamURL += "?" + q
+	}
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.Flux.Token != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+s.Flux.Token)
+	}
+	resp, err := s.Flux.HTTP.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("dial fluxvm logs: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		http.Error(w, fmt.Sprintf("fluxvm logs: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data))), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			return
+		}
+	}
 }
 
 // relay pumps bytes in both directions until either side closes; it
