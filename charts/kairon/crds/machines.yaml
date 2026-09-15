@@ -88,6 +88,10 @@ spec:
                   memory:
                     type: string
                     minLength: 1
+                  maxCpu:
+                    type: string
+                  maxMemory:
+                    type: string
                   hugepages:
                     type: boolean
                   numaNode:

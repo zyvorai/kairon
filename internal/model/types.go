@@ -193,6 +193,19 @@ type ImageSource struct {
 type ResourceSpec struct {
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
+	// MaxCPU/MaxMemory request more CPU/DIMM hotplug headroom than
+	// FluxVM's own default (roughly double CPU, and Memory+2Gi or double,
+	// whichever is larger -- see docs/guides/machine-hotplug.md). Creation-
+	// time-only, like CPU/Memory's own boot-time sizing; unlike them,
+	// there's no live-reconcile path for these, since headroom is baked
+	// into the VM's boot-time -smp/-m arguments (maxcpus=/maxmem=) and
+	// can't be changed on an already-running Machine at all. Same string
+	// quantity format as CPU/Memory. FluxVM silently clamps MaxCPU up to
+	// at least CPU if set too low (never an error); setting MaxMemory
+	// below Memory is FluxVM/QEMU's own error to raise, not something
+	// Kairon validates first.
+	MaxCPU    string `json:"maxCpu,omitempty"`
+	MaxMemory string `json:"maxMemory,omitempty"`
 	// Hugepages, NUMANode, and CPUSet are direct, opt-in passthroughs to
 	// FluxVM's own existing QEMU-backend-only support for the same
 	// (fluxvm-core's CreateVmRequest already has hugepages/numa_node/

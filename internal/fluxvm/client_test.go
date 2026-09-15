@@ -68,6 +68,86 @@ func TestCreatePassesNUMACPUSetHugepagesForQEMU(t *testing.T) {
 	}
 }
 
+func TestCreatePassesMaxCPUMaxMemoryHotplugHeadroom(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Name: got.Name, Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi", MaxCPU: "16", MaxMemory: "32Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "qemu"},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxVCPUs == nil || *got.MaxVCPUs != 16 {
+		t.Fatalf("expected max_vcpus=16, got %+v", got.MaxVCPUs)
+	}
+	if got.MaxMemoryMiB == nil || *got.MaxMemoryMiB != 32*1024 {
+		t.Fatalf("expected max_memory_mib=32Gi, got %+v", got.MaxMemoryMiB)
+	}
+}
+
+func TestCreateOmitsMaxCPUMaxMemoryWhenUnset(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "qemu"},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxVCPUs != nil || got.MaxMemoryMiB != nil {
+		t.Fatalf("expected max_vcpus/max_memory_mib to stay unset (nil) so FluxVM picks its own default, got %+v/%+v", got.MaxVCPUs, got.MaxMemoryMiB)
+	}
+}
+
+func TestCreateRejectsInvalidMaxCPUMaxMemory(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("expected the request to be rejected before it ever reached FluxVM")
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	base := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "qemu"},
+		},
+	}
+	badMaxCPU := base
+	badMaxCPU.Spec.Resources.MaxCPU = "not-a-number"
+	if _, err := c.Create(context.Background(), badMaxCPU, "qemu"); err == nil {
+		t.Fatal("expected an error for an invalid spec.resources.maxCpu")
+	}
+	badMaxMemory := base
+	badMaxMemory.Spec.Resources.MaxMemory = "not-a-quantity"
+	if _, err := c.Create(context.Background(), badMaxMemory, "qemu"); err == nil {
+		t.Fatal("expected an error for an invalid spec.resources.maxMemory")
+	}
+}
+
 func TestCreateRejectsNUMAForNonQEMUBackend(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("expected the request to be rejected before it ever reached FluxVM")

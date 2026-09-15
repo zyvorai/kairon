@@ -75,20 +75,26 @@ type CloudInitSpec struct {
 }
 
 type CreateRequest struct {
-	Name        string         `json:"name"`
-	Tenant      string         `json:"tenant,omitempty"`
-	Backend     string         `json:"backend"`
-	Image       string         `json:"image"`
-	Kernel      string         `json:"kernel,omitempty"`
-	VCPUs       uint32         `json:"vcpus"`
-	MemoryMiB   uint64         `json:"memory_mib"`
-	Network     map[string]any `json:"network,omitempty"`
-	CloudInit   *CloudInitSpec `json:"cloud_init,omitempty"`
-	PodUID      string         `json:"pod_uid,omitempty"`
-	TTLSeconds  int64          `json:"ttl_seconds,omitempty"`
-	VFIODevices []string       `json:"vfio_devices,omitempty"`
-	Qga         *QgaSpec       `json:"qga,omitempty"`
-	Agent       *AgentSpec     `json:"agent,omitempty"`
+	Name      string `json:"name"`
+	Tenant    string `json:"tenant,omitempty"`
+	Backend   string `json:"backend"`
+	Image     string `json:"image"`
+	Kernel    string `json:"kernel,omitempty"`
+	VCPUs     uint32 `json:"vcpus"`
+	MemoryMiB uint64 `json:"memory_mib"`
+	// MaxVCPUs/MaxMemoryMiB request more CPU/DIMM hotplug headroom than
+	// FluxVM's own default -- see model.ResourceSpec.MaxCPU/.MaxMemory's
+	// own doc comment. nil lets FluxVM pick its default, exactly as
+	// before this field existed.
+	MaxVCPUs     *uint32        `json:"max_vcpus,omitempty"`
+	MaxMemoryMiB *uint64        `json:"max_memory_mib,omitempty"`
+	Network      map[string]any `json:"network,omitempty"`
+	CloudInit    *CloudInitSpec `json:"cloud_init,omitempty"`
+	PodUID       string         `json:"pod_uid,omitempty"`
+	TTLSeconds   int64          `json:"ttl_seconds,omitempty"`
+	VFIODevices  []string       `json:"vfio_devices,omitempty"`
+	Qga          *QgaSpec       `json:"qga,omitempty"`
+	Agent        *AgentSpec     `json:"agent,omitempty"`
 	// NUMANode/CPUSet/Hugepages mirror FluxVM's own CreateVmRequest
 	// fields of the same name (fluxvm-core/src/model.rs) exactly --
 	// QEMU-backend-only there (silently ignored for Cloud Hypervisor/
@@ -230,6 +236,22 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	if err != nil {
 		return nil, err
 	}
+	var maxVCPUs *uint32
+	if m.Spec.Resources.MaxCPU != "" {
+		v, err := model.ParseVCPUs(m.Spec.Resources.MaxCPU)
+		if err != nil {
+			return nil, fmt.Errorf("spec.resources.maxCpu: %w", err)
+		}
+		maxVCPUs = &v
+	}
+	var maxMemoryMiB *uint64
+	if m.Spec.Resources.MaxMemory != "" {
+		v, err := model.ParseMemoryMiB(m.Spec.Resources.MaxMemory)
+		if err != nil {
+			return nil, fmt.Errorf("spec.resources.maxMemory: %w", err)
+		}
+		maxMemoryMiB = &v
+	}
 	backend := m.Spec.Runtime.Backend
 	if backend == "" || backend == "auto" {
 		backend = defaultBackend
@@ -243,20 +265,22 @@ func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBac
 	tenant := m.Namespace()
 	network := BuildNetworkMap(m.Spec.Network)
 	payload := CreateRequest{
-		Name:        m.RuntimeName(),
-		Tenant:      tenant,
-		Backend:     backend,
-		Image:       m.Spec.Image.Path,
-		Kernel:      m.Spec.Runtime.Kernel,
-		VCPUs:       cpu,
-		MemoryMiB:   mem,
-		Network:     network,
-		TTLSeconds:  m.Spec.TTLSeconds,
-		VFIODevices: vfioDevices,
-		PodUID:      m.Spec.Network.PodUID,
-		NUMANode:    m.Spec.Resources.NUMANode,
-		CPUSet:      m.Spec.Resources.CPUSet,
-		Hugepages:   m.Spec.Resources.Hugepages,
+		Name:         m.RuntimeName(),
+		Tenant:       tenant,
+		Backend:      backend,
+		Image:        m.Spec.Image.Path,
+		Kernel:       m.Spec.Runtime.Kernel,
+		VCPUs:        cpu,
+		MemoryMiB:    mem,
+		MaxVCPUs:     maxVCPUs,
+		MaxMemoryMiB: maxMemoryMiB,
+		Network:      network,
+		TTLSeconds:   m.Spec.TTLSeconds,
+		VFIODevices:  vfioDevices,
+		PodUID:       m.Spec.Network.PodUID,
+		NUMANode:     m.Spec.Resources.NUMANode,
+		CPUSet:       m.Spec.Resources.CPUSet,
+		Hugepages:    m.Spec.Resources.Hugepages,
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}
