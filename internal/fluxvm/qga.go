@@ -78,6 +78,68 @@ type QGAExecRequest struct {
 	TimeoutSeconds *uint64
 }
 
+// QGAFsfreezeStatus reports whatever qemu-guest-agent's own
+// guest-fsfreeze-status currently says (e.g. "thawed"/"frozen") --
+// read-only, the GET companion to QGAFsfreezeFreeze/Thaw above, useful
+// for confirming a guest's actual filesystem state directly rather than
+// inferring it from Kairon's own quiesce-request/-status annotations
+// (see internal/agent/quiesce.go).
+func (c *Client) QGAFsfreezeStatus(ctx context.Context, id string) (string, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/qga/fsfreeze-status", nil)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", fmt.Errorf("decode qga fsfreeze-status: %w", err)
+	}
+	return out.Status, nil
+}
+
+// QGAFirewallOpen/QGAFirewallClose toggle a named firewall rule inside
+// the guest via qemu-guest-agent -- FluxVM implements both as a
+// guest-side command it runs over the same guest-exec channel QGAExec
+// uses (hence the shared QGAExecResult return shape: exit code, stdout,
+// stderr of whatever firewall tool the guest actually has), just with a
+// friendlier name/port/protocol request shape than raw QGAExec would
+// need. protocol defaults to "tcp" server-side when empty.
+func (c *Client) QGAFirewallOpen(ctx context.Context, id, name string, port uint16, protocol string, timeoutSeconds *uint64) (*QGAExecResult, error) {
+	payload := map[string]any{"name": name, "port": port}
+	if protocol != "" {
+		payload["protocol"] = protocol
+	}
+	if timeoutSeconds != nil {
+		payload["timeout_seconds"] = *timeoutSeconds
+	}
+	return c.qgaFirewallCall(ctx, id, "open", payload)
+}
+
+func (c *Client) QGAFirewallClose(ctx context.Context, id, name string, timeoutSeconds *uint64) (*QGAExecResult, error) {
+	payload := map[string]any{"name": name}
+	if timeoutSeconds != nil {
+		payload["timeout_seconds"] = *timeoutSeconds
+	}
+	return c.qgaFirewallCall(ctx, id, "close", payload)
+}
+
+func (c *Client) qgaFirewallCall(ctx context.Context, id, action string, payload map[string]any) (*QGAExecResult, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/qga/firewall/"+action, payload)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		ExitCode int64  `json:"exit_code"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode qga firewall %s: %w", action, err)
+	}
+	return &QGAExecResult{ExitCode: out.ExitCode, Stdout: out.Stdout, Stderr: out.Stderr}, nil
+}
+
 // QGAExec calls FluxVM's real qemu-guest-agent guest-exec (+ its own
 // guest-exec-status polling, done entirely on FluxVM's side) to run a
 // command inside the guest and return its exit code and captured

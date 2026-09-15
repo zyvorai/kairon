@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 func TestNetworkMigrationQuiesce(t *testing.T) {
@@ -134,6 +136,41 @@ func TestNetworkMigrationResume(t *testing.T) {
 	}
 	if !hit {
 		t.Fatal("expected the resume endpoint to be called")
+	}
+}
+
+func TestGetVMNetworkPolicyDecodesWireShape(t *testing.T) {
+	mbps := uint32(100)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/vms/vm-1/network/policy" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(WireVmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}, MaxEgressMbps: &mbps})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	got, err := c.GetVMNetworkPolicy(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := model.VmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}, MaxEgressMbps: &mbps}
+	if got.DefaultAllow != want.DefaultAllow || len(got.AllowPorts) != 1 || got.AllowPorts[0] != "tcp/443" || got.MaxEgressMbps == nil || *got.MaxEgressMbps != 100 {
+		t.Fatalf("got=%+v want=%+v", got, want)
+	}
+}
+
+func TestGetVMNetworkPolicyPropagatesErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "VM not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.GetVMNetworkPolicy(context.Background(), "vm-1"); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
 	}
 }
 

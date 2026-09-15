@@ -107,7 +107,7 @@ Posted to `/v1/network/cnp` before the VM policy upsert.
 |---|---|
 | `phase` | `Applied` / `Error` |
 | `observedMachines` | Running local Machines that received the policy |
-| `effectiveSynced` | At least one Machine was updated this pass |
+| `effectiveSynced` | At least one Machine was updated *and* a read-back of `GET /v1/vms/{id}/network/policy` against every applied Machine matches what was sent -- a real confirmation, not just "the write call returned success". A FluxVM that silently normalizes or partially rejects part of the request now shows up as `false` here instead of a false `true`. |
 | `lastAppliedTime` | Last successful apply |
 
 On delete, matched Running Machines on this node are reset to

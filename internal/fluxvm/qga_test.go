@@ -51,6 +51,92 @@ func TestQGAFsfreezeThaw(t *testing.T) {
 	}
 }
 
+func TestQGAFsfreezeStatus(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/vms/vm-1/qga/fsfreeze-status" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "frozen"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	status, err := c.QGAFsfreezeStatus(context.Background(), "vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "frozen" {
+		t.Fatalf("expected status %q, got %q", "frozen", status)
+	}
+}
+
+func TestQGAFirewallOpen(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": "ok", "stderr": ""})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	res, err := c.QGAFirewallOpen(context.Background(), "vm-1", "web", 8080, "tcp", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/qga/firewall/open" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotBody["name"] != "web" || gotBody["port"] != float64(8080) || gotBody["protocol"] != "tcp" {
+		t.Fatalf("unexpected request body: %+v", gotBody)
+	}
+	if res.ExitCode != 0 || res.Stdout != "ok" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+func TestQGAFirewallClose(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": "", "stderr": ""})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.QGAFirewallClose(context.Background(), "vm-1", "web", nil); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/vms/vm-1/qga/firewall/close" {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotBody["name"] != "web" {
+		t.Fatalf("unexpected request body: %+v", gotBody)
+	}
+	if _, hasTimeout := gotBody["timeout_seconds"]; hasTimeout {
+		t.Fatalf("did not expect timeout_seconds when nil, got %+v", gotBody)
+	}
+}
+
+func TestQGAFirewallPropagatesGuestError(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "guest agent is not enabled for this VM", http.StatusBadRequest)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if _, err := c.QGAFirewallOpen(context.Background(), "vm-1", "web", 8080, "", nil); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+	if _, err := c.QGAFirewallClose(context.Background(), "vm-1", "web", nil); err == nil {
+		t.Fatal("expected an error when the server rejects the request")
+	}
+}
+
 func TestQGAFsfreezePropagatesErrors(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "QGA not enabled for this VM", http.StatusBadRequest)

@@ -207,6 +207,7 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 	}
 	var policyPosted bool
 	var statusPhase string
+	var effectiveSynced bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
@@ -223,6 +224,7 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			statusPhase = p.Status.Phase
+			effectiveSynced = p.Status.EffectiveSynced
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status":
 			w.WriteHeader(http.StatusOK)
@@ -242,6 +244,8 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 			policyPosted = true
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9/network/policy":
+			_ = json.NewEncoder(w).Encode(fluxvm.ToWirePolicy(policy.Spec.Policy))
 		default:
 			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
 		}
@@ -258,5 +262,89 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 	}
 	if !policyPosted || statusPhase != "Applied" {
 		t.Fatalf("policyPosted=%v statusPhase=%q", policyPosted, statusPhase)
+	}
+	if !effectiveSynced {
+		t.Fatal("expected EffectiveSynced=true once the read-back policy matches what was posted")
+	}
+}
+
+// TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch proves
+// EffectiveSynced now reflects a real read-back comparison, not just "the
+// POST succeeded" -- a FluxVM that accepts the write but reports a
+// different policy on GET must not be reported as synced.
+func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web"}, Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/web.qcow2"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}, PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "default", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}},
+		},
+	}
+	var effectiveSynced bool
+	var effectiveSyncedSet bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: []model.MachineNetworkPolicy{policy}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status":
+			var p struct {
+				Status model.MachineNetworkPolicyStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			effectiveSynced = p.Status.EffectiveSynced
+			effectiveSyncedSet = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-9", Status: "Running", GuestIP: "10.44.0.9"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9/network/status":
+			_ = json.NewEncoder(w).Encode(fluxvm.DataplaneStatus{Mode: "ebpf", Attached: true, Identity: 42, PolicySynced: true})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9/network/policy":
+			// Deliberately reports something different from what was
+			// posted (DefaultAllow flipped) -- simulates FluxVM silently
+			// normalizing or only partially applying the request.
+			_ = json.NewEncoder(w).Encode(fluxvm.ToWirePolicy(model.VmNetworkPolicy{DefaultAllow: true}))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !effectiveSyncedSet {
+		t.Fatal("expected a status patch to have been observed")
+	}
+	if effectiveSynced {
+		t.Fatal("expected EffectiveSynced=false when the read-back policy doesn't match what was posted")
 	}
 }

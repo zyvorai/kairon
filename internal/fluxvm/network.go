@@ -49,6 +49,46 @@ func ToWirePolicy(p model.VmNetworkPolicy) WireVmNetworkPolicy {
 	}
 }
 
+// FromWirePolicy is ToWirePolicy's inverse -- decodes what FluxVM's own
+// GET /v1/vms/{id}/network/policy reports back into Kairon's model type,
+// for drift-checking against what SetVMNetworkPolicy last sent (FluxVM's
+// own policy engine is free to normalize/default fields on write, so a
+// read-back is the only way to see what's actually enforced, not just
+// what was last requested).
+func FromWirePolicy(w WireVmNetworkPolicy) model.VmNetworkPolicy {
+	return model.VmNetworkPolicy{
+		DefaultAllow:  w.DefaultAllow,
+		AllowCidrs:    w.AllowCidrs,
+		DenyCidrs:     w.DenyCidrs,
+		AllowPorts:    w.AllowPorts,
+		MaxEgressMbps: w.MaxEgressMbps,
+		MaxEgressPps:  w.MaxEgressPps,
+		AllowFqdns:    w.AllowFqdns,
+		Groups:        w.Groups,
+		Labels:        w.Labels,
+		Entities:      w.Entities,
+		AuditMode:     w.AuditMode,
+		AllowIcmp:     w.AllowIcmp,
+		SampleRate:    w.SampleRate,
+	}
+}
+
+// GetVMNetworkPolicy reads back the policy FluxVM is actually enforcing
+// for id (GET /v1/vms/{id}/network/policy) -- the read half of
+// SetVMNetworkPolicy, previously write-only from Kairon's side.
+func (c *Client) GetVMNetworkPolicy(ctx context.Context, id string) (*model.VmNetworkPolicy, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/policy", nil)
+	if err != nil {
+		return nil, err
+	}
+	var w WireVmNetworkPolicy
+	if err := json.Unmarshal(data, &w); err != nil {
+		return nil, fmt.Errorf("decode network policy: %w", err)
+	}
+	p := FromWirePolicy(w)
+	return &p, nil
+}
+
 // DataplaneStatus is FluxVM GET /v1/vms/{id}/network/status.
 type DataplaneStatus struct {
 	Mode              string              `json:"mode"`

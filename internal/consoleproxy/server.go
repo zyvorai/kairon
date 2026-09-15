@@ -50,6 +50,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /text-console/{runtimeID}", s.handleTextConsole)
 	mux.HandleFunc("POST /agent-file/put/{runtimeID}", s.handleAgentPutFile)
 	mux.HandleFunc("POST /agent-file/get/{runtimeID}", s.handleAgentGetFile)
+	mux.HandleFunc("GET /qga-fsfreeze-status/{runtimeID}", s.handleQGAFsfreezeStatus)
+	mux.HandleFunc("POST /qga-firewall/open/{runtimeID}", s.handleQGAFirewallOpen)
+	mux.HandleFunc("POST /qga-firewall/close/{runtimeID}", s.handleQGAFirewallClose)
 	return mux
 }
 
@@ -104,6 +107,91 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(execResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
+}
+
+// fsfreezeStatusResponse/firewallRequest/firewallResponse mirror
+// internal/fluxvm's own QGAFsfreezeStatus/QGAFirewallOpen/Close request
+// and result shapes -- separate types for the same reason
+// execRequest/execResponse above are.
+type fsfreezeStatusResponse struct {
+	Status string `json:"status"`
+}
+
+type firewallOpenRequest struct {
+	Name           string  `json:"name"`
+	Port           uint16  `json:"port"`
+	Protocol       string  `json:"protocol,omitempty"`
+	TimeoutSeconds *uint64 `json:"timeoutSeconds,omitempty"`
+}
+
+type firewallCloseRequest struct {
+	Name           string  `json:"name"`
+	TimeoutSeconds *uint64 `json:"timeoutSeconds,omitempty"`
+}
+
+type firewallResponse struct {
+	ExitCode int64  `json:"exitCode"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+}
+
+// handleQGAFsfreezeStatus forwards to FluxVM's own
+// GET /v1/vms/{id}/qga/fsfreeze-status -- a read-only diagnostic
+// confirming what qemu-guest-agent itself currently reports, rather than
+// inferring guest filesystem state from Kairon's own quiesce annotations
+// (internal/agent/quiesce.go).
+func (s *Server) handleQGAFsfreezeStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	status, err := s.Flux.QGAFsfreezeStatus(r.Context(), r.PathValue("runtimeID"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("qga fsfreeze-status: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(fsfreezeStatusResponse{Status: status})
+}
+
+// handleQGAFirewallOpen/handleQGAFirewallClose forward to FluxVM's own
+// qemu-guest-agent-backed firewall toggle -- same synchronous
+// request/response shape as handleExec, since FluxVM itself implements
+// both as a guest-exec call under the hood.
+func (s *Server) handleQGAFirewallOpen(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req firewallOpenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	result, err := s.Flux.QGAFirewallOpen(ctx, r.PathValue("runtimeID"), req.Name, req.Port, req.Protocol, req.TimeoutSeconds)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("qga firewall open: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(firewallResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
+}
+
+func (s *Server) handleQGAFirewallClose(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	var req firewallCloseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
+	defer cancel()
+	result, err := s.Flux.QGAFirewallClose(ctx, r.PathValue("runtimeID"), req.Name, req.TimeoutSeconds)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("qga firewall close: %v", err), http.StatusBadGateway)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(firewallResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
 }
 
 // agentPutFileRequest/agentGetFileRequest/agentFileResponse mirror

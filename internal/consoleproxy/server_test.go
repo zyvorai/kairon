@@ -219,6 +219,113 @@ func TestHandleExecPropagatesFluxVMFailure(t *testing.T) {
 	}
 }
 
+func TestHandleQGAFsfreezeStatusRelaysResponse(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/vms/vm-1/qga/fsfreeze-status" {
+			http.Error(w, "bad route", http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "frozen"})
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/qga-fsfreeze-status/vm-1", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var out fsfreezeStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "frozen" {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+}
+
+func TestHandleQGAFirewallOpenAndCloseRelayRequests(t *testing.T) {
+	var gotOpenBody, gotCloseBody map[string]any
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/vms/vm-1/qga/firewall/open":
+			_ = json.NewDecoder(r.Body).Decode(&gotOpenBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": "", "stderr": ""})
+		case "/v1/vms/vm-1/qga/firewall/close":
+			_ = json.NewDecoder(r.Body).Decode(&gotCloseBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "stdout": "", "stderr": ""})
+		default:
+			http.Error(w, "bad route", http.StatusNotFound)
+		}
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	openReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/qga-firewall/open/vm-1", strings.NewReader(`{"name":"web","port":8080,"protocol":"tcp"}`))
+	openReq.Header.Set("Authorization", "Bearer secret")
+	openResp, err := http.DefaultClient.Do(openReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = openResp.Body.Close() }()
+	if openResp.StatusCode != http.StatusOK {
+		t.Fatalf("open: expected 200, got %d", openResp.StatusCode)
+	}
+	if gotOpenBody["name"] != "web" || gotOpenBody["port"] != float64(8080) {
+		t.Fatalf("open: unexpected request forwarded: %+v", gotOpenBody)
+	}
+
+	closeReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/qga-firewall/close/vm-1", strings.NewReader(`{"name":"web"}`))
+	closeReq.Header.Set("Authorization", "Bearer secret")
+	closeResp, err := http.DefaultClient.Do(closeReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closeResp.Body.Close() }()
+	if closeResp.StatusCode != http.StatusOK {
+		t.Fatalf("close: expected 200, got %d", closeResp.StatusCode)
+	}
+	if gotCloseBody["name"] != "web" {
+		t.Fatalf("close: unexpected request forwarded: %+v", gotCloseBody)
+	}
+}
+
+func TestHandleQGAFsfreezeStatusAndFirewallRejectWrongToken(t *testing.T) {
+	s := &Server{Flux: fluxvm.New("http://unused", ""), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	if req, _ := http.NewRequest(http.MethodGet, srv.URL+"/qga-fsfreeze-status/vm-1", nil); true {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("fsfreeze-status: expected 401 with no token, got %d", resp.StatusCode)
+		}
+	}
+	if req, _ := http.NewRequest(http.MethodPost, srv.URL+"/qga-firewall/open/vm-1", strings.NewReader(`{}`)); true {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("firewall/open: expected 401 with no token, got %d", resp.StatusCode)
+		}
+	}
+}
+
 // fakeFluxTextConsole stands in for FluxVM's own GET /v1/vms/{id}/console
 // WebSocket-upgrade endpoint -- accepts the upgrade and echoes whatever it
 // receives back, enough to prove handleTextConsole's client-dial-then-relay

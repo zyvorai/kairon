@@ -130,6 +130,46 @@ func (s *Server) relayToNode(ctx context.Context, nodeAddr, nodePath string, bod
 	return nil
 }
 
+// relayToNodeGet is relayToNode's GET counterpart -- for a read-only node
+// relay call that has no request body (e.g. handleQGAFsfreezeStatus).
+func (s *Server) relayToNodeGet(ctx context.Context, nodeAddr, nodePath string, out any) error {
+	scheme := "http"
+	transport := http.DefaultTransport
+	if s.ConsoleTLS != nil {
+		scheme = "https"
+		transport = &http.Transport{TLSClientConfig: s.ConsoleTLS}
+	}
+	upstreamURL := fmt.Sprintf("%s://%s:%s/%s", scheme, nodeAddr, s.ConsolePort, nodePath)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		return err
+	}
+	upstreamReq.Header.Set("Authorization", "Bearer "+s.ConsoleToken)
+	resp, err := (&http.Client{Transport: transport}).Do(upstreamReq)
+	if err != nil {
+		return fmt.Errorf("connect to node relay: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		var upstreamErr struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&upstreamErr)
+		msg := upstreamErr.Error
+		if msg == "" {
+			msg = fmt.Sprintf("node relay returned HTTP %d", resp.StatusCode)
+		}
+		return fmt.Errorf("%s", msg)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode node relay response: %w", err)
+	}
+	return nil
+}
+
 // handleAgentPutFile writes a file into the guest: kairon-ui -> kairon-node
 // (internal/consoleproxy) -> FluxVM's own bespoke vsock guest agent
 // (POST /v1/vms/{id}/agent/put-file). See requireGuestFileAccess's own doc

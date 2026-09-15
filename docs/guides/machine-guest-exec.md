@@ -46,6 +46,26 @@ there's no shell-injection surface from what you type) or **PowerShell**
 and click **Run**. The result panel shows the exit code and any
 stdout/stderr once the command completes.
 
+## Related, smaller API-only endpoints
+
+Two more `qemu-guest-agent`-backed calls ride the exact same authorization
+model as exec (admin account, `spec.guestAgent.enabled`, `Running`) but
+have no dedicated dashboard button yet -- reachable via the REST API only:
+
+- **`GET /api/v1/machines/{ns}/{name}/qga/fsfreeze-status`** -- a
+  read-only check of what qemu-guest-agent itself currently reports for
+  the guest's filesystem freeze state, independent of Kairon's own
+  quiesce-request/-status annotations
+  ([guide](machine-snapshot-quiesce.md)). Useful for confirming directly
+  whether a guest is actually frozen, rather than inferring it from
+  `MachineSnapshot`'s own phase.
+- **`POST /api/v1/machines/{ns}/{name}/qga/firewall/open`** /
+  **`.../qga/firewall/close`** (body: `{"name", "port", "protocol"}` /
+  `{"name"}`) -- toggles a named firewall rule inside the guest. FluxVM
+  implements both as a guest-side command run over the same channel
+  `exec` uses, so the result has the same shape (`exitCode`/`stdout`/
+  `stderr`).
+
 ## Real limits today (first cut)
 
 - **One-shot, not interactive.** There's no shell session, no stdin, no

@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -122,6 +123,7 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 		}
 	}
 	applied := 0
+	allConfirmed := true
 	for _, m := range machines {
 		if m.Spec.NodeName != a.NodeName || m.Namespace() != p.Namespace() {
 			continue
@@ -136,6 +138,17 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 			return fmt.Errorf("set policy on %s/%s: %w", m.Namespace(), m.Metadata.Name, err)
 		}
 		applied++
+		// Read the policy back rather than trusting the POST alone --
+		// FluxVM's own policy engine could in principle normalize or
+		// reject part of what was sent without surfacing an HTTP error.
+		// A read-back failure (e.g. an older FluxVM predating this GET
+		// route) just leaves EffectiveSynced honestly false, the same
+		// soft-fail posture the dataplane status projection above
+		// already takes for a "legacy FluxVM" gap.
+		got, err := a.Flux.GetVMNetworkPolicy(ctx, m.Status.RuntimeID)
+		if err != nil || !reflect.DeepEqual(*got, p.Spec.Policy) {
+			allConfirmed = false
+		}
 	}
 	now := time.Now().UTC()
 	status := p.Status
@@ -143,7 +156,11 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 	status.Message = ""
 	status.ObservedMachines = applied
 	status.LastAppliedTime = &now
-	status.EffectiveSynced = applied > 0
+	// EffectiveSynced is now a real confirmation (read the policy back
+	// from every applied Machine and compare), not just "the POST
+	// succeeded on at least one Machine" -- see GetVMNetworkPolicy's own
+	// doc comment for why a read-back is the only real way to know.
+	status.EffectiveSynced = applied > 0 && allConfirmed
 	return a.Kube.PatchMachineNetworkPolicyStatus(ctx, p.Namespace(), p.Metadata.Name, status)
 }
 
