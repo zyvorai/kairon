@@ -56,10 +56,22 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 	return nil
 }
 
+// reconcileSecurityGroup drives a NetworkSecurityGroup's FluxVM-side
+// state, including its own deletion. On delete, fails closed exactly
+// like Agent.cleanup's own Machine-runtime-delete-then-finalizer-removal
+// sequence: the finalizer is only removed once
+// Flux.DeleteNetworkGroup actually succeeds (idempotently tolerating
+// "already gone"), so a real delete failure (FluxVM node unreachable, a
+// transient error) leaves the finalizer in place and the object gets
+// reconciled -- and retried -- again next tick, rather than silently
+// vanishing from Kubernetes while its FluxVM-side security group state
+// leaks behind, untracked and unreachable through this object again.
 func (a *Agent) reconcileSecurityGroup(ctx context.Context, g model.NetworkSecurityGroup) error {
 	if g.Metadata.DeletionTimestamp != nil {
 		if model.HasFinalizerList(g.Metadata.Finalizers, model.FinalizerNetworkGroup) {
-			_ = a.Flux.DeleteNetworkGroup(ctx, g.FluxGroupName())
+			if err := a.Flux.DeleteNetworkGroup(ctx, g.FluxGroupName()); err != nil {
+				return fmt.Errorf("delete FluxVM network group: %w", err)
+			}
 			finals := model.RemoveFinalizer(g.Metadata.Finalizers, model.FinalizerNetworkGroup)
 			return a.Kube.PatchNetworkSecurityGroup(ctx, g.Namespace(), g.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}})
 		}

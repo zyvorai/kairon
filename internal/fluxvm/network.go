@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -302,9 +303,37 @@ func (c *Client) UpsertNetworkGroup(ctx context.Context, group SecurityGroup) (*
 	return &out, nil
 }
 
+// DeleteNetworkGroup deletes a FluxVM network security group. Idempotent
+// like Client.Delete (Machine deletion): a 404 -- the group is already
+// gone, e.g. a retry after a prior attempt's finalizer-removal Patch
+// failed but the FluxVM-side delete itself had already succeeded -- is
+// treated as success rather than an error, so a caller that fails closed
+// on a genuine delete error (see internal/agent/network.go's
+// reconcileSecurityGroup) can retry safely without deadlocking on an
+// already-completed deletion. Hand-rolled rather than routed through the
+// shared do() helper specifically to get at the raw status code; do()
+// treats every non-2xx (404 included) as an error.
 func (c *Client) DeleteNetworkGroup(ctx context.Context, name string) error {
-	_, err := c.do(ctx, http.MethodDelete, "/v1/network/groups/"+url.PathEscape(name), nil)
-	return err
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/network/groups/"+url.PathEscape(name), nil)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("fluxvm DELETE /v1/network/groups/%s: HTTP %d: %s", name, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return nil
 }
 
 func (c *Client) ApplyCNP(ctx context.Context, doc map[string]any) error {

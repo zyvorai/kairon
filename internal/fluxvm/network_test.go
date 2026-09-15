@@ -318,3 +318,49 @@ func TestNetworkMigrationQuiesceErrorPropagates(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestDeleteNetworkGroupSucceeds(t *testing.T) {
+	var gotMethod, gotPath string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if err := c.DeleteNetworkGroup(context.Background(), "web-edge"); err != nil {
+		t.Fatalf("DeleteNetworkGroup: %v", err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/v1/network/groups/web-edge" {
+		t.Fatalf("gotMethod=%q gotPath=%q", gotMethod, gotPath)
+	}
+}
+
+// TestDeleteNetworkGroupToleratesAlreadyDeleted proves a 404 is treated
+// as success -- required for the caller (internal/agent/network.go's
+// reconcileSecurityGroup) to fail closed on a genuine delete error
+// without deadlocking a retry of an already-completed deletion.
+func TestDeleteNetworkGroupToleratesAlreadyDeleted(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if err := c.DeleteNetworkGroup(context.Background(), "already-gone"); err != nil {
+		t.Fatalf("expected a 404 to be tolerated as success, got: %v", err)
+	}
+}
+
+func TestDeleteNetworkGroupPropagatesRealErrors(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	err := c.DeleteNetworkGroup(context.Background(), "web-edge")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("err=%v", err)
+	}
+}

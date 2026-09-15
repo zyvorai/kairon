@@ -348,3 +348,135 @@ func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
 		t.Fatal("expected EffectiveSynced=false when the read-back policy doesn't match what was posted")
 	}
 }
+
+func deletingSecurityGroup() model.NetworkSecurityGroup {
+	now := time.Now().UTC()
+	return model.NetworkSecurityGroup{
+		Metadata: model.ObjectMeta{
+			Name:              "web-edge",
+			Namespace:         "default",
+			Finalizers:        []string{model.FinalizerNetworkGroup},
+			DeletionTimestamp: &now,
+		},
+	}
+}
+
+// TestReconcileSecurityGroupDeletionKeepsFinalizerOnDeleteError proves
+// reconcileSecurityGroup now fails closed: a genuine FluxVM-side delete
+// error must leave the finalizer in place (no finalizer-removal Patch
+// observed) rather than silently dropping the Kubernetes object while
+// its FluxVM security group state leaks behind untracked.
+func TestReconcileSecurityGroupDeletionKeepsFinalizerOnDeleteError(t *testing.T) {
+	var finalizerPatchSeen bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+			finalizerPatchSeen = true
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	err := a.reconcileSecurityGroup(context.Background(), deletingSecurityGroup())
+	if err == nil {
+		t.Fatal("expected an error from a failed FluxVM delete")
+	}
+	if finalizerPatchSeen {
+		t.Fatal("finalizer must not be removed when the FluxVM-side delete failed")
+	}
+}
+
+// TestReconcileSecurityGroupDeletionRemovesFinalizerOnSuccess is the
+// positive case: a successful FluxVM delete does remove the finalizer,
+// so a healthy deletion still completes exactly as before this fix.
+func TestReconcileSecurityGroupDeletionRemovesFinalizerOnSuccess(t *testing.T) {
+	var patchedFinalizers []string
+	var sawFinalizerPatch bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+			sawFinalizerPatch = true
+			var body struct {
+				Metadata struct {
+					Finalizers []string `json:"finalizers"`
+				} `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patchedFinalizers = body.Metadata.Finalizers
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	var deleteHit bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/v1/network/groups/web-edge" {
+			deleteHit = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.reconcileSecurityGroup(context.Background(), deletingSecurityGroup()); err != nil {
+		t.Fatalf("reconcileSecurityGroup: %v", err)
+	}
+	if !deleteHit {
+		t.Fatal("expected FluxVM's DeleteNetworkGroup to have been called")
+	}
+	if !sawFinalizerPatch || len(patchedFinalizers) != 0 {
+		t.Fatalf("expected the finalizer removed, got sawFinalizerPatch=%v patchedFinalizers=%v", sawFinalizerPatch, patchedFinalizers)
+	}
+}
+
+// TestReconcileSecurityGroupDeletionToleratesAlreadyDeleted proves a
+// FluxVM-side 404 (the group was already deleted, e.g. by a prior tick
+// whose own finalizer-removal Patch then failed) still lets the
+// finalizer clear -- without this, DeleteNetworkGroup's own 404
+// tolerance combined with a naive non-idempotent caller could still
+// deadlock a retry.
+func TestReconcileSecurityGroupDeletionToleratesAlreadyDeleted(t *testing.T) {
+	var sawFinalizerPatch bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+			sawFinalizerPatch = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.reconcileSecurityGroup(context.Background(), deletingSecurityGroup()); err != nil {
+		t.Fatalf("reconcileSecurityGroup: %v", err)
+	}
+	if !sawFinalizerPatch {
+		t.Fatal("expected the finalizer to be removed once the FluxVM-side group is confirmed already gone")
+	}
+}

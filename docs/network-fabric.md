@@ -50,7 +50,7 @@ flowchart TB
 1. **Create** — map rich `spec.network` into FluxVM create payload (Fabric create parity).
 2. **Status** — project guest IP + dataplane attach fields Fabric already expects.
 3. **Policy** — when Machine is Running on this node and selected by `machineName` or labels, upsert FluxVM policy; on CR delete, reset to `default_allow: true`.
-4. **Groups** — upsert node-local FluxVM security groups from `NetworkSecurityGroup`.
+4. **Groups** — upsert node-local FluxVM security groups from `NetworkSecurityGroup`. Deletion fails closed: the finalizer only clears once `DELETE /v1/network/groups/{name}` actually succeeds (idempotently tolerating "already gone"), so a real delete failure -- FluxVM unreachable, a transient error -- leaves the object (and the finalizer) in place for a retry on the next tick, rather than the Kubernetes object silently vanishing while its FluxVM-side security group state leaks behind, untracked.
 5. **Migration** — source quiesce+export before transfer; target restore after prepare; resume after commit (mTLS peer carries opaque snapshot, not CRD status).
 6. **Service Fabric** — after guest IP is known, register Machine as backend of named VIPs.
 
