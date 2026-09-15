@@ -84,9 +84,17 @@ type TypeMeta struct {
 }
 
 type ObjectMeta struct {
-	Name              string            `json:"name"`
-	Namespace         string            `json:"namespace,omitempty"`
-	UID               string            `json:"uid,omitempty"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+	UID       string `json:"uid,omitempty"`
+	// CreationTimestamp is always set by the apiserver on a real object;
+	// only ever zero-value on an object this process constructed itself
+	// (a request body, a test fixture) and hasn't round-tripped through
+	// the API yet. internal/controller/restore.go's own
+	// missingSnapshotGracePeriod check relies on that zero-value default
+	// to fall safely back to prior (non-grace-period) behavior rather
+	// than mistake an untimestamped object for a brand-new one.
+	CreationTimestamp time.Time         `json:"creationTimestamp,omitempty"`
 	ResourceVersion   string            `json:"resourceVersion,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`

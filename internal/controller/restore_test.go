@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
@@ -84,6 +85,70 @@ func TestReconcileSnapshotRestoreParksPendingOnANotYetReadySnapshot(t *testing.T
 	}
 	if restoreStatus.Phase != "Pending" || !strings.Contains(restoreStatus.Message, "waiting for MachineSnapshot") {
 		t.Fatalf("expected a Pending status naming the wait, got %+v", restoreStatus)
+	}
+}
+
+func TestReconcileSnapshotRestoreParksPendingWhenSnapshotDoesNotExistYet(t *testing.T) {
+	var restoreStatus model.MachineSnapshotRestoreStatus
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+			http.Error(w, "not found", http.StatusNotFound)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+			var p struct {
+				Status model.MachineSnapshotRestoreStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			restoreStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	restore := model.MachineSnapshotRestore{
+		Metadata: model.ObjectMeta{Name: "r1", Namespace: "prod", CreationTimestamp: time.Now().UTC()},
+		Spec:     model.MachineSnapshotRestoreSpec{SnapshotName: "snap", TargetClaimName: "restored-pvc"},
+	}
+	// A brand-new restore whose MachineSnapshot hasn't hit the API yet --
+	// e.g. both were submitted together in one GitOps apply and this
+	// restore's own reconcile tick landed first -- must not become a
+	// permanent Failed either, the same ordinary-race reasoning as the
+	// not-yet-ready case above, just one step earlier.
+	if err := ctl.reconcileSnapshotRestore(context.Background(), restore); err != nil {
+		t.Fatalf("expected a nil error (parked Pending, not Failed), got %v", err)
+	}
+	if restoreStatus.Phase != "Pending" || !strings.Contains(restoreStatus.Message, "waiting for MachineSnapshot") {
+		t.Fatalf("expected a Pending status naming the wait, got %+v", restoreStatus)
+	}
+}
+
+func TestReconcileSnapshotRestoreFailsWhenSnapshotNeverAppears(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	restore := model.MachineSnapshotRestore{
+		// Old enough (well past missingSnapshotGracePeriod) that a still-
+		// missing MachineSnapshot is a genuine, permanent misconfiguration
+		// (e.g. a misspelled spec.snapshotName), not an ordinary race --
+		// this must fail outright, exactly like before this change.
+		Metadata: model.ObjectMeta{Name: "r1", Namespace: "prod", CreationTimestamp: time.Now().UTC().Add(-time.Hour)},
+		Spec:     model.MachineSnapshotRestoreSpec{SnapshotName: "snap", TargetClaimName: "restored-pvc"},
+	}
+	if err := ctl.reconcileSnapshotRestore(context.Background(), restore); err == nil {
+		t.Fatal("expected an error for a snapshot that never appeared within the grace period")
 	}
 }
 

@@ -7,10 +7,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
+
+// missingSnapshotGracePeriod bounds how long reconcileSnapshotRestore will
+// park a restore Pending, rather than fail it outright, when its
+// spec.snapshotName doesn't resolve to any MachineSnapshot yet. Sized like
+// quiesceFreezeTimeout (snapshot.go) -- long enough to absorb an ordinary
+// GitOps apply-ordering race (a MachineSnapshotRestore and its
+// MachineSnapshot submitted together, the restore's own reconcile tick
+// landing first), short enough that a genuinely missing/misspelled
+// snapshotName still fails within a bounded, human-noticeable time rather
+// than being silently Pending forever.
+const missingSnapshotGracePeriod = 30 * time.Second
 
 // reconcileSnapshotRestore restores one volume of a Succeeded
 // MachineSnapshot into a brand-new PersistentVolumeClaim via the standard
@@ -26,10 +38,18 @@ import (
 // permanent status.phase=Failed with no further retries -- so creating a
 // MachineSnapshotRestore even slightly before its MachineSnapshot finished
 // left it stuck Failed forever, even though the snapshot went on to
-// succeed moments later. A genuinely missing/misspelled SnapshotName still
-// fails outright (below) -- there's no way to tell "will exist later" from
-// "will never exist", unlike a snapshot that already exists but is still
-// in progress.
+// succeed moments later.
+//
+// spec.snapshotName resolving to no MachineSnapshot at all gets the same
+// grace-period treatment (missingSnapshotGracePeriod), bounded rather than
+// open-ended: telling "will exist any moment now" (the exact same
+// GitOps-apply-ordering race as above, just one step earlier -- the
+// restore submitted alongside a MachineSnapshot that hasn't hit the API
+// yet) apart from "will never exist" (a genuine typo) is only possible
+// within a bounded window, using restore.Metadata.CreationTimestamp -- so
+// it's treated as the former only while the restore itself is still
+// nearly brand new, and as the latter (a real, permanent
+// status.phase=Failed) once that window has passed.
 func (c *Controller) reconcileSnapshotRestore(ctx context.Context, restore model.MachineSnapshotRestore) error {
 	if restore.Status.Phase == "Succeeded" || restore.Status.Phase == "Failed" {
 		return nil
@@ -39,6 +59,9 @@ func (c *Controller) reconcileSnapshotRestore(ctx context.Context, restore model
 	}
 	snapshot, err := c.Kube.GetMachineSnapshot(ctx, restore.Namespace(), restore.Spec.SnapshotName)
 	if err != nil {
+		if kube.IsNotFound(err) && time.Since(restore.Metadata.CreationTimestamp) < missingSnapshotGracePeriod {
+			return c.parkRestorePending(ctx, restore, fmt.Sprintf("waiting for MachineSnapshot %s to appear", restore.Spec.SnapshotName))
+		}
 		return fmt.Errorf("get MachineSnapshot %s: %w", restore.Spec.SnapshotName, err)
 	}
 	if snapshot.Status.Phase != "Succeeded" || !snapshot.Status.ReadyToUse {
