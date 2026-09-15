@@ -190,13 +190,69 @@ func TestCreateAllowsNoNUMAFieldsForNonQEMUBackend(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSecureBootAndTPM(t *testing.T) {
-	cases := []model.SecuritySpec{
-		{SecureBoot: true},
-		{TPM: true},
-		{SecureBoot: true, TPM: true},
+func TestCreatePassesSecureBootAndTPMOnQEMU(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Name: got.Name, Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "win", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/win.qcow2"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "qemu"},
+			Security:  model.SecuritySpec{SecureBoot: true, TPM: true},
+		},
 	}
-	for _, sec := range cases {
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if !got.SecureBoot || !got.TPM {
+		t.Fatalf("expected secure_boot/tpm to pass through, got %+v", got)
+	}
+}
+
+func TestCreatePassesTPMOnlyOnCloudHypervisor(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Name: got.Name, Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "ch", Namespace: "prod"},
+		Spec: model.MachineSpec{
+			Image:     model.ImageSpec{Path: "/images/ch.raw"},
+			Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"},
+			Runtime:   model.RuntimeSpec{Backend: "cloud-hypervisor"},
+			Security:  model.SecuritySpec{TPM: true},
+		},
+	}
+	if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+		t.Fatal(err)
+	}
+	if !got.TPM {
+		t.Fatalf("expected tpm to pass through on cloud-hypervisor, got %+v", got)
+	}
+}
+
+func TestCreateRejectsSecureBootAndTPMOnUnsupportedBackends(t *testing.T) {
+	cases := []struct {
+		backend string
+		sec     model.SecuritySpec
+	}{
+		{"cloud-hypervisor", model.SecuritySpec{SecureBoot: true}},
+		{"firecracker", model.SecuritySpec{SecureBoot: true}},
+		{"firecracker", model.SecuritySpec{TPM: true}},
+		{"flux-vm", model.SecuritySpec{TPM: true}},
+	}
+	for _, tc := range cases {
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			t.Fatal("expected the request to be rejected before it ever reached FluxVM")
 		}))
@@ -207,14 +263,14 @@ func TestCreateRejectsSecureBootAndTPM(t *testing.T) {
 			Spec: model.MachineSpec{
 				Image:     model.ImageSpec{Path: "/images/win.qcow2"},
 				Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"},
-				Runtime:   model.RuntimeSpec{Backend: "qemu"},
-				Security:  sec,
+				Runtime:   model.RuntimeSpec{Backend: tc.backend},
+				Security:  tc.sec,
 			},
 		}
 		_, err := c.Create(context.Background(), m, "qemu")
 		s.Close()
 		if err == nil {
-			t.Fatalf("expected an error for %+v (no FluxVM backend supports UEFI/vTPM today)", sec)
+			t.Fatalf("expected an error for backend=%q security=%+v", tc.backend, tc.sec)
 		}
 	}
 }

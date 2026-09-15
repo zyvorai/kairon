@@ -113,6 +113,18 @@ type CreateRequest struct {
 	NUMANode  *int   `json:"numa_node,omitempty"`
 	CPUSet    string `json:"cpuset,omitempty"`
 	Hugepages bool   `json:"hugepages,omitempty"`
+	// SecureBoot/TPM mirror FluxVM's own CreateVmRequest fields of the same
+	// name (fluxvm-core/src/model.rs) exactly -- enforced at
+	// buildCreateRequest against the same backend restrictions FluxVM's own
+	// scheduler enforces server-side (secure_boot: qemu only; tpm: qemu or
+	// cloud-hypervisor), so an operator gets a clear error at the same
+	// place NUMA/CPUSet/Hugepages already do rather than a 400 relayed from
+	// FluxVM with no Kairon-side context. Neither field carries an OVMF
+	// firmware/vars-template path -- that's a FluxVM node-level config
+	// default (Config.qemu_ovmf_code/.qemu_ovmf_vars_template), not
+	// something Kairon manages or has a Machine-spec field for yet.
+	SecureBoot bool `json:"secure_boot,omitempty"`
+	TPM        bool `json:"tpm,omitempty"`
 }
 
 // QgaSpec mirrors FluxVM's own qemu-guest-agent (virtio-serial) opt-in --
@@ -230,15 +242,6 @@ func (c *Client) Get(ctx context.Context, id string) (*Record, error) {
 // (POST /v1/sandboxes' embedded spec field), so the two creation paths
 // can never drift apart on what a given Machine field maps to.
 func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []string) (CreateRequest, error) {
-	// Refused outright rather than silently accepted-and-ignored: no
-	// FluxVM backend Kairon talks to (QEMU, Cloud Hypervisor, Firecracker)
-	// implements UEFI/OVMF firmware or a vTPM device today -- confirmed
-	// against FluxVM's own source, not assumed. See
-	// docs/guides/machine-windows-guests.md and ROADMAP.md for this
-	// tracked upstream dependency.
-	if m.Spec.Security.SecureBoot || m.Spec.Security.TPM {
-		return CreateRequest{}, fmt.Errorf("spec.security.secureBoot/tpm are not yet supported -- no FluxVM backend implements UEFI/OVMF firmware or a vTPM device today")
-	}
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
 		return CreateRequest{}, err
@@ -273,6 +276,23 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 	if r := m.Spec.Resources; (r.NUMANode != nil || r.CPUSet != "" || r.Hugepages) && backend != "qemu" {
 		return CreateRequest{}, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
 	}
+	// secureBoot/tpm backend restrictions mirror FluxVM's own scheduler-side
+	// enforcement exactly (fluxvm-scheduler's secure_boot_or_tpm_backend_error,
+	// confirmed against FluxVM's own source, not assumed): secureBoot is
+	// QEMU-only, permanently -- Cloud Hypervisor's own --firmware is a
+	// single opaque file with no documented separate vars store to enroll
+	// Secure Boot keys into, so claiming support there would be dishonest,
+	// not just unimplemented. tpm is qemu or cloud-hypervisor (both dial a
+	// real swtpm-backed socket); firecracker/flux-vm have no vTPM device at
+	// all. Enforced here too, not just relayed from FluxVM's own 400, so an
+	// operator gets the same clear, Kairon-side error the NUMA/CPUSet check
+	// above already gives instead of a bare HTTP failure.
+	if m.Spec.Security.SecureBoot && backend != "qemu" {
+		return CreateRequest{}, fmt.Errorf("spec.security.secureBoot requires the qemu backend (FluxVM only supports Secure Boot there); Machine resolves to backend %q", backend)
+	}
+	if m.Spec.Security.TPM && backend != "qemu" && backend != "cloud-hypervisor" {
+		return CreateRequest{}, fmt.Errorf("spec.security.tpm requires the qemu or cloud-hypervisor backend; Machine resolves to backend %q", backend)
+	}
 	tenant := m.Namespace()
 	network := BuildNetworkMap(m.Spec.Network)
 	image := m.Spec.Image.Path
@@ -300,6 +320,8 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 		NUMANode:     m.Spec.Resources.NUMANode,
 		CPUSet:       m.Spec.Resources.CPUSet,
 		Hugepages:    m.Spec.Resources.Hugepages,
+		SecureBoot:   m.Spec.Security.SecureBoot,
+		TPM:          m.Spec.Security.TPM,
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}

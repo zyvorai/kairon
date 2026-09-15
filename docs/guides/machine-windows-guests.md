@@ -47,30 +47,59 @@ spec:
 This covers Windows Server (2019/2022) and Windows 10 -- any edition that
 doesn't *require* UEFI Secure Boot + TPM 2.0 to boot at all.
 
-## What's blocked: Windows 11 and anything requiring Secure Boot/TPM
+## Windows 11: Secure Boot and TPM 2.0
 
-`spec.security.secureBoot`/`spec.security.tpm` exist in the `Machine` CRD,
-but **Kairon refuses to create a Machine that sets either to `true`** --
-confirmed against FluxVM's own source, not assumed: no backend Kairon
-talks to (QEMU, Cloud Hypervisor, Firecracker) implements UEFI/OVMF
-firmware or a vTPM device today. This used to be a silent gap (the fields
-existed and did nothing); it's now an explicit, immediate error instead:
+`spec.security.secureBoot`/`spec.security.tpm` now pass through to FluxVM,
+which as of its own `ff145b4`/`e2bd218` implements real UEFI Secure Boot
+(OVMF pflash, QEMU-backend-only) and a real emulated TPM 2.0 device
+(`swtpm`, QEMU or Cloud Hypervisor). Kairon enforces the same backend
+restrictions FluxVM's own scheduler enforces server-side, so an
+unsupported combination is refused at Kairon with a clear error instead of
+a bare HTTP failure relayed from FluxVM:
 
+```yaml
+spec:
+  runtime: {backend: qemu}
+  security: {secureBoot: true, tpm: true}
 ```
-spec.security.secureBoot/tpm are not yet supported -- no FluxVM backend
-implements UEFI/OVMF firmware or a vTPM device today
-```
 
-**Windows 11 hard-requires both** to boot at all, so it isn't supported by
-Kairon today, full stop -- this is a real FluxVM-side capability gap
-(OVMF firmware integration + a vTPM device, both genuine QEMU features
-FluxVM simply doesn't wire up yet), tracked in `ROADMAP.md` as an upstream
-dependency, the same way VFIO-through-live-migration names FluxVM's
-missing hot-unplug/hot-plug API as its own blocker.
+- **`secureBoot` is QEMU-only, permanently.** Cloud Hypervisor's own
+  `--firmware` is a single opaque file with no documented separate
+  variable store to enroll Secure Boot keys into and no documented
+  enforcement mechanism -- claiming support there would be dishonest, not
+  just unimplemented, so FluxVM itself rejects it and Kairon refuses it
+  first.
+- **`tpm` works on QEMU or Cloud Hypervisor** -- both dial a real
+  `swtpm`-backed Unix socket. Firecracker and the in-tree `flux-vm`
+  sandbox backend have no vTPM device at all.
+- **A real Secure Boot chain also needs the FluxVM *node* configured with
+  an OVMF vars template** (`Config.qemu_ovmf_vars_template` -- a vars
+  store with Microsoft's UEFI CA keys already enrolled) and, unless the
+  node also sets `Config.qemu_ovmf_code` as a default, a firmware path
+  Kairon has no `Machine`-spec field for yet. This is deliberately a
+  FluxVM node-level operator responsibility, not something Kairon
+  synthesizes or manages -- see FluxVM's own `docs/secure-boot-tpm.md`.
+  Setting `secureBoot: true` against a node that hasn't configured this
+  fails closed with FluxVM's own clear error at VM-create time, not a
+  silent no-op.
+- **Not live-verified end-to-end through Kairon itself.** FluxVM's own
+  `e2bd218` verified real `qemu-system-x86_64`/`cloud-hypervisor`/`swtpm`
+  argv construction and a real OVMF boot on a remote host directly against
+  FluxVM's API -- but no `kairon-node` build has yet made a real
+  `POST /v1/vms` call with `secure_boot`/`tpm` set against a live FluxVM
+  instance in this repo's own CI. The Go-side request mapping (this
+  file's own `buildCreateRequest`) has full unit coverage; the resulting
+  real boot has not been separately reconfirmed from the Kairon side.
+
+**Windows 11 hard-requires both** to boot at all -- with a node configured
+for Secure Boot per the above, it's now reachable through Kairon rather
+than refused outright.
 
 ## Real limits today (first cut)
 
-- No UEFI/Secure Boot/vTPM -- see above. Legacy BIOS only.
+- Secure Boot/vTPM need a FluxVM node-level OVMF vars template configured
+  by the operator -- see above. No `Machine`-spec field to override the
+  firmware/vars path per-Machine yet, only the node-wide default.
 - No driver-ISO-attach for an interactive Windows Setup flow -- bring a
   pre-built image with virtio drivers already installed, the same
   expectation Kairon already has for every other guest OS.
