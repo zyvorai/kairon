@@ -239,6 +239,32 @@ field can reference instead of a raw path:
 
 See `docs/guides/machine-image-catalog.md`.
 
+## Egress check (`POST /api/v1/nodes/{node}/egress-check`)
+
+A stateless diagnostic against a node's static sandbox egress config
+(`internal/uiapi/egress.go`) -- FluxVM's own `POST /v1/egress/check`,
+checking whether an outbound request to a given host would be allowed,
+with no auth requirement at all on FluxVM's own side. Kairon adds two
+layers on top:
+
+- **Admin-only.** Even though the check itself is read-only, confirming
+  which hosts are allowlisted (or that a credential is configured for one
+  at all) is real information about a node's sandbox egress policy.
+- **The credential itself is never returned.** FluxVM's own response
+  carries `inject_authorization` -- the literal secret value it would
+  inject into a matching request, not a boolean -- when a credential-vault
+  entry matches the checked host. `handleEgressCheck` deliberately
+  discards that value entirely and reports only a boolean
+  (`wouldInjectCredential`) instead; returning the raw value to any admin
+  who can guess or enumerate a configured host would defeat the point of
+  having a vault at all. Covered by a dedicated regression test
+  (`TestHandleEgressCheckRedactsCredential`) that fails loudly if the
+  secret ever leaks into the response body again.
+
+There is no way to change the underlying allowlist/credential vault
+through this or any Kairon API -- it's static, node-local FluxVM config,
+not a runtime-mutable resource.
+
 ## CSI node plugin (`csiNode.enabled`)
 
 Kairon's own first-cut CSI driver (`csi.kairon.zyvor.dev`, iSCSI only -- see [`docs/guides/machine-storage-csi.md`](docs/guides/machine-storage-csi.md)) is a real, larger trust boundary than every other Kairon component, inherent to what it does, not a design oversight:

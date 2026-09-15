@@ -69,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /catalog/{name}/export", s.handleExportCatalogEntry)
 	mux.HandleFunc("POST /catalog/{name}/read-only", s.handleSetCatalogReadOnly)
 	mux.HandleFunc("POST /catalog/clean", s.handleCleanCatalogDownloads)
+	mux.HandleFunc("POST /egress-check", s.handleEgressCheck)
 	return mux
 }
 

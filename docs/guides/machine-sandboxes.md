@@ -96,6 +96,30 @@ real state (including a sandbox created directly against FluxVM outside
 Kairon entirely), the same posture `GET /api/v1/nodes` itself has for
 node visibility. Any authenticated operator, since this is read-only.
 
+## Checking egress policy
+
+**`POST /api/v1/nodes/{node}/egress-check`** (admin-only, body `{"host"}`)
+asks a node whether a sandbox's outbound request to `host` would be
+allowed -- FluxVM's own stateless check against that node's static
+`[sandbox]` config (`egress_allow_domains`, an empty list meaning "allow
+everything"). Response: `{"allow", "reason", "wouldInjectCredential"}`.
+
+There is deliberately **no way to change the allowlist through this or
+any Kairon API** -- it's read from the node's own FluxVM config file at
+daemon startup, not a runtime-mutable resource. And `wouldInjectCredential`
+is a boolean, never the actual credential: FluxVM's own response carries
+the literal secret value that would be injected for a matching host
+(`inject_authorization`), and Kairon deliberately never returns that value
+to a caller. See SECURITY.md's "Egress check" section for why.
+
+## Listing sandboxes
+
+**`GET /api/v1/nodes/{node}/sandboxes`** lists every FluxVM sandbox on a
+node -- node-scoped, not Machine-scoped, since it reflects FluxVM's own
+real state (including a sandbox created directly against FluxVM outside
+Kairon entirely), the same posture `GET /api/v1/nodes` itself has for
+node visibility. Any authenticated operator, since this is read-only.
+
 ## Real limits today (first cut)
 
 - **No VFIO passthrough.** `spec.deviceClaims` on a sandbox Machine is

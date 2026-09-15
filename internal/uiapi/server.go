@@ -204,6 +204,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog/{name}/export", s.handleExportCatalogEntry)
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog/{name}/read-only", s.handleSetCatalogReadOnly)
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog/clean", s.handleCleanCatalogDownloads)
+	api.HandleFunc("POST /api/v1/nodes/{node}/egress-check", s.handleEgressCheck)
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
