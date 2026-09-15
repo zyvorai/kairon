@@ -203,6 +203,50 @@ func TestBestGuestIPHandlesNoInterfaces(t *testing.T) {
 	}
 }
 
+// TestBestGuestIPWithPrimaryPrefersKnownPrimaryNICOverFirstIPv4 is the
+// SR-IOV regression guard: a passthrough VF interface (its own real
+// hardware MAC, own DHCP lease) appearing before the primary virtio-net
+// NIC in the guest's own enumeration order must not win status.guestIP
+// once FluxVM's own primary MAC is known.
+func TestBestGuestIPWithPrimaryPrefersKnownPrimaryNICOverFirstIPv4(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},
+		{Name: "enp1s0f0v0", HardwareAddress: "aa:bb:cc:dd:ee:ff", IPAddresses: []QgaIPAddress{
+			{IPAddress: "192.168.100.5", IPAddressType: "ipv4"}, // the SR-IOV VF, enumerated first
+		}},
+		{Name: "eth0", HardwareAddress: "52:54:00:12:34:56", IPAddresses: []QgaIPAddress{
+			{IPAddress: "10.0.2.15", IPAddressType: "ipv4"}, // the primary virtio-net NIC
+		}},
+	}
+	if got := BestGuestIPWithPrimary(ifaces, "52:54:00:12:34:56"); got != "10.0.2.15" {
+		t.Fatalf("got %q, want the primary NIC's address (10.0.2.15), not the VF's", got)
+	}
+}
+
+func TestBestGuestIPWithPrimaryMatchIsCaseInsensitive(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "eth0", HardwareAddress: "52:54:00:12:34:56", IPAddresses: []QgaIPAddress{{IPAddress: "10.0.2.15", IPAddressType: "ipv4"}}},
+	}
+	if got := BestGuestIPWithPrimary(ifaces, "52:54:00:12:34:56"); got != "10.0.2.15" {
+		t.Fatalf("got %q, want 10.0.2.15", got)
+	}
+}
+
+func TestBestGuestIPWithPrimaryFallsBackWhenPrimaryMACUnknownOrUnmatched(t *testing.T) {
+	ifaces := []QgaNetworkInterface{
+		{Name: "enp1s0f0v0", HardwareAddress: "aa:bb:cc:dd:ee:ff", IPAddresses: []QgaIPAddress{{IPAddress: "192.168.100.5", IPAddressType: "ipv4"}}},
+	}
+	// Empty primaryMAC (unknown) falls back to plain first-IPv4 behavior.
+	if got := BestGuestIPWithPrimary(ifaces, ""); got != "192.168.100.5" {
+		t.Fatalf("got %q, want 192.168.100.5 (fallback with no known primary MAC)", got)
+	}
+	// A primaryMAC that matches nothing in the guest's own report also
+	// falls back rather than reporting no address at all.
+	if got := BestGuestIPWithPrimary(ifaces, "de:ad:be:ef:00:00"); got != "192.168.100.5" {
+		t.Fatalf("got %q, want 192.168.100.5 (fallback when the primary MAC isn't found)", got)
+	}
+}
+
 func TestAllGuestIPsOrdersIPv4BeforeIPv6AcrossInterfaces(t *testing.T) {
 	ifaces := []QgaNetworkInterface{
 		{Name: "lo", IPAddresses: []QgaIPAddress{{IPAddress: "127.0.0.1", IPAddressType: "ipv4"}}},

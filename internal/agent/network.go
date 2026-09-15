@@ -216,7 +216,13 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 				a.guestIPCheckedAt[key] = time.Now()
 				if all := fluxvm.AllGuestIPs(resolved); len(all) > 0 {
 					guestIPs = all
-					guestIP = fluxvm.BestGuestIP(resolved)
+					// rec.Request.Network.MAC is FluxVM's own record of the
+					// primary virtio-net NIC's assigned MAC -- distinguishes
+					// it from an SR-IOV VFIO NIC (spec.deviceClaims), which
+					// keeps its own real hardware MAC and could otherwise
+					// nondeterministically win status.guestIP. See
+					// BestGuestIPWithPrimary's own doc comment.
+					guestIP = fluxvm.BestGuestIPWithPrimary(resolved, rec.Request.Network.MAC)
 				}
 			}
 		}

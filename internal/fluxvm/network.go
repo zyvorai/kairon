@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -193,8 +194,37 @@ func AllGuestIPs(ifaces []QgaNetworkInterface) []string {
 // back to the first IPv6 address only when no IPv4 address exists anywhere
 // -- previously this returned "" in the IPv6-only case, silently reporting
 // no guest IP at all for an IPv6-only guest. See AllGuestIPs for the full
-// address list this is derived from.
+// address list this is derived from. See BestGuestIPWithPrimary below for
+// the SR-IOV/VFIO-NIC-aware variant reconcile actually calls.
 func BestGuestIP(ifaces []QgaNetworkInterface) string {
+	return BestGuestIPWithPrimary(ifaces, "")
+}
+
+// BestGuestIPWithPrimary is BestGuestIP, but prefers the interface whose
+// hardware-address matches primaryMAC (case-insensitive) over blind
+// first-IPv4 selection, when a match exists and reports an address at
+// all. primaryMAC is normally FluxVM's own record of the primary
+// virtio-net NIC's assigned MAC (Record.Request.Network.MAC) -- a real,
+// necessary distinction once a Machine can also carry an SR-IOV VFIO NIC
+// passed through via spec.deviceClaims (see docs/guides/machine-sriov.md):
+// a passthrough VF keeps its own real hardware MAC (never one FluxVM
+// assigns), and the guest's own interface enumeration order is outside
+// Kairon's control, so without this a VF with its own DHCP lease could
+// nondeterministically clobber status.guestIP instead of the intended
+// primary management NIC. primaryMAC == "" (unknown, or a Machine with no
+// virtio-net primary at all) falls back to the original first-IPv4/
+// first-IPv6 behavior unchanged.
+func BestGuestIPWithPrimary(ifaces []QgaNetworkInterface, primaryMAC string) string {
+	if primaryMAC != "" {
+		for _, iface := range ifaces {
+			if iface.Name == "lo" || !strings.EqualFold(iface.HardwareAddress, primaryMAC) {
+				continue
+			}
+			if addrs := AllGuestIPs([]QgaNetworkInterface{iface}); len(addrs) > 0 {
+				return addrs[0]
+			}
+		}
+	}
 	all := AllGuestIPs(ifaces)
 	if len(all) == 0 {
 		return ""

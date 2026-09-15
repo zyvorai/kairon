@@ -62,6 +62,20 @@ Destination sessions are persisted as mode `0600` JSON files using write -> fsyn
 
 `Machine.spec.deviceClaims[]` references same-namespace `resource.k8s.io/v1` `ResourceClaim` objects. The node agent requires an allocation, resolves a PCI BDF, normalizes it and checks a node-local allowlist. Namespace users cannot bypass the host PCI authorization boundary by editing annotations.
 
+This path is deliberately device-type-agnostic -- `resolveVFIODevices` only
+ever cares that a claim resolves to an allowlisted BDF, never what kind of
+PCI device it is, and `spec.deviceClaims` is a list, resolved and passed
+to FluxVM's own `vfio_devices` as a set. That means an SR-IOV NIC Virtual
+Function, once created and bound to `vfio-pci` on the host (the same
+operator/host-setup responsibility GPU passthrough already has -- Kairon
+manages neither GPU nor VF driver binding itself), passes through via this
+exact same mechanism with no new allocation code -- a Machine can combine
+a GPU claim and a NIC-VF claim in one `spec.deviceClaims` list today. See
+[guides/machine-sriov.md](guides/machine-sriov.md). Multus (the standard
+Kubernetes SR-IOV integration path) doesn't apply here at all -- its whole
+mechanism wires extra interfaces into a Pod's network namespace, and a
+Machine has no Pod for it to attach to.
+
 ## Day-2 operations on a running Machine
 
 `spec.cloudInit` (SSH keys, hostname, packages, first-boot commands) and

@@ -228,6 +228,78 @@ func TestDRAClaimMapsToAllowedVFIOBDF(t *testing.T) {
 	}
 }
 
+// TestMultipleDRAClaimsMapToMultipleAllowedVFIOBDFs is the SR-IOV
+// regression guard: resolveVFIODevices already loops over every entry in
+// spec.deviceClaims, not just the first -- proving a Machine can combine
+// a GPU passthrough claim with an SR-IOV NIC VF claim (or any two BDFs)
+// in one create, with FluxVM's own CreateVmRequest.vfio_devices carrying
+// both, distinct devices with no per-device-type code anywhere in this
+// path.
+func TestMultipleDRAClaimsMapToMultipleAllowedVFIOBDFs(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "gpu-and-nic", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec: model.MachineSpec{
+			NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/gpu.qcow2"}, Resources: model.ResourceSpec{CPU: "4", Memory: "8Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running",
+			DeviceClaims: []model.DeviceClaimReference{{Name: "gpu0"}, {Name: "nic-vf0"}},
+		},
+	}
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/resource.k8s.io/v1/namespaces/prod/resourceclaims/gpu0":
+			_ = json.NewEncoder(w).Encode(model.ResourceClaim{Metadata: model.ObjectMeta{Name: "gpu0", Namespace: "prod", Annotations: map[string]string{model.AnnotationVFIOBDF: "65:00.0"}}, Status: model.ResourceClaimStatus{Allocation: &model.ResourceClaimAllocation{}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/resource.k8s.io/v1/namespaces/prod/resourceclaims/nic-vf0":
+			// A real SR-IOV VF, already bound to vfio-pci on the host out of
+			// band (see docs/guides/machine-sriov.md) -- resolved here via the
+			// exact same manual kairon.zyvor.dev/vfio-bdf annotation fallback
+			// a DRA-driver-less ResourceClaim for a GPU already uses above.
+			_ = json.NewEncoder(w).Encode(model.ResourceClaim{Metadata: model.ObjectMeta{Name: "nic-vf0", Namespace: "prod", Annotations: map[string]string{model.AnnotationVFIOBDF: "81:10.1"}}, Status: model.ResourceClaimStatus{Allocation: &model.ResourceClaimAllocation{}}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/gpu-and-nic/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			http.NotFound(w, r)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	var got fluxvm.CreateRequest
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms":
+			_ = json.NewEncoder(w).Encode([]fluxvm.Record{})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms":
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "gpu-and-nic-vm", Name: machine.RuntimeName(), Status: "Running"})
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	allow, err := ParseVFIOAllowlist("0000:65:00.0,0000:81:10.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu", VFIOAllowlist: allow, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.VFIODevices) != 2 {
+		t.Fatalf("expected both BDFs to reach FluxVM's own vfio_devices, got %v", got.VFIODevices)
+	}
+	want := map[string]bool{"0000:65:00.0": true, "0000:81:10.1": true}
+	for _, bdf := range got.VFIODevices {
+		if !want[bdf] {
+			t.Fatalf("unexpected BDF %q in vfio_devices=%v", bdf, got.VFIODevices)
+		}
+	}
+}
+
 func TestDRAClaimFailsClosedWithoutAllowlist(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "gpu", Namespace: "prod", Finalizers: []string{model.Finalizer}}, Spec: model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/gpu.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"}, DeviceClaims: []model.DeviceClaimReference{{Name: "gpu0"}}}}
 	statusError := false
