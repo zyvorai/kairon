@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -337,6 +338,102 @@ func TestRateLimitIsOptInAndThrottlesPerRemoteAddr(t *testing.T) {
 	}
 	if !got429 {
 		t.Fatal("expected a burst of 5 requests against burst=2 to eventually hit 429")
+	}
+}
+
+func TestClientIPIsRemoteAddrWithoutTrustedProxyConfig(t *testing.T) {
+	s := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.9:5555"
+	req.Header.Set("X-Forwarded-For", "198.51.100.1")
+	if got := s.clientIP(req); got != "203.0.113.9" {
+		t.Fatalf("expected the header to be ignored with no TrustedProxyHeader/CIDRs configured, got %q", got)
+	}
+}
+
+func TestClientIPUsesHeaderOnlyFromATrustedPeer(t *testing.T) {
+	_, trustedNet, err := net.ParseCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{TrustedProxyHeader: "X-Forwarded-For", TrustedProxyCIDRs: []*net.IPNet{trustedNet}}
+
+	// Direct peer is inside the trusted CIDR (the load balancer itself) --
+	// the header's leftmost entry (the real client) is trusted.
+	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	trusted.RemoteAddr = "10.0.0.5:5555"
+	trusted.Header.Set("X-Forwarded-For", "198.51.100.1, 10.0.0.5")
+	if got := s.clientIP(trusted); got != "198.51.100.1" {
+		t.Fatalf("expected the header's leftmost entry from a trusted peer, got %q", got)
+	}
+
+	// Direct peer is NOT inside the trusted CIDR -- a client talking
+	// directly to kairon-ui (bypassing the load balancer, or a load
+	// balancer with an untrusted address) cannot spoof its way into an
+	// arbitrary bucket by setting the header itself.
+	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	untrusted.RemoteAddr = "203.0.113.9:5555"
+	untrusted.Header.Set("X-Forwarded-For", "198.51.100.1")
+	if got := s.clientIP(untrusted); got != "203.0.113.9" {
+		t.Fatalf("expected the header to be ignored from an untrusted peer, got %q", got)
+	}
+
+	// Trusted peer, but no header present -- falls back to the peer
+	// address rather than an empty key.
+	noHeader := httptest.NewRequest(http.MethodGet, "/", nil)
+	noHeader.RemoteAddr = "10.0.0.5:5555"
+	if got := s.clientIP(noHeader); got != "10.0.0.5" {
+		t.Fatalf("expected fallback to RemoteAddr when the header is absent, got %q", got)
+	}
+
+	// Trusted peer, malformed header value -- falls back rather than
+	// keying by garbage.
+	malformed := httptest.NewRequest(http.MethodGet, "/", nil)
+	malformed.RemoteAddr = "10.0.0.5:5555"
+	malformed.Header.Set("X-Forwarded-For", "not-an-ip")
+	if got := s.clientIP(malformed); got != "10.0.0.5" {
+		t.Fatalf("expected fallback to RemoteAddr on a malformed header value, got %q", got)
+	}
+}
+
+func TestRateLimitKeysByTrustedForwardedForNotSharedProxyAddress(t *testing.T) {
+	_, trustedNet, err := net.ParseCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk := newFakeKube()
+	s := newTestServer(t, fk, "")
+	s.RateLimit = ratelimit.New(1, 2) // 1 req/s, burst 2
+	s.TrustedProxyHeader = "X-Forwarded-For"
+	s.TrustedProxyCIDRs = []*net.IPNet{trustedNet}
+	h := s.Handler()
+
+	// Two distinct real clients, both arriving via the same trusted
+	// load-balancer peer address -- without trusting the forwarded
+	// header, both would collapse into one rate-limit bucket keyed by
+	// the LB's own address. With it, client A being throttled must not
+	// throttle client B.
+	requestFrom := func(clientIP string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil)
+		req.RemoteAddr = "10.0.0.5:5555"
+		req.Header.Set("X-Forwarded-For", clientIP)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	var aThrottled bool
+	for range 5 {
+		if requestFrom("198.51.100.1") == http.StatusTooManyRequests {
+			aThrottled = true
+			break
+		}
+	}
+	if !aThrottled {
+		t.Fatal("expected client A to eventually hit 429 against burst=2")
+	}
+	if got := requestFrom("198.51.100.2"); got == http.StatusTooManyRequests {
+		t.Fatalf("client B should have its own bucket, keyed by its own forwarded address, got %d", got)
 	}
 }
 

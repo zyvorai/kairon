@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -53,6 +54,8 @@ func run() int {
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", env("KAIRON_UI_ALLOW_UNAUTHENTICATED", "false") == "true", "start without a token -- local development only, refused by default")
 	rateLimitRPS := flag.Float64("rate-limit-rps", 20, "requests per second allowed per remote address across every route, sustained (0 disables rate limiting entirely) -- distinct from and in addition to the per-username login lockout, which only throttles repeated failed passwords")
 	rateLimitBurst := flag.Int("rate-limit-burst", 40, "requests a remote address may burst above -rate-limit-rps before throttling kicks in")
+	trustedProxyHeader := flag.String("trusted-proxy-header", env("KAIRON_UI_TRUSTED_PROXY_HEADER", ""), "header (e.g. X-Forwarded-For) to read the real client address from for rate limiting, instead of the immediate TCP peer -- only trusted from a peer matching -trusted-proxy-cidrs; empty (the default) is unchanged behavior")
+	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", env("KAIRON_UI_TRUSTED_PROXY_CIDRS", ""), "comma-separated CIDRs (e.g. your Ingress/load-balancer's pod or node network) that -trusted-proxy-header is ever trusted from; required alongside it, otherwise any direct client could spoof that header")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -126,6 +129,28 @@ func run() int {
 		go rateLimiter.Run(ctx, 5*time.Minute, 30*time.Minute)
 	}
 
+	// -trusted-proxy-header/-trusted-proxy-cidrs are all-or-nothing, same
+	// "fail closed on a half-set group of flags" posture OIDC's three
+	// flags already use above -- a header configured with no trusted
+	// CIDRs (or vice versa) is silently never applied by uiapi.Server
+	// itself (see clientIP), so refusing startup here surfaces the
+	// misconfiguration immediately instead of an operator wondering why
+	// rate limiting still collapses behind their load balancer.
+	trustedProxyConfigured := *trustedProxyHeader != "" || *trustedProxyCIDRs != ""
+	if trustedProxyConfigured && (*trustedProxyHeader == "" || *trustedProxyCIDRs == "") {
+		log.Error("secure startup refused", "reason", "-trusted-proxy-header and -trusted-proxy-cidrs must both be set together, or neither")
+		return 1
+	}
+	var trustedProxyNets []*net.IPNet
+	for _, cidr := range splitNonEmpty(*trustedProxyCIDRs, ",") {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			log.Error("secure startup refused", "reason", "invalid -trusted-proxy-cidrs entry", "cidr", cidr, "error", err)
+			return 1
+		}
+		trustedProxyNets = append(trustedProxyNets, ipNet)
+	}
+
 	var oidcAuth *uiapi.OIDCAuth
 	if oidcConfigured {
 		discoverCtx, discoverCancel := context.WithTimeout(ctx, 15*time.Second)
@@ -175,9 +200,11 @@ func run() int {
 		ConsoleTLS:   consoleTLS,
 		// RBACConsoleCheck false (the default) is unchanged, annotation-
 		// only console authorization -- see uiapi.Server's own doc comment.
-		RBACConsoleCheck: env("KAIRON_UI_RBAC_CONSOLE_CHECK", "false") == "true",
-		Metrics:          rec,
-		RateLimit:        rateLimiter,
+		RBACConsoleCheck:   env("KAIRON_UI_RBAC_CONSOLE_CHECK", "false") == "true",
+		Metrics:            rec,
+		RateLimit:          rateLimiter,
+		TrustedProxyHeader: *trustedProxyHeader,
+		TrustedProxyCIDRs:  trustedProxyNets,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,

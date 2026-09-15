@@ -134,6 +134,26 @@ type Server struct {
 	// hammering an unrelated route. Optional, nil-checked; without it
 	// nothing here changes.
 	RateLimit *ratelimit.Limiter
+	// TrustedProxyHeader, when set alongside TrustedProxyCIDRs, is the
+	// header (e.g. "X-Forwarded-For") withRateLimit reads the real client
+	// address from instead of r.RemoteAddr -- closes the gap README.md's
+	// Production-gaps section documented honestly: behind a Service/
+	// Ingress/load balancer with no forwarded-header trust configured,
+	// every real client collapses into that one proxy's address, so one
+	// noisy client can throttle everyone. Empty (the default) is
+	// unchanged prior behavior: always key by r.RemoteAddr directly. See
+	// clientIP.
+	TrustedProxyHeader string
+	// TrustedProxyCIDRs bounds which immediate peer addresses
+	// TrustedProxyHeader is ever trusted from -- required alongside it,
+	// fails closed (falls back to r.RemoteAddr) for a request whose
+	// direct r.RemoteAddr doesn't fall inside one of these. Without this
+	// check, TrustedProxyHeader alone would let *any* direct client spoof
+	// an arbitrary address in that header and evade rate limiting (or
+	// collapse its bucket onto an unrelated real client's), the opposite
+	// of what this exists to fix -- it must only ever be trusted from the
+	// operator's own known proxy/load-balancer hop.
+	TrustedProxyCIDRs []*net.IPNet
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -264,7 +284,7 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := remoteIP(r.RemoteAddr)
+		key := s.clientIP(r)
 		if allowed, retryAfter := s.RateLimit.Allow(key); !allowed {
 			w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())+1))
 			if s.Log != nil {
@@ -288,6 +308,47 @@ func remoteIP(remoteAddr string) string {
 		return remoteAddr
 	}
 	return host
+}
+
+// clientIP returns the address withRateLimit should key its bucket by:
+// r.RemoteAddr (the TCP peer) unchanged, unless TrustedProxyHeader and
+// TrustedProxyCIDRs are both configured AND that peer itself falls inside
+// one of those CIDRs -- only then is TrustedProxyHeader's value trusted
+// at all, since without that check any direct client could set the
+// header itself to spoof or collide with another client's bucket. When
+// trusted, takes the leftmost entry of a comma-separated header value
+// (X-Forwarded-For's own convention: each proxy appends to the right, so
+// the leftmost entry is what the first hop -- the real client -- sent),
+// falling back to r.RemoteAddr if the header is absent or doesn't parse
+// as an IP.
+func (s *Server) clientIP(r *http.Request) string {
+	direct := remoteIP(r.RemoteAddr)
+	if s.TrustedProxyHeader == "" || len(s.TrustedProxyCIDRs) == 0 {
+		return direct
+	}
+	peer := net.ParseIP(direct)
+	if peer == nil {
+		return direct
+	}
+	trusted := false
+	for _, cidr := range s.TrustedProxyCIDRs {
+		if cidr.Contains(peer) {
+			trusted = true
+			break
+		}
+	}
+	if !trusted {
+		return direct
+	}
+	header := r.Header.Get(s.TrustedProxyHeader)
+	if header == "" {
+		return direct
+	}
+	forwarded := strings.TrimSpace(strings.SplitN(header, ",", 2)[0])
+	if net.ParseIP(forwarded) == nil {
+		return direct
+	}
+	return forwarded
 }
 
 // withMetrics wraps every route (auth-gated or not, including /healthz/

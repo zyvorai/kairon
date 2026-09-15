@@ -1015,6 +1015,12 @@ spec:
             - name: KAIRON_UI_RBAC_CONSOLE_CHECK
               value: "true"
 {{ end }}
+{{ if .Values.ui.rateLimit.trustedProxyHeader }}
+            - name: KAIRON_UI_TRUSTED_PROXY_HEADER
+              value: {{ .Values.ui.rateLimit.trustedProxyHeader | quote }}
+            - name: KAIRON_UI_TRUSTED_PROXY_CIDRS
+              value: {{ .Values.ui.rateLimit.trustedProxyCidrs | join "," | quote }}
+{{ end }}
           ports: [{name: http, containerPort: {{ .Values.ui.service.port }}}]
           readinessProbe: {httpGet: {path: /readyz, port: http}}
           livenessProbe: {httpGet: {path: /healthz, port: http}}

@@ -470,6 +470,24 @@ ui:
     # has no real Kubernetes User to check RBAC against, so it's denied
     # outright when this is true. See docs/guides/kairon-ui-console-rbac.md.
     rbacConsoleCheck: false
+  rateLimit:
+    # trustedProxyHeader, when set alongside trustedProxyCidrs, is the
+    # header (e.g. "X-Forwarded-For") kairon-ui reads the real client
+    # address from for rate limiting, instead of the immediate TCP peer.
+    # Empty (the default) is unchanged prior behavior -- always key by
+    # the direct connection's own address. Set this when kairon-ui sits
+    # behind a Service/Ingress/load balancer: without it, every real
+    # client collapses into that one proxy's address, so one noisy
+    # client throttles everyone. See README.md's Production-gaps section.
+    trustedProxyHeader: ""
+    # trustedProxyCidrs bounds which immediate peer addresses
+    # trustedProxyHeader is ever trusted from -- required alongside it.
+    # Set this to your Ingress controller's/load balancer's own pod or
+    # node CIDR (e.g. the cluster's Pod network). Without this check,
+    # trustedProxyHeader alone would let any direct client spoof an
+    # arbitrary address in that header and evade rate limiting, or
+    # collapse its bucket onto an unrelated real client's.
+    trustedProxyCidrs: []
   oidc:
     # "Sign in with SSO" against an external OpenID Connect identity
     # provider (Authorization Code + PKCE), alongside -- not instead of --
