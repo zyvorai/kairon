@@ -47,7 +47,10 @@ type MachineSnapshotRestoreSpec struct {
 }
 
 type MachineSnapshotRestoreStatus struct {
-	Phase             string `json:"phase,omitempty"`
-	Message           string `json:"message,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// No omitempty -- see model.MachineStatus.Message's comment: this
+	// status is patched as one whole object, so an omitted key never
+	// clears a previously-set value under JSON merge-patch semantics.
+	Message           string `json:"message"`
 	RestoredClaimName string `json:"restoredClaimName,omitempty"`
 }

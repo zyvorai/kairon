@@ -321,8 +321,16 @@ type MachineStatus struct {
 	GuestIPs           []string              `json:"guestIPs,omitempty"`
 	Network            *MachineNetworkStatus `json:"network,omitempty"`
 	ObservedGeneration int64                 `json:"observedGeneration,omitempty"`
-	Message            string                `json:"message,omitempty"`
-	Conditions         []Condition           `json:"conditions,omitempty"`
+	// Message deliberately has no omitempty: this whole status object is
+	// sent as one JSON merge patch (internal/kube.Client.PatchMachineStatus),
+	// and RFC 7386 merge-patch semantics treat an *absent* key as "leave
+	// unchanged", not "clear" -- only an explicit `null` (or, for a plain
+	// string field, an explicit `""` present in the patch) can clear a
+	// previously-set value. Dropping this field via omitempty when a
+	// reconcile recovers from an earlier error would silently leave the
+	// stale error message in status forever.
+	Message    string      `json:"message"`
+	Conditions []Condition `json:"conditions,omitempty"`
 	// AppliedVCPUs/AppliedMemoryMiB track what Kairon has actually hotplugged
 	// into the live FluxVM runtime so far -- FluxVM has no query endpoint for
 	// "current live vcpus/memory" (hotplugged CPUs/DIMMs are pure QMP-time
@@ -427,8 +435,11 @@ const (
 )
 
 type MachineMigrationStatus struct {
-	Phase             string `json:"phase,omitempty"`
-	Message           string `json:"message,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// No omitempty -- see MachineStatus.Message's comment: this status is
+	// patched as one whole object, so an omitted key never clears a
+	// previously-set value under JSON merge-patch semantics.
+	Message           string `json:"message"`
 	SourceNode        string `json:"sourceNode,omitempty"`
 	TargetNode        string `json:"targetNode,omitempty"`
 	EffectiveStrategy string `json:"effectiveStrategy,omitempty"`
@@ -501,8 +512,9 @@ type MachineSnapshotSpec struct {
 }
 
 type MachineSnapshotStatus struct {
-	Phase           string                    `json:"phase,omitempty"`
-	Message         string                    `json:"message,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// No omitempty -- see MachineStatus.Message's comment.
+	Message         string                    `json:"message"`
 	ReadyToUse      bool                      `json:"readyToUse,omitempty"`
 	VolumeSnapshots []VolumeSnapshotReference `json:"volumeSnapshots,omitempty"`
 }

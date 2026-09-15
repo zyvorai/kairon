@@ -106,8 +106,11 @@ type MachineNetworkPolicySpec struct {
 }
 
 type MachineNetworkPolicyStatus struct {
-	Phase            string     `json:"phase,omitempty"`
-	Message          string     `json:"message,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// No omitempty -- this whole status is patched as one object; under
+	// JSON merge-patch semantics an absent key never clears a
+	// previously-set value (see model.MachineStatus.Message's comment).
+	Message          string     `json:"message"`
 	ObservedMachines int        `json:"observedMachines,omitempty"`
 	LastAppliedTime  *time.Time `json:"lastAppliedTime,omitempty"`
 	EffectiveSynced  bool       `json:"effectiveSynced,omitempty"`
@@ -143,8 +146,9 @@ type NetworkSecurityGroupSpec struct {
 }
 
 type NetworkSecurityGroupStatus struct {
-	Phase     string `json:"phase,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Phase string `json:"phase,omitempty"`
+	// No omitempty -- see MachineStatus.Message's comment.
+	Message   string `json:"message"`
 	Identity  uint32 `json:"identity,omitempty"`
 	AppliedOn string `json:"appliedOn,omitempty"` // node that last upserted
 }

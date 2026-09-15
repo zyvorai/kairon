@@ -93,8 +93,12 @@ type MachineTemplate struct {
 // already fetched, purely observational like MachineDisruptionBudget's
 // own status reconciliation.
 type MachineSetStatus struct {
-	Replicas        int    `json:"replicas,omitempty"`
-	ReadyReplicas   int    `json:"readyReplicas,omitempty"`
-	UpdatedReplicas int    `json:"updatedReplicas,omitempty"`
-	Message         string `json:"message,omitempty"`
+	Replicas        int `json:"replicas,omitempty"`
+	ReadyReplicas   int `json:"readyReplicas,omitempty"`
+	UpdatedReplicas int `json:"updatedReplicas,omitempty"`
+	// No omitempty -- this whole status is patched as one object
+	// (internal/kube.Client.PatchMachineSetStatus); under JSON merge-patch
+	// semantics an absent key never clears a previously-set value, so a
+	// recovered MachineSet would keep showing a stale error forever.
+	Message string `json:"message"`
 }
