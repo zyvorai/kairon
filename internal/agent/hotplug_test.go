@@ -129,6 +129,157 @@ func TestReconcileHotplugDoesNotAdvanceAppliedOnFailure(t *testing.T) {
 	}
 }
 
+// hotplugMachineOnNode is hotplugMachine plus a real spec.nodeName --
+// quotaBlocksResize's own MachineCountsTowardQuota guard requires one
+// (matching a real, already-scheduled Machine kairon-node would actually
+// be hotplug-reconciling), so these quota-specific tests need it set,
+// unlike hotplugMachine's own fixture above.
+func hotplugMachineOnNode(cpu, memory string, appliedVCPUs uint32, appliedMemoryMiB uint64) model.Machine {
+	m := hotplugMachine(cpu, memory, appliedVCPUs, appliedMemoryMiB)
+	m.Spec.NodeName = "worker-1"
+	return m
+}
+
+func kubeServerWithQuotas(t *testing.T, quotas []model.MachineQuota, machines []model.Machine) *kube.Client {
+	t.Helper()
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas":
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: quotas})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: machines})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(ks.Close)
+	kc, err := kube.New(ks.URL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc.HTTP = ks.Client()
+	return kc
+}
+
+func TestReconcileHotplugBlockedByMachineQuota(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("FluxVM should not be called when the resize is blocked by quota, got %s %s", r.Method, r.URL.Path)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+
+	m := hotplugMachineOnNode("8", "4Gi", 2, 2048) // requesting 8 vcpus, up from 2
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "q", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxTotalCPU: "4"}, // m's own target (8) alone already exceeds this
+	}
+	kc := kubeServerWithQuotas(t, []model.MachineQuota{quota}, []model.Machine{m})
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	vcpus, memMiB, err := a.reconcileHotplug(context.Background(), m, &fluxvm.Record{UUID: "vm-1"}, false)
+	if err != nil {
+		t.Fatalf("reconcileHotplug: %v", err)
+	}
+	if vcpus != 2 || memMiB != 2048 {
+		t.Fatalf("expected applied totals to stay unchanged when blocked by quota, got vcpus=%d memMiB=%d", vcpus, memMiB)
+	}
+}
+
+func TestReconcileHotplugAllowedWithinMachineQuota(t *testing.T) {
+	var gotCPUCall bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/hotplug/cpu":
+			gotCPUCall = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"vcpus": 4})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+
+	m := hotplugMachineOnNode("4", "2Gi", 2, 2048) // requesting 4 vcpus, up from 2
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "q", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxTotalCPU: "8"}, // comfortably within
+	}
+	kc := kubeServerWithQuotas(t, []model.MachineQuota{quota}, []model.Machine{m})
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	vcpus, _, err := a.reconcileHotplug(context.Background(), m, &fluxvm.Record{UUID: "vm-1"}, false)
+	if err != nil {
+		t.Fatalf("reconcileHotplug: %v", err)
+	}
+	if vcpus != 4 {
+		t.Fatalf("expected the resize to proceed (vcpus=4), got %d", vcpus)
+	}
+	if !gotCPUCall {
+		t.Fatal("expected FluxVM's hotplug/cpu to actually be called")
+	}
+}
+
+func TestReconcileHotplugProceedsWhenNoMachineQuotaInNamespace(t *testing.T) {
+	var gotCPUCall bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCPUCall = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"vcpus": 4})
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+
+	m := hotplugMachineOnNode("4", "2Gi", 2, 2048)
+	kc := kubeServerWithQuotas(t, nil, []model.Machine{m}) // no MachineQuota objects at all
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	vcpus, _, err := a.reconcileHotplug(context.Background(), m, &fluxvm.Record{UUID: "vm-1"}, false)
+	if err != nil {
+		t.Fatalf("reconcileHotplug: %v", err)
+	}
+	if vcpus != 4 || !gotCPUCall {
+		t.Fatalf("expected the resize to proceed normally with no MachineQuota configured, got vcpus=%d called=%v", vcpus, gotCPUCall)
+	}
+}
+
+func TestReconcileHotplugFailsOpenWhenQuotaLookupErrors(t *testing.T) {
+	var gotCPUCall bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCPUCall = true
+		_ = json.NewEncoder(w).Encode(map[string]any{"vcpus": 4})
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+
+	// A ServiceAccount without the machinequotas RBAC this check needs
+	// (e.g. a binary upgraded ahead of its chart) sees this as a 403 --
+	// must fail open (proceed with the resize, same as always) rather
+	// than newly blocking hotplug on infrastructure this check itself
+	// depends on.
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+	}))
+	defer ks.Close()
+	kc, err := kube.New(ks.URL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc.HTTP = ks.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := hotplugMachineOnNode("4", "2Gi", 2, 2048)
+	vcpus, _, err := a.reconcileHotplug(context.Background(), m, &fluxvm.Record{UUID: "vm-1"}, false)
+	if err != nil {
+		t.Fatalf("reconcileHotplug: %v", err)
+	}
+	if vcpus != 4 || !gotCPUCall {
+		t.Fatalf("expected the resize to proceed (fail open) when the quota lookup itself errors, got vcpus=%d called=%v", vcpus, gotCPUCall)
+	}
+}
+
 func TestReconcileMachineEndToEndTracksAppliedResourcesAndHotplugs(t *testing.T) {
 	machine := model.Machine{
 		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},

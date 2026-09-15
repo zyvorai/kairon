@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -48,7 +49,37 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 		return targetVCPUs, targetMemoryMiB, nil
 	}
 
-	if targetVCPUs > appliedVCPUs {
+	growingCPU := targetVCPUs > appliedVCPUs
+	growingMemory := targetMemoryMiB > appliedMemoryMiB
+	if growingCPU || growingMemory {
+		// Self-check against MachineQuota before actually growing --
+		// closes a real gap: the admission webhook already enforces this
+		// on the same spec.resources UPDATE, but only when webhook.enabled
+		// is set (off by default), and kairon-node's own hotplug
+		// reconciliation had no cluster-wide quota visibility of its own
+		// before this existed. Independent of webhook.enabled -- this
+		// runs regardless, so a resize past quota is caught even on a
+		// deployment that has never turned the webhook on. Fails open
+		// (logs a warning, proceeds with the resize) on any lookup error
+		// -- most commonly a kairon-node ServiceAccount that hasn't yet
+		// been granted the new read-only machinequotas RBAC this needs
+		// (a binary upgraded ahead of its chart) -- rather than newly
+		// blocking a resize that always worked before on account of
+		// infrastructure this check itself depends on.
+		if blocked, reason := a.quotaBlocksResize(ctx, m, targetVCPUs, targetMemoryMiB); blocked {
+			a.Log.Warn("hotplug resize blocked by MachineQuota", "machine", m.Metadata.Name, "namespace", m.Namespace(), "reason", reason)
+			if growingCPU {
+				targetVCPUs = appliedVCPUs
+				growingCPU = false
+			}
+			if growingMemory {
+				targetMemoryMiB = appliedMemoryMiB
+				growingMemory = false
+			}
+		}
+	}
+
+	if growingCPU {
 		newTotal, err := a.Flux.HotplugCPU(ctx, rec.ID(), targetVCPUs-appliedVCPUs)
 		if err != nil {
 			return appliedVCPUs, appliedMemoryMiB, fmt.Errorf("hotplug cpu: %w", err)
@@ -59,7 +90,7 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 			"machine", m.Metadata.Name, "applied", appliedVCPUs, "requested", targetVCPUs)
 	}
 
-	if targetMemoryMiB > appliedMemoryMiB {
+	if growingMemory {
 		newTotal, err := a.Flux.HotplugMemory(ctx, rec.ID(), targetMemoryMiB-appliedMemoryMiB)
 		if err != nil {
 			return appliedVCPUs, appliedMemoryMiB, fmt.Errorf("hotplug memory: %w", err)
@@ -70,4 +101,55 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 			"machine", m.Metadata.Name, "applied", appliedMemoryMiB, "requested", targetMemoryMiB)
 	}
 	return appliedVCPUs, appliedMemoryMiB, nil
+}
+
+// quotaBlocksResize reports whether m's namespace's MachineQuota (if any)
+// is already exceeded once m's own footprint is counted at
+// (targetVCPUs, targetMemoryMiB) -- i.e. whether kairon-node should refuse
+// to actually realize a resize m's own spec.resources is already asking
+// for.
+//
+// Reuses internal/controller's own admission logic
+// (QuotaTrackersForNamespace/AdmitQuotaResize) rather than reimplementing
+// it, so this can never drift from what the admission webhook itself
+// would decide for the identical UPDATE -- but with one real difference
+// in how it's called, worth spelling out precisely rather than getting
+// subtly wrong: the webhook runs *before* a resize is persisted, so its
+// own QuotaTrackersForNamespace call sees every Machine (including the
+// one being resized) at its OLD, still-in-effect footprint, and passes
+// that as AdmitQuotaResize's (old, new) pair. Here, by contrast, m has
+// already been persisted with spec.resources at the NEW (target) value
+// by the time kairon-node ever sees it -- so QuotaTrackersForNamespace's
+// own fresh Machines list already counts m at target, not at what's
+// actually been hotplugged so far (status.appliedVCPUs/appliedMemoryMiB,
+// which FluxVM itself has no record of at all -- see reconcileHotplug's
+// own comment). Passing (target, target) as AdmitQuotaResize's (old, new)
+// arguments exploits that already-seeded value exactly: the function's
+// own `used - old + new` arithmetic collapses to `used - target + target`
+// = `used`, i.e. "is the total, which already includes m at its target
+// footprint, over the limit" -- precisely the question that needs
+// answering here, with no double-counting. Passing
+// (appliedVCPUs, targetVCPUs) instead -- the more obviously-named pair --
+// would be wrong: it would subtract only the already-hotplugged amount
+// while the tracker already added the full target, inflating usage by
+// (target - applied) and blocking resizes that shouldn't be blocked.
+//
+// Fails open (blocked=false) on any lookup error -- see
+// reconcileHotplug's own comment for why.
+func (a *Agent) quotaBlocksResize(ctx context.Context, m model.Machine, targetVCPUs uint32, targetMemoryMiB uint64) (blocked bool, reason string) {
+	if !controller.MachineCountsTowardQuota(m) {
+		return false, ""
+	}
+	trackers, ok, err := controller.QuotaTrackersForNamespace(ctx, a.Kube, m.Namespace())
+	if err != nil {
+		a.Log.Warn("listing MachineQuotas for hotplug resize check failed; proceeding without this check", "machine", m.Metadata.Name, "namespace", m.Namespace(), "error", err)
+		return false, ""
+	}
+	if !ok {
+		return false, ""
+	}
+	if reason := controller.AdmitQuotaResize(trackers, m.Namespace(), targetVCPUs, targetVCPUs, targetMemoryMiB, targetMemoryMiB); reason != "" {
+		return true, reason
+	}
+	return false, ""
 }

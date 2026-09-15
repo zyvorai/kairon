@@ -154,7 +154,7 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := validateImageSource(m.Spec.Image); err != nil {
 		return admission.Deny(err.Error())
 	}
-	trackers, ok, err := c.quotaTrackersForNamespace(r.Context(), req.Namespace)
+	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
 	}
@@ -185,51 +185,25 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	if err := json.Unmarshal(req.Object, &newM); err != nil {
 		return admission.Deny(fmt.Sprintf("decode Machine: %v", err))
 	}
-	if !machineCountsTowardQuota(oldM) {
+	if !MachineCountsTowardQuota(oldM) {
 		return admission.Allow()
 	}
-	oldCPU, oldMem := machineFootprint(oldM)
-	newCPU, newMem := machineFootprint(newM)
+	oldCPU, oldMem := MachineFootprint(oldM)
+	newCPU, newMem := MachineFootprint(newM)
 	if newCPU <= oldCPU && newMem <= oldMem {
 		return admission.Allow()
 	}
-	trackers, ok, err := c.quotaTrackersForNamespace(r.Context(), req.Namespace)
+	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
 	}
 	if !ok {
 		return admission.Allow()
 	}
-	if blocker := admitQuotaResize(trackers, req.Namespace, oldCPU, newCPU, oldMem, newMem); blocker != "" {
+	if blocker := AdmitQuotaResize(trackers, req.Namespace, oldCPU, newCPU, oldMem, newMem); blocker != "" {
 		return admission.Deny(blocker)
 	}
 	return admission.Allow()
-}
-
-// quotaTrackersForNamespace lists MachineQuotas and Machines for
-// namespace and seeds trackers from them -- the shared I/O sequence
-// behind both validateMachineCreate and validateMachineResize. ok is
-// false only when the caller should short-circuit straight to Allow()
-// without denying anything: no MachineQuota exists in this namespace at
-// all, so there's nothing to enforce and no reason to pay for the extra
-// ListMachines call.
-func (c *Controller) quotaTrackersForNamespace(ctx context.Context, namespace string) (trackers map[string][]*quotaTracker, ok bool, err error) {
-	quotas, err := c.Kube.ListMachineQuotasNamespace(ctx, namespace)
-	if err != nil {
-		return nil, false, fmt.Errorf("list MachineQuotas: %w", err)
-	}
-	if len(quotas) == 0 {
-		return nil, false, nil
-	}
-	machines, err := c.Kube.ListMachinesNamespace(ctx, namespace)
-	if err != nil {
-		return nil, false, fmt.Errorf("list Machines: %w", err)
-	}
-	trackers, err = buildQuotaTrackers(quotas, machines)
-	if err != nil {
-		return nil, false, err
-	}
-	return trackers, true, nil
 }
 
 // validateMachineMigration only applies to CREATE: a MachineMigration is

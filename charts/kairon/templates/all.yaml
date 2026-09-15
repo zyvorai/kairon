@@ -113,6 +113,15 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status"]
     verbs: ["get", "list", "watch", "patch"]
+  # Read-only: internal/agent/hotplug.go's own resize-past-quota self-check
+  # (independent of webhook.enabled) needs to list MachineQuotas/Machines
+  # cluster-wide the same way the admission webhook's own equivalent check
+  # already does -- see internal/controller/quota.go's QuotaTrackersForNamespace,
+  # reused directly by both. Never writes a MachineQuota -- kairon-controller's
+  # own machinequotas/status patch grant is unaffected.
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinequotas"]
+    verbs: ["get", "list"]
   - apiGroups: ["resource.k8s.io"]
     resources: ["resourceclaims"]
     verbs: ["get"]

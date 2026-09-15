@@ -168,7 +168,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil && !kube.IsNotFound(err) {
 		return err
 	}
-	quotaTrackers, err := buildQuotaTrackers(quotas, machines)
+	quotaTrackers, err := BuildQuotaTrackers(quotas, machines)
 	if err != nil {
 		return err
 	}
