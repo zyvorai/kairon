@@ -102,6 +102,13 @@ spec:
                     minimum: 0
                   cpuSet:
                     type: string
+                  cpuPinning:
+                    type: boolean
+                  allocatedCpuSet:
+                    type: array
+                    items:
+                      type: integer
+                      minimum: 0
                   limits:
                     type: object
                     properties:
@@ -120,6 +127,11 @@ spec:
                         type: integer
                         format: int64
                         minimum: 1
+                      cpuSetCpus:
+                        type: array
+                        items:
+                          type: integer
+                          minimum: 0
               runtime:
                 type: object
                 properties:
@@ -437,6 +449,11 @@ spec:
                   pidsMax:
                     type: integer
                     format: int64
+                  cpuSetCpus:
+                    type: array
+                    items:
+                      type: integer
+                      minimum: 0
               resourceUsage:
                 type: object
                 properties:

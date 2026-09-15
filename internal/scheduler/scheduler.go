@@ -272,7 +272,72 @@ func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, m
 			return false
 		}
 	}
+	if m.Spec.Resources.CPUPinning {
+		requested, err := model.ParseVCPUs(m.Spec.Resources.CPU)
+		if err != nil {
+			return false // an unparseable spec.resources.cpu is caught elsewhere with a real error; just not eligible here
+		}
+		if uint32(len(freePinnableCPUs(n, machines))) < requested {
+			return false
+		}
+	}
 	return true
+}
+
+// freePinnableCPUs returns a candidate node's PinnableCPUsLabel-asserted
+// CPU numbers minus whatever every OTHER already-assigned Machine on that
+// node has already exclusively claimed via its own
+// spec.resources.allocatedCpuSet -- the real capacity check a
+// CPUPinning-requesting Machine's eligibility depends on. A node with no
+// (or an unparseable) PinnableCPUsLabel has zero pinnable CPUs -- fail
+// closed, the same posture an empty KAIRON_VFIO_ALLOWLIST already has.
+func freePinnableCPUs(n model.Node, machines []model.Machine) []uint32 {
+	pinnable, err := model.ParseCPUList(n.Metadata.Labels[model.PinnableCPUsLabel])
+	if err != nil || len(pinnable) == 0 {
+		return nil
+	}
+	used := map[uint32]struct{}{}
+	for _, other := range machines {
+		if other.Spec.NodeName != n.Metadata.Name || other.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		for _, cpu := range other.Spec.Resources.AllocatedCPUSet {
+			used[cpu] = struct{}{}
+		}
+	}
+	free := make([]uint32, 0, len(pinnable))
+	for _, cpu := range pinnable {
+		if _, ok := used[cpu]; !ok {
+			free = append(free, cpu)
+		}
+	}
+	return free
+}
+
+// AllocateCPUSet picks the exact host CPU numbers a CPUPinning Machine
+// exclusively owns on the node Choose already picked -- called once,
+// immediately after Choose returns, from the same scheduling pass (so the
+// "which node" and "which cores" decisions are made from the same
+// snapshot of machines and can be patched atomically by the caller).
+// Deterministic first-fit over freePinnableCPUs's own ascending order --
+// simple and reproducible, not attempting NUMA-locality-aware selection
+// even when spec.resources.numaNode is also set (a real, documented
+// first-cut limit: combining cpuPinning with numaNode doesn't
+// cross-validate that the chosen cores actually sit in the requested NUMA
+// node). Returns an error if the node no longer has enough free CPUs --
+// possible if machines changed between eligible's own check and this call
+// within the same reconcile pass, though ordinarily eligible already
+// guarantees this succeeds.
+func AllocateCPUSet(m model.Machine, node model.Node, machines []model.Machine) ([]uint32, error) {
+	requested, err := model.ParseVCPUs(m.Spec.Resources.CPU)
+	if err != nil {
+		return nil, fmt.Errorf("spec.resources.cpu: %w", err)
+	}
+	free := freePinnableCPUs(node, machines)
+	if uint32(len(free)) < requested {
+		return nil, fmt.Errorf("node %q has only %d free pinnable CPU(s), %s requests %d", node.Metadata.Name, len(free), m.Metadata.Name, requested)
+	}
+	return free[:requested], nil
 }
 
 // termSatisfied reports whether at least one other Machine matching

@@ -275,17 +275,28 @@ type ResourceSpec struct {
 	// does and doesn't guarantee, and internal/fluxvm.Client.CreateWithVFIO
 	// for the qemu-backend-only enforcement.
 	//
-	// Deliberately no dedicatedCpuPlacement/exclusive-host-core-pinning
-	// field here -- FluxVM separately supports real host cgroup cpuset
-	// pinning (its own resize/ResourcePatch.cpuset_cpus), but allocating
-	// *specific*, non-overlapping host CPU numbers across every Machine
-	// competing for them on one node is a real capacity-allocator problem
-	// (the same shape VFIODevicesLabel's own doc comment already flags as
-	// out of scope for this project's current "no capacity model at all"
-	// scheduler) -- a bigger, separate design, not attempted here.
 	Hugepages bool   `json:"hugepages,omitempty"`
 	NUMANode  *int   `json:"numaNode,omitempty"`
 	CPUSet    string `json:"cpuSet,omitempty"`
+	// CPUPinning opts a Machine into real, exclusive host-core allocation
+	// -- distinct from CPUSet above, which is a pure guest-visible vNUMA
+	// hint with no host-side enforcement at all. When true,
+	// internal/scheduler allocates AllocatedCPUSet (below) from a node's
+	// operator-asserted PinnableCPUsLabel at scheduling time, as a real
+	// capacity filter (a node without enough free exclusive cores is
+	// ineligible), the capacity-allocator problem the CPUSet doc comment
+	// above used to flag as out of scope. QEMU-only, same as
+	// Hugepages/NUMANode/CPUSet. See docs/guides/machine-cpu-pinning.md.
+	CPUPinning bool `json:"cpuPinning,omitempty"`
+	// AllocatedCPUSet is the scheduler's own decision of exactly which
+	// host CPU numbers this Machine exclusively owns -- system-computed,
+	// the same "user doesn't set this, the scheduler fills it in" relationship
+	// spec.nodeName itself already has, not an operator-facing request
+	// field. Patched atomically alongside spec.nodeName by
+	// internal/controller at scheduling time (never by kairon-node), so
+	// the two can never land separately. See status.appliedCpuSet for
+	// confirmation this was actually written to the cgroup.
+	AllocatedCPUSet []uint32 `json:"allocatedCpuSet,omitempty"`
 	// Limits is a live, mutable host-side cap on the Machine's already-running
 	// VMM process cgroup -- a ceiling the host enforces, distinct from CPU/
 	// Memory above (which describe what the *guest* sees, realized via boot-time
@@ -302,13 +313,7 @@ type ResourceSpec struct {
 
 // ResourceLimits are host cgroup v2 controls for an already-running Machine
 // -- see ResourceSpec.Limits's own doc comment for why this is a separate,
-// live-mutable field rather than a creation-time-only one. Deliberately no
-// CPUSetCPUs field here, matching ResourceSpec's own already-documented
-// reasoning for excluding cpuset pinning: allocating *specific*,
-// non-overlapping host CPU numbers across every Machine competing for them
-// on one node is a real capacity-allocator problem internal/scheduler
-// doesn't solve today, not something to expose here just because FluxVM's
-// own ResourcePatch happens to support it.
+// live-mutable field rather than a creation-time-only one.
 type ResourceLimits struct {
 	// CPUQuotaPercent caps CPU as a percentage of one host core (200 = 2
 	// full cores) -- FluxVM's own cgroup v2 cpu.max, translated from a
@@ -327,6 +332,14 @@ type ResourceLimits struct {
 	// process's own cgroup (pids.max) -- a containment bound against a
 	// runaway guest/VMM process tree, not a guest-visible limit.
 	PIDsMax *uint64 `json:"pidsMax,omitempty"`
+	// CPUSetCPUs is a real cgroup v2 cpuset.cpus write -- exact,
+	// exclusive host core numbers, FluxVM's own ResourcePatch.cpuset_cpus.
+	// Populated from spec.resources.allocatedCpuSet by
+	// internal/agent/resourcelimits.go once the scheduler has made an
+	// allocation decision (see ResourceSpec.CPUPinning) -- never set
+	// directly by a Machine author the way the other fields in this
+	// struct are.
+	CPUSetCPUs []uint32 `json:"cpuSetCpus,omitempty"`
 }
 
 // ResourceUsage mirrors FluxVM's own VmMetrics exactly (GET

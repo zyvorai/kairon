@@ -497,6 +497,44 @@ func TestSetResourceLimitsOnlySendsSetFields(t *testing.T) {
 	}
 }
 
+func TestSetResourceLimitsSendsCPUSetCPUsWhenSet(t *testing.T) {
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	if err := c.SetResourceLimits(context.Background(), "vm-1", model.ResourceLimits{CPUSetCPUs: []uint32{2, 3, 4}}); err != nil {
+		t.Fatal(err)
+	}
+	cpus, ok := gotBody["cpuset_cpus"].([]any)
+	if !ok || len(cpus) != 3 || cpus[0] != float64(2) || cpus[1] != float64(3) || cpus[2] != float64(4) {
+		t.Fatalf("unexpected cpuset_cpus: %+v", gotBody["cpuset_cpus"])
+	}
+}
+
+func TestSetResourceLimitsOmitsCPUSetCPUsWhenEmpty(t *testing.T) {
+	var gotBody map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+
+	cpu := uint32(200)
+	if err := c.SetResourceLimits(context.Background(), "vm-1", model.ResourceLimits{CPUQuotaPercent: &cpu}); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasCPUSet := gotBody["cpuset_cpus"]; hasCPUSet {
+		t.Fatalf("did not expect cpuset_cpus to be sent when unset, got %+v", gotBody)
+	}
+}
+
 func TestSetResourceLimitsPropagatesErrors(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "VM has no cgroup (not running)", http.StatusBadRequest)

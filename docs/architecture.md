@@ -76,6 +76,23 @@ Kubernetes SR-IOV integration path) doesn't apply here at all -- its whole
 mechanism wires extra interfaces into a Pod's network namespace, and a
 Machine has no Pod for it to attach to.
 
+## Real CPU pinning
+
+`internal/scheduler` gained a real capacity model, opt-in via
+`spec.resources.cpuPinning`: a node's operator-asserted
+`kairon.zyvor.dev/pinnable-cpus` label (the same "operator asserts a fact
+Kairon can't otherwise know" shape DRA/VFIO's own allowlist and the
+storage/network domain labels already use) becomes a real hard filter at
+scheduling time, and `AllocateCPUSet` deterministically picks exact core
+numbers from a candidate node's free set (its label minus every other
+already-assigned Machine's own `spec.resources.allocatedCpuSet`) in the
+same scheduling pass `Choose` uses -- node assignment and core allocation
+are patched to the Machine atomically, in one call, so they can never land
+separately. Deliberately does not attempt to read kubelet's own internal
+CPU Manager state file (a known, fragile, unsupported community pattern)
+-- the operator-asserted label already carries that responsibility. See
+[guides/machine-cpu-pinning.md](guides/machine-cpu-pinning.md).
+
 ## Day-2 operations on a running Machine
 
 `spec.cloudInit` (SSH keys, hostname, packages, first-boot commands) and

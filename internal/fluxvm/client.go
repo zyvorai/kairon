@@ -401,6 +401,9 @@ func (c *Client) SetResourceLimits(ctx context.Context, id string, limits model.
 	if limits.PIDsMax != nil {
 		payload["pids_max"] = *limits.PIDsMax
 	}
+	if len(limits.CPUSetCPUs) > 0 {
+		payload["cpuset_cpus"] = limits.CPUSetCPUs
+	}
 	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/resources", payload)
 	return err
 }

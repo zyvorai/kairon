@@ -209,7 +209,34 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": node}}); err != nil {
+		specPatch := map[string]any{"nodeName": node}
+		if m.Spec.Resources.CPUPinning {
+			// Allocated in the same scheduling pass Choose's own
+			// eligibility check already used (the same machines/nodes
+			// snapshot), so "which node" and "which cores" are decided
+			// together and patched in one call below -- they can never
+			// land separately. See scheduler.AllocateCPUSet's own doc
+			// comment for why this doesn't attempt NUMA-aware selection.
+			var chosenNode model.Node
+			for _, n := range nodes {
+				if n.Metadata.Name == node {
+					chosenNode = n
+					break
+				}
+			}
+			cpuset, err := scheduler.AllocateCPUSet(m, chosenNode, machines)
+			if err != nil {
+				status := m.Status
+				status.Phase = "Pending"
+				status.Message = err.Error()
+				if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
+					c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
+				}
+				continue
+			}
+			specPatch["resources"] = map[string]any{"allocatedCpuSet": cpuset}
+		}
+		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": specPatch}); err != nil {
 			return err
 		}
 		assigned[node]++
