@@ -158,3 +158,33 @@ groups:
             message -- raise the MachineQuota's limit, or free capacity,
             before that happens.
           runbook: "docs/guides/machine-quotas.md"
+
+  # A MachineDisruptionBudget sitting at 0 disruptions allowed previously
+  # had no proactive signal either -- an operator only found out once a
+  # `kaironctl evacuate` (or, with webhook.enabled, a MachineMigration
+  # create) was already refused with a "0 disruptions allowed" message.
+  # This group closes that the same way kairon-quotas closes it for
+  # MachineQuota, using kairon_disruption_budget_status (internal/metrics,
+  # kairon-controller only -- see ObserveDisruptionBudgets). Unlike
+  # KaironQuotaNearLimit, this fires at exhaustion (disruptions_allowed
+  # == 0) rather than approaching it -- disruptions_allowed is a small
+  # integer count with no fixed "hard limit" to take a ratio against, so
+  # "sustained at 0" is the meaningful threshold, not a percentage.
+  - name: kairon-disruption-budgets
+    rules:
+      - alert: KaironDisruptionBudgetExhausted
+        expr: kairon_disruption_budget_status{field="disruptions_allowed"} == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "MachineDisruptionBudget {{ $labels.namespace }}/{{ $labels.budget }} has had 0 disruptions allowed for 10 minutes"
+          description: >-
+            Every Machine matching this budget's selector is currently
+            protected -- `kaironctl evacuate` (and, with webhook.enabled,
+            a new MachineMigration) against a matching Machine will be
+            refused with a "0 disruptions allowed" message until enough
+            Machines are healthy again. severity: info, not warn/page,
+            because this is often working-as-intended (e.g. mid rolling
+            node drain) rather than a problem to fix.
+          runbook: "docs/guides/machine-disruption-budgets.md"

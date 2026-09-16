@@ -122,6 +122,17 @@ func AdmitDisruption(states []*BudgetState, machine model.Machine) string {
 // individual PatchMachineDisruptionBudgetStatus failure is logged and
 // skipped so one bad write doesn't stop every other budget's status from
 // updating.
+//
+// observed carries each budget with its freshly-computed Status() attached
+// -- exactly the same values PatchMachineDisruptionBudgetStatus above wrote
+// to the real object -- and is handed to Metrics.ObserveDisruptionBudgets
+// so kairon_disruption_budget_status never reports numbers that disagree
+// with what `kubectl get machinedisruptionbudget` would show for the same
+// tick, same pattern as controller.go's observedQuotas/ObserveQuotas. A
+// budget whose status patch itself failed is still observed with the
+// computed (not the possibly-stale-in-etcd) status, since the metric's job
+// is to reflect what Kairon just computed, not to second-guess whether the
+// write landed.
 func (c *Controller) reconcileDisruptionBudgetsStatus(ctx context.Context, machines []model.Machine, migrations []model.MachineMigration) error {
 	budgets, err := c.Kube.ListMachineDisruptionBudgets(ctx)
 	if err != nil {
@@ -134,11 +145,17 @@ func (c *Controller) reconcileDisruptionBudgetsStatus(ctx context.Context, machi
 	if err != nil {
 		return err
 	}
+	observed := make([]model.MachineDisruptionBudget, 0, len(states))
 	for _, st := range states {
 		b := st.Budget()
-		if statusErr := c.Kube.PatchMachineDisruptionBudgetStatus(ctx, b.Namespace(), b.Metadata.Name, st.Status()); statusErr != nil {
+		b.Status = st.Status()
+		observed = append(observed, b)
+		if statusErr := c.Kube.PatchMachineDisruptionBudgetStatus(ctx, b.Namespace(), b.Metadata.Name, b.Status); statusErr != nil {
 			c.Log.Error("machine disruption budget status patch failed", "namespace", b.Namespace(), "budget", b.Metadata.Name, "error", statusErr)
 		}
+	}
+	if c.Metrics != nil {
+		c.Metrics.ObserveDisruptionBudgets(observed)
 	}
 	return nil
 }

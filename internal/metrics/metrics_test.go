@@ -178,6 +178,55 @@ func TestObserveQuotasPrunesRemovedQuotas(t *testing.T) {
 	}
 }
 
+func budget(ns, name string, expected, healthy, desired, allowed int) model.MachineDisruptionBudget {
+	return model.MachineDisruptionBudget{
+		Metadata: model.ObjectMeta{Name: name, Namespace: ns},
+		Status: model.MachineDisruptionBudgetStatus{
+			ExpectedMachines:   expected,
+			CurrentHealthy:     healthy,
+			DesiredHealthy:     desired,
+			DisruptionsAllowed: allowed,
+		},
+	}
+}
+
+func TestObserveDisruptionBudgetsReportsAllFourFields(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveDisruptionBudgets([]model.MachineDisruptionBudget{budget("prod", "web-tier", 3, 3, 2, 1)})
+
+	if got := testutil.ToFloat64(r.disruptionBudgetStatus.WithLabelValues("prod", "web-tier", "expected_machines")); got != 3 {
+		t.Errorf("expected_machines = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(r.disruptionBudgetStatus.WithLabelValues("prod", "web-tier", "current_healthy")); got != 3 {
+		t.Errorf("current_healthy = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(r.disruptionBudgetStatus.WithLabelValues("prod", "web-tier", "desired_healthy")); got != 2 {
+		t.Errorf("desired_healthy = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(r.disruptionBudgetStatus.WithLabelValues("prod", "web-tier", "disruptions_allowed")); got != 1 {
+		t.Errorf("disruptions_allowed = %v, want 1", got)
+	}
+}
+
+// TestObserveDisruptionBudgetsPrunesRemovedBudgets mirrors
+// TestObserveQuotasPrunesRemovedQuotas: a MachineDisruptionBudget that no
+// longer appears in the list (deleted, or the CRD listing failed and the
+// caller passed an empty slice) must not leave a stale series behind.
+func TestObserveDisruptionBudgetsPrunesRemovedBudgets(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveDisruptionBudgets([]model.MachineDisruptionBudget{budget("prod", "web-tier", 3, 3, 2, 1)})
+	if got := testutil.ToFloat64(r.disruptionBudgetStatus.WithLabelValues("prod", "web-tier", "disruptions_allowed")); got != 1 {
+		t.Fatalf("disruptions_allowed = %v, want 1", got)
+	}
+	r.ObserveDisruptionBudgets(nil)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), `budget="web-tier"`) {
+		t.Error("expected web-tier's series to be pruned once it's no longer observed")
+	}
+}
+
 func TestHandlerServesPrometheusExposition(t *testing.T) {
 	r := NewRecorder()
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")})
@@ -299,7 +348,8 @@ func TestNodeRecorderOmitsControllerOnlyMetrics(t *testing.T) {
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")}) // no-op: phaseCount is nil
 	r.ObserveWebhookDecision("machines", "CREATE", false)                            // no-op: webhookDecisions is nil
 	max := 1
-	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)}) // no-op: quotaResource is nil
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)})      // no-op: quotaResource is nil
+	r.ObserveDisruptionBudgets([]model.MachineDisruptionBudget{budget("prod", "a", 1, 1, 1, 0)}) // no-op: disruptionBudgetStatus is nil
 	r.ObserveReconcile(time.Millisecond, nil)
 	r.ObserveAPIRequest("GET", time.Millisecond, nil)
 
@@ -315,6 +365,9 @@ func TestNodeRecorderOmitsControllerOnlyMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, "kairon_quota_resource") {
 		t.Error("NewNodeRecorder should not expose MachineQuota utilization metrics")
+	}
+	if strings.Contains(body, "kairon_disruption_budget_status") {
+		t.Error("NewNodeRecorder should not expose MachineDisruptionBudget status metrics")
 	}
 	if !strings.Contains(body, "kairon_reconcile_duration_seconds") {
 		t.Error("NewNodeRecorder should expose reconcile metrics")
@@ -332,7 +385,8 @@ func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 	r.ObserveHTTPRequest("GET", "/api/v1/overview", 200, time.Millisecond)
 	r.ObserveAPIRequest("GET", time.Millisecond, nil)
 	max := 1
-	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)}) // no-op: quotaResource is nil
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)})      // no-op: quotaResource is nil
+	r.ObserveDisruptionBudgets([]model.MachineDisruptionBudget{budget("prod", "a", 1, 1, 1, 0)}) // no-op: disruptionBudgetStatus is nil
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -346,6 +400,9 @@ func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, "kairon_quota_resource") {
 		t.Error("NewUIRecorder should not expose MachineQuota utilization metrics")
+	}
+	if strings.Contains(body, "kairon_disruption_budget_status") {
+		t.Error("NewUIRecorder should not expose MachineDisruptionBudget status metrics")
 	}
 	if !strings.Contains(body, "kairon_ui_request_duration_seconds") {
 		t.Error("NewUIRecorder should expose its own HTTP request metrics")

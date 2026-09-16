@@ -60,9 +60,36 @@ self-checks quota for its own node's hotplug resizes) nor `kairon-ui` (no
 reconcile loop at all) has an equivalent of. See `docs/guides/machine-quotas.md`
 for the full picture, including the `KaironQuotaNearLimit` alert below.
 
+## `kairon_disruption_budget_status` (`kairon-controller` only)
+
+The same follow-on applied to the other resource that already computed
+real status every tick but never exposed it as a metric:
+`kairon-controller`'s `/metrics` now also exposes
+`kairon_disruption_budget_status{namespace, budget, field}`, one gauge per
+`MachineDisruptionBudget` status field (`field` is `expected_machines`,
+`current_healthy`, `desired_healthy`, or `disruptions_allowed`) --
+mirroring `kube-state-metrics`' own `kube_poddisruptionbudget_status_*`
+gauges (four separate metric names there, collapsed here into one vector
+via the `field` label, the same collapsing `kairon_quota_resource` already
+does with its own `type` label). Recorded once per `Reconcile` tick
+(`internal/metrics.Recorder.ObserveDisruptionBudgets`, called from
+`internal/controller/disruption.go`'s `reconcileDisruptionBudgetsStatus`),
+from the exact same `BudgetState.Status()` values that tick patches onto
+each `MachineDisruptionBudget`'s own `status.*` fields -- never a second,
+independently-computed number that could drift from what
+`kubectl get machinedisruptionbudget` shows for the same tick.
+
+Why `kairon-controller`-only: same reason as `kairon_quota_resource` above
+-- this needs the cluster-wide `MachineDisruptionBudget`/`Machine`/
+`MachineMigration` listing `LoadBudgetStates` already does
+(`internal/controller/disruption.go`), which neither `kairon-node` nor
+`kairon-ui` has an equivalent of. See
+`docs/guides/machine-disruption-budgets.md` for the full picture,
+including the `KaironDisruptionBudgetExhausted` alert below.
+
 ## Alerts
 
-`charts/kairon/alerts.yaml` now has three rule groups:
+`charts/kairon/alerts.yaml` now has four rule groups:
 
 - **`kairon-migrations`** (unchanged) -- the original four alerts, all
   pointing at `docs/runbook-migration-failures.md`.
@@ -86,6 +113,22 @@ for the full picture, including the `KaironQuotaNearLimit` alert below.
   "MachineQuota ... reached" message. `severity: warn`, pointed at
   `docs/guides/machine-quotas.md` rather than a dedicated runbook (there's
   nothing to debug -- raise the limit or free capacity).
+- **`kairon-disruption-budgets`** (new) -- one alert,
+  `KaironDisruptionBudgetExhausted`: a `MachineDisruptionBudget`'s
+  `disruptions_allowed` (`kairon_disruption_budget_status`, see above) has
+  stayed at `0` for 10 minutes. Unlike `KaironQuotaNearLimit`, this fires
+  *at* exhaustion rather than approaching it -- `disruptions_allowed`
+  swings between `0` and a positive number as Machines matching the
+  budget's selector come and go, so a "near" threshold on a small integer
+  count would either never fire (rounding) or fire on every ordinary dip;
+  `== 0` sustained for 10 minutes is the meaningful signal instead ("this
+  budget is currently blocking every `kaironctl evacuate`/webhook-admitted
+  disruption against it," not "it dipped to 0 for one reconcile tick").
+  `severity: info`, same rationale as `KaironWebhookDenyRateHigh`: a
+  disruption budget sitting at 0 is working-as-intended during, say, a
+  rolling node drain, not necessarily a problem -- pointed at
+  `docs/guides/machine-disruption-budgets.md` rather than a dedicated
+  runbook.
 
 Neither rule file distinguishes *which* `kairon-controller` or
 `kairon-node` instance fired, since `kairon_reconcile_*`/

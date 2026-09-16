@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -162,5 +164,52 @@ func TestReconcileDisruptionBudgetsStatusPatchesRealStatus(t *testing.T) {
 	want := model.MachineDisruptionBudgetStatus{ExpectedMachines: 2, CurrentHealthy: 2, DesiredHealthy: 1, DisruptionsAllowed: 1}
 	if got != want {
 		t.Fatalf("patched status = %+v, want %+v", got, want)
+	}
+}
+
+// TestReconcileDisruptionBudgetsStatusObservesMetrics confirms
+// reconcileDisruptionBudgetsStatus wires Metrics.ObserveDisruptionBudgets
+// into the same tick that patches MachineDisruptionBudget status, and that
+// what lands in kairon_disruption_budget_status matches what got patched --
+// not a second, independently-computed tally that could drift from it.
+// Mirrors TestReconcileObservesQuotaMetrics in controller_test.go.
+func TestReconcileDisruptionBudgetsStatusObservesMetrics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets" {
+			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: []model.MachineDisruptionBudget{webBudget("web-pdb", "1")}})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	rec := metrics.NewRecorder()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: rec}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running"), webMachine("web-2", "node-a", "Running")}
+	if err := ctl.reconcileDisruptionBudgetsStatus(context.Background(), machines, nil); err != nil {
+		t.Fatalf("reconcileDisruptionBudgetsStatus: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		`kairon_disruption_budget_status{budget="web-pdb",field="expected_machines",namespace="prod"} 2`,
+		`kairon_disruption_budget_status{budget="web-pdb",field="current_healthy",namespace="prod"} 2`,
+		`kairon_disruption_budget_status{budget="web-pdb",field="desired_healthy",namespace="prod"} 1`,
+		`kairon_disruption_budget_status{budget="web-pdb",field="disruptions_allowed",namespace="prod"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
 	}
 }

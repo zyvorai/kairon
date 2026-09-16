@@ -108,6 +108,28 @@ NAME       MINAVAILABLE  MAXUNAVAILABLE  EXPECTED  HEALTHY  DESIRED  ALLOWED
 web-tier   2             -               3         3        2        1
 ```
 
+## Prometheus metrics and alerting
+
+Until now, this status was only visible by polling `kubectl get mdb`/
+`kaironctl get budgets` (or the dashboard) -- there was no proactive
+signal that a budget had dropped to 0 disruptions allowed until an
+`evacuate`/webhook-admitted disruption was actually refused.
+`kairon-controller` now also exposes
+`kairon_disruption_budget_status{namespace, budget, field}` (`field` is
+`expected_machines`/`current_healthy`/`desired_healthy`/
+`disruptions_allowed`), the exact same `status.*` values above, recorded
+once per `Reconcile` right alongside that status patch so the two can
+never disagree. `charts/kairon/alerts.yaml`'s new
+`kairon-disruption-budgets` group (`KaironDisruptionBudgetExhausted`)
+fires once `disruptions_allowed` has stayed at `0` for 10 minutes on any
+namespace/budget -- `severity: info`, since a budget sitting at 0 is
+often working-as-intended (mid rolling node drain) rather than a problem.
+See `docs/guides/observability.md` for which component(s) expose which
+metrics overall -- this one is `kairon-controller`-only, mirroring the
+reconcile loop's own cluster-wide `ListMachineDisruptionBudgets`/
+`LoadBudgetStates` visibility (neither `kairon-node` nor `kairon-ui` has
+an equivalent view to report from).
+
 ## How `evacuate` uses it
 
 For every Machine on the node being evacuated:
