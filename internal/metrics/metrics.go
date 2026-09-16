@@ -3,17 +3,18 @@
 
 // Package metrics exposes Prometheus metrics for Kairon's components.
 // kairon-controller's Recorder (NewRecorder) additionally covers its
-// unique cluster-wide view of MachineMigration, MachineQuota, and
-// MachineDisruptionBudget state, since Controller.Reconcile already lists
-// every MachineMigration, MachineQuota, and MachineDisruptionBudget every
-// tick; kairon-node (NewNodeRecorder) and kairon-ui (NewUIRecorder) get a
-// smaller, purpose-specific subset instead of the full controller set, so
-// neither exposes migration-lifecycle, quota-utilization, or
-// disruption-budget metrics it has no way to keep meaningful (a node's
+// unique cluster-wide view of MachineMigration, MachineQuota,
+// MachineDisruptionBudget, and MachineSet state, since Controller.Reconcile
+// already lists every MachineMigration, MachineQuota,
+// MachineDisruptionBudget, and MachineSet every tick; kairon-node
+// (NewNodeRecorder) and kairon-ui (NewUIRecorder) get a smaller,
+// purpose-specific subset instead of the full controller set, so neither
+// exposes migration-lifecycle, quota-utilization, disruption-budget, or
+// machineset-rollout metrics it has no way to keep meaningful (a node's
 // /metrics permanently reporting kairon_migration_phase_count=0, or
-// kairon_quota_resource/kairon_disruption_budget_status for a namespace it
-// has no cluster-wide visibility into, would be misleading, not just
-// unused).
+// kairon_quota_resource/kairon_disruption_budget_status/kairon_machineset_status
+// for a namespace it has no cluster-wide visibility into, would be
+// misleading, not just unused).
 // Every Recorder shares the same struct and Observe* methods; a method
 // whose backing metric wasn't registered by the constructor that built
 // this Recorder is simply a no-op (nil-checked), so callers never need to
@@ -71,6 +72,15 @@ type Recorder struct {
 	// per-tick recomputation of every MachineDisruptionBudget's status to
 	// report here.
 	disruptionBudgetStatus *prometheus.GaugeVec
+
+	// MachineSet rollout status -- only registered by NewRecorder
+	// (kairon-controller), see ObserveMachineSets. Same rationale as
+	// quotaResource/disruptionBudgetStatus: kairon-node never lists
+	// MachineSets at all (it only reconciles individual Machines already
+	// assigned to it), and kairon-ui has no reconcile loop of its own, so
+	// neither has a cluster-wide, per-tick recomputation of every
+	// MachineSet's rollout status to report here.
+	machineSetStatus *prometheus.GaugeVec
 
 	// Reconcile-loop metrics -- registered by NewRecorder and
 	// NewNodeRecorder (kairon-controller/kairon-node both run one), see
@@ -179,6 +189,16 @@ func NewRecorder() *Recorder {
 				"into a single vector the same way kairon_quota_resource collapses used/hard into one " +
 				"vector via its own type label.",
 		}, []string{"namespace", "budget", "field"}),
+		machineSetStatus: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "kairon_machineset_status",
+			Help: "MachineSet rollout status, by namespace, machineset name, and field " +
+				"(replicas/ready_replicas/updated_replicas) -- mirrors kube-state-metrics' own " +
+				"kube_replicaset_status_replicas/kube_replicaset_status_ready_replicas and " +
+				"kube_deployment_status_replicas_updated gauges (three separate metric names there), " +
+				"collapsed into a single vector via the field label, the same collapsing " +
+				"kairon_quota_resource/kairon_disruption_budget_status already do with their own " +
+				"type/field labels.",
+		}, []string{"namespace", "machineset", "field"}),
 		reconcileDuration:   reconcileDuration,
 		reconcileErrors:     reconcileErrors,
 		reconcileItemErrors: reconcileItemErrors,
@@ -192,7 +212,7 @@ func NewRecorder() *Recorder {
 		now:                time.Now,
 	}
 	reg.MustRegister(r.phaseCount, r.phaseAgeSeconds, r.completedTotal, r.transferDuration, r.cutoverDowntime, r.dataPlaneEncrypted,
-		r.quotaResource, r.disruptionBudgetStatus, r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.webhookDecisions, r.apiRequestDuration)
+		r.quotaResource, r.disruptionBudgetStatus, r.machineSetStatus, r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.webhookDecisions, r.apiRequestDuration)
 	return r
 }
 
@@ -379,6 +399,31 @@ func (r *Recorder) ObserveDisruptionBudgets(budgets []model.MachineDisruptionBud
 		r.disruptionBudgetStatus.WithLabelValues(ns, name, "current_healthy").Set(float64(b.Status.CurrentHealthy))
 		r.disruptionBudgetStatus.WithLabelValues(ns, name, "desired_healthy").Set(float64(b.Status.DesiredHealthy))
 		r.disruptionBudgetStatus.WithLabelValues(ns, name, "disruptions_allowed").Set(float64(b.Status.DisruptionsAllowed))
+	}
+}
+
+// ObserveMachineSets is a pure function of the current MachineSet list,
+// each carrying the exact status.replicas/readyReplicas/updatedReplicas
+// tallies that tick's reconcileMachineSets is about to (or just did) patch
+// onto the real object -- call it once per Reconcile tick, right alongside
+// the MachineSet status patches themselves
+// (internal/controller/machineset.go's reconcileMachineSets), the same
+// "Status already computed, just also hand it to metrics" shape
+// ObserveQuotas/ObserveDisruptionBudgets established.
+//
+// Like quotaResource/disruptionBudgetStatus, machineSetStatus is Reset()
+// first: a deleted MachineSet must stop reporting a stale series rather
+// than being left at its last-observed value forever.
+func (r *Recorder) ObserveMachineSets(machineSets []model.MachineSet) {
+	if r.machineSetStatus == nil {
+		return
+	}
+	r.machineSetStatus.Reset()
+	for _, ms := range machineSets {
+		ns, name := ms.Namespace(), ms.Metadata.Name
+		r.machineSetStatus.WithLabelValues(ns, name, "replicas").Set(float64(ms.Status.Replicas))
+		r.machineSetStatus.WithLabelValues(ns, name, "ready_replicas").Set(float64(ms.Status.ReadyReplicas))
+		r.machineSetStatus.WithLabelValues(ns, name, "updated_replicas").Set(float64(ms.Status.UpdatedReplicas))
 	}
 }
 

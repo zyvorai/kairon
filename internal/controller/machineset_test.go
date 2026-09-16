@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -103,7 +104,7 @@ func TestMachineSetTemplateHashIsStableAndSensitiveToChange(t *testing.T) {
 func TestReconcileMachineSetCreatesMissingReplicas(t *testing.T) {
 	ctl, fake := newMachineSetTestController(t)
 	ms := testMachineSet(3, "", "")
-	if err := ctl.reconcileMachineSet(context.Background(), ms, nil); err != nil {
+	if _, err := ctl.reconcileMachineSet(context.Background(), ms, nil); err != nil {
 		t.Fatalf("reconcileMachineSet: %v", err)
 	}
 	if len(fake.created) != 3 {
@@ -125,7 +126,7 @@ func TestReconcileMachineSetScalesDownExcessCurrentReplicas(t *testing.T) {
 	ms := testMachineSet(1, "", "")
 	hash := machineSetTemplateHash(ms.Spec.Template)
 	owned := []model.Machine{ownedMachine("ms1-a", hash, "Running"), ownedMachine("ms1-b", hash, "Running"), ownedMachine("ms1-c", hash, "Running")}
-	if err := ctl.reconcileMachineSet(context.Background(), ms, owned); err != nil {
+	if _, err := ctl.reconcileMachineSet(context.Background(), ms, owned); err != nil {
 		t.Fatalf("reconcileMachineSet: %v", err)
 	}
 	if len(fake.deleted) != 2 {
@@ -140,11 +141,77 @@ func TestReconcileMachineSetIgnoresMachinesFromOtherSets(t *testing.T) {
 	ctl, fake := newMachineSetTestController(t)
 	ms := testMachineSet(1, "", "")
 	unrelated := model.Machine{Metadata: model.ObjectMeta{Name: "other", Namespace: "prod", Labels: map[string]string{model.LabelMachineSet: "ms2"}}}
-	if err := ctl.reconcileMachineSet(context.Background(), ms, []model.Machine{unrelated}); err != nil {
+	if _, err := ctl.reconcileMachineSet(context.Background(), ms, []model.Machine{unrelated}); err != nil {
 		t.Fatalf("reconcileMachineSet: %v", err)
 	}
 	if len(fake.created) != 1 || len(fake.deleted) != 0 {
 		t.Fatalf("expected exactly 1 create and no deletes (unrelated Machine untouched), got created=%d deleted=%d", len(fake.created), len(fake.deleted))
+	}
+}
+
+// TestReconcileMachineSetsObservesMetrics confirms reconcileMachineSets
+// wires Metrics.ObserveMachineSets into the same tick that patches
+// MachineSet status, and that what lands in kairon_machineset_status
+// matches what got patched -- not a second, independently-computed tally
+// that could drift from it. Mirrors TestReconcileObservesQuotaMetrics
+// (controller_test.go) and TestReconcileDisruptionBudgetsStatusObservesMetrics
+// (disruption_test.go).
+func TestReconcileMachineSetsObservesMetrics(t *testing.T) {
+	ctl, _ := newMachineSetTestController(t)
+	rec := metrics.NewRecorder()
+	ctl.Metrics = rec
+
+	ms := testMachineSet(3, "", "")
+	hash := machineSetTemplateHash(ms.Spec.Template)
+	owned := []model.Machine{ownedMachine("ms1-a", hash, "Running"), ownedMachine("ms1-b", hash, "Pending")}
+
+	ctl.reconcileMachineSets(context.Background(), []model.MachineSet{ms}, owned)
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		`kairon_machineset_status{field="replicas",machineset="ms1",namespace="prod"} 2`,
+		`kairon_machineset_status{field="ready_replicas",machineset="ms1",namespace="prod"} 1`,
+		`kairon_machineset_status{field="updated_replicas",machineset="ms1",namespace="prod"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
+// TestReconcileMachineSetsObservesMetricsEvenOnStepError confirms the
+// replicas/readyReplicas/updatedReplicas tally reconcileMachineSet computed
+// from the Machine snapshot still reaches ObserveMachineSets even when
+// stepMachineSetToward's own create/delete call fails -- that tally is
+// real, already-listed Machine state independent of whether the attempted
+// mutation itself succeeded, the same "the count is real even if the write
+// wasn't" reasoning reconcileDisruptionBudgetsStatus's own observed slice
+// already relies on.
+func TestReconcileMachineSetsObservesMetricsEvenOnStepError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Every Machine create/delete/status-patch call fails outright, so
+		// reconcileMachineSet always returns a non-nil error.
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	rec := metrics.NewRecorder()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: rec}
+
+	ms := testMachineSet(3, "", "") // under-provisioned: 0 owned vs. 3 desired, always attempts a create
+	ctl.reconcileMachineSets(context.Background(), []model.MachineSet{ms}, nil)
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	if !strings.Contains(body, `kairon_machineset_status{field="replicas",machineset="ms1",namespace="prod"} 0`) {
+		t.Errorf("expected the pre-create owned count (0) to still be observed despite the create failing, got:\n%s", body)
 	}
 }
 

@@ -87,6 +87,36 @@ tick from this same pass -- `readyReplicas` counts current-template
 replicas whose `status.phase` is `Running`; `updatedReplicas` counts every
 current-template replica regardless of phase.
 
+## Metrics and alerts
+
+`kairon-controller`'s `/metrics` also exposes
+`kairon_machineset_status{namespace, machineset, field}`, one gauge per
+`field` (`replicas`/`ready_replicas`/`updated_replicas`) -- mirroring
+`kube-state-metrics`' own `kube_replicaset_status_replicas`/
+`kube_replicaset_status_ready_replicas`/`kube_deployment_status_replicas_updated`
+gauges, collapsed into a single vector the same way `kairon_quota_resource`/
+`kairon_disruption_budget_status` already collapse their own dimensions.
+Recorded once per `Reconcile` tick (`internal/metrics.Recorder.ObserveMachineSets`,
+called from `reconcileMachineSets` above) from the exact same tally that
+tick's `status` patch uses -- never a second, independently-computed number
+that could drift from what `kubectl get machineset` shows for the same
+tick. `kairon-controller`-only, for the same reason `kairon_quota_resource`
+is: `kairon-node` never lists `MachineSet`s cluster-wide (it only
+reconciles individual `Machine`s already assigned to it) and `kairon-ui`
+has no reconcile loop at all, so neither has a meaningful per-tick tally to
+report here. See `docs/guides/observability.md`.
+
+`charts/kairon/alerts.yaml`'s `kairon-machinesets` group adds
+`KaironMachineSetRolloutStuck`: `ready_replicas` below `replicas` for over
+30 minutes on some `MachineSet`, the same "sustained gap, not a transient
+blip" 30-minute threshold `KaironMigrationStuckInFlight` already uses for
+an in-flight migration. Previously the only signal a rollout had stalled
+was polling `kaironctl get machinesets`/`kubectl get machinesets` and
+noticing `READY` never catches up to `REPLICAS` -- this fires proactively
+instead. `severity: warn`, pointed at this page rather than a dedicated
+runbook (check `kubectl get machines -l kairon.zyvor.dev/machineset=<name>`
+for the specific stuck replica, per the "Real limits today" section below).
+
 ## Rollout strategy
 
 - **`RollingUpdate`** (the default): replaces outdated replicas

@@ -227,6 +227,60 @@ func TestObserveDisruptionBudgetsPrunesRemovedBudgets(t *testing.T) {
 	}
 }
 
+func machineSetWithStatus(ns, name string, replicas, ready, updated int) model.MachineSet {
+	return model.MachineSet{
+		Metadata: model.ObjectMeta{Name: name, Namespace: ns},
+		Status: model.MachineSetStatus{
+			Replicas:        replicas,
+			ReadyReplicas:   ready,
+			UpdatedReplicas: updated,
+		},
+	}
+}
+
+func TestObserveMachineSetsReportsAllThreeFields(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveMachineSets([]model.MachineSet{machineSetWithStatus("prod", "web", 3, 2, 3)})
+
+	if got := testutil.ToFloat64(r.machineSetStatus.WithLabelValues("prod", "web", "replicas")); got != 3 {
+		t.Errorf("replicas = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(r.machineSetStatus.WithLabelValues("prod", "web", "ready_replicas")); got != 2 {
+		t.Errorf("ready_replicas = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(r.machineSetStatus.WithLabelValues("prod", "web", "updated_replicas")); got != 3 {
+		t.Errorf("updated_replicas = %v, want 3", got)
+	}
+}
+
+// TestObserveMachineSetsPrunesRemovedMachineSets mirrors
+// TestObserveDisruptionBudgetsPrunesRemovedBudgets: a MachineSet that no
+// longer appears in the list (deleted, or the CRD listing failed and the
+// caller passed an empty slice) must not leave a stale series behind.
+func TestObserveMachineSetsPrunesRemovedMachineSets(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveMachineSets([]model.MachineSet{machineSetWithStatus("prod", "web", 3, 3, 3)})
+	if got := testutil.ToFloat64(r.machineSetStatus.WithLabelValues("prod", "web", "replicas")); got != 3 {
+		t.Fatalf("replicas = %v, want 3", got)
+	}
+	r.ObserveMachineSets(nil)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), `machineset="web"`) {
+		t.Error("expected web's series to be pruned once it's no longer observed")
+	}
+}
+
+// TestObserveMachineSetsNoopsOnNodeRecorder confirms ObserveMachineSets is
+// a safe no-op on a Recorder that never registered machineSetStatus
+// (NewNodeRecorder/NewUIRecorder) -- neither kairon-node nor kairon-ui has
+// a cluster-wide MachineSet listing to report on.
+func TestObserveMachineSetsNoopsOnNodeRecorder(t *testing.T) {
+	r := NewNodeRecorder()
+	r.ObserveMachineSets([]model.MachineSet{machineSetWithStatus("prod", "web", 3, 3, 3)})
+}
+
 func TestHandlerServesPrometheusExposition(t *testing.T) {
 	r := NewRecorder()
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")})

@@ -22,19 +22,37 @@ const defaultMachineSetMaxUnavailable = "1"
 // MachineSet's owned replicas in line with its spec -- see
 // reconcileMachineSet for the per-object logic. Uses the machines this
 // tick's Reconcile already listed; no separate API call for them.
+//
+// observed carries each MachineSet with the fresh replicas/readyReplicas/
+// updatedReplicas tally reconcileMachineSet just computed from this same
+// machines snapshot -- even on a create/delete error, since that tally
+// reflects real, already-listed Machine state independent of whether the
+// attempted mutation itself succeeded (the same "the count is real even if
+// the write wasn't" reasoning reconcileDisruptionBudgetsStatus's own
+// observed slice already uses). Handed to Metrics.ObserveMachineSets once
+// per tick, the same "Status already computed, just also hand it to
+// metrics" shape controller.go's observedQuotas/ObserveQuotas and
+// disruption.go's observed/ObserveDisruptionBudgets already established --
+// see internal/metrics.Recorder.ObserveMachineSets.
 func (c *Controller) reconcileMachineSets(ctx context.Context, machineSets []model.MachineSet, machines []model.Machine) {
+	observed := make([]model.MachineSet, 0, len(machineSets))
 	for _, ms := range machineSets {
 		if ms.Metadata.DeletionTimestamp != nil {
 			continue
 		}
-		if err := c.reconcileMachineSet(ctx, ms, machines); err != nil {
+		status, err := c.reconcileMachineSet(ctx, ms, machines)
+		ms.Status = status
+		observed = append(observed, ms)
+		if err != nil {
 			c.Log.Error("machineset reconcile failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "error", err)
-			status := ms.Status
 			status.Message = err.Error()
 			if statusErr := c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("machineset status patch failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "error", statusErr)
 			}
 		}
+	}
+	if c.Metrics != nil {
+		c.Metrics.ObserveMachineSets(observed)
 	}
 }
 
@@ -78,7 +96,15 @@ func ownedMachines(ms model.MachineSet, machines []model.Machine) []model.Machin
 // each tick's own snapshot of Phase == "Running", not a live watch or any
 // deeper application-level readiness signal (e.g. a guest agent heartbeat)
 // -- see docs/guides/machine-sets.md.
-func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSet, machines []model.Machine) error {
+//
+// Returns the status it computed regardless of outcome -- on success,
+// exactly what it also just patched; on a create/delete error from
+// stepMachineSetToward, the tally computed from this tick's Machine
+// snapshot before that step ever ran, still accurate independent of
+// whether the attempted mutation itself succeeded (the caller,
+// reconcileMachineSets, uses it for both the error-message status patch
+// and Metrics.ObserveMachineSets).
+func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSet, machines []model.Machine) (model.MachineSetStatus, error) {
 	desired := ms.Spec.Replicas
 	if desired < 0 {
 		desired = 0
@@ -110,9 +136,9 @@ func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSe
 	}
 
 	if err := c.stepMachineSetToward(ctx, ms, hash, strategy, desired, current, outdated, readyCurrent); err != nil {
-		return err
+		return status, err
 	}
-	return c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status)
+	return status, c.Kube.PatchMachineSetStatus(ctx, ms.Namespace(), ms.Metadata.Name, status)
 }
 
 // stepMachineSetToward performs at most one create-or-delete batch per

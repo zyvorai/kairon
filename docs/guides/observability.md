@@ -87,9 +87,40 @@ Why `kairon-controller`-only: same reason as `kairon_quota_resource` above
 `docs/guides/machine-disruption-budgets.md` for the full picture,
 including the `KaironDisruptionBudgetExhausted` alert below.
 
+## `kairon_machineset_status` (`kairon-controller` only)
+
+The same follow-on applied to a third resource that already computed real
+status every tick but never exposed it as a metric:
+`kairon-controller`'s `/metrics` now also exposes
+`kairon_machineset_status{namespace, machineset, field}`, one gauge per
+`MachineSet` rollout status field (`field` is `replicas`, `ready_replicas`,
+or `updated_replicas`) -- mirroring `kube-state-metrics`' own
+`kube_replicaset_status_replicas`/`kube_replicaset_status_ready_replicas`/
+`kube_deployment_status_replicas_updated` gauges (three separate metric
+names there), collapsed here into one vector via the `field` label, the
+same collapsing `kairon_quota_resource`/`kairon_disruption_budget_status`
+already do with their own `type`/`field` labels. Recorded once per
+`Reconcile` tick (`internal/metrics.Recorder.ObserveMachineSets`, called
+from `internal/controller/machineset.go`'s `reconcileMachineSets`), from
+the exact same tally that tick's `status.replicas`/`.readyReplicas`/
+`.updatedReplicas` patch uses -- never a second, independently-computed
+number that could drift from what `kubectl get machineset` shows for the
+same tick. Unlike `kairon_quota_resource`/`kairon_disruption_budget_status`,
+this is observed even when the tick's own create/delete step failed (the
+tally is computed from the Machine snapshot before that step ever runs, so
+it stays accurate regardless of whether the attempted mutation succeeded).
+
+Why `kairon-controller`-only: same reason as `kairon_quota_resource` and
+`kairon_disruption_budget_status` above -- `kairon-node` never lists
+`MachineSet`s cluster-wide at all (it only reconciles individual `Machine`s
+already assigned to it), and `kairon-ui` has no reconcile loop of its own,
+so neither has an equivalent per-tick tally to report here. See
+`docs/guides/machine-sets.md` for the full picture, including the
+`KaironMachineSetRolloutStuck` alert below.
+
 ## Alerts
 
-`charts/kairon/alerts.yaml` now has four rule groups:
+`charts/kairon/alerts.yaml` now has five rule groups:
 
 - **`kairon-migrations`** (unchanged) -- the original four alerts, all
   pointing at `docs/runbook-migration-failures.md`.
@@ -129,6 +160,16 @@ including the `KaironDisruptionBudgetExhausted` alert below.
   rolling node drain, not necessarily a problem -- pointed at
   `docs/guides/machine-disruption-budgets.md` rather than a dedicated
   runbook.
+- **`kairon-machinesets`** (new) -- one alert,
+  `KaironMachineSetRolloutStuck`: a `MachineSet`'s `ready_replicas`
+  (`kairon_machineset_status`, see above) has stayed below its `replicas`
+  for 30 minutes. Previously the only signal a rollout had stalled was
+  polling `kaironctl get machinesets`/`kubectl get machinesets` and
+  noticing `READY` never catches up to `REPLICAS` -- this fires
+  proactively instead, the same 30-minute "sustained, not a transient
+  blip" threshold `KaironMigrationStuckInFlight` already uses for an
+  in-flight migration. `severity: warn`, pointed at
+  `docs/guides/machine-sets.md` rather than a dedicated runbook.
 
 Neither rule file distinguishes *which* `kairon-controller` or
 `kairon-node` instance fired, since `kairon_reconcile_*`/
