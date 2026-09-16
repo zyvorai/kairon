@@ -32,6 +32,9 @@ const quiesceFreezeTimeout = 30 * time.Second
 // AnnotationQuiesceStatus, internal/model) rather than a new RPC of its
 // own -- see internal/agent/quiesce.go for kairon-node's own half.
 func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {
+	if snapshot.Metadata.DeletionTimestamp != nil {
+		return c.reconcileSnapshotDeletion(ctx, snapshot, machines)
+	}
 	if snapshot.Status.Phase == "Succeeded" || snapshot.Status.Phase == "Failed" {
 		return nil
 	}
@@ -65,6 +68,19 @@ func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.Machi
 // internal/agent/quiesce.go), and parks the snapshot in a new Freezing
 // phase until awaitGuestFreeze sees it confirmed or times out.
 func (c *Controller) requestGuestFreeze(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+	// Guard deletion before ever asking a guest to freeze -- without this,
+	// deleting the MachineSnapshot object while it holds the guest frozen
+	// (Freezing/Thawing) would leave nothing to ever clear
+	// AnnotationQuiesceRequest, and kairon-node's own reconcileGuestQuiesce
+	// only thaws in response to that annotation being cleared. See
+	// reconcileSnapshotDeletion below.
+	if !model.HasFinalizerList(snapshot.Metadata.Finalizers, model.FinalizerSnapshotQuiesce) {
+		finals := append(append([]string{}, snapshot.Metadata.Finalizers...), model.FinalizerSnapshotQuiesce)
+		patch := map[string]any{"metadata": map[string]any{"finalizers": finals}}
+		if err := c.Kube.PatchMachineSnapshot(ctx, snapshot.Namespace(), snapshot.Metadata.Name, patch); err != nil {
+			return fmt.Errorf("add quiesce finalizer to snapshot %s/%s: %w", snapshot.Namespace(), snapshot.Metadata.Name, err)
+		}
+	}
 	ref := model.FormatQuiesceRef(snapshot.Metadata.Name, time.Now())
 	patch := map[string]any{"metadata": map[string]any{"annotations": map[string]string{model.AnnotationQuiesceRequest: ref}}}
 	if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, patch); err != nil {
@@ -213,4 +229,38 @@ func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot mode
 		status.Message = "waiting for CSI VolumeSnapshots"
 	}
 	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
+}
+
+// reconcileSnapshotDeletion is reconcileSnapshot's counterpart to
+// requestGuestFreeze's finalizer-add: refuses to let the MachineSnapshot
+// object actually disappear while it may still be the one holding
+// AnnotationQuiesceRequest/AnnotationQuiesceStatus on its target Machine,
+// requesting a thaw and waiting for kairon-node's confirmation first --
+// the same "never silently abandon a frozen guest" posture
+// awaitGuestThaw already has for the non-deletion path. A snapshot that
+// never reached requestGuestFreeze (no guestAgent, or hasn't gotten there
+// yet) never has the finalizer and returns immediately, deleting exactly
+// as before this existed.
+func (c *Controller) reconcileSnapshotDeletion(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {
+	if !model.HasFinalizerList(snapshot.Metadata.Finalizers, model.FinalizerSnapshotQuiesce) {
+		return nil
+	}
+	if machine, ok := machines[snapshot.Namespace()+"/"+snapshot.Spec.MachineName]; ok {
+		if requested, _, ok := model.ParseQuiesceRef(machine.Metadata.Annotations[model.AnnotationQuiesceRequest]); ok && requested == snapshot.Metadata.Name {
+			clear := map[string]any{"metadata": map[string]any{"annotations": map[string]any{model.AnnotationQuiesceRequest: nil}}}
+			if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, clear); err != nil {
+				return fmt.Errorf("request guest thaw before deleting snapshot %s/%s: %w", snapshot.Namespace(), snapshot.Metadata.Name, err)
+			}
+			return nil // wait for kairon-node's thaw confirmation next tick
+		}
+		if confirmed, _, ok := model.ParseQuiesceRef(machine.Metadata.Annotations[model.AnnotationQuiesceStatus]); ok && confirmed == snapshot.Metadata.Name {
+			return nil // thaw requested but not yet confirmed -- retried indefinitely, never abandoned
+		}
+	}
+	// Either the target Machine is gone too (nothing left to thaw), or the
+	// guest is already confirmed thawed (or was never frozen on this
+	// snapshot's behalf in the first place) -- safe to let deletion proceed.
+	finals := model.RemoveFinalizer(snapshot.Metadata.Finalizers, model.FinalizerSnapshotQuiesce)
+	patch := map[string]any{"metadata": map[string]any{"finalizers": finals}}
+	return c.Kube.PatchMachineSnapshot(ctx, snapshot.Namespace(), snapshot.Metadata.Name, patch)
 }

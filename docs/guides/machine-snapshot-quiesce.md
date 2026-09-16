@@ -86,6 +86,22 @@ uses for controller↔node coordination during a live migration cutover:
   silently abandon" posture `MachineMigration`'s own `NeedsRecovery` phase
   already has.
 
+## Deleting a `MachineSnapshot` while the guest is frozen
+
+Deleting a `MachineSnapshot` mid-`Freezing`/`Thawing` is safe: the moment
+`kairon-controller` first requests a freeze (step 1 above), it also adds
+the `kairon.zyvor.dev/snapshot-quiesce` finalizer to the `MachineSnapshot`
+itself. If the object is deleted before the guest is confirmed thawed,
+`kairon-controller` requests the thaw (clearing `quiesce-request`, same as
+the normal completion path) and holds the finalizer until `kairon-node`
+confirms it -- retried indefinitely, the same "never silently abandon a
+frozen guest" posture the thaw side already has above. Only once the
+guest is confirmed not frozen on this snapshot's behalf (or its target
+Machine is gone too, with nothing left to thaw) does deletion actually
+proceed. A `MachineSnapshot` that never enabled guest quiesce, or hasn't
+reached its first freeze request yet, never gets the finalizer and
+deletes immediately, exactly as before this existed.
+
 ## Real limits today (first cut)
 
 - **QEMU backend only** -- qemu-guest-agent is a QEMU-specific channel;

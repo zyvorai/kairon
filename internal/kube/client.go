@@ -255,6 +255,10 @@ func (c *Client) PatchMachineSnapshotStatus(ctx context.Context, ns, name string
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) PatchMachineSnapshot(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshots", name), patch, nil, "application/merge-patch+json")
+}
+
 func (c *Client) DeleteMachineSnapshot(ctx context.Context, ns, name string) error {
 	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinesnapshots", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }

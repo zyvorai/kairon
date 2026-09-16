@@ -6,16 +6,23 @@ package model
 import "time"
 
 const (
-	APIVersion             = "kairon.zyvor.dev/v1alpha1"
-	KindMachine            = "Machine"
-	KindMachineMigration   = "MachineMigration"
-	KindMachineSnapshot    = "MachineSnapshot"
-	Finalizer              = "kairon.zyvor.dev/runtime-cleanup"
-	CapableLabel           = "kairon.zyvor.dev/capable"
-	DefaultNamespace       = "default"
-	AnnotationAdoptOnly    = "kairon.zyvor.dev/adopt-only"
-	AnnotationVFIOBDF      = "kairon.zyvor.dev/vfio-bdf"
-	AnnotationMigrationRef = "kairon.zyvor.dev/migration"
+	APIVersion           = "kairon.zyvor.dev/v1alpha1"
+	KindMachine          = "Machine"
+	KindMachineMigration = "MachineMigration"
+	KindMachineSnapshot  = "MachineSnapshot"
+	Finalizer            = "kairon.zyvor.dev/runtime-cleanup"
+	// FinalizerSnapshotQuiesce guards a MachineSnapshot's deletion while it
+	// may still hold a guest filesystem frozen on its target Machine (see
+	// internal/controller/snapshot.go's guest quiesce protocol). Added the
+	// moment a freeze is first requested, never before -- a snapshot whose
+	// target Machine has no guest agent enabled, or that hasn't reached
+	// that point yet, deletes exactly as before this existed.
+	FinalizerSnapshotQuiesce = "kairon.zyvor.dev/snapshot-quiesce"
+	CapableLabel             = "kairon.zyvor.dev/capable"
+	DefaultNamespace         = "default"
+	AnnotationAdoptOnly      = "kairon.zyvor.dev/adopt-only"
+	AnnotationVFIOBDF        = "kairon.zyvor.dev/vfio-bdf"
+	AnnotationMigrationRef   = "kairon.zyvor.dev/migration"
 	// AnnotationConsoleAllowedUsers opts a Machine into a per-Machine VNC
 	// console access allowlist -- a comma-separated list of kairon-ui
 	// operator usernames (see internal/uiapi's consoleAuthorized). Unset

@@ -23,10 +23,11 @@ import (
 // the inline-httptest-server convention this package's other test files
 // already use.
 type snapshotTestServer struct {
-	mu              sync.Mutex
-	machineAnnos    map[string]string
-	volumeSnapshots map[string]model.VolumeSnapshot
-	snapshotStatus  model.MachineSnapshotStatus
+	mu                 sync.Mutex
+	machineAnnos       map[string]string
+	volumeSnapshots    map[string]model.VolumeSnapshot
+	snapshotStatus     model.MachineSnapshotStatus
+	snapshotFinalizers []string
 }
 
 func newSnapshotTestController(t *testing.T, machineAnnos map[string]string) (*Controller, *snapshotTestServer) {
@@ -71,6 +72,15 @@ func newSnapshotTestController(t *testing.T, machineAnnos map[string]string) (*C
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			fake.snapshotStatus = body.Status
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+			var body struct {
+				Metadata struct {
+					Finalizers []string `json:"finalizers"`
+				} `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			fake.snapshotFinalizers = body.Metadata.Finalizers
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -215,6 +225,93 @@ func TestReconcileSnapshotSucceedsOnceThawConfirmedAndVolumesReady(t *testing.T)
 	}
 	if fake.snapshotStatus.Phase != "Succeeded" {
 		t.Fatalf("expected phase Succeeded, got %q", fake.snapshotStatus.Phase)
+	}
+}
+
+func snapshotDeleting(phase string, finalizers []string) model.MachineSnapshot {
+	s := snapshotWithPhase(phase)
+	now := time.Now()
+	s.Metadata.DeletionTimestamp = &now
+	s.Metadata.Finalizers = finalizers
+	return s
+}
+
+func TestReconcileSnapshotAddsQuiesceFinalizerOnFirstFreezeRequest(t *testing.T) {
+	ctl, fake := newSnapshotTestController(t, nil)
+	snapshot := snapshotWithPhase("")
+	machine := quiesceMachine(nil)
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey(machine)); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+	if !model.HasFinalizerList(fake.snapshotFinalizers, model.FinalizerSnapshotQuiesce) {
+		t.Fatalf("expected the quiesce finalizer to be added before requesting a freeze, got %+v", fake.snapshotFinalizers)
+	}
+}
+
+func TestReconcileSnapshotDeletionWithoutFinalizerIsNoop(t *testing.T) {
+	// A snapshot that never enabled guest quiesce (or hasn't reached
+	// requestGuestFreeze yet) never has the finalizer -- deletion must not
+	// make any API call at all, matching prior (pre-finalizer) behavior
+	// byte for byte. Any unexpected call here 404s and fails the test.
+	ctl, _ := newSnapshotTestController(t, nil)
+	snapshot := snapshotDeleting("", nil)
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey(quiesceMachine(nil))); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+}
+
+func TestReconcileSnapshotDeletionRequestsThawWhileStillFrozenOnItsBehalf(t *testing.T) {
+	ref := model.FormatQuiesceRef("snap", time.Now())
+	ctl, fake := newSnapshotTestController(t, map[string]string{
+		model.AnnotationQuiesceRequest: ref,
+		model.AnnotationQuiesceStatus:  ref,
+	})
+	snapshot := snapshotDeleting("Freezing", []string{model.FinalizerSnapshotQuiesce})
+	machine := quiesceMachine(fake.machineAnnos)
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey(machine)); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+	if _, ok := fake.machineAnnos[model.AnnotationQuiesceRequest]; ok {
+		t.Fatal("expected the quiesce request annotation to be cleared (thaw requested) before deletion proceeds")
+	}
+	if fake.snapshotFinalizers != nil {
+		t.Fatal("expected the finalizer to still be present -- thaw isn't confirmed yet")
+	}
+}
+
+func TestReconcileSnapshotDeletionWaitsForThawConfirmationBeforeRemovingFinalizer(t *testing.T) {
+	ref := model.FormatQuiesceRef("snap", time.Now())
+	ctl, fake := newSnapshotTestController(t, map[string]string{model.AnnotationQuiesceStatus: ref}) // request already cleared, thaw not yet confirmed
+	snapshot := snapshotDeleting("Thawing", []string{model.FinalizerSnapshotQuiesce})
+	machine := quiesceMachine(fake.machineAnnos)
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey(machine)); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+	if fake.snapshotFinalizers != nil {
+		t.Fatal("expected the finalizer to still be present while the guest thaw is unconfirmed -- never abandon a frozen guest")
+	}
+}
+
+func TestReconcileSnapshotDeletionRemovesFinalizerOnceGuestIsNoLongerFrozenOnItsBehalf(t *testing.T) {
+	ctl, fake := newSnapshotTestController(t, nil) // no quiesce annotations left -- thaw already confirmed
+	snapshot := snapshotDeleting("Thawing", []string{model.FinalizerSnapshotQuiesce})
+	machine := quiesceMachine(nil)
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey(machine)); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+	if model.HasFinalizerList(fake.snapshotFinalizers, model.FinalizerSnapshotQuiesce) {
+		t.Fatalf("expected the finalizer to be removed once the guest is confirmed not frozen on this snapshot's behalf, got %+v", fake.snapshotFinalizers)
+	}
+}
+
+func TestReconcileSnapshotDeletionRemovesFinalizerWhenTargetMachineIsGone(t *testing.T) {
+	ctl, fake := newSnapshotTestController(t, nil)
+	snapshot := snapshotDeleting("Freezing", []string{model.FinalizerSnapshotQuiesce})
+	if err := ctl.reconcileSnapshot(context.Background(), snapshot, machinesByKey()); err != nil {
+		t.Fatalf("reconcileSnapshot: %v", err)
+	}
+	if model.HasFinalizerList(fake.snapshotFinalizers, model.FinalizerSnapshotQuiesce) {
+		t.Fatalf("expected the finalizer to be removed once the target Machine is gone too, got %+v", fake.snapshotFinalizers)
 	}
 }
 
