@@ -583,6 +583,7 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 	intervalSeconds := fs.Int("interval-seconds", 0, "minimum seconds between runs (required, minimum 60)")
 	volumeSnapshotClassName := fs.String("volume-snapshot-class", "", "VolumeSnapshotClassName passed through to every MachineSnapshot this schedule creates")
 	suspend := fs.Bool("suspend", false, "create the schedule already suspended")
+	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine, deleting older ones (0, the default, never prunes)")
 	_ = fs.Parse(args[1:])
 	if len(selector) == 0 {
 		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
@@ -602,6 +603,7 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 			IntervalSeconds:         *intervalSeconds,
 			VolumeSnapshotClassName: *volumeSnapshotClassName,
 			Suspend:                 *suspend,
+			KeepLast:                *keepLast,
 		},
 	}
 	out, err := kc.CreateMachineSnapshotSchedule(ctx, *ns, s)
@@ -647,7 +649,7 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 // supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -689,6 +691,7 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 	ns := fs.String("namespace", "default", "namespace")
 	suspend := fs.Bool("suspend", false, "pause (true) or resume (false) this schedule")
 	intervalSeconds := fs.Int("interval-seconds", 0, "new minimum seconds between runs (minimum 60)")
+	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine (0 disables pruning again)")
 	_ = fs.Parse(args)
 	spec := map[string]any{}
 	fs.Visit(func(f *flag.Flag) {
@@ -697,10 +700,12 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 			spec["suspend"] = *suspend
 		case "interval-seconds":
 			spec["intervalSeconds"] = *intervalSeconds
+		case "keep-last":
+			spec["keepLast"] = *keepLast
 		}
 	})
 	if len(spec) == 0 {
-		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend or --interval-seconds"))
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend, --interval-seconds, or --keep-last"))
 	}
 	if err := kc.PatchMachineSnapshotSchedule(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
 		fatal(err)

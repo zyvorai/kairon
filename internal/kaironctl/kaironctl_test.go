@@ -356,7 +356,7 @@ func TestCmdEditMigrationPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
 func TestCmdCreateSnapshotSchedulePostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
-	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600", "--volume-snapshot-class", "csi-hostpath-snapclass"})
+	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600", "--volume-snapshot-class", "csi-hostpath-snapclass", "--keep-last", "3"})
 	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
@@ -370,6 +370,25 @@ func TestCmdCreateSnapshotSchedulePostsExpectedSpec(t *testing.T) {
 	}
 	if spec["volumeSnapshotClassName"] != "csi-hostpath-snapclass" {
 		t.Errorf("volumeSnapshotClassName = %v", spec["volumeSnapshotClassName"])
+	}
+	if spec["keepLast"] != float64(3) {
+		t.Errorf("keepLast = %v, want 3", spec["keepLast"])
+	}
+}
+
+// TestCmdCreateSnapshotScheduleOmitsKeepLastByDefault confirms omitting
+// --keep-last entirely never sends a keepLast field at all (MachineSnapshotScheduleSpec.KeepLast
+// carries `omitempty`, matching Suspend/VolumeSnapshotClassName's own
+// zero-value-omitted convention) -- the model's own KeepLast doc comment
+// promises the zero value (also the JSON-absent case the apiserver defaults
+// to) never prunes.
+func TestCmdCreateSnapshotScheduleOmitsKeepLastByDefault(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if _, present := spec["keepLast"]; present {
+		t.Errorf("keepLast should not be present when --keep-last is omitted, got %v", spec)
 	}
 }
 
@@ -386,6 +405,22 @@ func TestCmdEditSnapshotScheduleOnlyPatchesFlagsActuallySet(t *testing.T) {
 	}
 	if _, present := spec["intervalSeconds"]; present {
 		t.Errorf("intervalSeconds should not be present when --interval-seconds wasn't passed, got %v", spec)
+	}
+	if _, present := spec["keepLast"]; present {
+		t.Errorf("keepLast should not be present when --keep-last wasn't passed, got %v", spec)
+	}
+}
+
+func TestCmdEditSnapshotScheduleKeepLast(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"snapshotschedule", "nightly", "--keep-last", "5"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["keepLast"] != float64(5) {
+		t.Errorf("keepLast = %v, want 5", spec["keepLast"])
+	}
+	if _, present := spec["suspend"]; present {
+		t.Errorf("suspend should not be present when --suspend wasn't passed, got %v", spec)
 	}
 }
 

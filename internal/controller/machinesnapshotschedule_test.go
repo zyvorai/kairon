@@ -214,3 +214,111 @@ func TestReconcileMachineSnapshotSchedulesCreateFailureIsLoggedNotFatal(t *testi
 		t.Fatal("expected LastRunError to be set")
 	}
 }
+
+// TestReconcileMachineSnapshotSchedulesPruningDeletesOnlyOldestReadyOwnSnapshots
+// exercises KeepLast end to end: an existing schedule-owned, ready-to-use
+// snapshot beyond the limit is deleted; a not-ready-to-use one of the same
+// schedule/Machine is left alone (never counted, never a deletion
+// candidate); and a snapshot carrying a *different* schedule's label (or no
+// label at all -- a manual one) is never touched regardless of age.
+func TestReconcileMachineSnapshotSchedulesPruningDeletesOnlyOldestReadyOwnSnapshots(t *testing.T) {
+	older := time.Now().Add(-2 * time.Hour)
+	newer := time.Now().Add(-1 * time.Hour)
+	existing := []model.MachineSnapshot{
+		{ // oldest, this schedule's own, ready -- should be pruned
+			Metadata: model.ObjectMeta{Name: "hourly-1", Namespace: "prod", CreationTimestamp: older, Labels: map[string]string{model.SnapshotScheduleLabel: "hourly"}},
+			Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+			Status:   model.MachineSnapshotStatus{ReadyToUse: true},
+		},
+		{ // newer, this schedule's own, ready -- should be kept (within KeepLast=1 once the brand-new one also counts... see below, this one is older than the tick's new snapshot but still the most recent PRE-EXISTING one)
+			Metadata: model.ObjectMeta{Name: "hourly-2", Namespace: "prod", CreationTimestamp: newer, Labels: map[string]string{model.SnapshotScheduleLabel: "hourly"}},
+			Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+			Status:   model.MachineSnapshotStatus{ReadyToUse: true},
+		},
+		{ // this schedule's own, but NOT ready yet -- must never be deleted, never counted
+			Metadata: model.ObjectMeta{Name: "hourly-inprogress", Namespace: "prod", CreationTimestamp: time.Now(), Labels: map[string]string{model.SnapshotScheduleLabel: "hourly"}},
+			Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+			Status:   model.MachineSnapshotStatus{ReadyToUse: false},
+		},
+		{ // a different schedule's own snapshot, ready, very old -- must never be touched by "hourly"'s pruning
+			Metadata: model.ObjectMeta{Name: "daily-1", Namespace: "prod", CreationTimestamp: older.Add(-24 * time.Hour), Labels: map[string]string{model.SnapshotScheduleLabel: "daily"}},
+			Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+			Status:   model.MachineSnapshotStatus{ReadyToUse: true},
+		},
+		{ // manually created (no schedule label at all), ready, very old -- must never be touched
+			Metadata: model.ObjectMeta{Name: "manual-1", Namespace: "prod", CreationTimestamp: older.Add(-48 * time.Hour)},
+			Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+			Status:   model.MachineSnapshotStatus{ReadyToUse: true},
+		},
+	}
+	var deleted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			sched := snapshotSchedule("hourly", time.Time{}, 3600) // never run -- immediately due
+			sched.Spec.KeepLast = 1
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			var s model.MachineSnapshot
+			_ = json.NewDecoder(r.Body).Decode(&s)
+			_ = json.NewEncoder(w).Encode(s)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: existing})
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/hourly-1":
+			deleted = append(deleted, "hourly-1")
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "hourly-1" {
+		t.Fatalf("deleted = %v, want exactly [hourly-1] (the oldest ready snapshot this schedule owns beyond KeepLast=1) -- hourly-2 (newer, ready), hourly-inprogress (not ready), daily-1/manual-1 (not this schedule's own) must all survive", deleted)
+	}
+}
+
+func TestPruneScheduledSnapshotsNoOpBelowKeepLast(t *testing.T) {
+	var deleteCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{
+				{
+					Metadata: model.ObjectMeta{Name: "hourly-1", Namespace: "prod", Labels: map[string]string{model.SnapshotScheduleLabel: "hourly"}},
+					Spec:     model.MachineSnapshotSpec{MachineName: "web-1"},
+					Status:   model.MachineSnapshotStatus{ReadyToUse: true},
+				},
+			}})
+		case r.Method == http.MethodDelete:
+			deleteCalled = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	ctl.pruneScheduledSnapshots(context.Background(), "prod", "hourly", "web-1", 1)
+	if deleteCalled {
+		t.Fatal("expected no delete when the count of owned, ready snapshots is already at or below KeepLast")
+	}
+}

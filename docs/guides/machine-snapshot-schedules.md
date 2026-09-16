@@ -17,6 +17,7 @@ metadata:
 spec:
   selector: {tier: web}
   intervalSeconds: 86400
+  keepLast: 7
 ```
 
 This creates a new `MachineSnapshot` for every `Machine` in the `prod`
@@ -36,6 +37,8 @@ $ kaironctl edit snapshotschedule nightly --suspend true
 snapshotschedule/nightly updated
 $ kaironctl edit snapshotschedule nightly --suspend false --interval-seconds 43200
 snapshotschedule/nightly updated
+$ kaironctl edit snapshotschedule nightly --keep-last 7
+snapshotschedule/nightly updated
 ```
 
 `--selector` is repeatable for a multi-label selector (`--selector tier=web
@@ -46,6 +49,36 @@ call never resets it.
 `spec.volumeSnapshotClassName`, if set, is passed straight through to every
 `MachineSnapshot` this schedule creates, mirroring
 `MachineSnapshot.spec.volumeSnapshotClassName` exactly.
+
+## Retention (`spec.keepLast`)
+
+Set, `spec.keepLast: N` bounds how many of THIS schedule's own
+`MachineSnapshot`s are kept **per Machine**: once a Machine has more than
+`N` ready-to-use snapshots this exact schedule created, the oldest (by
+`metadata.creationTimestamp`) are deleted right after each due run, once
+the run's own new snapshot has been created. Unset (or `0`, the default)
+never prunes anything -- snapshots accumulate forever, exactly this
+project's behavior before `keepLast` existed.
+
+Two things `keepLast` deliberately never touches, so it's safe to turn on
+against an existing schedule with pre-existing snapshots:
+
+- **A `MachineSnapshot` this schedule didn't create** -- one made by hand,
+  by a script, or by a *different* `MachineSnapshotSchedule` is never a
+  pruning candidate. Every snapshot a schedule creates is stamped with the
+  `kairon.zyvor.dev/snapshot-schedule: <schedule-name>` label at creation
+  time; pruning only ever counts and deletes snapshots carrying that exact
+  label with that exact schedule's own name.
+- **A snapshot that isn't `status.readyToUse` yet** -- one still
+  `Freezing`/`Thawing`/`Pending` is never counted toward the limit and
+  never itself a deletion candidate. This means a `keepLast: 1` schedule
+  never has a moment with zero completed backups: the old ready snapshot
+  only gets deleted once a newer one has actually finished, never while a
+  replacement is still in progress.
+
+Retention is per-Machine, not per-schedule-in-total: a schedule matching 5
+Machines with `keepLast: 3` keeps up to 3 snapshots *for each* of those 5
+Machines, not 3 total across all of them.
 
 ## How it's enforced
 
@@ -65,8 +98,13 @@ Each reconcile tick:
    `spec.suspend`d.
 2. For each due schedule, every `Machine` in the same namespace matching
    `spec.selector` gets a new `MachineSnapshot`, named
-   `<schedule-name>-<unix-timestamp>`.
-3. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError` are patched
+   `<schedule-name>-<unix-timestamp>` and labeled
+   `kairon.zyvor.dev/snapshot-schedule: <schedule-name>`.
+3. If `spec.keepLast` is set, right after each successful create the
+   schedule's own ready-to-use `MachineSnapshot`s for that same Machine
+   (matched by the label above) beyond `keepLast` are deleted, oldest
+   first -- see "Retention" above for exactly what does and doesn't count.
+4. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError` are patched
    once, after every match has been attempted -- a schedule matching zero
    Machines still gets `lastRunTime` patched, so it doesn't re-fire every
    tick forever waiting for a Machine that may never appear. A failure
@@ -87,12 +125,12 @@ Each reconcile tick:
 - **No jitter or stagger.** Several schedules sharing the same interval
   (or created around the same time) can all become due on the same
   reconcile tick and fire together.
-- **No automatic snapshot pruning or retention policy.** Every run's
-  `MachineSnapshot`s accumulate forever -- there's no `spec.keepLast: N`
-  or similar to automatically delete older ones. Cleaning up old scheduled
-  snapshots is a real, separate, un-implemented follow-up, not a hidden
-  gap: use `kaironctl get snapshots`/`kaironctl delete snapshot NAME`
-  (or a script around them) until one exists.
+- **`spec.keepLast` retention is per-Machine and count-only, not
+  time-based.** There's no "keep one per day for 7 days, one per week for
+  4 weeks"-style tiered retention (the kind a dedicated backup tool would
+  offer) -- just a flat "keep the N most recent ready ones per Machine."
+  Leaving `keepLast` unset (the default) still accumulates snapshots
+  forever, exactly as before this field existed.
 - **Namespace-scoped only** -- a `MachineSnapshotSchedule` only ever
   matches Machines in its own namespace, same as `MigrationPolicy`/
   `MachineDisruptionBudget`.

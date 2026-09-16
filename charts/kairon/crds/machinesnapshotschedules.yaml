@@ -56,6 +56,9 @@ spec:
                 type: string
               suspend:
                 type: boolean
+              keepLast:
+                type: integer
+                minimum: 1
           status:
             type: object
             properties:

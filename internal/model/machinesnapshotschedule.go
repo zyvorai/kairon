@@ -7,6 +7,17 @@ import "time"
 
 const KindMachineSnapshotSchedule = "MachineSnapshotSchedule"
 
+// SnapshotScheduleLabel is stamped onto every MachineSnapshot a
+// MachineSnapshotSchedule creates (value: the schedule's own Metadata.Name),
+// the same "operator/controller-asserted fact" label shape
+// PinnableCPUsLabel already uses -- reconcileMachineSnapshotSchedules'
+// retention pruning (Spec.KeepLast) relies on it to reliably tell its own
+// schedule-created snapshots apart from ones a person or script created by
+// hand, or ones a *different* schedule created; pruning only ever touches
+// a MachineSnapshot carrying this exact label with this exact schedule's
+// name as its value.
+const SnapshotScheduleLabel = "kairon.zyvor.dev/snapshot-schedule"
+
 // MachineSnapshotSchedule periodically creates a MachineSnapshot for every
 // Machine matching Selector, on a plain wall-clock interval -- Kairon's
 // first-cut, deliberately simpler analog of a Kubernetes CronJob (see
@@ -57,6 +68,21 @@ type MachineSnapshotScheduleSpec struct {
 	// returns false while set, regardless of how long it's been since the
 	// last run.
 	Suspend bool `json:"suspend,omitempty"`
+	// KeepLast, when set (> 0), bounds how many of THIS schedule's own
+	// MachineSnapshots are retained per Machine: once a Machine has more
+	// than KeepLast snapshots carrying this schedule's SnapshotScheduleLabel
+	// AND status.readyToUse -- only ready-to-use ones count toward or
+	// against the limit, so a snapshot still in progress is never counted
+	// (avoiding a moment with zero completed backups while a new one is
+	// still being taken) and never itself a deletion candidate -- the
+	// oldest (by metadata.creationTimestamp) beyond the limit are deleted
+	// right after this tick's new snapshot is created. Zero (the default)
+	// never prunes anything -- snapshots accumulate forever, exactly
+	// kairon's behavior before this field existed. A manually-created
+	// MachineSnapshot, or one created by a *different* schedule, is never a
+	// candidate: only this schedule's own labeled snapshots for that exact
+	// Machine are ever counted or deleted.
+	KeepLast int `json:"keepLast,omitempty"`
 }
 
 // Due reports whether this schedule should fire another round of

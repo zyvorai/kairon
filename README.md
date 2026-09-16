@@ -151,7 +151,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 **Snapshots**
 - **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates a standard snapshot object; `MachineSnapshotRestore` restores one into a *new* `PersistentVolumeClaim` via the standard CSI `dataSource` flow (deliberately doesn't also create a Machine — see the guide for why) — [guide](docs/guides/machine-snapshot-restore.md)
 - **Guest quiesce for snapshots** (`spec.guestAgent.enabled`) — a real `guest-fsfreeze`/`-thaw` around `MachineSnapshot`'s VolumeSnapshot creation for an application-consistent snapshot, coordinated between `kairon-controller` and `kairon-node` since only the node has a network path to the Machine's FluxVM instance — [guide](docs/guides/machine-snapshot-quiesce.md)
-- **`MachineSnapshotSchedule`** (first cut) — periodically creates a `MachineSnapshot` for every Machine matching a label selector on a plain `spec.intervalSeconds`, Kairon's own backup-automation primitive — deliberately not real cron syntax, no retention/pruning yet — [guide](docs/guides/machine-snapshot-schedules.md)
+- **`MachineSnapshotSchedule`** (first cut) — periodically creates a `MachineSnapshot` for every Machine matching a label selector on a plain `spec.intervalSeconds`, Kairon's own backup-automation primitive — deliberately not real cron syntax. `spec.keepLast` optionally retains only the N most recent ready-to-use snapshots per Machine, pruning older ones the schedule itself created (never a manually-created one) — [guide](docs/guides/machine-snapshot-schedules.md)
 
 **Operate it**
 - **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
