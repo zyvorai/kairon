@@ -209,7 +209,7 @@ func TestConsumeConsoleTicketFallsBackToSharedConfigMap(t *testing.T) {
 	ctx := context.Background()
 
 	issuer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, issuer, ctx, "alice", "default", "vm1", "vnc")
 
 	consumer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
 	username, namespace, name, _, ok := consumer.consumeConsoleTicket(ctx, ticket)
@@ -236,7 +236,7 @@ func TestSyncSharedConfigMapPreservesUnexpiredTicket(t *testing.T) {
 	ctx := context.Background()
 
 	issuer := &Server{Kube: kc, SharedStateConfigMapName: sharedStateConfigMapName}
-	ticket := issuer.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, issuer, ctx, "alice", "default", "vm1", "vnc")
 
 	// A periodic sync landing inside the ticket's own lifetime must not
 	// prune it -- it isn't part of the recognized rev-/lock-/pwc- merge

@@ -26,6 +26,15 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+func mustIssueConsoleTicket(t *testing.T, s *Server, ctx context.Context, username, namespace, name, kind string) string {
+	t.Helper()
+	ticket, err := s.issueConsoleTicket(ctx, username, namespace, name, kind)
+	if err != nil {
+		t.Fatalf("issueConsoleTicket: %v", err)
+	}
+	return ticket
+}
+
 func mustKubeClientAt(t *testing.T, u string) *kube.Client {
 	t.Helper()
 	kc, err := kube.New(u, "", "", false)
@@ -49,7 +58,7 @@ func dialWS(ctx context.Context, u string, opts *websocket.DialOptions) (*websoc
 func TestConsoleTicketIsSingleUse(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, ctx, "alice", "default", "vm1", "vnc")
 	username, namespace, name, _, ok := s.consumeConsoleTicket(ctx, ticket)
 	if !ok {
 		t.Fatal("expected a freshly issued ticket to be valid")
@@ -68,7 +77,7 @@ func TestConsoleTicketIsSingleUse(t *testing.T) {
 func TestConsoleTicketRejectsExpired(t *testing.T) {
 	s := &Server{}
 	ctx := context.Background()
-	ticket := s.issueConsoleTicket(ctx, "alice", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, ctx, "alice", "default", "vm1", "vnc")
 	// Overwrite with an already-expired timestamp rather than sleeping
 	// past the real (30s) TTL.
 	s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: "alice", namespace: "default", name: "vm1", expires: time.Now().Add(-time.Second)})
@@ -388,7 +397,7 @@ func TestHandleConsoleRejectsTicketIssuedForADifferentMachine(t *testing.T) {
 	// Ticket is bound to vm1 at issuance, then replayed against vm2's
 	// console endpoint -- must be rejected even though the ticket itself
 	// is otherwise still valid and unconsumed.
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm2/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected a ticket issued for vm1 to be rejected when presented against vm2's console")
@@ -464,7 +473,7 @@ func TestHandleConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -545,7 +554,7 @@ func TestHandleConsoleFullRelayOverTLS(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {
@@ -624,7 +633,7 @@ func TestHandleConsoleTLSRejectsUntrustedCert(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected the dial to fail when kairon-node's certificate isn't trusted")
@@ -645,7 +654,7 @@ func TestHandleConsoleRejectsWhenNotRunning(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-Running machine to fail")
@@ -666,7 +675,7 @@ func TestHandleConsoleDisabledWhenNotConfigured(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console to be refused when ConsoleToken/ConsolePort aren't configured")
@@ -688,7 +697,7 @@ func TestHandleConsoleRejectsNonQemuBackend(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "vnc")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "vnc")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected console on a non-qemu backend to fail")
@@ -746,7 +755,7 @@ func TestHandleConsoleRejectsTextConsoleWithoutGuestAgentConsole(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "text")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "text")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket
 	if _, err := dialWS(context.Background(), wsURL, nil); err == nil {
 		t.Fatal("expected a text-console dial to fail when spec.guestAgent.console is unset")
@@ -822,7 +831,7 @@ func TestHandleTextConsoleFullRelay(t *testing.T) {
 	uiSrv := httptest.NewServer(s.Handler())
 	defer uiSrv.Close()
 
-	ticket := s.issueConsoleTicket(context.Background(), "tester", "default", "vm1", "text")
+	ticket := mustIssueConsoleTicket(t, s, context.Background(), "tester", "default", "vm1", "text")
 	wsURL := "ws" + strings.TrimPrefix(uiSrv.URL, "http") + "/api/v1/machines/default/vm1/console?ticket=" + ticket + "&cols=120&rows=40"
 	conn, err := dialWS(context.Background(), wsURL, nil)
 	if err != nil {

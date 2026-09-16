@@ -56,17 +56,28 @@ type consoleTicketState struct {
 // ConfigMap becomes the single source of truth instead -- see
 // consumeConsoleTicket for why a ticket can't be trusted from both places
 // at once.
-func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, name, kind string) string {
+//
+// Returns an error rather than silently proceeding on a rand.Read failure
+// -- matching randomNonce's own established handling of the identical
+// crypto/rand call in oidc.go, and unlike that one, a discarded error here
+// wouldn't just fail a later comparison: crypto/rand.Read only guarantees
+// n == len(b) when err is nil, so a failure can leave buf (and therefore
+// the minted ticket) partially or entirely at its zero value -- a
+// predictable credential granting a live VNC/text console session, not
+// merely a rejected login.
+func (s *Server) issueConsoleTicket(ctx context.Context, username, namespace, name, kind string) (string, error) {
 	buf := make([]byte, 20)
-	_, _ = rand.Read(buf)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate console ticket: %w", err)
+	}
 	ticket := hex.EncodeToString(buf)
 	expires := time.Now().Add(consoleTicketTTL)
 	if s.SharedStateConfigMapName == "" {
 		s.consoleTickets.Store(sha256Hex(ticket), consoleTicketState{username: username, namespace: namespace, name: name, kind: kind, expires: expires})
-		return ticket
+		return ticket, nil
 	}
 	s.writeSharedState(ctx, sharedTicketKey(ticket), sharedTicketEntry{Username: username, Namespace: namespace, Name: name, Kind: kind, Expires: expires})
-	return ticket
+	return ticket, nil
 }
 
 // consumeConsoleTicket validates and immediately deletes a ticket --
@@ -154,7 +165,15 @@ func (s *Server) handleConsoleTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not authorized to open this machine's console")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"ticket": s.issueConsoleTicket(r.Context(), username, namespace, name, kind)})
+	ticket, err := s.issueConsoleTicket(r.Context(), username, namespace, name, kind)
+	if err != nil {
+		if s.Log != nil {
+			s.Log.Error("uiapi console ticket generation failed", "username", username, "namespace", namespace, "name", name, "error", err)
+		}
+		writeError(w, http.StatusInternalServerError, "failed to generate console ticket")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"ticket": ticket})
 }
 
 // consoleAuthorized reports whether username may open m's console. Unset
