@@ -160,6 +160,13 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 
 func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	if m.Metadata.DeletionTimestamp != nil {
+		inFlight, err := a.migrationInFlightFor(ctx, m)
+		if err != nil {
+			return fmt.Errorf("check in-flight migrations before cleanup: %w", err)
+		}
+		if inFlight {
+			return fmt.Errorf("refusing to delete the FluxVM runtime for %s/%s while a MachineMigration targeting it is still in flight; will retry once it reaches a terminal phase", m.Namespace(), m.Metadata.Name)
+		}
 		return a.cleanup(ctx, m)
 	}
 	if !model.HasFinalizer(m, model.Finalizer) {
@@ -454,6 +461,43 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 	status.Message = ""
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Halted", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+}
+
+// isNonTerminalMigrationPhase deliberately duplicates (rather than
+// imports) internal/controller's own isTerminalMigrationPhase and
+// internal/uiapi's isNonTerminalMigrationPhase -- matching this
+// codebase's own established precedent (see disruption.go's own comment)
+// that each consumer keeps its narrower definition of "terminal" rather
+// than share one across packages for a single boolean.
+func isNonTerminalMigrationPhase(phase string) bool {
+	switch phase {
+	case "Succeeded", "Failed", "Blocked", "":
+		return false
+	}
+	return true
+}
+
+// migrationInFlightFor reports whether a live QEMU-level migration
+// transfer may currently be streaming this Machine's runtime state --
+// i.e. whether some MachineMigration in m's namespace names m as its
+// Spec.MachineName and hasn't yet reached a terminal phase. A QMP
+// "migrate" command is asynchronous on the hypervisor side: once
+// reconcileMigration starts one, it keeps running whether or not this
+// reconcile loop is watching it, so cleanup deleting the source runtime
+// out from under an in-flight transfer would race a live migration --
+// exactly the kind of ambiguous outcome NeedsRecovery exists to name
+// explicitly, not something to risk by proceeding regardless.
+func (a *Agent) migrationInFlightFor(ctx context.Context, m model.Machine) (bool, error) {
+	migrations, err := a.Kube.ListMachineMigrationsNamespace(ctx, m.Namespace())
+	if err != nil {
+		return false, err
+	}
+	for _, mig := range migrations {
+		if mig.Spec.MachineName == m.Metadata.Name && isNonTerminalMigrationPhase(mig.Status.Phase) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
