@@ -65,6 +65,28 @@ evaluated against however many Machines currently match `selector` --
 same shape and rounding (percentages round up) as a real Kubernetes
 `PodDisruptionBudget`.
 
+Or, via `kaironctl`:
+
+```console
+$ kaironctl create budget web-tier --selector tier=web --min-available 2
+budget/web-tier created
+$ kaironctl edit budget web-tier --min-available 3
+budget/web-tier updated
+```
+
+`--selector` is repeatable for a multi-label selector. `create` requires
+exactly one of `--min-available`/`--max-unavailable` -- mirroring
+`DesiredHealthy`'s own "exactly one, not both or neither" contract above,
+so a budget that would fail that check on every future reconcile tick is
+never created in the first place. `edit` only patches the flags you
+actually pass, and also refuses both bound flags in the same call; passing
+`--selector` on its own `edit` call replaces the entire selector map, not a
+per-key merge. Switching an existing budget from `minAvailable` to
+`maxUnavailable` (or back) still needs a follow-up `kubectl`/YAML edit to
+clear the old field -- a plain merge patch can set a new field but can't
+also unset a different one in the same `edit` call, a real first-cut limit
+of this verb.
+
 ## Status
 
 Every reconcile tick, `kairon-controller` computes each budget's

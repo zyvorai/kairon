@@ -142,9 +142,9 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Node fencing is detection + operator-attested action, never a guess** — `kairon-controller` flags a Machine's node `NodeUnreachable` every reconcile tick but never reschedules it itself (that risks running the same VM twice if the node isn't actually dead); `kaironctl fence --reason ...` is the explicit, attested step that clears it for rescheduling — same shape as `NeedsRecovery`. Opt-in `node.livenessLease.enabled` gives fence a second, independent signal (a `coordination.k8s.io/v1` Lease kairon-node renews itself) to refuse fencing a node it still looks alive on, despite `NodeUnreachable=True`. Opt-in `kairon.zyvor.dev/storage-domain`/`network-domain` node labels also let migration preflight block a target when it's *confirmed* to not share storage/network with the source — [guide](docs/guides/machine-fencing.md)
 
 **Guarding the fleet**
-- **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once; `kairon-controller` now reconciles real `status` every tick too (`kaironctl get budgets`/`kubectl get mdb`), purely observational — [guide](docs/guides/machine-disruption-budgets.md)
+- **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once; `kairon-controller` now reconciles real `status` every tick too (`kaironctl get budgets`/`kubectl get mdb`), purely observational. `kaironctl create budget NAME --selector k=v (--min-available X | --max-unavailable X)`/`edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X]` create and mutate one directly — no more dropping to `kubectl apply`/YAML just to stand one up — [guide](docs/guides/machine-disruption-budgets.md)
 - **Cordon-triggered automatic evacuation** (`controller.cordonEvacuation.enabled`, opt-in) — `kairon-controller` itself migrates every Machine off a Node the moment it's cordoned, budget-throttled exactly like `kaironctl evacuate`, mirroring KubeVirt's `LiveMigrateIfPossible` — [guide](docs/guides/machine-disruption-budgets.md#automatic-cordon-triggered-evacuation)
-- **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap — [guide](docs/guides/machine-quotas.md)
+- **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap. `kaironctl create quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]`/`edit quota NAME [flags]` create and mutate one directly — [guide](docs/guides/machine-quotas.md)
 - **Admission webhook** (`webhook.enabled`, opt-in) — both of the above can now be enforced *at admission*, not just in the reconcile loop or `kaironctl`: a `Machine` create that would blow a quota, or a `MachineMigration` create that would violate a budget, gets rejected outright instead of just parked `Pending` or silently allowed. See [Guarding the fleet](#guarding-the-fleet) below.
 - **Network Fabric** — `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge — [reference](docs/network-fabric.md)
 
@@ -327,11 +327,15 @@ kaironctl create instancetype NAME --cpu N --memory SIZE [--max-cpu N] [--max-me
 kaironctl create migrationpolicy NAME --selector k=v [--bandwidth-mbps N] [--max-concurrent N]
 kaironctl create snapshotschedule NAME --selector k=v --interval-seconds N [--volume-snapshot-class NAME]
                  [--keep-last N] [--starting-deadline-seconds N]
+kaironctl create quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]  # at least one required
+kaironctl create budget NAME --selector k=v (--min-available X | --max-unavailable X)  # exactly one required
 kaironctl start|stop NAME
 kaironctl delete [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl scale machineset NAME --replicas N
 kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]  # only patches flags you actually pass
 kaironctl edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N]
+kaironctl edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]
+kaironctl edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X]
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-interval 10s]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]

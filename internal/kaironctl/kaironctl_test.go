@@ -497,6 +497,117 @@ func TestCmdEditSnapshotScheduleKeepLast(t *testing.T) {
 	}
 }
 
+func TestCmdCreateQuotaPostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateQuota(context.Background(), kc, []string{"team-payments", "--max-machines", "20", "--max-total-cpu", "40", "--max-total-memory", "160Gi"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["maxMachines"] != float64(20) {
+		t.Errorf("maxMachines = %v, want 20", spec["maxMachines"])
+	}
+	if spec["maxTotalCpu"] != "40" || spec["maxTotalMemory"] != "160Gi" {
+		t.Errorf("spec = %v", spec)
+	}
+}
+
+// TestCmdCreateQuotaOmitsMaxMachinesWhenNotPassed confirms omitting
+// --max-machines entirely leaves spec.maxMachines absent (nil, matching its
+// own *int/omitempty "no cap on this dimension" contract) rather than
+// sending a spurious 0 -- 0 is itself a meaningful, valid cap (zero
+// Machines allowed), so the zero value can't double as "unset" the way a
+// plain int flag can elsewhere in this file.
+func TestCmdCreateQuotaOmitsMaxMachinesWhenNotPassed(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateQuota(context.Background(), kc, []string{"team-payments", "--max-total-cpu", "40"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if _, present := spec["maxMachines"]; present {
+		t.Errorf("maxMachines should not be present when --max-machines is omitted, got %v", spec)
+	}
+}
+
+func TestCmdEditQuotaOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"quota", "team-payments", "--max-machines", "30"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas/team-payments" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["maxMachines"] != float64(30) {
+		t.Errorf("maxMachines = %v, want 30", spec["maxMachines"])
+	}
+	if _, present := spec["maxTotalCpu"]; present {
+		t.Errorf("maxTotalCpu should not be present when --max-total-cpu wasn't passed, got %v", spec)
+	}
+}
+
+func TestCmdCreateBudgetMinAvailablePostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateBudget(context.Background(), kc, []string{"web-tier", "--selector", "tier=web", "--min-available", "2"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	selector, _ := spec["selector"].(map[string]any)
+	if selector["tier"] != "web" {
+		t.Errorf("selector = %v", selector)
+	}
+	if spec["minAvailable"] != "2" {
+		t.Errorf("minAvailable = %v, want 2", spec["minAvailable"])
+	}
+	if _, present := spec["maxUnavailable"]; present {
+		t.Errorf("maxUnavailable should not be present when --max-unavailable wasn't passed, got %v", spec)
+	}
+}
+
+func TestCmdCreateBudgetMaxUnavailablePostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateBudget(context.Background(), kc, []string{"web-tier", "--selector", "tier=web", "--max-unavailable", "1"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["maxUnavailable"] != "1" {
+		t.Errorf("maxUnavailable = %v, want 1", spec["maxUnavailable"])
+	}
+	if _, present := spec["minAvailable"]; present {
+		t.Errorf("minAvailable should not be present when --min-available wasn't passed, got %v", spec)
+	}
+}
+
+func TestCmdEditBudgetOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"budget", "web-tier", "--min-available", "3"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets/web-tier" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["minAvailable"] != "3" {
+		t.Errorf("minAvailable = %v, want 3", spec["minAvailable"])
+	}
+	if _, present := spec["selector"]; present {
+		t.Errorf("selector should not be present when --selector wasn't passed, got %v", spec)
+	}
+	if _, present := spec["maxUnavailable"]; present {
+		t.Errorf("maxUnavailable should not be present when --max-unavailable wasn't passed, got %v", spec)
+	}
+}
+
+func TestCmdEditBudgetSelectorReplacesWholeMap(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"budget", "web-tier", "--selector", "tier=web", "--selector", "env=prod"})
+	spec, _ := s.body["spec"].(map[string]any)
+	selector, _ := spec["selector"].(map[string]any)
+	if selector["tier"] != "web" || selector["env"] != "prod" || len(selector) != 2 {
+		t.Errorf("selector = %v", selector)
+	}
+}
+
 // TestCmdCreateStillCreatesAPlainMachine is a regression test: `kaironctl
 // create NAME --image ... [flags]` (no KIND argument) must keep creating a
 // Machine exactly as it did before create machineset/instancetype/

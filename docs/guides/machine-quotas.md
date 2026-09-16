@@ -24,6 +24,21 @@ same namespace all apply independently -- same as multiple Kubernetes
 `ResourceQuota` objects in one namespace, every one of them must be
 satisfied.
 
+Or, via `kaironctl`:
+
+```console
+$ kaironctl create quota team-payments --max-machines 20 --max-total-cpu 40 --max-total-memory 160Gi
+quota/team-payments created
+$ kaironctl edit quota team-payments --max-machines 30
+quota/team-payments updated
+```
+
+`kaironctl create quota` refuses to create one with every dimension left
+unset -- a `MachineQuota` capping nothing is never useful, so this is
+caught up front rather than silently shipping a no-op object. `edit` only
+patches the flags you actually pass -- omitting `--max-total-cpu` on an
+`edit` call never clears an already-configured cap back to unset.
+
 ## How it's enforced
 
 `kairon-controller`'s existing scheduling loop checks quota, immediately

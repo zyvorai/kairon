@@ -388,6 +388,16 @@ func (c *Client) DeleteMachineQuota(ctx context.Context, ns, name string) error 
 	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinequotas", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
+func (c *Client) CreateMachineQuota(ctx context.Context, ns string, q model.MachineQuota) (model.MachineQuota, error) {
+	var out model.MachineQuota
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinequotas"), q, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineQuota(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinequotas", name), patch, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineSets(ctx context.Context) ([]model.MachineSet, error) {
 	var list model.MachineSetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesets", nil, &list, "")
@@ -548,6 +558,16 @@ func (c *Client) GetMachineDisruptionBudget(ctx context.Context, ns, name string
 
 func (c *Client) DeleteMachineDisruptionBudget(ctx context.Context, ns, name string) error {
 	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinedisruptionbudgets", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
+func (c *Client) CreateMachineDisruptionBudget(ctx context.Context, ns string, b model.MachineDisruptionBudget) (model.MachineDisruptionBudget, error) {
+	var out model.MachineDisruptionBudget
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinedisruptionbudgets"), b, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineDisruptionBudget(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinedisruptionbudgets", name), patch, nil, "application/merge-patch+json")
 }
 
 func (c *Client) CreatePersistentVolumeClaim(ctx context.Context, ns string, pvc model.PersistentVolumeClaim) (model.PersistentVolumeClaim, error) {

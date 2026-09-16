@@ -511,7 +511,7 @@ func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, imag
 // create-a-Machine behavior below, byte-for-byte unchanged.
 func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy NAME [flags]"))
+		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget NAME [flags]"))
 	}
 	switch strings.ToLower(args[0]) {
 	case "machineset", "machinesets":
@@ -525,6 +525,12 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 		return
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
 		cmdCreateSnapshotSchedule(ctx, kc, args[1:])
+		return
+	case "quota", "quotas", "machinequotas":
+		cmdCreateQuota(ctx, kc, args[1:])
+		return
+	case "budget", "budgets", "machinedisruptionbudgets":
+		cmdCreateBudget(ctx, kc, args[1:])
 		return
 	}
 	name := args[0]
@@ -710,6 +716,90 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 	fmt.Printf("snapshotschedule/%s created\n", out.Metadata.Name)
 }
 
+// cmdCreateQuota handles `kaironctl create quota NAME [--max-machines N]
+// [--max-total-cpu N] [--max-total-memory SIZE]`, dispatched from cmdCreate.
+// Unlike migrationpolicy/snapshotschedule's selector, MachineQuotaSpec has
+// no required field the CRD itself enforces (every dimension is optional --
+// see internal/model/machinequota.go's own doc comment), but a MachineQuota
+// with every dimension unset caps nothing at all, so this still refuses to
+// create one -- the same "don't let an operator create a resource that
+// provably does nothing" instinct as requiring --selector elsewhere, just
+// enforced client-side here since the CRD schema can't express "at least
+// one of these three."
+func cmdCreateQuota(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create quota", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	maxMachines := fs.Int("max-machines", -1, "cap on scheduled Machine count in this namespace; -1 (the default) leaves it unset (no cap on this dimension)")
+	maxTotalCPU := fs.String("max-total-cpu", "", "cap on total vCPUs scheduled in this namespace, summed across every scheduled Machine's spec.resources.cpu")
+	maxTotalMemory := fs.String("max-total-memory", "", "cap on total memory scheduled in this namespace, summed across every scheduled Machine's spec.resources.memory")
+	_ = fs.Parse(args[1:])
+	if *maxMachines < 0 && *maxTotalCPU == "" && *maxTotalMemory == "" {
+		fatal(fmt.Errorf("at least one of --max-machines, --max-total-cpu, --max-total-memory is required -- a quota with no dimension set caps nothing"))
+	}
+	spec := model.MachineQuotaSpec{MaxTotalCPU: *maxTotalCPU, MaxTotalMemory: *maxTotalMemory}
+	if *maxMachines >= 0 {
+		spec.MaxMachines = maxMachines
+	}
+	q := model.MachineQuota{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineQuota},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec:     spec,
+	}
+	out, err := kc.CreateMachineQuota(ctx, *ns, q)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("quota/%s created\n", out.Metadata.Name)
+}
+
+// cmdCreateBudget handles `kaironctl create budget NAME --selector k=v
+// (--min-available X | --max-unavailable X)`, dispatched from cmdCreate.
+// Requires exactly one of --min-available/--max-unavailable, mirroring
+// MachineDisruptionBudgetSpec.DesiredHealthy's own documented contract
+// (internal/model/disruption.go) -- a budget created with both or neither
+// set would parse fine against the CRD schema (which doesn't express
+// "exactly one of," the same limit --max-machines above works around) but
+// would then fail DesiredHealthy on every reconcile tick and every
+// `evacuate` check, so this catches the mistake up front instead of
+// shipping a silently-broken budget.
+func cmdCreateBudget(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create budget NAME --selector k=v (--min-available X | --max-unavailable X)"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create budget", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "label key=value a Machine must match to count against this budget (repeatable, required)")
+	minAvailable := fs.String("min-available", "", "integer or \"N%\" floor on healthy matching Machines (exactly one of this and --max-unavailable is required)")
+	maxUnavailable := fs.String("max-unavailable", "", "integer or \"N%\" ceiling on unhealthy/disrupted matching Machines (exactly one of this and --min-available is required)")
+	_ = fs.Parse(args[1:])
+	if len(selector) == 0 {
+		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
+	}
+	if (*minAvailable == "") == (*maxUnavailable == "") {
+		fatal(fmt.Errorf("exactly one of --min-available or --max-unavailable is required, not both or neither"))
+	}
+	selectorMap, err := parseKeyValues(selector)
+	if err != nil {
+		fatal(err)
+	}
+	b := model.MachineDisruptionBudget{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineDisruptionBudget},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec:     model.MachineDisruptionBudgetSpec{Selector: selectorMap, MinAvailable: *minAvailable, MaxUnavailable: *maxUnavailable},
+	}
+	out, err := kc.CreateMachineDisruptionBudget(ctx, *ns, b)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("budget/%s created\n", out.Metadata.Name)
+}
+
 // cmdScale mutates spec.replicas on an existing MachineSet -- the only
 // resource kind this verb supports for a first cut, since no other kind
 // kaironctl manages has a sensible "scale" operation. Takes its own
@@ -742,11 +832,11 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 // only the ones an explicit flag was actually passed for on this
 // invocation (tracked via fs.Visit, never a flag's zero-value default) so
 // an omitted flag can never clobber an already-set value back to zero.
-// migrationpolicy and snapshotschedule are the only kinds this verb
-// supports for a first cut.
+// migrationpolicy, snapshotschedule, quota, and budget are the only kinds
+// this verb supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -754,8 +844,12 @@ func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 		cmdEditMigrationPolicy(ctx, kc, name, args[2:])
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
 		cmdEditSnapshotSchedule(ctx, kc, name, args[2:])
+	case "quota", "quotas", "machinequotas":
+		cmdEditQuota(ctx, kc, name, args[2:])
+	case "budget", "budgets", "machinedisruptionbudgets":
+		cmdEditBudget(ctx, kc, name, args[2:])
 	default:
-		fatal(fmt.Errorf("edit only supports migrationpolicy or snapshotschedule, got %q", kind))
+		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, or budget, got %q", kind))
 	}
 }
 
@@ -811,6 +905,81 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 		fatal(err)
 	}
 	fmt.Printf("snapshotschedule/%s updated\n", name)
+}
+
+// cmdEditQuota patches only the MachineQuota dimensions an explicit flag
+// was passed for, same fs.Visit convention as cmdEditMigrationPolicy/
+// cmdEditSnapshotSchedule above -- an omitted flag never clobbers an
+// already-configured cap back to "unset."
+func cmdEditQuota(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit quota", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	maxMachines := fs.Int("max-machines", 0, "new cap on scheduled Machine count in this namespace")
+	maxTotalCPU := fs.String("max-total-cpu", "", "new cap on total vCPUs scheduled in this namespace")
+	maxTotalMemory := fs.String("max-total-memory", "", "new cap on total memory scheduled in this namespace")
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "max-machines":
+			spec["maxMachines"] = *maxMachines
+		case "max-total-cpu":
+			spec["maxTotalCpu"] = *maxTotalCPU
+		case "max-total-memory":
+			spec["maxTotalMemory"] = *maxTotalMemory
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --max-machines, --max-total-cpu, or --max-total-memory"))
+	}
+	if err := kc.PatchMachineQuota(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("quota/%s updated\n", name)
+}
+
+// cmdEditBudget patches only the MachineDisruptionBudget fields an explicit
+// flag was passed for, same fs.Visit convention as the other edit
+// subcommands. Passing both --min-available and --max-unavailable in the
+// same call is refused, matching cmdCreateBudget's own exactly-one
+// validation -- passing only one of them is always fine, including to
+// switch a budget from one bound type to the other (the apiserver-side
+// merge patch leaves the other field's prior value in place, so a full
+// switch needs a follow-up kubectl/YAML edit to clear the old field, a
+// known first-cut limit of this verb's simple merge-patch shape).
+func cmdEditBudget(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit budget", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "new label key=value selector (repeatable; replaces the entire existing selector when passed)")
+	minAvailable := fs.String("min-available", "", "new integer or \"N%\" floor on healthy matching Machines")
+	maxUnavailable := fs.String("max-unavailable", "", "new integer or \"N%\" ceiling on unhealthy/disrupted matching Machines")
+	_ = fs.Parse(args)
+	if *minAvailable != "" && *maxUnavailable != "" {
+		fatal(fmt.Errorf("cannot pass both --min-available and --max-unavailable in the same edit"))
+	}
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "selector":
+			selectorMap, err := parseKeyValues(selector)
+			if err != nil {
+				fatal(err)
+			}
+			spec["selector"] = selectorMap
+		case "min-available":
+			spec["minAvailable"] = *minAvailable
+		case "max-unavailable":
+			spec["maxUnavailable"] = *maxUnavailable
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --selector, --min-available, or --max-unavailable"))
+	}
+	if err := kc.PatchMachineDisruptionBudget(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("budget/%s updated\n", name)
 }
 
 func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
@@ -1277,7 +1446,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [migrationpolicy|snapshotschedule] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
