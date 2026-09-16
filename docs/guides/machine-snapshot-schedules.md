@@ -26,7 +26,8 @@ A brand-new schedule fires on its very first reconcile tick after creation
 -- it doesn't wait a full interval before its first run. `kaironctl get
 snapshotschedules` (or `kubectl get machinesnapshotschedules`) lists what's
 configured, including each schedule's `status.lastRunTime`/
-`lastRunSnapshotCount`.
+`lastRunSnapshotCount`/`nextRunTime` -- see "When will it run next?" below
+for exactly what `nextRunTime` does and doesn't promise.
 
 Or, via `kaironctl`:
 
@@ -85,6 +86,42 @@ Retention is per-Machine, not per-schedule-in-total: a schedule matching 5
 Machines with `keepLast: 3` keeps up to 3 snapshots *for each* of those 5
 Machines, not 3 total across all of them.
 
+## When will it run next? (`status.nextRunTime`)
+
+Every schedule's `status` also carries `nextRunTime`, projecting the next
+time it's expected to fire -- `kaironctl get snapshotschedules` shows it in
+a `NEXTRUN` column, `kubectl get machinesnapshotschedules` has its own
+`NextRun` printer column, and the dashboard's **Snapshot schedules** page
+has a **Next run** column too.
+
+`nextRunTime` is set once, every time a schedule actually fires, to
+`lastRunTime + intervalSeconds` -- a simple as-of-last-fire projection, not
+a live countdown recomputed on every reconcile tick. This is a deliberate
+choice, not an oversight: `MachineSnapshotSchedule`'s own status is only
+ever patched when a schedule is `Due` (see "How it's enforced" below) --
+adding a second, independent tick that patches `nextRunTime` alone for
+every schedule that *isn't* due yet would multiply this CRD's write volume
+against the apiserver for a value that's already a pure function of fields
+already in `status`/`spec`, for no real benefit.
+
+One consequence of that choice: `nextRunTime` is **not** cleared or
+recomputed if a schedule is suspended sometime after it last fired -- the
+stored value can point at an already-passed timestamp while
+`spec.suspend: true`. Both `kaironctl` and the dashboard handle this
+correctly at *display* time rather than trusting the stored field blindly:
+each checks the live `spec.suspend` flag first and shows `suspended`
+instead of a stale, already-passed timestamp whenever it's set. A schedule
+that has never yet fired shows `pending` the same way, rather than a zero/
+epoch date. `kubectl get machinesnapshotschedules`' own `NextRun` printer
+column is the one place this project can't apply that same live-suspend
+check -- it's a bare `jsonPath: .status.nextRunTime` and shows the raw
+stored value verbatim, so a `kubectl`-only workflow should also check
+`spec.suspend`/the `Suspend` printer column before trusting it. A schedule
+that's never fired shows a blank `NextRun` there, not `pending` (`kubectl`
+has no such formatting hook either) -- a real, honestly-named limit of the
+plain-CRD-printer-columns mechanism itself, not something this project's
+own code can paper over.
+
 ## How it's enforced
 
 Entirely by `kairon-controller`'s own reconcile loop
@@ -109,11 +146,14 @@ Each reconcile tick:
    schedule's own ready-to-use `MachineSnapshot`s for that same Machine
    (matched by the label above) beyond `keepLast` are deleted, oldest
    first -- see "Retention" above for exactly what does and doesn't count.
-4. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError` are patched
-   once, after every match has been attempted -- a schedule matching zero
-   Machines still gets `lastRunTime` patched, so it doesn't re-fire every
-   tick forever waiting for a Machine that may never appear. A failure
-   creating one Machine's snapshot is logged and counted
+4. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError`/`nextRunTime`
+   are patched once, after every match has been attempted -- a schedule
+   matching zero Machines still gets `lastRunTime`/`nextRunTime` patched,
+   so it doesn't re-fire every tick forever waiting for a Machine that may
+   never appear. `nextRunTime` is set to this tick's `lastRunTime +
+   intervalSeconds` -- see "When will it run next?" above for exactly what
+   it does and doesn't promise. A failure creating one Machine's snapshot
+   is logged and counted
    (`kairon_reconcile_item_errors_total{kind="snapshotschedule"}`) but
    never stops the rest of that schedule's matches from being attempted.
 
@@ -144,3 +184,13 @@ Each reconcile tick:
   `spec.suspend` with a click -- but editing `selector`/`intervalSeconds`/
   `keepLast`/`volumeSnapshotClassName`, or creating/deleting a schedule,
   still needs `kaironctl`/`kubectl`.
+- **`status.nextRunTime` is a projection, not a live countdown.** It's only
+  ever recomputed when a schedule actually fires (`lastRunTime +
+  intervalSeconds` at that moment) -- see "When will it run next?" above.
+  `kaironctl`'s and the dashboard's own displays correctly show
+  `suspended`/`pending` instead of a stale timestamp by checking the live
+  `spec.suspend` flag first, but `kubectl get machinesnapshotschedules`'
+  plain `NextRun` printer column can't apply that same logic -- it shows
+  the raw stored value (or a blank cell if the schedule has never fired),
+  even while suspended. Check `spec.suspend`/the `Suspend` column
+  alongside it in a `kubectl`-only workflow.

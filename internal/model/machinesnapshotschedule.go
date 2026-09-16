@@ -100,6 +100,19 @@ func (s MachineSnapshotScheduleSpec) Due(lastRun, now time.Time) bool {
 	return now.Sub(lastRun) >= time.Duration(s.IntervalSeconds)*time.Second
 }
 
+// NextRunAfter projects when this schedule's *next* round is expected,
+// given the moment (firedAt) a round has just actually fired -- simply
+// firedAt + IntervalSeconds. Called only from the reconciler's Due branch
+// (a schedule that didn't fire has nothing new to project; its previously
+// stored Status.NextRunTime, if any, is left untouched -- see
+// MachineSnapshotScheduleStatus.NextRunTime's own doc comment for why that
+// asymmetry is deliberate, not an oversight). Pure and independent of
+// Suspend: a caller that just confirmed Due()==true already knows Suspend
+// was false at that moment.
+func (s MachineSnapshotScheduleSpec) NextRunAfter(firedAt time.Time) time.Time {
+	return firedAt.Add(time.Duration(s.IntervalSeconds) * time.Second)
+}
+
 // MachineSnapshotScheduleStatus is purely observational, written once per
 // schedule at the end of every reconcile tick that found it due -- mirrors
 // MigrationPolicyStatus/MachineDisruptionBudgetStatus's own
@@ -115,4 +128,20 @@ type MachineSnapshotScheduleStatus struct {
 	// matches succeeded, one or more didn't). Cleared (empty) on a run with
 	// no errors at all.
 	LastRunError string `json:"lastRunError,omitempty"`
+	// NextRunTime is set alongside LastRunTime, every time this schedule
+	// actually fires, to LastRunTime + IntervalSeconds -- a simple
+	// as-of-last-fire projection, not a live countdown recomputed on every
+	// reconcile tick (this schedule's own status is only ever touched when
+	// Due, exactly like every other field here; adding a tick that patches
+	// NextRunTime alone for every not-yet-due schedule would multiply this
+	// CRD's write volume for no real benefit, since the projection is a
+	// pure function of fields already in Status/Spec). It intentionally
+	// does NOT get cleared or recomputed if the schedule is suspended after
+	// this projection was made -- kaironctl's own display logic
+	// (formatNextRun) checks the live Spec.Suspend flag itself before
+	// trusting this field for exactly that reason, so a stale
+	// already-passed timestamp is never shown as if it were still
+	// meaningful. Zero (the default) means "never yet fired" -- see
+	// MachineSnapshotScheduleSpec.NextRunAfter's own doc comment.
+	NextRunTime time.Time `json:"nextRunTime,omitempty"`
 }

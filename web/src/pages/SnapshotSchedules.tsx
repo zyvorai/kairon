@@ -10,6 +10,17 @@ function formatSelector(selector: Record<string, string>): string {
   return entries.map(([k, v]) => `${k}=${v}`).join(', ');
 }
 
+// formatNextRun mirrors kaironctl's own formatNextRun (internal/kaironctl/kaironctl.go):
+// status.nextRunTime is only ever updated when a schedule actually fires, so
+// a schedule suspended sometime after its last run would otherwise show an
+// already-passed timestamp as if a run were still pending. Checking the
+// live spec.suspend flag here at render time means that can't happen.
+function formatNextRun(s: MachineSnapshotSchedule): string {
+  if (s.spec.suspend) return 'suspended';
+  if (!s.status?.nextRunTime) return 'pending';
+  return new Date(s.status.nextRunTime).toLocaleString();
+}
+
 export default function SnapshotSchedules() {
   const [items, setItems] = useState<MachineSnapshotSchedule[]>([]);
   const [msg, setMsg] = useState('');
@@ -58,6 +69,7 @@ export default function SnapshotSchedules() {
             },
             { header: 'Last run', render: (s) => (s.status?.lastRunTime ? new Date(s.status.lastRunTime).toLocaleString() : 'never') },
             { header: 'Last count', render: (s) => s.status?.lastRunSnapshotCount ?? 0 },
+            { header: 'Next run', render: (s) => formatNextRun(s) },
             { header: 'Last error', render: (s) => s.status?.lastRunError || '-' },
             {
               header: '',

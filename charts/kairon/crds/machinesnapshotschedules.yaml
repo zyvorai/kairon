@@ -33,6 +33,9 @@ spec:
     - name: LastCount
       type: integer
       jsonPath: .status.lastRunSnapshotCount
+    - name: NextRun
+      type: string
+      jsonPath: .status.nextRunTime
     schema:
       openAPIV3Schema:
         type: object
@@ -69,3 +72,6 @@ spec:
                 type: integer
               lastRunError:
                 type: string
+              nextRunTime:
+                type: string
+                format: date-time

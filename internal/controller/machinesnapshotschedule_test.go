@@ -113,6 +113,10 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesOnePerMatch(t *testing.T) {
 	if patchedStatus.LastRunError != "" {
 		t.Fatalf("LastRunError = %q, want empty", patchedStatus.LastRunError)
 	}
+	wantNextRun := patchedStatus.LastRunTime.Add(time.Hour)
+	if !patchedStatus.NextRunTime.Equal(wantNextRun) {
+		t.Fatalf("NextRunTime = %v, want %v (LastRunTime + the 3600s interval)", patchedStatus.NextRunTime, wantNextRun)
+	}
 }
 
 func TestReconcileMachineSnapshotSchedulesZeroMatchesStillPatchesLastRunTime(t *testing.T) {
@@ -152,6 +156,9 @@ func TestReconcileMachineSnapshotSchedulesZeroMatchesStillPatchesLastRunTime(t *
 	}
 	if status.LastRunSnapshotCount != 0 {
 		t.Fatalf("LastRunSnapshotCount = %d, want 0", status.LastRunSnapshotCount)
+	}
+	if !status.NextRunTime.Equal(status.LastRunTime.Add(time.Hour)) {
+		t.Fatalf("NextRunTime = %v, want LastRunTime (%v) + the 3600s interval -- a zero-match run still projects a real next run", status.NextRunTime, status.LastRunTime)
 	}
 }
 

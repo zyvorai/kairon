@@ -61,3 +61,31 @@ func TestMachineSnapshotScheduleSpecDue(t *testing.T) {
 		})
 	}
 }
+
+func TestMachineSnapshotScheduleSpecNextRunAfter(t *testing.T) {
+	firedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		interval int
+		want     time.Time
+	}{
+		{
+			name:     "one hour interval projects one hour past the firing time",
+			interval: 3600,
+			want:     firedAt.Add(time.Hour),
+		},
+		{
+			name:     "one minute interval projects one minute past the firing time",
+			interval: 60,
+			want:     firedAt.Add(time.Minute),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := MachineSnapshotScheduleSpec{IntervalSeconds: tc.interval}
+			if got := spec.NextRunAfter(firedAt); !got.Equal(tc.want) {
+				t.Errorf("NextRunAfter(%v) = %v, want %v", firedAt, got, tc.want)
+			}
+		})
+	}
+}

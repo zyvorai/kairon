@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
@@ -455,5 +456,57 @@ func TestCmdCreateDispatchesToMachineSetByKeyword(t *testing.T) {
 	cmdCreate(context.Background(), kc, []string{"machineset", "web", "--image", "/img.qcow2"})
 	if s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets" {
 		t.Fatalf("path=%s, want a machinesets POST (create dispatched to cmdCreateMachineSet)", s.path)
+	}
+}
+
+// TestFormatNextRun exercises `kaironctl get snapshotschedules`' NEXTRUN
+// column logic directly. The "suspended after a prior fire" case is the one
+// that matters most: it confirms formatNextRun trusts the live spec.suspend
+// flag over a stale, already-computed Status.NextRunTime that was only ever
+// projected as of the schedule's last actual run (see
+// MachineSnapshotScheduleStatus.NextRunTime's own doc comment) -- otherwise
+// a suspended schedule could show an already-passed timestamp as if a run
+// were still pending.
+func TestFormatNextRun(t *testing.T) {
+	fired := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	nextRun := fired.Add(time.Hour)
+	tests := []struct {
+		name string
+		sch  model.MachineSnapshotSchedule
+		want string
+	}{
+		{
+			name: "never yet run shows pending",
+			sch:  model.MachineSnapshotSchedule{Spec: model.MachineSnapshotScheduleSpec{IntervalSeconds: 3600}},
+			want: "pending",
+		},
+		{
+			name: "fired once shows the projected next run",
+			sch: model.MachineSnapshotSchedule{
+				Spec:   model.MachineSnapshotScheduleSpec{IntervalSeconds: 3600},
+				Status: model.MachineSnapshotScheduleStatus{LastRunTime: fired, NextRunTime: nextRun},
+			},
+			want: nextRun.Format(time.RFC3339),
+		},
+		{
+			name: "suspended after a prior fire shows suspended, not the stale projection",
+			sch: model.MachineSnapshotSchedule{
+				Spec:   model.MachineSnapshotScheduleSpec{IntervalSeconds: 3600, Suspend: true},
+				Status: model.MachineSnapshotScheduleStatus{LastRunTime: fired, NextRunTime: nextRun},
+			},
+			want: "suspended",
+		},
+		{
+			name: "suspended and never run shows suspended",
+			sch:  model.MachineSnapshotSchedule{Spec: model.MachineSnapshotScheduleSpec{IntervalSeconds: 3600, Suspend: true}},
+			want: "suspended",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatNextRun(tc.sch); got != tc.want {
+				t.Errorf("formatNextRun() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -268,13 +268,13 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
-		fmt.Printf("NAME\tINTERVALSECONDS\tSUSPEND\tLASTRUN\tLASTCOUNT\n")
+		fmt.Printf("NAME\tINTERVALSECONDS\tSUSPEND\tLASTRUN\tLASTCOUNT\tNEXTRUN\n")
 		for _, s := range items {
 			lastRun := "-"
 			if !s.Status.LastRunTime.IsZero() {
 				lastRun = s.Status.LastRunTime.Format(time.RFC3339)
 			}
-			fmt.Printf("%s\t%d\t%t\t%s\t%d\n", s.Metadata.Name, s.Spec.IntervalSeconds, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount)
+			fmt.Printf("%s\t%d\t%t\t%s\t%d\t%s\n", s.Metadata.Name, s.Spec.IntervalSeconds, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
 		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
@@ -289,6 +289,24 @@ func defaultStrategy(strategy string) string {
 		return "RollingUpdate"
 	}
 	return strategy
+}
+
+// formatNextRun renders `kaironctl get snapshotschedules`' NEXTRUN column.
+// It deliberately does NOT just print s.Status.NextRunTime verbatim: that
+// field is only ever updated when a schedule actually fires (see
+// MachineSnapshotScheduleStatus.NextRunTime's own doc comment), so a
+// schedule suspended sometime *after* its last run would otherwise show an
+// already-passed timestamp as if a run were still pending. Checking the
+// live spec.suspend flag here, at display time, means this can never
+// happen -- "suspended" always wins over a stale projection.
+func formatNextRun(s model.MachineSnapshotSchedule) string {
+	if s.Spec.Suspend {
+		return "suspended"
+	}
+	if s.Status.NextRunTime.IsZero() {
+		return "pending" // never yet run -- fires on the next reconcile tick
+	}
+	return s.Status.NextRunTime.Format(time.RFC3339)
 }
 
 // resourceKindAndName splits describe/delete's positional args into a

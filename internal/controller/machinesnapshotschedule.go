@@ -68,7 +68,7 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 				c.pruneScheduledSnapshots(ctx, sched.Namespace(), sched.Metadata.Name, m.Metadata.Name, sched.Spec.KeepLast)
 			}
 		}
-		status := model.MachineSnapshotScheduleStatus{LastRunTime: now, LastRunSnapshotCount: count}
+		status := model.MachineSnapshotScheduleStatus{LastRunTime: now, LastRunSnapshotCount: count, NextRunTime: sched.Spec.NextRunAfter(now)}
 		if firstErr != nil {
 			status.LastRunError = firstErr.Error()
 		}

@@ -140,5 +140,5 @@ export interface MachineSnapshotSchedule {
     suspend?: boolean;
     keepLast?: number;
   };
-  status?: { lastRunTime?: string; lastRunSnapshotCount?: number; lastRunError?: string };
+  status?: { lastRunTime?: string; lastRunSnapshotCount?: number; lastRunError?: string; nextRunTime?: string };
 }
