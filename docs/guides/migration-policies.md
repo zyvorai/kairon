@@ -31,6 +31,20 @@ each policy's current `status.activeMigrations` count -- as does
 `kairon-ui`'s own read-only "Migration policies" dashboard page
 (`GET /api/v1/migration-policies`).
 
+Or, via `kaironctl`:
+
+```console
+$ kaironctl create migrationpolicy web-tier --selector tier=web --bandwidth-mbps 500 --max-concurrent 2
+migrationpolicy/web-tier created
+$ kaironctl edit migrationpolicy web-tier --max-concurrent 4
+migrationpolicy/web-tier updated
+```
+
+`--selector` is repeatable for a multi-label selector (`--selector tier=web
+--selector env=prod`). `edit` only patches the flags you actually pass --
+omitting `--bandwidth-mbps` on an `edit` call never clears an
+already-configured value back to 0.
+
 ## How it's enforced
 
 Both fields are enforced by `kairon-controller`'s existing migration

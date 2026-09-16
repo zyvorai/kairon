@@ -39,6 +39,25 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
+// parseKeyValues parses a repeated "key=value" flag (e.g. --label/
+// --selector) into a map -- the map-flag counterpart to parseForwards's
+// "hostPort:guestPort" splitting below. Returns a nil map for an empty
+// input, matching how an unset map-shaped JSON field already behaves.
+func parseKeyValues(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid key=value %q: want key=value", p)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
 // parseForwards parses "hostPort:guestPort[/proto]" specs, matching FluxVM's
 // SLIRP hostfwd syntax (protocol defaults to tcp).
 func parseForwards(specs []string) ([]model.PortForward, error) {
@@ -123,6 +142,10 @@ func Run(args []string, version string) int {
 		cmdSnapshot(ctx, kc, args[1:])
 	case "restore":
 		cmdRestore(ctx, kc, args[1:])
+	case "scale":
+		cmdScale(ctx, kc, args[1:])
+	case "edit":
+		cmdEdit(ctx, kc, args[1:])
 	default:
 		usage()
 		return 2
@@ -315,14 +338,19 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	fmt.Println(string(b))
 }
 
-func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
-	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags]"))
-	}
-	name := args[0]
-	fs := flag.NewFlagSet("create", flag.ExitOnError)
-	ns := fs.String("namespace", "default", "namespace")
-	image := fs.String("image", "", "FluxVM host-local image path")
+// machineSpecFromFlags registers the Machine-spec-shaped flags shared by a
+// plain `create` (one Machine) and `create machineset` (every replica's
+// template) onto fs, returning a closure that builds the resulting
+// model.MachineSpec once fs.Parse has run, plus the --image flag's own
+// pointer so each caller can enforce its own "image is required" check
+// after parsing (both do; a MachineSet with no image would never actually
+// boot). Extracted so the two callers can never drift apart on how a flag
+// maps onto MachineSpec -- anything this doesn't cover (placement, device
+// claims, security, per-volume claims) needs kubectl apply/YAML for either
+// caller, same limit `create` already had before `create machineset`
+// existed.
+func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, image *string) {
+	image = fs.String("image", "", "FluxVM host-local image path")
 	cpu := fs.String("cpu", "2", "vCPU quantity")
 	memory := fs.String("memory", "2Gi", "memory quantity")
 	backend := fs.String("backend", "qemu", "qemu|cloud-hypervisor|firecracker|flux-vm|auto")
@@ -338,18 +366,12 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	fs.Var(&packages, "package", "package to install via cloud-init at first boot (repeatable)")
 	var runcmd stringSliceFlag
 	fs.Var(&runcmd, "runcmd", "shell command to run via cloud-init at first boot (repeatable)")
-	_ = fs.Parse(args[1:])
-	if *image == "" {
-		fatal(fmt.Errorf("--image PATH is required"))
-	}
-	pf, err := parseForwards(forwards)
-	if err != nil {
-		fatal(err)
-	}
-	m := model.Machine{
-		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
-		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
-		Spec: model.MachineSpec{
+	return func() model.MachineSpec {
+		pf, err := parseForwards(forwards)
+		if err != nil {
+			fatal(err)
+		}
+		return model.MachineSpec{
 			Image:     model.ImageSpec{Path: *image},
 			Resources: model.ResourceSpec{CPU: *cpu, Memory: *memory},
 			Runtime:   model.RuntimeSpec{Backend: *backend},
@@ -362,13 +384,235 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 				RunCmd:            runcmd,
 			},
 			PowerState: "Running",
-		},
+		}
+	}, image
+}
+
+// cmdCreate handles both `kaironctl create NAME --image PATH [flags]` (a
+// Machine, its original and unchanged form) and, dispatched by keyword,
+// `create machineset|instancetype|migrationpolicy NAME [flags]`.
+// "machineset"/"instancetype"/"migrationpolicy" are recognized as a KIND
+// only by exact match against this fixed alias list, never by any other
+// heuristic -- the same tradeoff resourceKindAndName's own doc comment
+// already accepts for get/describe/delete: a Machine actually named e.g.
+// "machineset" can't be created through this bare form (kubectl apply is
+// the escape hatch, as it already is for every field these flags don't
+// cover). Every other NAME falls straight through to the original
+// create-a-Machine behavior below, byte-for-byte unchanged.
+func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy NAME [flags]"))
+	}
+	switch strings.ToLower(args[0]) {
+	case "machineset", "machinesets":
+		cmdCreateMachineSet(ctx, kc, args[1:])
+		return
+	case "instancetype", "instancetypes", "machineinstancetypes":
+		cmdCreateInstanceType(ctx, kc, args[1:])
+		return
+	case "migrationpolicy", "migrationpolicies":
+		cmdCreateMigrationPolicy(ctx, kc, args[1:])
+		return
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	specFn, image := machineSpecFromFlags(fs)
+	_ = fs.Parse(args[1:])
+	if *image == "" {
+		fatal(fmt.Errorf("--image PATH is required"))
+	}
+	m := model.Machine{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec:     specFn(),
 	}
 	out, err := kc.CreateMachine(ctx, *ns, m)
 	if err != nil {
 		fatal(err)
 	}
 	fmt.Printf("machine/%s created\n", out.Metadata.Name)
+}
+
+// cmdCreateMachineSet handles `kaironctl create machineset NAME [flags]`,
+// dispatched from cmdCreate. Reuses machineSpecFromFlags for
+// Template.Spec so a MachineSet's per-replica spec is built exactly the
+// same way a plain Machine's is.
+func cmdCreateMachineSet(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create machineset NAME --image PATH [--replicas N] [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create machineset", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	replicas := fs.Int("replicas", 1, "desired Machine count")
+	strategy := fs.String("strategy", "", "RollingUpdate (default) | Recreate")
+	maxUnavailable := fs.String("max-unavailable", "", "integer or percentage bound on simultaneously-missing/outdated replicas during RollingUpdate; empty defaults to 1")
+	var labels stringSliceFlag
+	fs.Var(&labels, "label", "label key=value applied to every replica this MachineSet creates, in addition to its own bookkeeping labels (repeatable)")
+	specFn, image := machineSpecFromFlags(fs)
+	_ = fs.Parse(args[1:])
+	if *image == "" {
+		fatal(fmt.Errorf("--image PATH is required"))
+	}
+	labelMap, err := parseKeyValues(labels)
+	if err != nil {
+		fatal(err)
+	}
+	ms := model.MachineSet{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSet},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.MachineSetSpec{
+			Replicas:       *replicas,
+			Template:       model.MachineTemplate{Labels: labelMap, Spec: specFn()},
+			Strategy:       *strategy,
+			MaxUnavailable: *maxUnavailable,
+		},
+	}
+	out, err := kc.CreateMachineSet(ctx, *ns, ms)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machineset/%s created\n", out.Metadata.Name)
+}
+
+// cmdCreateInstanceType handles `kaironctl create instancetype NAME --cpu N
+// --memory SIZE [flags]`, dispatched from cmdCreate. A strict subset of
+// cmdCreate's own resource flags -- MachineInstanceTypeSpec is just a
+// ResourceSpec, nothing else to map.
+func cmdCreateInstanceType(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create instancetype NAME --cpu N --memory SIZE [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create instancetype", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	cpu := fs.String("cpu", "", "vCPU quantity (required)")
+	memory := fs.String("memory", "", "memory quantity (required)")
+	maxCPU := fs.String("max-cpu", "", "hotplug headroom vCPU ceiling")
+	maxMemory := fs.String("max-memory", "", "hotplug headroom memory ceiling")
+	hugepages := fs.Bool("hugepages", false, "back guest memory with hugepages (qemu only)")
+	numaNode := fs.Int("numa-node", -1, "pin to a specific host NUMA node (qemu only); -1 leaves it unset")
+	cpuSet := fs.String("cpu-set", "", "guest-visible vNUMA CPUSet hint (qemu only)")
+	cpuPinning := fs.Bool("cpu-pinning", false, "real, exclusive host-core allocation (qemu only)")
+	_ = fs.Parse(args[1:])
+	if *cpu == "" || *memory == "" {
+		fatal(fmt.Errorf("--cpu and --memory are both required"))
+	}
+	resources := model.ResourceSpec{
+		CPU: *cpu, Memory: *memory, MaxCPU: *maxCPU, MaxMemory: *maxMemory,
+		Hugepages: *hugepages, CPUSet: *cpuSet, CPUPinning: *cpuPinning,
+	}
+	if *numaNode >= 0 {
+		resources.NUMANode = numaNode
+	}
+	it := model.MachineInstanceType{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineInstanceType},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec:     model.MachineInstanceTypeSpec{Resources: resources},
+	}
+	out, err := kc.CreateMachineInstanceType(ctx, *ns, it)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("instancetype/%s created\n", out.Metadata.Name)
+}
+
+// cmdCreateMigrationPolicy handles `kaironctl create migrationpolicy NAME
+// --selector k=v [flags]`, dispatched from cmdCreate.
+func cmdCreateMigrationPolicy(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create migrationpolicy NAME --selector k=v [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create migrationpolicy", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "label key=value this policy applies to (repeatable, required)")
+	bandwidth := fs.Uint64("bandwidth-mbps", 0, "default migration bandwidth for a matching Machine's migration, if it didn't already set one explicitly")
+	maxConcurrent := fs.Int("max-concurrent", 0, "cap on simultaneous non-terminal migrations of matching Machines cluster-wide; 0 is unlimited within this policy's own scope")
+	_ = fs.Parse(args[1:])
+	if len(selector) == 0 {
+		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
+	}
+	selectorMap, err := parseKeyValues(selector)
+	if err != nil {
+		fatal(err)
+	}
+	p := model.MigrationPolicy{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMigrationPolicy},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec:     model.MigrationPolicySpec{Selector: selectorMap, BandwidthMbps: *bandwidth, MaxConcurrent: *maxConcurrent},
+	}
+	out, err := kc.CreateMigrationPolicy(ctx, *ns, p)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("migrationpolicy/%s created\n", out.Metadata.Name)
+}
+
+// cmdScale mutates spec.replicas on an existing MachineSet -- the only
+// resource kind this verb supports for a first cut, since no other kind
+// kaironctl manages has a sensible "scale" operation. Takes its own
+// lightweight KIND NAME split (not resourceKindAndName, which is shaped
+// for get/describe/delete's "1 arg defaults to machine" convention and
+// doesn't fit a verb that always requires an explicit KIND plus trailing
+// flags).
+func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 2 {
+		fatal(fmt.Errorf("usage: kaironctl scale machineset NAME --replicas N"))
+	}
+	kind, name := strings.ToLower(args[0]), args[1]
+	if kind != "machineset" && kind != "machinesets" {
+		fatal(fmt.Errorf("scale only supports machineset, got %q", kind))
+	}
+	fs := flag.NewFlagSet("scale", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	replicas := fs.Int("replicas", -1, "desired replica count (required)")
+	_ = fs.Parse(args[2:])
+	if *replicas < 0 {
+		fatal(fmt.Errorf("--replicas N is required"))
+	}
+	if err := kc.PatchMachineSet(ctx, *ns, name, map[string]any{"spec": map[string]any{"replicas": *replicas}}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machineset/%s scaled to %d replicas\n", name, *replicas)
+}
+
+// cmdEdit patches a subset of an existing object's spec fields, touching
+// only the ones an explicit flag was actually passed for on this
+// invocation (tracked via fs.Visit, never a flag's zero-value default) so
+// an omitted flag can never clobber an already-set value back to zero.
+// migrationpolicy is the only kind this verb supports for a first cut.
+func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 2 {
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]"))
+	}
+	kind, name := strings.ToLower(args[0]), args[1]
+	if kind != "migrationpolicy" && kind != "migrationpolicies" {
+		fatal(fmt.Errorf("edit only supports migrationpolicy, got %q", kind))
+	}
+	fs := flag.NewFlagSet("edit", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	bandwidth := fs.Uint64("bandwidth-mbps", 0, "new default migration bandwidth")
+	maxConcurrent := fs.Int("max-concurrent", 0, "new cap on simultaneous non-terminal migrations")
+	_ = fs.Parse(args[2:])
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "bandwidth-mbps":
+			spec["bandwidthMbps"] = *bandwidth
+		case "max-concurrent":
+			spec["maxConcurrent"] = *maxConcurrent
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --bandwidth-mbps or --max-concurrent"))
+	}
+	if err := kc.PatchMigrationPolicy(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("migrationpolicy/%s updated\n", name)
 }
 
 func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
@@ -833,7 +1077,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe [RESOURCE] NAME | create | delete [RESOURCE] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit migrationpolicy NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

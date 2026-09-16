@@ -317,8 +317,15 @@ kaironctl describe [RESOURCE] NAME  # RESOURCE defaults to "machine", same alias
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
                  [--ssh-key KEY] [--package PKG] [--runcmd CMD]  # repeatable/cloud-init, see docs/guides/machine-network.md
+kaironctl create machineset NAME --image PATH [--replicas N] [--strategy RollingUpdate|Recreate]
+                 [--max-unavailable N] [--label k=v] [same Machine-spec flags as `create` above]
+kaironctl create instancetype NAME --cpu N --memory SIZE [--max-cpu N] [--max-memory SIZE]
+                 [--hugepages] [--numa-node N] [--cpu-set SET] [--cpu-pinning]
+kaironctl create migrationpolicy NAME --selector k=v [--bandwidth-mbps N] [--max-concurrent N]
 kaironctl start|stop NAME
 kaironctl delete [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
+kaironctl scale machineset NAME --replicas N
+kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]  # only patches flags you actually pass
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-interval 10s]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
@@ -327,6 +334,8 @@ kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASO
 kaironctl fence MACHINE --reason REASON  # only once NodeUnreachable=True and you've confirmed the node is truly gone
 kaironctl version
 ```
+
+`create`/`scale`/`edit` cover the common flag-friendly fields only — `spec.placement`, device claims, security, and per-volume claims on a `MachineSet`'s template (and anything else these flags don't expose) still need `kubectl apply`/YAML, the same limit `create machine` already had for those fields.
 
 Point at a cluster with `KAIRON_KUBE_URL` (e.g. after `kubectl proxy`), or run in-cluster with the mounted service account.
 

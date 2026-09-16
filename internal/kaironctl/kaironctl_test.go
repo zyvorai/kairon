@@ -217,3 +217,172 @@ func TestResourceKindAndName(t *testing.T) {
 		t.Fatalf("kind=%q name=%q, want snapshot/snapshot (a resource literally named after its own kind)", kind, name)
 	}
 }
+
+func TestParseKeyValues(t *testing.T) {
+	got, err := parseKeyValues([]string{"tier=web", "env=prod"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["tier"] != "web" || got["env"] != "prod" || len(got) != 2 {
+		t.Fatalf("got %v", got)
+	}
+	if got, err := parseKeyValues(nil); err != nil || got != nil {
+		t.Fatalf("empty input: got %v, %v, want nil, nil", got, err)
+	}
+	if _, err := parseKeyValues([]string{"no-equals-sign"}); err == nil {
+		t.Fatal("expected an error for a value with no '='")
+	}
+	if _, err := parseKeyValues([]string{"=v"}); err == nil {
+		t.Fatal("expected an error for an empty key")
+	}
+}
+
+// recordingServer captures the last request it received (method, path, and
+// decoded JSON body) so a test can assert exactly what kaironctl sent
+// without standing up a full fake apiserver per resource kind -- these new
+// create/scale/edit verbs are exercised at this HTTP boundary rather than
+// against internal/kube.Client's own methods directly, so a bug in the
+// flag-to-JSON mapping is what actually gets caught.
+type recordingServer struct {
+	method string
+	path   string
+	body   map[string]any
+}
+
+func (s *recordingServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		s.method, s.path, s.body = r.Method, r.URL.Path, body
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	})
+}
+
+func testClient(t *testing.T, s *recordingServer) *kube.Client {
+	t.Helper()
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+	return &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+}
+
+func TestCmdCreateMachineSetPostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateMachineSet(context.Background(), kc, []string{"web", "--image", "/img.qcow2", "--replicas", "3", "--cpu", "4", "--label", "tier=web"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["replicas"] != float64(3) {
+		t.Errorf("replicas = %v, want 3", spec["replicas"])
+	}
+	template, _ := spec["template"].(map[string]any)
+	labels, _ := template["labels"].(map[string]any)
+	if labels["tier"] != "web" {
+		t.Errorf("labels = %v, want tier=web", labels)
+	}
+	tmplSpec, _ := template["spec"].(map[string]any)
+	resources, _ := tmplSpec["resources"].(map[string]any)
+	if resources["cpu"] != "4" {
+		t.Errorf("template.spec.resources.cpu = %v, want 4", resources["cpu"])
+	}
+	image, _ := tmplSpec["image"].(map[string]any)
+	if image["path"] != "/img.qcow2" {
+		t.Errorf("template.spec.image.path = %v, want /img.qcow2", image["path"])
+	}
+}
+
+func TestCmdCreateInstanceTypePostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateInstanceType(context.Background(), kc, []string{"small", "--cpu", "2", "--memory", "4Gi", "--hugepages"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	resources, _ := spec["resources"].(map[string]any)
+	if resources["cpu"] != "2" || resources["memory"] != "4Gi" || resources["hugepages"] != true {
+		t.Errorf("resources = %v", resources)
+	}
+}
+
+func TestCmdCreateMigrationPolicyPostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateMigrationPolicy(context.Background(), kc, []string{"fast-tier", "--selector", "tier=fast", "--bandwidth-mbps", "500", "--max-concurrent", "2"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	selector, _ := spec["selector"].(map[string]any)
+	if selector["tier"] != "fast" {
+		t.Errorf("selector = %v", selector)
+	}
+	if spec["bandwidthMbps"] != float64(500) || spec["maxConcurrent"] != float64(2) {
+		t.Errorf("spec = %v", spec)
+	}
+}
+
+func TestCmdScalePatchesReplicas(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdScale(context.Background(), kc, []string{"machineset", "web", "--replicas", "5"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/web" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["replicas"] != float64(5) {
+		t.Errorf("replicas = %v, want 5", spec["replicas"])
+	}
+}
+
+func TestCmdEditMigrationPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"migrationpolicy", "fast-tier", "--max-concurrent", "3"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/fast-tier" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["maxConcurrent"] != float64(3) {
+		t.Errorf("maxConcurrent = %v, want 3", spec["maxConcurrent"])
+	}
+	if _, present := spec["bandwidthMbps"]; present {
+		t.Errorf("bandwidthMbps should not be present when --bandwidth-mbps wasn't passed, got %v", spec)
+	}
+}
+
+// TestCmdCreateStillCreatesAPlainMachine is a regression test: `kaironctl
+// create NAME --image ... [flags]` (no KIND argument) must keep creating a
+// Machine exactly as it did before create machineset/instancetype/
+// migrationpolicy existed.
+func TestCmdCreateStillCreatesAPlainMachine(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreate(context.Background(), kc, []string{"my-vm", "--image", "/img.qcow2", "--cpu", "4", "--memory", "8Gi"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	resources, _ := spec["resources"].(map[string]any)
+	if resources["cpu"] != "4" || resources["memory"] != "8Gi" {
+		t.Errorf("resources = %v", resources)
+	}
+	metadata, _ := s.body["metadata"].(map[string]any)
+	if metadata["name"] != "my-vm" {
+		t.Errorf("metadata.name = %v, want my-vm", metadata["name"])
+	}
+}
+
+// TestCmdCreateDispatchesToMachineSetByKeyword confirms `create machineset
+// NAME` is recognized as a KIND, not treated as a Machine named
+// "machineset" -- the design tradeoff documented on cmdCreate itself.
+func TestCmdCreateDispatchesToMachineSetByKeyword(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreate(context.Background(), kc, []string{"machineset", "web", "--image", "/img.qcow2"})
+	if s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets" {
+		t.Fatalf("path=%s, want a machinesets POST (create dispatched to cmdCreateMachineSet)", s.path)
+	}
+}

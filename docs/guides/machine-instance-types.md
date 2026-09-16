@@ -35,6 +35,19 @@ spec:
 `instanceTypeName` and fills it in for you, from a `MachineInstanceType` in
 the *same namespace*.
 
+Or, via `kaironctl`:
+
+```console
+$ kaironctl create instancetype standard-2x4 --cpu 2 --memory 4Gi
+instancetype/standard-2x4 created
+```
+
+`--max-cpu`/`--max-memory` (hotplug headroom), `--hugepages`, `--numa-node`,
+`--cpu-set`, and `--cpu-pinning` are all also available, matching every
+field `ResourceSpec` accepts -- this covers the whole spec (it's just a
+`ResourceSpec`, nothing else to set), so unlike `create machineset` there's
+no YAML-only escape hatch needed here.
+
 ## How resolution works
 
 Resolution happens **once**, the first reconcile tick after a Machine sets

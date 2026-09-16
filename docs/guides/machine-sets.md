@@ -27,6 +27,24 @@ spec:
       powerState: Running
 ```
 
+Or, for the flag-friendly fields above, `kaironctl create`:
+
+```console
+$ kaironctl create machineset web --image /var/lib/fluxvm/images/web.qcow2 \
+    --cpu 2 --memory 4Gi --replicas 3 --max-unavailable 1 --label app=web
+machineset/web created
+$ kaironctl scale machineset web --replicas 5
+machineset/web scaled to 5 replicas
+```
+
+`create machineset` reuses the exact same Machine-spec flags `kaironctl
+create` (a single Machine) already has for `spec.template.spec` -- anything
+those flags don't cover (`spec.placement`, device claims, security,
+per-volume claims) still needs `kubectl apply`/YAML, the same limit a plain
+`create machine` already has for those fields. `scale` is the only mutation
+this verb supports beyond create -- editing the template itself still means
+`kubectl edit`/`apply`.
+
 `spec.template.spec` is exactly a `Machine`'s own `spec` -- anything a
 hand-created `Machine` accepts (`image`, `volumes`, `deviceClaims`,
 `network`, `cloudInit`, ...) works here unchanged. `spec.template.labels`
