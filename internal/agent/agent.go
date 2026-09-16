@@ -712,6 +712,7 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 			if message == "" {
 				message = "target node has no live migration backend"
 			}
+			a.resumeSourceNetworkQuiesce(ctx, rec.ID())
 			return a.blockLiveMigrationWithStatus(ctx, item, status, message+"; source runtime was left untouched")
 		}
 		mode := item.Spec.Mode
@@ -720,6 +721,7 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 		}
 		if mode != "pre-copy" && mode != "post-copy" {
 			_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
+			a.resumeSourceNetworkQuiesce(ctx, rec.ID())
 			return fmt.Errorf("unsupported migration mode %q", mode)
 		}
 		transfer, err := a.SourceMigrator.Start(ctx, migration.SourceRequest{
@@ -735,6 +737,7 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 		})
 		if err != nil {
 			_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
+			a.resumeSourceNetworkQuiesce(ctx, rec.ID())
 			if errors.Is(err, migration.ErrUnsupported) {
 				return a.blockLiveMigrationWithStatus(ctx, item, status, err.Error()+"; prepared target was aborted and source runtime was left untouched")
 			}
@@ -779,6 +782,7 @@ func (a *Agent) projectTransfer(ctx context.Context, item model.MachineMigration
 		status.Message = "source transfer completed and target committed; waiting for guarded target adoption"
 	case "failed", "cancelled", "canceled", "aborted":
 		_ = a.MigrationPeer.Abort(ctx, targetURL, session.ID)
+		a.resumeSourceNetworkQuiesce(ctx, session.RuntimeID)
 		status.Phase = "Failed"
 		status.Message = transfer.Message
 		if status.Message == "" {
@@ -912,6 +916,33 @@ func (a *Agent) reconcileNeedsRecovery(ctx context.Context, item model.MachineMi
 		status.Message = "recovery: operator forced abort; source runtime was left untouched -- verify its state before reuse"
 	}
 	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
+}
+
+// resumeSourceNetworkQuiesce best-effort un-quiesces runtimeID's own network
+// dataplane on the source node, undoing reconcileMigration's own
+// NetworkMigrationQuiesce for every path where a live migration stops short
+// of a destination commit -- blocked, an unsupported mode, a source
+// transfer that never started, or a transfer that failed/was
+// cancelled/aborted. Without this, the source Machine -- which stays the
+// real, running VM on every one of these paths, unlike the destination --
+// would have its network left quiesced indefinitely: nothing else in this
+// codebase ever calls NetworkMigrationResume for the source runtime, only
+// the destination side resumes its own (internal/migration/network.go's
+// NetworkAwareDestination.Commit), which never runs when the migration
+// doesn't reach that point. Best-effort and log-only on failure, matching
+// NetworkMigrationQuiesce/Export's own established convention in
+// reconcileMigration: failing to resume must never turn an already-bad
+// migration outcome into a Go error that blocks this reconcile loop's other
+// work. Deliberately not called from reconcileNeedsRecovery -- an ambiguous
+// commit must never be touched further by anything but an operator's own
+// attested decision, matching this project's own documented principle.
+func (a *Agent) resumeSourceNetworkQuiesce(ctx context.Context, runtimeID string) {
+	if runtimeID == "" {
+		return
+	}
+	if err := a.Flux.NetworkMigrationResume(ctx, runtimeID); err != nil {
+		a.Log.Warn("resuming source network migration quiesce failed", "runtimeID", runtimeID, "error", err)
+	}
 }
 
 func (a *Agent) blockLiveMigration(ctx context.Context, item model.MachineMigration, message string) error {

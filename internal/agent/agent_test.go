@@ -553,6 +553,115 @@ func TestUnsupportedTargetBlocksBeforeSourceTransfer(t *testing.T) {
 	}
 }
 
+// runLiveAgentReconcileTrackingResume mirrors runLiveAgentReconcileWithNetwork
+// but reports whether the source's own network migration quiesce was ever
+// resumed (POST /v1/vms/{id}/network/migration/resume), to prove
+// resumeSourceNetworkQuiesce actually fires on the paths that call it.
+func runLiveAgentReconcileTrackingResume(t *testing.T, peerServer *httptest.Server, source *fakeSourceMigrator) (status model.MachineMigrationStatus, resumed bool) {
+	t.Helper()
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Mode: "pre-copy"},
+		Status:   model.MachineMigrationStatus{Phase: "Starting", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live"},
+	}
+	var migrationStatus model.MachineMigrationStatus
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+			_ = json.NewEncoder(w).Encode(machine)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			migrationStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/network/migration/quiesce":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/network/migration/export":
+			_, _ = w.Write([]byte("{}"))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/network/migration/resume":
+			resumed = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(peerServer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return migrationStatus, resumed
+}
+
+// TestBlockedLiveMigrationResumesSourceNetworkQuiesce proves the fix for a
+// real bug: the source Machine stays the real, running VM when a migration
+// is blocked (the destination has no live migration backend), so its
+// network -- already quiesced moments earlier in the very same reconcile
+// pass -- must be resumed rather than left stranded indefinitely.
+func TestBlockedLiveMigrationResumesSourceNetworkQuiesce(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: false, Reason: "adapter unavailable"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "must-not-run", Phase: "completed"}}
+	status, resumed := runLiveAgentReconcileTrackingResume(t, peerServer, source)
+	if status.Phase != "Blocked" {
+		t.Fatalf("status=%+v", status)
+	}
+	if !resumed {
+		t.Fatal("expected source network migration quiesce to be resumed once the migration was blocked, but it was not")
+	}
+}
+
+// TestFailedSourceTransferResumesSourceNetworkQuiesce proves the same fix
+// for the far more common real-world case: the transfer itself starts, then
+// fails or is cancelled mid-flight (network blip, target-side error). The
+// source Machine keeps running unmigrated and must have its network
+// resumed, not left quiesced through every future reconcile tick.
+func TestFailedSourceTransferResumesSourceNetworkQuiesce(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session", Backend: "test-adapter"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "failed", Message: "link dropped"}}
+	status, resumed := runLiveAgentReconcileTrackingResume(t, peerServer, source)
+	if status.Phase != "Failed" {
+		t.Fatalf("status=%+v", status)
+	}
+	if !resumed {
+		t.Fatal("expected source network migration quiesce to be resumed once the transfer failed, but it was not")
+	}
+}
+
 func TestSourceStartFailureAbortsPreparedTarget(t *testing.T) {
 	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session"}}
 	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
