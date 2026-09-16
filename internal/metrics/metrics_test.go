@@ -95,6 +95,89 @@ func TestObserveMigrationsSetsDataPlaneEncryptedForActivePhasesOnly(t *testing.T
 	}
 }
 
+func quotaWithMax(ns, name string, maxMachines *int, maxCPU, maxMem string, usedMachines int, usedCPU uint32, usedMem uint64) model.MachineQuota {
+	return model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: name, Namespace: ns},
+		Spec:     model.MachineQuotaSpec{MaxMachines: maxMachines, MaxTotalCPU: maxCPU, MaxTotalMemory: maxMem},
+		Status: model.MachineQuotaStatus{
+			UsedMachines:       usedMachines,
+			UsedTotalCPUCores:  usedCPU,
+			UsedTotalMemoryMiB: usedMem,
+		},
+	}
+}
+
+func TestObserveQuotasReportsUsedAndHardLimits(t *testing.T) {
+	r := NewRecorder()
+	max := 10
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "team-a", &max, "16", "32Gi", 4, 8, 16384)})
+
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "machines", "used")); got != 4 {
+		t.Errorf("machines used = %v, want 4", got)
+	}
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "machines", "hard")); got != 10 {
+		t.Errorf("machines hard = %v, want 10", got)
+	}
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "cpu_cores", "used")); got != 8 {
+		t.Errorf("cpu_cores used = %v, want 8", got)
+	}
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "cpu_cores", "hard")); got != 16 {
+		t.Errorf("cpu_cores hard = %v, want 16", got)
+	}
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "memory_mib", "used")); got != 16384 {
+		t.Errorf("memory_mib used = %v, want 16384", got)
+	}
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "memory_mib", "hard")); got != 32*1024 {
+		t.Errorf("memory_mib hard = %v, want %v", got, 32*1024)
+	}
+}
+
+// TestObserveQuotasOmitsHardSeriesForUnsetDimension confirms a MachineQuota
+// that doesn't cap a given dimension (e.g. no maxTotalCpu) never gets a
+// type="hard" series for it -- only type="used", never a misleading
+// type="hard" 0 that would read as "capped at zero."
+func TestObserveQuotasOmitsHardSeriesForUnsetDimension(t *testing.T) {
+	r := NewRecorder()
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "uncapped", nil, "", "", 3, 6, 8192)})
+
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "uncapped", "machines", "used")); got != 3 {
+		t.Errorf("machines used = %v, want 3", got)
+	}
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, `resource="machines",type="hard"`) {
+		t.Errorf("expected no hard series for unset maxMachines in:\n%s", body)
+	}
+	if strings.Contains(body, `resource="cpu_cores",type="hard"`) {
+		t.Errorf("expected no hard series for unset maxTotalCpu in:\n%s", body)
+	}
+	if strings.Contains(body, `resource="memory_mib",type="hard"`) {
+		t.Errorf("expected no hard series for unset maxTotalMemory in:\n%s", body)
+	}
+}
+
+// TestObserveQuotasPrunesRemovedQuotas mirrors
+// TestObserveMigrationsPrunesRemovedMigrations: a MachineQuota that no
+// longer appears in the list (deleted, or the CRD listing failed and the
+// caller passed an empty slice) must not leave a stale series behind.
+func TestObserveQuotasPrunesRemovedQuotas(t *testing.T) {
+	r := NewRecorder()
+	max := 5
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "team-a", &max, "", "", 1, 0, 0)})
+	if got := testutil.ToFloat64(r.quotaResource.WithLabelValues("prod", "team-a", "machines", "used")); got != 1 {
+		t.Fatalf("machines used = %v, want 1", got)
+	}
+	r.ObserveQuotas(nil)
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), `quota="team-a"`) {
+		t.Error("expected team-a's series to be pruned once it's no longer observed")
+	}
+}
+
 func TestHandlerServesPrometheusExposition(t *testing.T) {
 	r := NewRecorder()
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")})
@@ -215,6 +298,8 @@ func TestNodeRecorderOmitsControllerOnlyMetrics(t *testing.T) {
 	r := NewNodeRecorder()
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")}) // no-op: phaseCount is nil
 	r.ObserveWebhookDecision("machines", "CREATE", false)                            // no-op: webhookDecisions is nil
+	max := 1
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)}) // no-op: quotaResource is nil
 	r.ObserveReconcile(time.Millisecond, nil)
 	r.ObserveAPIRequest("GET", time.Millisecond, nil)
 
@@ -227,6 +312,9 @@ func TestNodeRecorderOmitsControllerOnlyMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, "kairon_webhook_decisions_total") {
 		t.Error("NewNodeRecorder should not expose webhook decision metrics")
+	}
+	if strings.Contains(body, "kairon_quota_resource") {
+		t.Error("NewNodeRecorder should not expose MachineQuota utilization metrics")
 	}
 	if !strings.Contains(body, "kairon_reconcile_duration_seconds") {
 		t.Error("NewNodeRecorder should expose reconcile metrics")
@@ -243,6 +331,8 @@ func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 	r.ObserveReconcile(time.Millisecond, nil) // no-op: reconcileDuration is nil
 	r.ObserveHTTPRequest("GET", "/api/v1/overview", 200, time.Millisecond)
 	r.ObserveAPIRequest("GET", time.Millisecond, nil)
+	max := 1
+	r.ObserveQuotas([]model.MachineQuota{quotaWithMax("prod", "a", &max, "", "", 1, 0, 0)}) // no-op: quotaResource is nil
 
 	req := httptest.NewRequest("GET", "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -253,6 +343,9 @@ func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, "kairon_migration_phase_count") {
 		t.Error("NewUIRecorder should not expose migration-lifecycle metrics")
+	}
+	if strings.Contains(body, "kairon_quota_resource") {
+		t.Error("NewUIRecorder should not expose MachineQuota utilization metrics")
 	}
 	if !strings.Contains(body, "kairon_ui_request_duration_seconds") {
 		t.Error("NewUIRecorder should expose its own HTTP request metrics")

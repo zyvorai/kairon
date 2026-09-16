@@ -131,3 +131,30 @@ groups:
             is broken. severity: info, not warn/page, because "the
             webhook is working" and "the webhook is blocking too much"
             look identical in this metric alone.
+
+  # A namespace approaching a MachineQuota limit previously had no
+  # proactive signal at all -- an operator only found out once a Machine
+  # was already left Pending with a "MachineQuota ... reached" message
+  # (or, with webhook.enabled, an outright denied create/resize). This
+  # group closes that: it fires *before* the limit is actually hit, using
+  # kairon_quota_resource (internal/metrics, kairon-controller only --
+  # see ObserveQuotas).
+  - name: kairon-quotas
+    rules:
+      - alert: KaironQuotaNearLimit
+        expr: (kairon_quota_resource{type="used"} / on(namespace, quota, resource) kairon_quota_resource{type="hard"}) >= 0.9
+        for: 10m
+        labels:
+          severity: warn
+        annotations:
+          summary: "MachineQuota {{ $labels.namespace }}/{{ $labels.quota }} has been at or above 90% of its {{ $labels.resource }} limit for 10 minutes"
+          description: >-
+            kairon_quota_resource only reports a type="hard" series for a
+            dimension (machines/cpu_cores/memory_mib) the MachineQuota
+            actually caps, so this never fires for an uncapped dimension.
+            Once the limit is reached, new Machine scheduling in this
+            namespace starts landing Pending (or, with webhook.enabled,
+            being denied outright) with a "MachineQuota ... reached"
+            message -- raise the MachineQuota's limit, or free capacity,
+            before that happens.
+          runbook: "docs/guides/machine-quotas.md"

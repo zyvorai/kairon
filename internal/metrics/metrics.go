@@ -3,13 +3,15 @@
 
 // Package metrics exposes Prometheus metrics for Kairon's components.
 // kairon-controller's Recorder (NewRecorder) additionally covers its
-// unique cluster-wide view of MachineMigration state, since
-// Controller.Reconcile already lists every MachineMigration every tick;
-// kairon-node (NewNodeRecorder) and kairon-ui (NewUIRecorder) get a
-// smaller, purpose-specific subset instead of the full controller set, so
-// neither exposes migration-lifecycle metrics it has no way to keep
-// meaningful (a node's /metrics permanently reporting
-// kairon_migration_phase_count=0 would be misleading, not just unused).
+// unique cluster-wide view of MachineMigration and MachineQuota state,
+// since Controller.Reconcile already lists every MachineMigration and
+// MachineQuota every tick; kairon-node (NewNodeRecorder) and kairon-ui
+// (NewUIRecorder) get a smaller, purpose-specific subset instead of the
+// full controller set, so neither exposes migration-lifecycle or
+// quota-utilization metrics it has no way to keep meaningful (a node's
+// /metrics permanently reporting kairon_migration_phase_count=0, or
+// kairon_quota_resource for a namespace it has no cluster-wide visibility
+// into, would be misleading, not just unused).
 // Every Recorder shares the same struct and Observe* methods; a method
 // whose backing metric wasn't registered by the constructor that built
 // this Recorder is simply a no-op (nil-checked), so callers never need to
@@ -52,6 +54,14 @@ type Recorder struct {
 	transferDuration   *prometheus.HistogramVec
 	cutoverDowntime    prometheus.Histogram
 	dataPlaneEncrypted *prometheus.GaugeVec
+
+	// MachineQuota utilization -- only registered by NewRecorder
+	// (kairon-controller), see ObserveQuotas. Like migration-lifecycle
+	// metrics, neither kairon-node (no cluster-wide MachineQuota listing of
+	// its own -- see internal/controller/quota.go's QuotaTrackersForNamespace,
+	// which is namespace-scoped) nor kairon-ui (no reconcile loop at all)
+	// has a meaningful value to report here.
+	quotaResource *prometheus.GaugeVec
 
 	// Reconcile-loop metrics -- registered by NewRecorder and
 	// NewNodeRecorder (kairon-controller/kairon-node both run one), see
@@ -142,6 +152,15 @@ func NewRecorder() *Recorder {
 			Name: "kairon_migration_dataplane_encrypted",
 			Help: "1 if an active live migration's QEMU data-plane transport is TLS-encrypted, 0 otherwise.",
 		}, []string{"namespace", "name"}),
+		quotaResource: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "kairon_quota_resource",
+			Help: "MachineQuota usage and limit, by namespace, quota name, resource (machines/cpu_cores/memory_mib), " +
+				"and type (used/hard) -- mirrors kube-state-metrics' own kube_resourcequota shape so the same " +
+				"kairon_quota_resource{type=\"used\"} / kairon_quota_resource{type=\"hard\"} ratio pattern applies. " +
+				"A resource dimension the MachineQuota doesn't cap at all (e.g. no maxTotalCpu) never gets a " +
+				"type=\"hard\" series for that resource, only type=\"used\" -- there's no limit to report, not a " +
+				"limit of zero.",
+		}, []string{"namespace", "quota", "resource", "type"}),
 		reconcileDuration:   reconcileDuration,
 		reconcileErrors:     reconcileErrors,
 		reconcileItemErrors: reconcileItemErrors,
@@ -155,7 +174,7 @@ func NewRecorder() *Recorder {
 		now:                time.Now,
 	}
 	reg.MustRegister(r.phaseCount, r.phaseAgeSeconds, r.completedTotal, r.transferDuration, r.cutoverDowntime, r.dataPlaneEncrypted,
-		r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.webhookDecisions, r.apiRequestDuration)
+		r.quotaResource, r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.webhookDecisions, r.apiRequestDuration)
 	return r
 }
 
@@ -269,6 +288,54 @@ func (r *Recorder) ObserveMigrations(migrations []model.MachineMigration) {
 	r.phaseCount.Reset()
 	for phase, n := range counts {
 		r.phaseCount.WithLabelValues(phase).Set(float64(n))
+	}
+}
+
+// ObserveQuotas is a pure function of the current MachineQuota list, each
+// carrying the exact status.used* values that reconcile tick is about to
+// (or just did) patch onto the real object -- call it once per Reconcile
+// tick, right alongside the quota status patches themselves
+// (internal/controller/controller.go), the same "one Observe* call per
+// tick, not scattered across every call site" shape ObserveMigrations
+// already established. Passing the object's Spec/Status pair directly
+// (rather than internal/controller's own QuotaTracker, whose fields are
+// unexported) keeps this package with no import-time dependency on
+// internal/controller.
+//
+// Like dataPlaneEncrypted, quotaResource is Reset() first: a deleted
+// MachineQuota, or one that dropped a limit it used to set, must stop
+// reporting a stale series rather than being left at its last-observed
+// value forever.
+func (r *Recorder) ObserveQuotas(quotas []model.MachineQuota) {
+	if r.quotaResource == nil {
+		return
+	}
+	r.quotaResource.Reset()
+	for _, q := range quotas {
+		ns, name := q.Namespace(), q.Metadata.Name
+		r.quotaResource.WithLabelValues(ns, name, "machines", "used").Set(float64(q.Status.UsedMachines))
+		if q.Spec.MaxMachines != nil {
+			r.quotaResource.WithLabelValues(ns, name, "machines", "hard").Set(float64(*q.Spec.MaxMachines))
+		}
+		r.quotaResource.WithLabelValues(ns, name, "cpu_cores", "used").Set(float64(q.Status.UsedTotalCPUCores))
+		if q.Spec.MaxTotalCPU != "" {
+			// Already validated by BuildQuotaTrackers before this ever ran
+			// this tick (an invalid maxTotalCpu fails the whole Reconcile
+			// tick outright, well before any status/metric is ever
+			// observed) -- a parse error here can only mean this exact
+			// MachineQuota's limit somehow never got validated, so skip
+			// reporting a hard limit for it rather than reporting a
+			// meaningless zero.
+			if max, err := model.ParseVCPUs(q.Spec.MaxTotalCPU); err == nil {
+				r.quotaResource.WithLabelValues(ns, name, "cpu_cores", "hard").Set(float64(max))
+			}
+		}
+		r.quotaResource.WithLabelValues(ns, name, "memory_mib", "used").Set(float64(q.Status.UsedTotalMemoryMiB))
+		if q.Spec.MaxTotalMemory != "" {
+			if max, err := model.ParseMemoryMiB(q.Spec.MaxTotalMemory); err == nil {
+				r.quotaResource.WithLabelValues(ns, name, "memory_mib", "hard").Set(float64(max))
+			}
+		}
 	}
 }
 

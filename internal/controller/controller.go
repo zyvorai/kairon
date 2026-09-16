@@ -252,12 +252,24 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
 	}
 
+	// observedQuotas carries each tracker's final Spec/Status pair (seeded
+	// usage plus whatever this same tick's scheduling loop admitted) --
+	// exactly the same values PatchMachineQuotaStatus below writes to the
+	// real object, so ObserveQuotas never reports numbers that disagree
+	// with what `kubectl get machinequota` would show for the same tick.
+	observedQuotas := make([]model.MachineQuota, 0, len(quotas))
 	for _, list := range quotaTrackers {
 		for _, t := range list {
+			q := t.quota
+			q.Status = t.used
+			observedQuotas = append(observedQuotas, q)
 			if statusErr := c.Kube.PatchMachineQuotaStatus(ctx, t.quota.Namespace(), t.quota.Metadata.Name, t.used); statusErr != nil {
 				c.Log.Error("machine quota status patch failed", "namespace", t.quota.Namespace(), "quota", t.quota.Metadata.Name, "error", statusErr)
 			}
 		}
+	}
+	if c.Metrics != nil {
+		c.Metrics.ObserveQuotas(observedQuotas)
 	}
 
 	if err := c.reconcileDisruptionBudgetsStatus(ctx, machines, migrations); err != nil {

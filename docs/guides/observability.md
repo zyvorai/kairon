@@ -35,9 +35,34 @@ convention -- see `SECURITY.md`'s `kairon-ui` section for the trust
 boundary that implies (aggregate request counts/latencies, not sensitive
 data, but reachable wherever the dashboard itself is).
 
+## `kairon_quota_resource` (`kairon-controller` only)
+
+A later addition on top of the above: `kairon-controller`'s `/metrics` now
+also exposes `kairon_quota_resource{namespace, quota, resource, type}`,
+one gauge per `MachineQuota` dimension it caps or tracks (`resource` is
+`machines`/`cpu_cores`/`memory_mib`; `type` is `used` or `hard`) --
+mirroring `kube-state-metrics`' own `kube_resourcequota{resource, type}`
+shape so the familiar `used / hard` ratio pattern applies directly.
+Recorded once per `Reconcile` tick (`internal/metrics.Recorder.ObserveQuotas`),
+from the exact same tallies that tick patches onto each `MachineQuota`'s
+own `status.used*` fields -- never a second, independently-computed
+number that could drift from what `kubectl get machinequota` shows for
+the same tick. A dimension the `MachineQuota` doesn't cap at all (e.g. no
+`maxTotalCpu` set) never gets a `type="hard"` series for it, only
+`type="used"` -- there's no limit to report, not a limit of zero that
+would misleadingly read as "already over quota."
+
+Why `kairon-controller`-only, unlike `kairon_apiserver_request_duration_seconds`:
+this needs the same cluster-wide `MachineQuota`/`Machine` listing the
+reconcile loop's own quota enforcement already does (`internal/controller/quota.go`),
+which neither `kairon-node` (no cluster-wide visibility, only ever
+self-checks quota for its own node's hotplug resizes) nor `kairon-ui` (no
+reconcile loop at all) has an equivalent of. See `docs/guides/machine-quotas.md`
+for the full picture, including the `KaironQuotaNearLimit` alert below.
+
 ## Alerts
 
-`charts/kairon/alerts.yaml` now has two rule groups:
+`charts/kairon/alerts.yaml` now has three rule groups:
 
 - **`kairon-migrations`** (unchanged) -- the original four alerts, all
   pointing at `docs/runbook-migration-failures.md`.
@@ -52,6 +77,15 @@ data, but reachable wherever the dashboard itself is).
     -- a denial is the webhook doing its job; a spike usually means a
     `MachineQuota`/`MachineDisruptionBudget` was set stricter than
     expected, not that something is broken.
+- **`kairon-quotas`** (new) -- one alert, `KaironQuotaNearLimit`: a
+  `MachineQuota`'s `used`/`hard` ratio (`kairon_quota_resource`, see
+  above) has stayed at or above 90% for 10 minutes on some
+  namespace/quota/resource. Fires *before* the limit is actually hit --
+  previously the only signal was a Machine already stuck `Pending` (or,
+  with `webhook.enabled`, an outright denied create/resize) with a
+  "MachineQuota ... reached" message. `severity: warn`, pointed at
+  `docs/guides/machine-quotas.md` rather than a dedicated runbook (there's
+  nothing to debug -- raise the limit or free capacity).
 
 Neither rule file distinguishes *which* `kairon-controller` or
 `kairon-node` instance fired, since `kairon_reconcile_*`/

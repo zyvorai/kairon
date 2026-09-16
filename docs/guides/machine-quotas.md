@@ -70,6 +70,27 @@ before it would otherwise assign a Machine to a node:
 Already-scheduled Machines are never evicted retroactively if a quota is
 lowered below what's already running -- quota only blocks *new* scheduling.
 
+## Prometheus metrics and alerting
+
+Until now, seeing a namespace approach its limit meant either watching
+`status.used*` by hand or waiting for a Machine to actually land `Pending`
+with a `MachineQuota ... reached` message -- there was no proactive signal.
+`kairon-controller` now also exposes `kairon_quota_resource{namespace,
+quota, resource, type}` (`resource` is `machines`/`cpu_cores`/`memory_mib`,
+`type` is `used`/`hard`), the exact same tallies `status.used*` gets every
+tick, recorded once per `Reconcile` right alongside that status patch so
+the two can never disagree. A dimension a `MachineQuota` doesn't cap at all
+(e.g. no `maxTotalCpu`) never gets a `type="hard"` series for it -- only
+`type="used"`, never a misleading "capped at zero". `charts/kairon/alerts.yaml`'s
+new `kairon-quotas` group (`KaironQuotaNearLimit`) fires once
+`used`/`hard` has stayed at or above 90% for 10 minutes on any
+namespace/quota/resource, well before the limit is actually reached and
+new scheduling starts blocking. See `docs/guides/observability.md` for
+which component(s) expose which metrics overall -- this one is
+`kairon-controller`-only, mirroring the reconcile loop's own cluster-wide
+`ListMachineQuotas` visibility (neither `kairon-node` nor `kairon-ui` has
+an equivalent view to report from).
+
 ## Admission webhook (`webhook.enabled`)
 
 Unlike a real Kubernetes `ResourceQuota` (enforced by the API server at

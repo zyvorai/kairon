@@ -88,6 +88,57 @@ func TestRunRecordsReconcileMetrics(t *testing.T) {
 	}
 }
 
+// TestReconcileObservesQuotaMetrics confirms Reconcile wires
+// Metrics.ObserveQuotas into the same tick that patches MachineQuota
+// status, and that what lands in kairon_quota_resource matches what got
+// patched -- not a second, independently-computed tally that could drift
+// from it.
+func TestReconcileObservesQuotaMetrics(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
+				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+				Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			_ = json.NewEncoder(w).Encode(model.NodeList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+			max := 5
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{{
+				Metadata: model.ObjectMeta{Name: "team-a", Namespace: "prod"},
+				Spec:     model.MachineQuotaSpec{MaxMachines: &max, MaxTotalCPU: "10"},
+			}}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/team-a/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	rec := metrics.NewRecorder()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Metrics: rec}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	rec.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		`kairon_quota_resource{namespace="prod",quota="team-a",resource="machines",type="hard"} 5`,
+		`kairon_quota_resource{namespace="prod",quota="team-a",resource="machines",type="used"} 1`,
+		`kairon_quota_resource{namespace="prod",quota="team-a",resource="cpu_cores",type="hard"} 10`,
+		`kairon_quota_resource{namespace="prod",quota="team-a",resource="cpu_cores",type="used"} 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 func TestReconcileRespectsAntiAffinityAcrossRealMachines(t *testing.T) {
 	primary := model.Machine{
 		Metadata: model.ObjectMeta{Name: "primary", Namespace: "prod", Labels: map[string]string{"role": "db-primary"}},
