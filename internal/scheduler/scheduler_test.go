@@ -447,3 +447,61 @@ func TestChooseNamesInsufficientPinnableCPUs(t *testing.T) {
 		t.Fatalf("error doesn't name the cpuPinning shortfall: %v", err)
 	}
 }
+
+func namedMachine(name string, priority int32) model.Machine {
+	return model.Machine{
+		Metadata: model.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:     model.MachineSpec{Priority: priority},
+	}
+}
+
+func machineNames(machines []model.Machine) []string {
+	names := make([]string, len(machines))
+	for i, m := range machines {
+		names[i] = m.Metadata.Name
+	}
+	return names
+}
+
+func TestSortByPriorityDescHighestFirst(t *testing.T) {
+	pending := []model.Machine{namedMachine("low", 0), namedMachine("high", 10), namedMachine("mid", 5)}
+	SortByPriorityDesc(pending)
+	got := machineNames(pending)
+	want := []string{"high", "mid", "low"}
+	if got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestSortByPriorityDescNegativePrioritySortsBelowZero(t *testing.T) {
+	pending := []model.Machine{namedMachine("below", -5), namedMachine("default", 0)}
+	SortByPriorityDesc(pending)
+	if got := machineNames(pending); got[0] != "default" || got[1] != "below" {
+		t.Fatalf("got %v, want [default below]", got)
+	}
+}
+
+// TestSortByPriorityDescStableOnTies confirms every Machine before this
+// field existed -- Priority always 0 -- schedules in exactly the arrival
+// order it always did: SortByPriorityDesc must never reorder within a
+// shared Priority value.
+func TestSortByPriorityDescStableOnTies(t *testing.T) {
+	pending := []model.Machine{namedMachine("c", 0), namedMachine("a", 0), namedMachine("b", 0)}
+	SortByPriorityDesc(pending)
+	got := machineNames(pending)
+	want := []string{"c", "a", "b"}
+	if got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("got %v, want %v (ties must preserve arrival order)", got, want)
+	}
+}
+
+func TestSortByPriorityDescEmptyAndSingle(t *testing.T) {
+	var empty []model.Machine
+	SortByPriorityDesc(empty) // must not panic
+
+	one := []model.Machine{namedMachine("solo", 3)}
+	SortByPriorityDesc(one)
+	if len(one) != 1 || one[0].Metadata.Name != "solo" {
+		t.Fatalf("got %v", one)
+	}
+}

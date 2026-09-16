@@ -630,6 +630,60 @@ func TestCmdCreateStillCreatesAPlainMachine(t *testing.T) {
 	}
 }
 
+func TestCmdCreatePriorityFlag(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreate(context.Background(), kc, []string{"urgent-vm", "--image", "/img.qcow2", "--priority", "10"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["priority"] != float64(10) {
+		t.Errorf("priority = %v, want 10", spec["priority"])
+	}
+}
+
+// TestCmdCreateOmitsPriorityByDefault confirms an unset --priority produces
+// no "priority" key at all (MachineSpec.Priority's own omitempty), not an
+// explicit 0 -- matching every other create verb's "unset means the API's
+// own zero-value default, not an explicit override" convention.
+func TestCmdCreateOmitsPriorityByDefault(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreate(context.Background(), kc, []string{"plain-vm", "--image", "/img.qcow2"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if _, present := spec["priority"]; present {
+		t.Errorf("priority should be omitted by default, got %v", spec)
+	}
+}
+
+// TestCmdCreateMachineSetPropagatesPriority confirms --priority flows
+// through machineSpecFromFlags into a MachineSet's per-replica template,
+// exactly like --cpu/--image already do -- every replica a MachineSet
+// creates competes for scarce capacity at the same priority as the
+// MachineSet itself was asked to run at.
+func TestCmdCreateMachineSetPropagatesPriority(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateMachineSet(context.Background(), kc, []string{"web", "--image", "/img.qcow2", "--priority", "7"})
+	spec, _ := s.body["spec"].(map[string]any)
+	template, _ := spec["template"].(map[string]any)
+	tmplSpec, _ := template["spec"].(map[string]any)
+	if tmplSpec["priority"] != float64(7) {
+		t.Errorf("template.spec.priority = %v, want 7", tmplSpec["priority"])
+	}
+}
+
+func TestCmdEditMachinePriority(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"machine", "urgent-vm", "--priority", "20"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/urgent-vm" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["priority"] != float64(20) {
+		t.Errorf("priority = %v, want 20", spec["priority"])
+	}
+}
+
 // TestCmdCreateDispatchesToMachineSetByKeyword confirms `create machineset
 // NAME` is recognized as a KIND, not treated as a Machine named
 // "machineset" -- the design tradeoff documented on cmdCreate itself.

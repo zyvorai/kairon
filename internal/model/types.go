@@ -130,21 +130,40 @@ type MachineSpec struct {
 	// time this is set while Resources is still empty; editing either
 	// field afterward never re-resolves, matching every other
 	// creation-time-only field in this project.
-	InstanceTypeName string                 `json:"instanceTypeName,omitempty"`
-	Image            ImageSpec              `json:"image"`
-	Resources        ResourceSpec           `json:"resources"`
-	Runtime          RuntimeSpec            `json:"runtime,omitempty"`
-	Network          NetworkSpec            `json:"network,omitempty"`
-	CloudInit        CloudInitSpec          `json:"cloudInit,omitempty"`
-	ServiceFabric    ServiceFabricSpec      `json:"serviceFabric,omitempty"`
-	PowerState       string                 `json:"powerState,omitempty"`
-	Tenant           string                 `json:"tenant,omitempty"`
-	TTLSeconds       int64                  `json:"ttlSeconds,omitempty"`
-	Placement        PlacementSpec          `json:"placement,omitempty"`
-	Security         SecuritySpec           `json:"security,omitempty"`
-	Volumes          []MachineVolume        `json:"volumes,omitempty"`
-	DeviceClaims     []DeviceClaimReference `json:"deviceClaims,omitempty"`
-	GuestAgent       GuestAgentSpec         `json:"guestAgent,omitempty"`
+	InstanceTypeName string            `json:"instanceTypeName,omitempty"`
+	Image            ImageSpec         `json:"image"`
+	Resources        ResourceSpec      `json:"resources"`
+	Runtime          RuntimeSpec       `json:"runtime,omitempty"`
+	Network          NetworkSpec       `json:"network,omitempty"`
+	CloudInit        CloudInitSpec     `json:"cloudInit,omitempty"`
+	ServiceFabric    ServiceFabricSpec `json:"serviceFabric,omitempty"`
+	PowerState       string            `json:"powerState,omitempty"`
+	Tenant           string            `json:"tenant,omitempty"`
+	TTLSeconds       int64             `json:"ttlSeconds,omitempty"`
+	// Priority orders competition among Machines that are all still
+	// unscheduled (spec.nodeName empty) at the start of the same
+	// reconcile tick -- kairon-controller attempts higher-Priority
+	// pending Machines first, so a burst of new Machines that exceeds
+	// available node capacity or MachineQuota headroom admits the
+	// highest-Priority ones rather than whichever happened to list
+	// first. Same "no fixed range, compare directly" convention as
+	// PlacementSpec's own Weight fields -- higher wins, negative values
+	// are valid for a below-default class, and the zero value (every
+	// Machine before this field existed) sorts identically to today's
+	// plain list order since sort.SliceStable never reorders equal
+	// keys. Purely an admission-order signal for this tick's pending
+	// Machines: it never preempts/evicts an already-scheduled Machine,
+	// however low its own Priority, and never influences which node an
+	// eligible Machine lands on (that's still internal/scheduler's own
+	// load/affinity/topology scoring) -- see
+	// internal/scheduler.SortByPriorityDesc and
+	// docs/guides/machine-placement.md.
+	Priority     int32                  `json:"priority,omitempty"`
+	Placement    PlacementSpec          `json:"placement,omitempty"`
+	Security     SecuritySpec           `json:"security,omitempty"`
+	Volumes      []MachineVolume        `json:"volumes,omitempty"`
+	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
+	GuestAgent   GuestAgentSpec         `json:"guestAgent,omitempty"`
 	// Sandbox opts this Machine into FluxVM's own agent-sandbox track
 	// (BackendKind::FluxVm, its own in-tree lightweight hypervisor) --
 	// see SandboxSpec's own doc comment. Nil for every other Machine.

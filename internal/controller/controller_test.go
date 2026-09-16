@@ -244,6 +244,79 @@ func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
 	}
 }
 
+// TestReconcileAdmitsHigherPriorityMachineFirst confirms spec.Priority
+// actually changes who wins scarce capacity, not just what order the log
+// lines print in. Two pending Machines (no NodeName yet, so both compete in
+// the same tick) chase one MachineQuota slot (MaxMachines: 1); "low" is
+// deliberately listed *before* "important" in the fake API's own response
+// -- the exact ordering a Priority-less fleet would have relied on -- so a
+// pass here can only mean SortByPriorityDesc, not incidental list order,
+// decided the outcome.
+func TestReconcileAdmitsHigherPriorityMachineFirst(t *testing.T) {
+	low := model.Machine{
+		Metadata: model.ObjectMeta{Name: "low", Namespace: "prod"},
+		Spec:     model.MachineSpec{PowerState: "Running", Priority: 0, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	important := model.Machine{
+		Metadata: model.ObjectMeta{Name: "important", Namespace: "prod"},
+		Spec:     model.MachineSpec{PowerState: "Running", Priority: 10, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "prod-quota", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxMachines: intPtr(1)},
+	}
+	scheduledMachines := map[string]string{}
+	blockedMachines := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{low, important}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			var n model.Node
+			n.Metadata.Name = "worker-1"
+			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
+			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/") && strings.HasSuffix(r.URL.Path, "/status"):
+			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/"), "/status")
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			blockedMachines[name] = p.Status.Message
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/")
+			var p map[string]map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			scheduledMachines[name] = p["spec"]["nodeName"]
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if scheduledMachines["important"] != "worker-1" {
+		t.Fatalf("expected the higher-priority machine to be scheduled, got scheduled=%v blocked=%v", scheduledMachines, blockedMachines)
+	}
+	if _, stillScheduled := scheduledMachines["low"]; stillScheduled {
+		t.Fatalf("expected the lower-priority machine to lose the quota race, got scheduled=%v", scheduledMachines)
+	}
+	if msg := blockedMachines["low"]; !strings.Contains(msg, "MachineQuota") {
+		t.Fatalf("expected low to be blocked by MachineQuota, got message %q (blocked=%v)", msg, blockedMachines)
+	}
+}
+
 func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running", RuntimeID: "vm-1"}}
 	migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: "Cutover", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live", RuntimeID: "vm-1"}}

@@ -255,6 +255,9 @@ spec:
                 type: integer
                 format: int64
                 minimum: 0
+              priority:
+                type: integer
+                format: int32
               placement:
                 type: object
                 properties:

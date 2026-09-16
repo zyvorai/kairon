@@ -141,6 +141,64 @@ server would reject `maxSkew: 0` outright as invalid; Kairon has no
 equivalent admission-time field validation to hook a rejection into, so
 if you meant to write a positive number, write one.
 
+## Scheduling priority
+
+```yaml
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: urgent-vm
+spec:
+  priority: 10
+```
+
+Every field above steers *which node* a Machine lands on. `spec.priority`
+answers a different question: *when several Machines are all still
+unscheduled at once and can't all fit, which gets tried first?*
+
+Every reconcile tick, `kairon-controller` collects every Machine that isn't
+scheduled yet (no `spec.nodeName`), sorts that list by `spec.priority`
+descending, then runs each one through placement (this page's own
+eligibility/scoring pass) and, if a node is found, `MachineQuota` admission
+-- in that order. A higher-`priority` Machine is attempted, and can claim
+scarce node capacity or the last unit of `MachineQuota` headroom, before a
+lower-priority one — even one that was created earlier, or that the API
+happened to list first.
+
+There's no fixed range for `priority`, same as `preferredAffinity`'s own
+`weight` — pick any integer, positive or negative; the default is `0`. Ties
+(the overwhelming common case: every Machine that doesn't set this field)
+keep whatever order they'd have had anyway — the sort used is stable, so a
+fleet that never sets `priority` schedules in exactly the order it always
+did.
+
+```
+kaironctl create urgent-vm --image /base.qcow2 --priority 10
+kaironctl create machineset web --image /base.qcow2 --replicas 5 --priority 5
+kaironctl edit machine urgent-vm --priority 20
+```
+
+`kaironctl create`/`create machineset` both take `--priority N` (a
+MachineSet's replicas all inherit its template's priority); `kaironctl edit
+machine NAME --priority N` changes it on an existing Machine without a
+delete/recreate — the one Machine-spec field this project's `edit` verb
+supports patching after creation, since it only ever affects a *future*
+tick's admission order.
+
+**This is not preemption.** A high-`priority` Machine created after a
+lower-`priority` one is already running never evicts, migrates, or
+otherwise disturbs it — `priority` only ever orders Machines that are
+*already* competing to be scheduled in the same tick, not Machines that
+already won a previous tick. It also never changes *which* eligible node a
+Machine lands on — that's still this page's own load/affinity/topology-spread
+scoring, untouched. If you need a busy fleet to actively make room for a
+new high-priority Machine by evicting a running lower-priority one, that's
+real preemption — a materially riskier mechanism (choosing what to kill,
+draining it cleanly, handling the case where nothing suitable exists to
+evict) this project doesn't implement yet; this is a smaller, safer first
+cut that solves the much more common "a burst of new Machines exceeds
+capacity, who goes first" problem without it.
+
 ## Real limits today
 
 - **DRA topology-awareness is a best-effort hint, not an allocation

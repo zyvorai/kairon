@@ -476,6 +476,7 @@ func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, imag
 	fs.Var(&packages, "package", "package to install via cloud-init at first boot (repeatable)")
 	var runcmd stringSliceFlag
 	fs.Var(&runcmd, "runcmd", "shell command to run via cloud-init at first boot (repeatable)")
+	priority := fs.Int("priority", 0, "scheduling priority: when a reconcile tick can't fit every pending Machine (node capacity or MachineQuota), higher values are attempted first; default 0, negative values are valid for a below-default class")
 	return func() model.MachineSpec {
 		pf, err := parseForwards(forwards)
 		if err != nil {
@@ -494,6 +495,7 @@ func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, imag
 				RunCmd:            runcmd,
 			},
 			PowerState: "Running",
+			Priority:   int32(*priority),
 		}
 	}, image
 }
@@ -832,11 +834,11 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 // only the ones an explicit flag was actually passed for on this
 // invocation (tracked via fs.Visit, never a flag's zero-value default) so
 // an omitted flag can never clobber an already-set value back to zero.
-// migrationpolicy, snapshotschedule, quota, and budget are the only kinds
-// this verb supports for a first cut.
+// migrationpolicy, snapshotschedule, quota, budget, and machine are the
+// only kinds this verb supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X] | edit machine NAME --priority N"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -848,9 +850,41 @@ func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 		cmdEditQuota(ctx, kc, name, args[2:])
 	case "budget", "budgets", "machinedisruptionbudgets":
 		cmdEditBudget(ctx, kc, name, args[2:])
+	case "machine", "machines":
+		cmdEditMachine(ctx, kc, name, args[2:])
 	default:
-		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, or budget, got %q", kind))
+		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, budget, or machine, got %q", kind))
 	}
+}
+
+// cmdEditMachine patches only spec.priority for a first cut -- the one
+// Machine-spec field this project considers safe to change on an
+// already-created (possibly already-scheduled) Machine via a narrow
+// merge-patch, since it's purely an admission-order hint for a future
+// reconcile tick (see MachineSpec.Priority's own doc comment) and never
+// itself triggers a re-realization. Every other Machine-spec field
+// (image, resources, network, ...) stays create-time-only through this
+// CLI, same as before `edit machine` existed -- kubectl apply/YAML is
+// still the only way to change those, exactly like the fields `create`
+// itself doesn't expose flags for.
+func cmdEditMachine(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit machine", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	priority := fs.Int("priority", 0, "new scheduling priority (higher wins a scarce reconcile-tick race for node capacity or MachineQuota headroom; see kaironctl create --priority)")
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "priority" {
+			spec["priority"] = *priority
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass --priority"))
+	}
+	if err := kc.PatchMachine(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machine/%s updated\n", name)
 }
 
 func cmdEditMigrationPolicy(ctx context.Context, kc *kube.Client, name string, args []string) {
@@ -1446,7 +1480,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

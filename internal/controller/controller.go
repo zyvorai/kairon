@@ -186,15 +186,28 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 
+	// pending collects every Machine this tick will actually try to
+	// schedule -- the same "nothing to schedule" skips as before this
+	// existed (deleted, already assigned, or desired Stopped/Halted with
+	// no runtime yet to stop) -- then SortByPriorityDesc reorders it so a
+	// burst of pending Machines that exceeds available node capacity or
+	// MachineQuota headroom admits the highest spec.Priority ones first
+	// within this same tick, instead of whichever the API happened to
+	// list first. machines itself (the full list, scheduled and pending
+	// alike) is untouched and still what Choose/admitQuota consult for
+	// affinity/topology/quota-usage context below -- only the outer
+	// iteration order changes.
+	var pending []model.Machine
 	for _, m := range machines {
-		// A never-yet-assigned Machine desired Stopped or Halted has
-		// nothing to schedule -- ensureStopped/ensureHalted (internal/agent)
-		// both no-op without an existing runtime anyway, so there is no
-		// point choosing it a node here.
 		desired := m.DesiredPowerState()
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || desired == "Stopped" || desired == "Halted" {
 			continue
 		}
+		pending = append(pending, m)
+	}
+	scheduler.SortByPriorityDesc(pending)
+
+	for _, m := range pending {
 		node, err := c.Scheduler.Choose(m, nodes, machines, assigned, draHints[m.Namespace()+"/"+m.Metadata.Name])
 		if err != nil {
 			status := m.Status

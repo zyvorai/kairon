@@ -408,6 +408,27 @@ func nodeLabelValue(nodes []model.Node, nodeName, key string) (string, bool) {
 	return "", false
 }
 
+// SortByPriorityDesc reorders pending in place, highest spec.Priority
+// first -- called once by internal/controller.Reconcile, on the slice of
+// Machines it's about to attempt to schedule this tick, before that loop's
+// per-Machine Choose/admitQuota calls. sort.SliceStable, not sort.Slice:
+// Machines sharing a Priority (every Machine before this field existed, or
+// any two Machines that just happen to set the same value) keep whatever
+// relative order they arrived in, so a Priority-less fleet schedules in
+// exactly the same order it always did -- this only ever reorders across
+// distinct Priority values, never within one.
+//
+// Deliberately a small, separately-testable pure function rather than an
+// inline sort.SliceStable call in controller.go, matching this project's
+// established pattern for a scheduling-adjacent decision (see e.g.
+// model.MachineSnapshotScheduleSpec.Due) of keeping the decision itself
+// directly unit-testable without an httptest fake-Kube-server harness.
+func SortByPriorityDesc(pending []model.Machine) {
+	sort.SliceStable(pending, func(i, j int) bool {
+		return pending[i].Spec.Priority > pending[j].Spec.Priority
+	})
+}
+
 func ready(n model.Node) bool {
 	for _, c := range n.Status.Conditions {
 		if c.Type == "Ready" {
