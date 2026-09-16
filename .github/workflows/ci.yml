@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: '22', cache: npm, cache-dependency-path: web/package.json}
       - run: npm --prefix web install
       - run: npm --prefix web run typecheck
@@ -135,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version: '22', cache: npm, cache-dependency-path: website/package-lock.json}
       - run: npm --prefix website ci
       - run: npm --prefix website run build
