@@ -75,6 +75,12 @@ To actually turn encryption on, two things must both be true simultaneously acro
 
 Before flipping either, query whether every currently-active live migration already reports `dataPlaneEncrypted: true` (or watch the `kairon_migration_dataplane_encrypted` metric go to 1 across the board) -- that's the actual signal that every node's adapter is upgraded and configured, not just a guess based on when you think the rollout finished.
 
+## Abandoned pre-commit sessions (destination-side, opt-in)
+
+A source `kairon-node` crashing or being fenced *between* a successful `Prepare` and ever calling `Commit`/`Abort` is a different, narrower failure than everything above: `NeedsRecovery` only ever covers an *ambiguous commit result* on a transfer that got far enough to try committing. This case never gets that far -- the destination's reserved incoming-QEMU process just sits there with no source left to release it, and no `MachineMigration` object is stuck in any visible phase to alert on (the source-side object is usually gone or unreachable along with its node).
+
+`kairon-node`'s `--migration-heartbeat-ttl` flag (zero by default, off) closes this: the source heartbeats a live transfer's destination session once per reconcile tick (piggybacked on the same tick that already polls transfer status), and a destination whose `HeartbeatTTL` is configured self-aborts any `Prepared` session that's gone quiet for longer than that -- logged as `session.Reason: "heartbeat timeout: no renewal for over <TTL>, presumed source failure"`, visible via `GET /internal/v1/migrations/{id}` or `.../diagnosis` against the *destination* node directly (not through the Kubernetes API -- there's no CRD-level surface for this yet). Set `--migration-heartbeat-ttl` comfortably larger than several multiples of `--interval` (the reconcile tick, default 3s) to tolerate a transient network blip without reaping a migration that's still actually healthy.
+
 ## Escalation
 
 - A single `NeedsRecovery` migration, diagnosable and resolvable via the decision tree above: handle it yourself, no escalation needed.

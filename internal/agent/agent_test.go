@@ -687,6 +687,171 @@ func TestCommitFailureStopsAtNeedsRecovery(t *testing.T) {
 	}
 }
 
+// TestRunningPhaseMigrationSendsHeartbeatToTarget proves the fix for the
+// destination-session-leak gap named in ROADMAP.md: a live migration
+// already in its "Running" (per-tick polling) phase must renew its
+// destination session's heartbeat once per reconcile tick, so the
+// target's Server.ReapStaleSessions (when HeartbeatTTL is configured)
+// doesn't mistake an actively-transferring migration for one whose source
+// crashed or was fenced.
+func TestRunningPhaseMigrationSendsHeartbeatToTarget(t *testing.T) {
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live"},
+	}
+	sessionID := migrationSessionID(item)
+	item.Status = model.MachineMigrationStatus{
+		Phase: "Running", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live",
+		RuntimeID: "vm-1", SessionID: sessionID, TransferID: "xfer-1",
+	}
+	store := migration.NewFileStore(t.TempDir())
+	if err := store.Put(migration.Session{ID: sessionID, Namespace: "prod", Machine: "db", SourceNode: "worker-1", TargetNode: "worker-2", Phase: "Prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	destination := &fakePeerDestination{}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: store, Driver: destination}).Handler())
+	defer peerServer.Close()
+
+	before, err := store.Get(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "running", RAMTotal: 4096, RAMTransferred: 1024}}
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+			_ = json.NewEncoder(w).Encode(machine)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1" {
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(peerServer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Get(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.UpdatedAt.After(before.UpdatedAt) {
+		t.Fatalf("expected the Running-phase reconcile tick to heartbeat the destination session: before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+	}
+	if after.Phase != "Prepared" {
+		t.Fatalf("an in-progress transfer's heartbeat must not itself change the session phase, got %q", after.Phase)
+	}
+}
+
+// TestRunningPhaseMigrationToleratesHeartbeatFailure proves the heartbeat
+// call is best-effort, matching resumeSourceNetworkQuiesce's own
+// convention: a target that's unreachable or errors on the heartbeat route
+// must never fail the whole reconcile over a missed liveness ping -- the
+// transfer itself keeps progressing based on the source's own polled
+// status regardless.
+func TestRunningPhaseMigrationToleratesHeartbeatFailure(t *testing.T) {
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live"},
+	}
+	sessionID := migrationSessionID(item)
+	item.Status = model.MachineMigrationStatus{
+		Phase: "Running", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live",
+		RuntimeID: "vm-1", SessionID: sessionID, TransferID: "xfer-1",
+	}
+	// A peer that 500s on every request -- the heartbeat call will fail,
+	// but nothing else in the "Running" branch calls MigrationPeer.
+	brokenPeer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "peer unavailable", http.StatusInternalServerError)
+	}))
+	defer brokenPeer.Close()
+
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "running", RAMTotal: 4096, RAMTransferred: 1024}}
+	var migrationStatus model.MachineMigrationStatus
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+			_ = json.NewEncoder(w).Encode(machine)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			migrationStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1" {
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(brokenPeer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return brokenPeer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatalf("a missed heartbeat must not fail the reconcile: %v", err)
+	}
+	if migrationStatus.Phase != "Running" || migrationStatus.RAMTransferred != 1024 {
+		t.Fatalf("expected the transfer to keep progressing despite the heartbeat failure, got %+v", migrationStatus)
+	}
+}
+
 func runLiveAgentReconcile(t *testing.T, peerServer *httptest.Server, _ *fakePeerDestination, source *fakeSourceMigrator) model.MachineMigrationStatus {
 	t.Helper()
 	return runLiveAgentReconcileWithNetwork(t, peerServer, source, "")

@@ -206,6 +206,307 @@ func TestFileStoreRoundTripAndRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestFileStoreList(t *testing.T) {
+	dir := t.TempDir()
+	store := NewFileStore(dir)
+	if sessions, err := store.List(); err != nil || len(sessions) != 0 {
+		t.Fatalf("expected empty list on a not-yet-created store, got %+v err=%v", sessions, err)
+	}
+	a, b := testSession(), testSession()
+	a.ID, b.ID = "kmm-a", "kmm-b"
+	a.Phase, b.Phase = "Prepared", "Committed"
+	if err := store.Put(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(b); err != nil {
+		t.Fatal(err)
+	}
+	// A corrupt/unparseable session file must be skipped, not fail the
+	// whole listing.
+	if err := os.WriteFile(filepath.Join(dir, "corrupt.json"), []byte("{not valid json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions (corrupt file skipped), got %d: %+v", len(sessions), sessions)
+	}
+	ids := map[string]bool{}
+	for _, s := range sessions {
+		ids[s.ID] = true
+	}
+	if !ids["kmm-a"] || !ids["kmm-b"] {
+		t.Fatalf("missing expected session ids in %+v", sessions)
+	}
+}
+
+func TestServerHeartbeatRenewsPreparedSession(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	ts := httptest.NewServer((&Server{Store: store, Driver: d}).Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Get("kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := c.Heartbeat(context.Background(), ts.URL, "kmm-123"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Get("kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.UpdatedAt.After(before.UpdatedAt) {
+		t.Fatalf("expected UpdatedAt to advance: before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+	}
+	if after.Phase != "Prepared" {
+		t.Fatalf("heartbeat must not change phase, got %q", after.Phase)
+	}
+}
+
+func TestServerHeartbeatIsANoOpOnTerminalPhases(t *testing.T) {
+	for _, phase := range []string{"Committed", "Aborted", "Unsupported"} {
+		t.Run(phase, func(t *testing.T) {
+			d := &fakeDestination{prepare: PrepareResult{TransferSupported: phase != "Unsupported", Endpoint: "opaque://session/123"}}
+			store := NewFileStore(t.TempDir())
+			ts := httptest.NewServer((&Server{Store: store, Driver: d}).Handler())
+			defer ts.Close()
+			c := NewClient(ts.Client())
+			if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
+				t.Fatal(err)
+			}
+			if phase == "Committed" {
+				if err := c.Commit(context.Background(), ts.URL, "kmm-123"); err != nil {
+					t.Fatal(err)
+				}
+			} else if phase == "Aborted" {
+				if err := c.Abort(context.Background(), ts.URL, "kmm-123"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := store.Get("kmm-123")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Heartbeat(context.Background(), ts.URL, "kmm-123"); err != nil {
+				t.Fatalf("heartbeat on a terminal-phase session must not error: %v", err)
+			}
+			after, err := store.Get("kmm-123")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Phase != before.Phase || !after.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatalf("heartbeat must be a true no-op on a terminal phase: before=%+v after=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestServerHeartbeat404OnUnknownSession(t *testing.T) {
+	d := &fakeDestination{}
+	ts := httptest.NewServer((&Server{Store: NewFileStore(t.TempDir()), Driver: d}).Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if err := c.Heartbeat(context.Background(), ts.URL, "does-not-exist"); err == nil {
+		t.Fatal("expected an error for an unknown session id")
+	}
+}
+
+func TestReapStaleSessionsNoOpWhenHeartbeatTTLIsZero(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	s := &Server{Store: store, Driver: d, Now: func() time.Time { return time.Now().Add(24 * time.Hour) }}
+	sess := testSession()
+	sess.Phase = "Prepared"
+	if err := s.Store.Put(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReapStaleSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.abortN != 0 {
+		t.Fatalf("HeartbeatTTL=0 must disable reaping entirely, got %d aborts", d.abortN)
+	}
+}
+
+func TestReapStaleSessionsIgnoresFreshSessions(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	now := time.Now()
+	s := &Server{Store: store, Driver: d, HeartbeatTTL: time.Minute, Now: func() time.Time { return now }}
+	sess := testSession()
+	sess.Phase = "Prepared"
+	sess.UpdatedAt = now.Add(-10 * time.Second) // well within the 1-minute TTL
+	if err := store.Put(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReapStaleSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.abortN != 0 {
+		t.Fatalf("a fresh session must not be reaped, got %d aborts", d.abortN)
+	}
+}
+
+func TestReapStaleSessionsSkipsNonPreparedPhases(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	now := time.Now()
+	s := &Server{Store: store, Driver: d, HeartbeatTTL: time.Minute, Now: func() time.Time { return now }}
+	for _, phase := range []string{"Committed", "Aborted", "Unsupported"} {
+		sess := testSession()
+		sess.ID = "kmm-" + phase
+		sess.Phase = phase
+		sess.UpdatedAt = now.Add(-time.Hour) // ancient, but not "Prepared"
+		if err := store.Put(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.ReapStaleSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.abortN != 0 {
+		t.Fatalf("only Prepared sessions may be reaped, got %d aborts", d.abortN)
+	}
+}
+
+func TestReapStaleSessionsAbortsExpiredPreparedSession(t *testing.T) {
+	d := &fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}}
+	store := NewFileStore(t.TempDir())
+	now := time.Now()
+	s := &Server{Store: store, Driver: d, HeartbeatTTL: time.Minute, Now: func() time.Time { return now }}
+	sess := testSession()
+	sess.Phase = "Prepared"
+	sess.UpdatedAt = now.Add(-2 * time.Minute) // stale: older than HeartbeatTTL
+	if err := store.Put(sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReapStaleSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d.abortN != 1 {
+		t.Fatalf("expected exactly one abort, got %d", d.abortN)
+	}
+	got, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Phase != "Aborted" {
+		t.Fatalf("expected Phase=Aborted after reaping, got %q", got.Phase)
+	}
+	if got.Reason == "" {
+		t.Fatal("expected a Reason explaining the reap")
+	}
+}
+
+// blockingDestination lets a test control exactly when Commit returns, so
+// a concurrent ReapStaleSessions call can be forced to run WHILE a commit
+// is genuinely in flight -- the exact interleaving the per-session lock
+// (Server.lockFor) must make impossible to observe as a wrongly-aborted,
+// actually-succeeding migration.
+type blockingDestination struct {
+	fakeDestination
+	commitStarted chan struct{}
+	releaseCommit chan struct{}
+}
+
+func (f *blockingDestination) Commit(ctx context.Context, session Session) error {
+	close(f.commitStarted)
+	<-f.releaseCommit
+	return f.fakeDestination.Commit(ctx, session)
+}
+
+func TestReapStaleSessionsDoesNotRaceWithConcurrentCommit(t *testing.T) {
+	d := &blockingDestination{
+		fakeDestination: fakeDestination{prepare: PrepareResult{TransferSupported: true, Endpoint: "opaque://session/123"}},
+		commitStarted:   make(chan struct{}),
+		releaseCommit:   make(chan struct{}),
+	}
+	store := NewFileStore(t.TempDir())
+	now := time.Now()
+	s := &Server{Store: store, Driver: d, HeartbeatTTL: time.Minute, Now: func() time.Time { return now }}
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	c := NewClient(ts.Client())
+	if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
+		t.Fatal(err)
+	}
+	// Artificially age the session well past HeartbeatTTL, as if its
+	// source had gone silent -- except a commit is about to land for it.
+	sess, err := store.Get("kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.UpdatedAt = now.Add(-2 * time.Minute)
+	if err := store.Put(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	commitErr := make(chan error, 1)
+	go func() { commitErr <- c.Commit(context.Background(), ts.URL, "kmm-123") }()
+
+	select {
+	case <-d.commitStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("commit never started")
+	}
+
+	// Commit is now blocked inside Driver.Commit, holding the per-session
+	// lock (transition() acquires it before calling fn()). A concurrent
+	// reap pass's own reapOne must block on that SAME lock rather than
+	// proceeding to see a stale-looking, still-"Prepared" session and
+	// abort it out from under the in-flight commit -- that's precisely the
+	// race this whole feature exists to close. So ReapStaleSessions is
+	// expected to BLOCK here, not return immediately.
+	reapDone := make(chan error, 1)
+	go func() { reapDone <- s.ReapStaleSessions(context.Background()) }()
+
+	select {
+	case err := <-reapDone:
+		t.Fatalf("ReapStaleSessions returned (err=%v) before the commit it should be blocked behind released its lock -- the per-session lock isn't working", err)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: still blocked on lockFor.
+	}
+	if d.abortN != 0 {
+		t.Fatalf("reap must not abort a session with a commit genuinely in flight, got %d aborts", d.abortN)
+	}
+
+	close(d.releaseCommit)
+	if err := <-commitErr; err != nil {
+		t.Fatalf("commit failed: %v", err)
+	}
+
+	select {
+	case err := <-reapDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReapStaleSessions never returned after the commit's lock was released")
+	}
+
+	final, err := store.Get("kmm-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Phase != "Committed" {
+		t.Fatalf("expected the legitimate commit to win, never clobbered back to Aborted, got Phase=%q", final.Phase)
+	}
+	if d.commitN != 1 {
+		t.Fatalf("expected exactly one commit, got %d", d.commitN)
+	}
+	if d.abortN != 0 {
+		t.Fatalf("expected zero aborts: the reap re-checked under the lock and found the session already Committed, got %d", d.abortN)
+	}
+}
+
 func TestServerTLSRequiresClientCertificate(t *testing.T) {
 	dir := t.TempDir()
 	ca, serverCert, serverKey, clientCert, clientKey := makeTLSFiles(t, dir)

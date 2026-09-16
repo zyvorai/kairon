@@ -4,12 +4,14 @@
 package migration
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +20,40 @@ type Server struct {
 	Driver   DestinationDriver
 	NodeName string
 	Now      func() time.Time
+	// HeartbeatTTL bounds how long a "Prepared" session may go without a
+	// heartbeat before RunReaper/ReapStaleSessions treats the source as
+	// gone and self-aborts it, releasing whatever Driver.Prepare reserved
+	// -- see the ROADMAP.md entry this closes. Zero (the default) disables
+	// reaping entirely: no behavior change from before this existed.
+	HeartbeatTTL time.Duration
+
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex // per-session-ID, lazily created; never cleaned up (see lockFor)
+}
+
+// lockFor serializes transition() (commit/abort) and reapOne for the same
+// session ID, so a reap can never abort a session while a legitimate
+// commit/abort is concurrently in flight for it (see ReapStaleSessions'
+// own doc comment for the exact race this closes). Heartbeat and read-only
+// handlers deliberately don't take this lock -- they never call the
+// (possibly slow) Driver, and a racing UpdatedAt bump is harmless
+// last-write-wins. The lock map is never garbage-collected: session IDs
+// are bounded by real migrations that actually occur, not
+// attacker-controlled at volume, so this is an acceptable simplicity
+// tradeoff rather than a real leak.
+func (s *Server) lockFor(id string) func() {
+	s.mu.Lock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
+	l, ok := s.locks[id]
+	if !ok {
+		l = &sync.Mutex{}
+		s.locks[id] = l
+	}
+	s.mu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 func (s *Server) Handler() http.Handler {
@@ -26,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/v1/migrations/{id}", s.get)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/commit", s.commit)
 	mux.HandleFunc("POST /internal/v1/migrations/{id}/abort", s.abort)
+	mux.HandleFunc("POST /internal/v1/migrations/{id}/heartbeat", s.heartbeat)
 	mux.HandleFunc("GET /internal/v1/migrations/{id}/diagnosis", s.diagnosis)
 	return http.MaxBytesHandler(mux, 8<<20)
 }
@@ -146,6 +183,7 @@ func (s *Server) transition(w http.ResponseWriter, r *http.Request, desired stri
 		writeError(w, http.StatusServiceUnavailable, err)
 		return
 	}
+	defer s.lockFor(r.PathValue("id"))()
 	session, err := s.Store.Get(r.PathValue("id"))
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, http.StatusNotFound, err)
@@ -178,6 +216,108 @@ func (s *Server) transition(w http.ResponseWriter, r *http.Request, desired stri
 		return
 	}
 	writeJSON(w, http.StatusOK, response(session))
+}
+
+// heartbeat renews a "Prepared" session's UpdatedAt so ReapStaleSessions
+// doesn't treat its source as gone. A no-op (not an error) on an
+// already-terminal session -- the source learns the real outcome through
+// its own Commit/Abort call result or Diagnose, not through this
+// best-effort liveness ping. Deliberately doesn't take lockFor: it never
+// calls the (possibly slow) Driver, and a racing UpdatedAt write is
+// harmless last-write-wins.
+func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
+	if s.Store == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("migration store is not configured"))
+		return
+	}
+	id := r.PathValue("id")
+	session, err := s.Store.Get(id)
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if session.Phase == "Prepared" {
+		session.UpdatedAt = s.now()
+		if err := s.Store.Put(session); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, response(session))
+}
+
+// ReapStaleSessions aborts every "Prepared" session whose heartbeat is
+// older than HeartbeatTTL, on the working theory that a source this quiet
+// for this long has crashed or been fenced between a successful Prepare
+// and ever calling Commit/Abort -- see ROADMAP.md's entry for the gap this
+// closes. A no-op when HeartbeatTTL is zero (the default), Store is nil,
+// or Driver is nil.
+//
+// Safe to call concurrently with itself and with Commit/Abort landing for
+// a DIFFERENT session. For the SAME session, reapOne's lockFor call makes
+// it impossible to race a commit/abort in flight for that session: without
+// it, this function's own List()-then-check could observe a session still
+// reading Phase="Prepared" with a stale UpdatedAt at the exact moment
+// transition() is between its own Store.Get and Store.Put -- i.e. between
+// a real Driver.Commit succeeding and that success being persisted -- and
+// wrongly abort a destination that is, at that instant, legitimately
+// coming up. reapOne re-fetches and re-checks staleness AFTER acquiring
+// the same per-session lock transition() holds for its own entire
+// Get-Driver-call-Put critical section, closing that window completely.
+func (s *Server) ReapStaleSessions(ctx context.Context) error {
+	if s.HeartbeatTTL <= 0 || s.Store == nil || s.Driver == nil {
+		return nil
+	}
+	sessions, err := s.Store.List()
+	if err != nil {
+		return fmt.Errorf("list sessions: %w", err)
+	}
+	now := s.now()
+	for _, session := range sessions {
+		if session.Phase != "Prepared" || now.Sub(session.UpdatedAt) < s.HeartbeatTTL {
+			continue
+		}
+		s.reapOne(ctx, session.ID, now)
+	}
+	return nil
+}
+
+func (s *Server) reapOne(ctx context.Context, id string, now time.Time) {
+	defer s.lockFor(id)()
+	// Re-fetch and re-check staleness UNDER the lock -- a heartbeat or a
+	// legitimate commit/abort may have landed between ReapStaleSessions'
+	// own List() call (lock-free) and here.
+	session, err := s.Store.Get(id)
+	if err != nil || session.Phase != "Prepared" || now.Sub(session.UpdatedAt) < s.HeartbeatTTL {
+		return
+	}
+	if err := s.Driver.Abort(ctx, session); err != nil {
+		return // best-effort; retried next reap tick
+	}
+	session.Phase = "Aborted"
+	session.Reason = fmt.Sprintf("heartbeat timeout: no renewal for over %s, presumed source failure", s.HeartbeatTTL)
+	session.UpdatedAt = s.now()
+	_ = s.Store.Put(session) // best-effort; retried next tick on failure
+}
+
+// RunReaper calls ReapStaleSessions once per interval until ctx is
+// cancelled. The caller (cmd/kairon-node) owns this goroutine's lifecycle,
+// matching this codebase's existing pattern (see Agent.Run).
+func (s *Server) RunReaper(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			_ = s.ReapStaleSessions(ctx) // errors are transient store I/O; retried next tick
+		}
+	}
 }
 
 // diagnosis is strictly read-only (never mutates Store) so it's always

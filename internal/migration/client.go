@@ -43,6 +43,13 @@ func (c *Client) Abort(ctx context.Context, baseURL, id string) error {
 	return c.do(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/internal/v1/migrations/"+id+"/abort", map[string]any{}, nil)
 }
 
+// Heartbeat renews a "Prepared" session's lease on the destination so its
+// Server.ReapStaleSessions doesn't treat this source as gone. Best-effort
+// by convention at every call site -- see Agent.reconcileMigration.
+func (c *Client) Heartbeat(ctx context.Context, baseURL, id string) error {
+	return c.do(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/internal/v1/migrations/"+id+"/heartbeat", map[string]any{}, nil)
+}
+
 func (c *Client) Diagnose(ctx context.Context, baseURL, id string) (DiagnosisResult, error) {
 	var out DiagnosisResult
 	err := c.do(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/internal/v1/migrations/"+id+"/diagnosis", nil, &out)

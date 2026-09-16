@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -17,6 +18,10 @@ var ErrNotFound = errors.New("migration session not found")
 type Store interface {
 	Get(string) (Session, error)
 	Put(Session) error
+	// List returns every session currently in the store, in no particular
+	// order. Used by Server.ReapStaleSessions to find "Prepared" sessions
+	// whose heartbeat has gone stale -- see server.go.
+	List() ([]Session, error)
 }
 
 type FileStore struct {
@@ -52,6 +57,40 @@ func (s *FileStore) Get(id string) (Session, error) {
 		return Session{}, fmt.Errorf("decode session %s: %w", id, err)
 	}
 	return session, nil
+}
+
+// List reads every session file in Dir. A file that fails to parse is
+// skipped rather than failing the whole listing -- a reap pass losing
+// visibility into every OTHER session over one corrupt file would be far
+// worse than the corrupt one going temporarily unreaped. Returns an empty
+// list, not an error, when Dir doesn't exist yet (mirrors Get's own
+// not-yet-created-store handling).
+func (s *FileStore) List() ([]Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.Dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sessions []Session
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(s.Dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var session Session
+		if err := json.Unmarshal(data, &session); err != nil {
+			continue
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
 }
 
 func (s *FileStore) Put(session Session) error {

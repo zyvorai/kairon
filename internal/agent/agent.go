@@ -757,6 +757,14 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 	if err != nil {
 		return fmt.Errorf("poll source transfer: %w", err)
 	}
+	// Best-effort: renews the destination's Prepared-session lease once per
+	// reconcile tick so its own Server.ReapStaleSessions (opt-in via a
+	// non-zero HeartbeatTTL) doesn't mistake an actively-transferring
+	// migration for an abandoned one. Never fails the reconcile over a
+	// missed heartbeat -- the same posture as resumeSourceNetworkQuiesce.
+	if err := a.MigrationPeer.Heartbeat(ctx, targetURL, session.ID); err != nil {
+		a.Log.Warn("migration heartbeat to target failed; continuing", "migration", item.Metadata.Name, "namespace", item.Namespace(), "target", item.Status.TargetNode, "error", err)
+	}
 	return a.projectTransfer(ctx, item, status, session, targetURL, transfer)
 }
 

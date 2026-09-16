@@ -58,6 +58,7 @@ func run() int {
 	migrationStateDir := flag.String("migration-state-dir", env("KAIRON_MIGRATION_STATE_DIR", "/var/run/kairon/migrations"), "destination migration session journal")
 	migrationAdapterSocket := flag.String("migration-adapter-socket", env("KAIRON_MIGRATION_ADAPTER_SOCKET", ""), "optional Kairon migration adapter Unix socket")
 	migrationPort := flag.Int("migration-port", 9443, "peer migration TCP port advertised through node InternalIP")
+	migrationHeartbeatTTL := flag.Duration("migration-heartbeat-ttl", 0, "how long a destination-side Prepared migration session may go without a heartbeat from its source before this node self-aborts it, releasing whatever it reserved -- closes the gap where a source kairon-node crashes or is fenced between a successful Prepare and ever calling Commit/Abort. Zero (the default) disables this entirely: no reaper goroutine, no behavior change from before this existed. A non-zero value should be set comfortably larger than several multiples of --interval (the source heartbeats once per reconcile tick) to tolerate transient blips; the reaper itself checks every TTL/4 (floored at 10s).")
 	consoleAddr := flag.String("console-addr", env("KAIRON_NODE_CONSOLE_ADDR", ":8090"), "VNC console relay listen address")
 	consoleToken := flag.String("console-token", os.Getenv("KAIRON_NODE_CONSOLE_TOKEN"), "shared bearer token kairon-ui must present for VNC console relay (default: $KAIRON_NODE_CONSOLE_TOKEN); empty disables the console listener")
 	consoleTLSCert := flag.String("console-tls-cert", env("KAIRON_NODE_CONSOLE_TLS_CERT", ""), "optional TLS certificate PEM for the console relay listener (server-only TLS -- the shared token already authenticates the caller, so no client cert is needed); must be set together with --console-tls-key")
@@ -123,7 +124,7 @@ func run() int {
 		}
 	}()
 
-	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket)
+	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket, *migrationHeartbeatTTL)
 	if err != nil {
 		log.Error("migration control plane", "error", err)
 		return 2
@@ -158,7 +159,7 @@ func run() int {
 	return 0
 }
 
-func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string) (*migration.Client, migration.SourceDriver, error) {
+func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string, heartbeatTTL time.Duration) (*migration.Client, migration.SourceDriver, error) {
 	configured := 0
 	for _, v := range []string{caPath, certPath, keyPath} {
 		if strings.TrimSpace(v) != "" {
@@ -196,9 +197,10 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 		destination = migration.NetworkAwareDestination{Inner: destination, Flux: fc}
 	}
 
+	migServer := &migration.Server{Store: migration.NewFileStore(stateDir), Driver: destination, NodeName: nodeName, HeartbeatTTL: heartbeatTTL}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           (&migration.Server{Store: migration.NewFileStore(stateDir), Driver: destination, NodeName: nodeName}).Handler(),
+		Handler:           migServer.Handler(),
 		TLSConfig:         serverTLS,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -216,6 +218,14 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 		defer shutdownCancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
+	if heartbeatTTL > 0 {
+		reapInterval := heartbeatTTL / 4
+		if reapInterval < 10*time.Second {
+			reapInterval = 10 * time.Second
+		}
+		go migServer.RunReaper(ctx, reapInterval)
+		log.Info("destination migration session reaper enabled", "heartbeatTTL", heartbeatTTL, "reapInterval", reapInterval)
+	}
 	go func() {
 		log.Info("migration mTLS peer listening", "address", addr, "adapterConfigured", strings.TrimSpace(adapterSocket) != "")
 		if err := server.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
