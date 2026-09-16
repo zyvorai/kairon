@@ -4,6 +4,11 @@ import Overview from './pages/Overview';
 import Machines from './pages/Machines';
 import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
+import Quotas from './pages/Quotas';
+import DisruptionBudgets from './pages/DisruptionBudgets';
+import MachineSets from './pages/MachineSets';
+import InstanceTypes from './pages/InstanceTypes';
+import MigrationPolicies from './pages/MigrationPolicies';
 import Account from './pages/Account';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
@@ -69,6 +74,11 @@ export default function App() {
     machines: <Machines onMigrate={goMigrate} onSnapshot={goSnapshot} />,
     migrations: <Migrations prefillMachine={prefillMachine} />,
     snapshots: <Snapshots prefillMachine={prefillMachine} />,
+    quotas: <Quotas />,
+    'disruption-budgets': <DisruptionBudgets />,
+    machinesets: <MachineSets />,
+    instancetypes: <InstanceTypes />,
+    'migration-policies': <MigrationPolicies />,
     account: <Account />,
   }[page];
 

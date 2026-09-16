@@ -1,12 +1,27 @@
-import { Activity, ArrowLeftRight, Box, Camera, LogOut, UserCog } from 'lucide-react';
+import { Activity, ArrowLeftRight, Box, Camera, Cpu, Gauge, Layers, LogOut, Route, Shield, UserCog } from 'lucide-react';
 
-export type Page = 'overview' | 'machines' | 'migrations' | 'snapshots' | 'account';
+export type Page =
+  | 'overview'
+  | 'machines'
+  | 'migrations'
+  | 'snapshots'
+  | 'quotas'
+  | 'disruption-budgets'
+  | 'machinesets'
+  | 'instancetypes'
+  | 'migration-policies'
+  | 'account';
 
 const ITEMS: [Page, React.ReactNode, string][] = [
   ['overview', <Activity size={17} key="i" />, 'Overview'],
   ['machines', <Box size={17} key="i" />, 'Machines'],
   ['migrations', <ArrowLeftRight size={17} key="i" />, 'Migrations'],
   ['snapshots', <Camera size={17} key="i" />, 'Snapshots'],
+  ['quotas', <Gauge size={17} key="i" />, 'Quotas'],
+  ['disruption-budgets', <Shield size={17} key="i" />, 'Disruption budgets'],
+  ['machinesets', <Layers size={17} key="i" />, 'Machine sets'],
+  ['instancetypes', <Cpu size={17} key="i" />, 'Instance types'],
+  ['migration-policies', <Route size={17} key="i" />, 'Migration policies'],
 ];
 
 export default function Nav({

@@ -86,3 +86,47 @@ export interface Overview {
   migrations: { total: number; active: number; needsRecovery: number; byPhase: Record<string, number> };
   nodes: number;
 }
+
+// The five resource kinds below are read-only, list-only in the dashboard
+// today (see internal/uiapi/fleet.go) -- kaironctl/kubectl remain the way
+// to create or mutate any of them.
+
+export interface MachineQuota {
+  metadata: ObjectMeta;
+  spec: { maxMachines?: number; maxTotalCpu?: string; maxTotalMemory?: string };
+  status?: { usedMachines?: number; usedTotalCpuCores?: number; usedTotalMemoryMiB?: number };
+}
+
+export interface MachineDisruptionBudget {
+  metadata: ObjectMeta;
+  spec: { selector: Record<string, string>; minAvailable?: string; maxUnavailable?: string };
+  status?: { expectedMachines: number; currentHealthy: number; desiredHealthy: number; disruptionsAllowed: number };
+}
+
+export interface MachineSet {
+  metadata: ObjectMeta;
+  spec: { replicas: number; strategy?: string; maxUnavailable?: string };
+  status?: { replicas?: number; readyReplicas?: number; updatedReplicas?: number; message?: string };
+}
+
+export interface MachineInstanceType {
+  metadata: ObjectMeta;
+  spec: {
+    resources: {
+      cpu: string;
+      memory: string;
+      maxCpu?: string;
+      maxMemory?: string;
+      hugepages?: boolean;
+      numaNode?: number;
+      cpuSet?: string;
+      cpuPinning?: boolean;
+    };
+  };
+}
+
+export interface MigrationPolicy {
+  metadata: ObjectMeta;
+  spec: { selector: Record<string, string>; bandwidthMbps?: number; maxConcurrent?: number };
+  status?: { activeMigrations?: number };
+}

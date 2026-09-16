@@ -49,7 +49,8 @@ before it would otherwise assign a Machine to a node:
 4. `status.usedMachines`/`usedTotalCpuCores`/`usedTotalMemoryMiB` are
    patched onto every `MachineQuota` every tick, mirroring what a real
    `ResourceQuota`'s `status.used` reports -- `kaironctl get quotas` shows
-   this alongside the configured caps.
+   this alongside the configured caps, and so does `kairon-ui`'s own
+   "Quotas" dashboard page (read-only, `GET /api/v1/quotas`).
 
 Already-scheduled Machines are never evicted retroactively if a quota is
 lowered below what's already running -- quota only blocks *new* scheduling.

@@ -43,7 +43,9 @@ any other Machines), and everything else that already operates on Machines
 keeps working exactly as it does today. `kaironctl get machinesets` (or
 `kubectl get machinesets`) lists the `MachineSet`s themselves --
 `STRATEGY`/`REPLICAS`/`READY`/`UPDATED` at a glance, without having to
-separately count matching Machines by hand.
+separately count matching Machines by hand -- `kairon-ui`'s own "Machine
+sets" dashboard page (read-only, `GET /api/v1/machinesets`) shows the same
+thing.
 
 ## How replicas are reconciled
 

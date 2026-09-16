@@ -85,4 +85,6 @@ you always could.
   doesn't yet offer a dropdown of available instance types -- set
   `spec.instanceTypeName` via `kaironctl`/`kubectl`/the API directly.
   `kaironctl get instancetypes` (or `kubectl get machineinstancetypes`)
-  at least lists what's available to choose from.
+  at least lists what's available to choose from, and so does `kairon-ui`'s
+  own read-only "Instance types" dashboard page (`GET /api/v1/instancetypes`)
+  -- just not yet wired into the Machine-create form itself.

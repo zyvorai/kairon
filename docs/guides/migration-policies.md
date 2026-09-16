@@ -27,7 +27,9 @@ This applies to every `Machine` in the `prod` namespace labeled
 anything matching, not just one caller's own code path" shape
 `MachineDisruptionBudget` already has. `kaironctl get migrationpolicies`
 (or `kubectl get migrationpolicies`) lists what's configured, including
-each policy's current `status.activeMigrations` count.
+each policy's current `status.activeMigrations` count -- as does
+`kairon-ui`'s own read-only "Migration policies" dashboard page
+(`GET /api/v1/migration-policies`).
 
 ## How it's enforced
 

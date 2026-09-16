@@ -72,7 +72,9 @@ Every reconcile tick, `kairon-controller` computes each budget's
 `disruptionsAllowed` from the exact same `LoadBudgetStates` logic
 `evacuate`/the admission webhook use, and patches it onto the object --
 `kubectl get mdb`/`kaironctl get budgets` now report real numbers instead
-of an empty `{}`. This is purely observational: `evacuate` and the
+of an empty `{}` -- as does `kairon-ui`'s own "Disruption budgets" dashboard
+page (read-only, `GET /api/v1/disruption-budgets`). This is purely
+observational: `evacuate` and the
 webhook still each recompute their own allowance fresh at decision time
 rather than trusting this status, since it can be up to one reconcile
 interval (`controller.interval`, 5s default) stale -- a real-time decision
