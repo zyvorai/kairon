@@ -40,6 +40,8 @@ $ kaironctl edit snapshotschedule nightly --suspend false --interval-seconds 432
 snapshotschedule/nightly updated
 $ kaironctl edit snapshotschedule nightly --keep-last 7
 snapshotschedule/nightly updated
+$ kaironctl edit snapshotschedule nightly --starting-deadline-seconds 3600
+snapshotschedule/nightly updated
 ```
 
 Or from the dashboard: the **Snapshot schedules** page lists every schedule
@@ -137,6 +139,53 @@ Retention is per-Machine, not per-schedule-in-total: a schedule matching 5
 Machines with `keepLast: 3` keeps up to 3 snapshots *for each* of those 5
 Machines, not 3 total across all of them.
 
+## Missed runs (`spec.startingDeadlineSeconds`)
+
+Every `MachineSnapshotSchedule`'s original behavior is: however overdue a
+run is, it always fires as soon as `kairon-controller` notices. Usually
+that's exactly right -- a few seconds of reconcile-loop lag between "due"
+and "actually ran" doesn't matter for a nightly backup. But if the
+controller was down for an extended maintenance window, or this CRD's
+`status` was reset by a reinstall, a schedule's next-due window can end up
+hours or days in the past by the time reconciliation resumes -- and firing
+it at that point isn't really "on schedule" anymore, it's a stale
+catch-up run.
+
+`spec.startingDeadlineSeconds`, Kairon's analog of Kubernetes `CronJob`'s
+field of the same name, opt-in bounds how late a due run is still allowed
+to actually fire:
+
+```yaml
+spec:
+  selector: {tier: web}
+  intervalSeconds: 3600
+  startingDeadlineSeconds: 900
+```
+
+With this set, a run that's still within 900 seconds of when it first
+became due fires normally, exactly as before. A run discovered *more* than
+900 seconds late -- controller was down, CRD reinstalled, whatever the
+cause -- is skipped instead of fired: no `MachineSnapshot` is created for
+that window at all, but the schedule's clock still advances
+(`status.lastRunTime` is set to now, so the next check starts counting a
+fresh interval rather than re-detecting the same missed window forever) and
+`status.lastRunError` records the skip (`"skipped: this run was more than
+startingDeadlineSeconds (900s) late"`) so it's visible in `kaironctl get
+snapshotschedules`, `kaironctl describe snapshotschedule`, and the
+dashboard's own **Last error** column -- not a silent no-op.
+
+Unset (`0`, the default) never skips anything -- an overdue run always
+fires, no matter how overdue, exactly this project's original behavior
+before this field existed. Enabling it on an existing schedule is purely
+opt-in and never changes behavior for a run that's on time.
+
+`kaironctl describe snapshotschedule` extends its "what would fire right
+now" preview (see above) to this: a schedule that's `Due` but already past
+its own `startingDeadlineSeconds` is reported as a third, distinct outcome
+-- `due, but will be SKIPPED` -- rather than folded into either "due now"
+(would actually fire) or "not due yet" (hasn't reached its interval at
+all), since it's neither: it's overdue *and* too late to catch up.
+
 ## When will it run next? (`status.nextRunTime`)
 
 Every schedule's `status` also carries `nextRunTime`, projecting the next
@@ -189,11 +238,15 @@ Each reconcile tick:
    `status.lastRunTime`: due if it's never run before, or if at least
    `spec.intervalSeconds` have elapsed since the last run, and not
    `spec.suspend`d.
-2. For each due schedule, every `Machine` in the same namespace matching
-   `spec.selector` gets a new `MachineSnapshot`, named
+2. If `spec.startingDeadlineSeconds` is set and this due run is more than
+   that many seconds late, it's skipped instead: no `MachineSnapshot` is
+   created, but `status.lastRunTime`/`nextRunTime` still advance and
+   `status.lastRunError` records the skip -- see "Missed runs" above.
+3. Otherwise, for each due schedule, every `Machine` in the same namespace
+   matching `spec.selector` gets a new `MachineSnapshot`, named
    `<schedule-name>-<unix-timestamp>` and labeled
    `kairon.zyvor.dev/snapshot-schedule: <schedule-name>`.
-3. If `spec.keepLast` is set, right after each successful create the
+4. If `spec.keepLast` is set, right after each successful create the
    schedule's own ready-to-use `MachineSnapshot`s for that same Machine
    (matched by the label above) beyond `keepLast` are deleted, oldest
    first -- see "Retention" above for exactly what does and doesn't count.
@@ -231,10 +284,17 @@ Each reconcile tick:
   matches Machines in its own namespace, same as `MigrationPolicy`/
   `MachineDisruptionBudget`.
 - **Dashboard is list + suspend/resume only.** The **Snapshot schedules**
-  page shows every schedule and its last-run status, and can toggle
+  page shows every schedule and its last-run status (including a skipped
+  run's `lastRunError`, in the **Last error** column), and can toggle
   `spec.suspend` with a click -- but editing `selector`/`intervalSeconds`/
-  `keepLast`/`volumeSnapshotClassName`, or creating/deleting a schedule,
-  still needs `kaironctl`/`kubectl`.
+  `keepLast`/`volumeSnapshotClassName`/`startingDeadlineSeconds`, or
+  creating/deleting a schedule, still needs `kaironctl`/`kubectl`.
+- **`startingDeadlineSeconds` only ever skips a whole due window, never
+  partially.** If a schedule matches 5 Machines and the run is found too
+  late, all 5 are skipped together for that window -- there's no
+  per-Machine deadline, and no "fire for the Machines that are still within
+  some grace period, skip the rest" middle ground. The next on-time window
+  fires for all matches again, same as always.
 - **`status.nextRunTime` is a projection, not a live countdown.** It's only
   ever recomputed when a schedule actually fires (`lastRunTime +
   intervalSeconds` at that moment) -- see "When will it run next?" above.

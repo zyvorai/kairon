@@ -36,6 +36,9 @@ spec:
     - name: NextRun
       type: string
       jsonPath: .status.nextRunTime
+    - name: StartingDeadline
+      type: integer
+      jsonPath: .spec.startingDeadlineSeconds
     schema:
       openAPIV3Schema:
         type: object
@@ -60,6 +63,9 @@ spec:
               suspend:
                 type: boolean
               keepLast:
+                type: integer
+                minimum: 1
+              startingDeadlineSeconds:
                 type: integer
                 minimum: 1
           status:

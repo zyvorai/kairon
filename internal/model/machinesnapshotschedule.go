@@ -83,6 +83,19 @@ type MachineSnapshotScheduleSpec struct {
 	// candidate: only this schedule's own labeled snapshots for that exact
 	// Machine are ever counted or deleted.
 	KeepLast int `json:"keepLast,omitempty"`
+	// StartingDeadlineSeconds, when set (> 0), bounds how late a due run is
+	// still allowed to actually fire -- Kubernetes CronJob's own
+	// spec.startingDeadlineSeconds, for exactly the same reason: if
+	// kairon-controller was down, or this CRD was reinstalled with a stale
+	// status.lastRunTime, a schedule's next-due window can end up far in
+	// the past by the time reconciliation resumes. Zero (the default)
+	// preserves this project's original, simpler behavior -- an overdue
+	// schedule always fires immediately, no matter how overdue -- exactly
+	// how MachineSnapshotSchedule behaved before this field existed, so
+	// enabling it is purely opt-in and never a silent behavior change to an
+	// existing schedule. See DeadlineExceeded's own doc comment for exactly
+	// what "too late" means and what happens instead of firing.
+	StartingDeadlineSeconds int `json:"startingDeadlineSeconds,omitempty"`
 }
 
 // Due reports whether this schedule should fire another round of
@@ -90,6 +103,16 @@ type MachineSnapshotScheduleSpec struct {
 // it has never run) and the current time. A never-yet-run schedule is
 // always immediately due -- it shouldn't have to wait a full interval after
 // creation before its very first snapshot.
+//
+// Due deliberately does NOT itself account for StartingDeadlineSeconds --
+// it only answers "has at least one interval elapsed," the same question it
+// always has. A caller that also cares whether firing now would be too
+// late (a missed-deadline skip rather than a normal run) calls
+// DeadlineExceeded separately once Due is true, exactly the same two-step
+// shape reconcileMachineSnapshotSchedules and describeSnapshotSchedule's
+// preview both use -- keeping "is it due" and "is it too late to fire"
+// independently testable, rather than folding a second opt-in concept into
+// Due's own long-stable boolean contract.
 func (s MachineSnapshotScheduleSpec) Due(lastRun, now time.Time) bool {
 	if s.Suspend {
 		return false
@@ -98,6 +121,34 @@ func (s MachineSnapshotScheduleSpec) Due(lastRun, now time.Time) bool {
 		return true
 	}
 	return now.Sub(lastRun) >= time.Duration(s.IntervalSeconds)*time.Second
+}
+
+// DeadlineExceeded reports whether a due run has been overdue for longer
+// than StartingDeadlineSeconds allows -- Kubernetes CronJob's own
+// "missed schedule" concept. It's meaningful only once Due(lastRun, now)
+// is already true; calling it when the schedule isn't due at all is
+// harmless (it still reports honestly whether the -- nonexistent -- due
+// window would count as missed) but never something either caller of this
+// method actually needs, since both only ever check it after Due.
+//
+// StartingDeadlineSeconds <= 0 (unset, the default) always returns false --
+// no deadline ever applies, preserving the original always-fire-once-due
+// behavior. A schedule that has never yet run (the zero lastRun) also
+// always returns false: there's no scheduled window to have missed yet, a
+// brand-new schedule's very first run can't be "late."
+//
+// Otherwise, the due window opened at lastRun + IntervalSeconds (the
+// instant Due first became true); DeadlineExceeded is true once now has
+// moved more than StartingDeadlineSeconds past that instant. Exactly at the
+// boundary is still on time (matches Due's own ">=" convention of treating
+// the boundary instant as the earliest due moment, not the latest
+// allowed one).
+func (s MachineSnapshotScheduleSpec) DeadlineExceeded(lastRun, now time.Time) bool {
+	if s.StartingDeadlineSeconds <= 0 || lastRun.IsZero() {
+		return false
+	}
+	dueAt := lastRun.Add(time.Duration(s.IntervalSeconds) * time.Second)
+	return now.Sub(dueAt) > time.Duration(s.StartingDeadlineSeconds)*time.Second
 }
 
 // NextRunAfter projects when this schedule's *next* round is expected,

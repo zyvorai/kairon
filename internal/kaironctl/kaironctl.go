@@ -269,13 +269,17 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
-		fmt.Printf("NAME\tINTERVALSECONDS\tSUSPEND\tLASTRUN\tLASTCOUNT\tNEXTRUN\n")
+		fmt.Printf("NAME\tINTERVALSECONDS\tSTARTINGDEADLINE\tSUSPEND\tLASTRUN\tLASTCOUNT\tNEXTRUN\n")
 		for _, s := range items {
 			lastRun := "-"
 			if !s.Status.LastRunTime.IsZero() {
 				lastRun = s.Status.LastRunTime.Format(time.RFC3339)
 			}
-			fmt.Printf("%s\t%d\t%t\t%s\t%d\t%s\n", s.Metadata.Name, s.Spec.IntervalSeconds, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
+			deadline := "-"
+			if s.Spec.StartingDeadlineSeconds > 0 {
+				deadline = strconv.Itoa(s.Spec.StartingDeadlineSeconds)
+			}
+			fmt.Printf("%s\t%d\t%s\t%t\t%s\t%d\t%s\n", s.Metadata.Name, s.Spec.IntervalSeconds, deadline, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
 		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
@@ -385,9 +389,15 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 // spec.selector currently matches in its namespace, and whether the very
 // next reconcile tick would actually fire a new round of snapshots for
 // them -- evaluated by calling the schedule's own Spec.Due(status.
-// lastRunTime, time.Now()), the identical pure function
+// lastRunTime, time.Now()) and, if Due, Spec.DeadlineExceeded(status.
+// lastRunTime, time.Now()) -- the identical pure functions
 // reconcileMachineSnapshotSchedules itself calls every tick, so this
-// preview can never drift from what the controller will actually do.
+// preview can never drift from what the controller will actually do. A
+// schedule that's Due but past its own spec.startingDeadlineSeconds is
+// reported as a distinct third outcome ("due, but will be SKIPPED") rather
+// than folded into either "due now" or "not due yet" -- it fires no
+// snapshots this tick, same as "not due", but for a different, worth-
+// surfacing reason.
 //
 // This is a deliberate, narrow exception to this project's otherwise
 // uniform "describe just dumps the raw object as JSON" convention (every
@@ -420,9 +430,13 @@ func describeSnapshotSchedule(ctx context.Context, kc *kube.Client, ns, name str
 	sort.Strings(matches)
 
 	fmt.Println()
-	if sched.Spec.Due(sched.Status.LastRunTime, time.Now()) {
+	now := time.Now()
+	switch {
+	case sched.Spec.Due(sched.Status.LastRunTime, now) && sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now):
+		fmt.Printf("Matching machines (%d) -- due, but will be SKIPPED: this run is more than startingDeadlineSeconds (%ds) late:\n", len(matches), sched.Spec.StartingDeadlineSeconds)
+	case sched.Spec.Due(sched.Status.LastRunTime, now):
 		fmt.Printf("Matching machines (%d) -- due now, the next reconcile tick will snapshot these:\n", len(matches))
-	} else {
+	default:
 		fmt.Printf("Matching machines (%d) -- not due yet (next projected run: %s):\n", len(matches), formatNextRun(sched))
 	}
 	if len(matches) == 0 {
@@ -665,6 +679,7 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 	volumeSnapshotClassName := fs.String("volume-snapshot-class", "", "VolumeSnapshotClassName passed through to every MachineSnapshot this schedule creates")
 	suspend := fs.Bool("suspend", false, "create the schedule already suspended")
 	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine, deleting older ones (0, the default, never prunes)")
+	startingDeadlineSeconds := fs.Int("starting-deadline-seconds", 0, "skip (rather than immediately fire) a run found more than this many seconds late, e.g. after the controller was down (0, the default, never skips -- an overdue run always fires)")
 	_ = fs.Parse(args[1:])
 	if len(selector) == 0 {
 		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
@@ -685,6 +700,7 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 			VolumeSnapshotClassName: *volumeSnapshotClassName,
 			Suspend:                 *suspend,
 			KeepLast:                *keepLast,
+			StartingDeadlineSeconds: *startingDeadlineSeconds,
 		},
 	}
 	out, err := kc.CreateMachineSnapshotSchedule(ctx, *ns, s)
@@ -730,7 +746,7 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 // supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -773,6 +789,7 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 	suspend := fs.Bool("suspend", false, "pause (true) or resume (false) this schedule")
 	intervalSeconds := fs.Int("interval-seconds", 0, "new minimum seconds between runs (minimum 60)")
 	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine (0 disables pruning again)")
+	startingDeadlineSeconds := fs.Int("starting-deadline-seconds", 0, "skip (rather than immediately fire) a run found more than this many seconds late (0 disables the deadline again -- an overdue run always fires)")
 	_ = fs.Parse(args)
 	spec := map[string]any{}
 	fs.Visit(func(f *flag.Flag) {
@@ -783,10 +800,12 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 			spec["intervalSeconds"] = *intervalSeconds
 		case "keep-last":
 			spec["keepLast"] = *keepLast
+		case "starting-deadline-seconds":
+			spec["startingDeadlineSeconds"] = *startingDeadlineSeconds
 		}
 	})
 	if len(spec) == 0 {
-		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend, --interval-seconds, or --keep-last"))
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend, --interval-seconds, --keep-last, or --starting-deadline-seconds"))
 	}
 	if err := kc.PatchMachineSnapshotSchedule(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
 		fatal(err)

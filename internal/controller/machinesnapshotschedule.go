@@ -22,6 +22,16 @@ import (
 // reconcile loop. A create failure for one Machine is logged and counted
 // (kairon_reconcile_item_errors_total{kind="snapshotschedule"}), never fails
 // the whole tick or skips the rest of that schedule's matches.
+//
+// A Due schedule whose window is already past spec.startingDeadlineSeconds
+// (Spec.DeadlineExceeded) is a third, distinct outcome from "fired" or "not
+// due": no MachineSnapshot is created at all this tick, but status is still
+// patched -- lastRunTime advances to now (so the next tick starts counting
+// a fresh interval rather than re-detecting the same missed window forever),
+// lastRunSnapshotCount is 0, and lastRunError names the skip. This is the
+// opt-in behavior; startingDeadlineSeconds unset (0, the default) never
+// takes this branch, preserving the original always-fire-once-due behavior
+// for every existing schedule.
 func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, machines []model.Machine) error {
 	schedules, err := c.Kube.ListMachineSnapshotSchedules(ctx)
 	if err != nil {
@@ -33,6 +43,19 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 	now := time.Now()
 	for _, sched := range schedules {
 		if !sched.Spec.Due(sched.Status.LastRunTime, now) {
+			continue
+		}
+		if sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now) {
+			c.Log.Warn("scheduled snapshot run skipped: starting deadline exceeded", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "startingDeadlineSeconds", sched.Spec.StartingDeadlineSeconds)
+			status := model.MachineSnapshotScheduleStatus{
+				LastRunTime:          now,
+				LastRunSnapshotCount: 0,
+				LastRunError:         fmt.Sprintf("skipped: this run was more than startingDeadlineSeconds (%ds) late", sched.Spec.StartingDeadlineSeconds),
+				NextRunTime:          sched.Spec.NextRunAfter(now),
+			}
+			if statusErr := c.Kube.PatchMachineSnapshotScheduleStatus(ctx, sched.Namespace(), sched.Metadata.Name, status); statusErr != nil {
+				c.Log.Error("machine snapshot schedule status patch failed", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", statusErr)
+			}
 			continue
 		}
 		count := 0

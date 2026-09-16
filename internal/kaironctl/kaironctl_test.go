@@ -423,6 +423,48 @@ func TestCmdCreateSnapshotScheduleOmitsKeepLastByDefault(t *testing.T) {
 	}
 }
 
+// TestCmdCreateSnapshotScheduleStartingDeadlineSeconds confirms
+// --starting-deadline-seconds is wired through to
+// spec.startingDeadlineSeconds, and (mirroring
+// TestCmdCreateSnapshotScheduleOmitsKeepLastByDefault) that omitting the
+// flag never sends the field at all, since MachineSnapshotScheduleSpec.
+// StartingDeadlineSeconds carries `omitempty` and 0 is meant to mean
+// "no deadline," matching every schedule's behavior before this field
+// existed.
+func TestCmdCreateSnapshotScheduleStartingDeadlineSeconds(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600", "--starting-deadline-seconds", "300"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["startingDeadlineSeconds"] != float64(300) {
+		t.Errorf("startingDeadlineSeconds = %v, want 300", spec["startingDeadlineSeconds"])
+	}
+
+	s2 := &recordingServer{}
+	kc2 := testClient(t, s2)
+	cmdCreateSnapshotSchedule(context.Background(), kc2, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600"})
+	spec2, _ := s2.body["spec"].(map[string]any)
+	if _, present := spec2["startingDeadlineSeconds"]; present {
+		t.Errorf("startingDeadlineSeconds should not be present when --starting-deadline-seconds is omitted, got %v", spec2)
+	}
+}
+
+func TestCmdEditSnapshotScheduleStartingDeadlineSeconds(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"snapshotschedule", "nightly", "--starting-deadline-seconds", "120"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["startingDeadlineSeconds"] != float64(120) {
+		t.Errorf("startingDeadlineSeconds = %v, want 120", spec["startingDeadlineSeconds"])
+	}
+	if _, present := spec["suspend"]; present {
+		t.Errorf("suspend should not be present when --suspend wasn't passed, got %v", spec)
+	}
+	if _, present := spec["keepLast"]; present {
+		t.Errorf("keepLast should not be present when --keep-last wasn't passed, got %v", spec)
+	}
+}
+
 func TestCmdEditSnapshotScheduleOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
@@ -637,5 +679,46 @@ func TestDescribeSnapshotScheduleNotDueYetShowsProjectedNextRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "(none") {
 		t.Errorf("expected the no-matches hint, got:\n%s", out)
+	}
+}
+
+// TestDescribeSnapshotScheduleDueButDeadlineExceededShowsSkipped confirms
+// the third preview outcome: a schedule that IS due (an interval has
+// elapsed) but whose window is already past its own
+// spec.startingDeadlineSeconds is reported as "will be SKIPPED", distinct
+// from both "due now" (would actually fire) and "not due yet".
+func TestDescribeSnapshotScheduleDueButDeadlineExceededShowsSkipped(t *testing.T) {
+	sched := model.MachineSnapshotSchedule{
+		Metadata: model.ObjectMeta{Name: "nightly", Namespace: "default"},
+		Spec: model.MachineSnapshotScheduleSpec{
+			Selector:                map[string]string{"tier": "web"},
+			IntervalSeconds:         60,
+			StartingDeadlineSeconds: 60,
+		},
+		// Due 24h ago and still never caught up -- far past any 60s deadline.
+		Status: model.MachineSnapshotScheduleStatus{LastRunTime: time.Now().Add(-24 * time.Hour)},
+	}
+	s := &describeScheduleTestServer{
+		schedule: sched,
+		machines: []model.Machine{
+			{Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeSnapshotSchedule(context.Background(), kc, "default", "nightly")
+	})
+	if !strings.Contains(out, "will be SKIPPED") {
+		t.Errorf("expected the SKIPPED outcome, got:\n%s", out)
+	}
+	if strings.Contains(out, "due now, the next reconcile") {
+		t.Errorf("must not also report the normal due-now outcome, got:\n%s", out)
 	}
 }

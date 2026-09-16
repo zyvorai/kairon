@@ -119,6 +119,110 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesOnePerMatch(t *testing.T) {
 	}
 }
 
+// TestReconcileMachineSnapshotSchedulesSkipsWhenStartingDeadlineExceeded
+// confirms the opt-in missed-deadline path: a schedule far enough overdue
+// that its due window is now past spec.startingDeadlineSeconds creates NO
+// MachineSnapshots this tick (unlike the always-fires-however-overdue
+// default behavior), but still advances status.lastRunTime (so the next
+// tick starts counting a fresh interval instead of re-detecting the same
+// missed window forever) and records the skip in lastRunError.
+func TestReconcileMachineSnapshotSchedulesSkipsWhenStartingDeadlineExceeded(t *testing.T) {
+	var createCalled bool
+	var patchedStatus model.MachineSnapshotScheduleStatus
+	var patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			sched := snapshotSchedule("hourly", time.Now().Add(-24*time.Hour), 60)
+			sched.Spec.StartingDeadlineSeconds = 300
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			createCalled = true
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			patched = true
+			var body map[string]model.MachineSnapshotScheduleStatus
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patchedStatus = body["status"]
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if createCalled {
+		t.Fatal("expected no MachineSnapshot to be created once startingDeadlineSeconds is exceeded")
+	}
+	if !patched {
+		t.Fatal("expected status to still be patched (advancing lastRunTime) even on a skipped run")
+	}
+	if patchedStatus.LastRunSnapshotCount != 0 {
+		t.Fatalf("LastRunSnapshotCount = %d, want 0 (nothing was snapshotted)", patchedStatus.LastRunSnapshotCount)
+	}
+	if patchedStatus.LastRunError == "" {
+		t.Fatal("expected LastRunError to name the skipped run")
+	}
+	if patchedStatus.LastRunTime.IsZero() {
+		t.Fatal("expected LastRunTime to advance to now, so the next tick doesn't re-detect the same missed window forever")
+	}
+	wantNextRun := patchedStatus.LastRunTime.Add(time.Minute)
+	if !patchedStatus.NextRunTime.Equal(wantNextRun) {
+		t.Fatalf("NextRunTime = %v, want %v (LastRunTime + the 60s interval)", patchedStatus.NextRunTime, wantNextRun)
+	}
+}
+
+// TestReconcileMachineSnapshotSchedulesFiresWithinStartingDeadline confirms
+// startingDeadlineSeconds being *set* doesn't change behavior for a run
+// that's due but not yet past its own deadline -- only a run that's
+// actually missed its window skips.
+func TestReconcileMachineSnapshotSchedulesFiresWithinStartingDeadline(t *testing.T) {
+	var created []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			// Due 30s ago (interval 60s, lastRun 90s ago), deadline 300s -- well within it.
+			sched := snapshotSchedule("hourly", time.Now().Add(-90*time.Second), 60)
+			sched.Spec.StartingDeadlineSeconds = 300
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			var s model.MachineSnapshot
+			_ = json.NewDecoder(r.Body).Decode(&s)
+			created = append(created, s.Spec.MachineName)
+			_ = json.NewEncoder(w).Encode(s)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("created = %v, want 1 (a due run within its own startingDeadlineSeconds must still fire normally)", created)
+	}
+}
+
 func TestReconcileMachineSnapshotSchedulesZeroMatchesStillPatchesLastRunTime(t *testing.T) {
 	var patched bool
 	var status model.MachineSnapshotScheduleStatus
