@@ -151,6 +151,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 **Snapshots**
 - **CSI VolumeSnapshot** — `MachineSnapshot` orchestrates a standard snapshot object; `MachineSnapshotRestore` restores one into a *new* `PersistentVolumeClaim` via the standard CSI `dataSource` flow (deliberately doesn't also create a Machine — see the guide for why) — [guide](docs/guides/machine-snapshot-restore.md)
 - **Guest quiesce for snapshots** (`spec.guestAgent.enabled`) — a real `guest-fsfreeze`/`-thaw` around `MachineSnapshot`'s VolumeSnapshot creation for an application-consistent snapshot, coordinated between `kairon-controller` and `kairon-node` since only the node has a network path to the Machine's FluxVM instance — [guide](docs/guides/machine-snapshot-quiesce.md)
+- **`MachineSnapshotSchedule`** (first cut) — periodically creates a `MachineSnapshot` for every Machine matching a label selector on a plain `spec.intervalSeconds`, Kairon's own backup-automation primitive — deliberately not real cron syntax, no retention/pruning yet — [guide](docs/guides/machine-snapshot-schedules.md)
 
 **Operate it**
 - **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
@@ -312,7 +313,7 @@ More worked examples: [`examples/`](examples/).
 ## CLI
 
 ```text
-kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] [-n NS]
+kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] [-n NS]
 kaironctl describe [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
@@ -322,10 +323,12 @@ kaironctl create machineset NAME --image PATH [--replicas N] [--strategy Rolling
 kaironctl create instancetype NAME --cpu N --memory SIZE [--max-cpu N] [--max-memory SIZE]
                  [--hugepages] [--numa-node N] [--cpu-set SET] [--cpu-pinning]
 kaironctl create migrationpolicy NAME --selector k=v [--bandwidth-mbps N] [--max-concurrent N]
+kaironctl create snapshotschedule NAME --selector k=v --interval-seconds N [--volume-snapshot-class NAME]
 kaironctl start|stop NAME
 kaironctl delete [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl scale machineset NAME --replicas N
 kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]  # only patches flags you actually pass
+kaironctl edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N]
 kaironctl migrate MACHINE --strategy auto|cold|live --target-node NODE
 kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-interval 10s]
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]

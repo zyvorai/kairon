@@ -37,6 +37,19 @@ rules:
     # exactly as it was; this only covers replicas a MachineSet owns.
     resources: ["machines"]
     verbs: ["create", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshotschedules", "machinesnapshotschedules/status"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # MachineSnapshotSchedule is the second reason kairon-controller itself
+    # creates an object directly (the first is Machine, above, for MachineSet
+    # replicas) -- see internal/controller/machinesnapshotschedule.go. The
+    # existing get/list/watch/patch rule on machinesnapshots above doesn't
+    # cover create; kairon-ui's own separate ClusterRole already grants it
+    # create for operator-initiated snapshots, but that's a different
+    # ServiceAccount.
+    resources: ["machinesnapshots"]
+    verbs: ["create"]
 {{ if .Values.controller.cordonEvacuation.enabled }}
   - apiGroups: ["kairon.zyvor.dev"]
     # cordonEvacuation is the only reason kairon-controller itself ever

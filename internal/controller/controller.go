@@ -264,6 +264,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Log.Error("machine disruption budget status computation failed", "error", err)
 	}
 
+	if err := c.reconcileMachineSnapshotSchedules(ctx, machines); err != nil {
+		c.Log.Error("machine snapshot schedule reconciliation failed", "error", err)
+	}
+
 	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)
 	return nil

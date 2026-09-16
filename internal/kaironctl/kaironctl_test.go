@@ -353,6 +353,42 @@ func TestCmdEditMigrationPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
 	}
 }
 
+func TestCmdCreateSnapshotSchedulePostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600", "--volume-snapshot-class", "csi-hostpath-snapclass"})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	selector, _ := spec["selector"].(map[string]any)
+	if selector["tier"] != "web" {
+		t.Errorf("selector = %v", selector)
+	}
+	if spec["intervalSeconds"] != float64(3600) {
+		t.Errorf("intervalSeconds = %v, want 3600", spec["intervalSeconds"])
+	}
+	if spec["volumeSnapshotClassName"] != "csi-hostpath-snapclass" {
+		t.Errorf("volumeSnapshotClassName = %v", spec["volumeSnapshotClassName"])
+	}
+}
+
+func TestCmdEditSnapshotScheduleOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"snapshotschedule", "nightly", "--suspend", "true"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/nightly" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["suspend"] != true {
+		t.Errorf("suspend = %v, want true", spec["suspend"])
+	}
+	if _, present := spec["intervalSeconds"]; present {
+		t.Errorf("intervalSeconds should not be present when --interval-seconds wasn't passed, got %v", spec)
+	}
+}
+
 // TestCmdCreateStillCreatesAPlainMachine is a regression test: `kaironctl
 // create NAME --image ... [flags]` (no KIND argument) must keep creating a
 // Machine exactly as it did before create machineset/instancetype/

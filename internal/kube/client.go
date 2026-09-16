@@ -488,6 +488,42 @@ func (c *Client) PatchMigrationPolicy(ctx context.Context, ns, name string, patc
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "migrationpolicies", name), patch, nil, "application/merge-patch+json")
 }
 
+func (c *Client) ListMachineSnapshotSchedules(ctx context.Context) ([]model.MachineSnapshotSchedule, error) {
+	var list model.MachineSnapshotScheduleList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineSnapshotSchedulesNamespace(ctx context.Context, ns string) ([]model.MachineSnapshotSchedule, error) {
+	var list model.MachineSnapshotScheduleList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinesnapshotschedules"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineSnapshotSchedule(ctx context.Context, ns, name string) (model.MachineSnapshotSchedule, error) {
+	var s model.MachineSnapshotSchedule
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinesnapshotschedules", name), nil, &s, "")
+	return s, err
+}
+
+func (c *Client) DeleteMachineSnapshotSchedule(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinesnapshotschedules", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
+func (c *Client) CreateMachineSnapshotSchedule(ctx context.Context, ns string, s model.MachineSnapshotSchedule) (model.MachineSnapshotSchedule, error) {
+	var out model.MachineSnapshotSchedule
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinesnapshotschedules"), s, &out, "")
+	return out, err
+}
+
+func (c *Client) PatchMachineSnapshotSchedule(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotschedules", name), patch, nil, "application/merge-patch+json")
+}
+
+func (c *Client) PatchMachineSnapshotScheduleStatus(ctx context.Context, ns, name string, status model.MachineSnapshotScheduleStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotschedules", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")

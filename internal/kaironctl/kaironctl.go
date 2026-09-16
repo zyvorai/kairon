@@ -263,6 +263,19 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 			}
 			fmt.Printf("%s\t%s\t%d\n", p.Metadata.Name, bw, p.Status.ActiveMigrations)
 		}
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		items, err := kc.ListMachineSnapshotSchedulesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tINTERVALSECONDS\tSUSPEND\tLASTRUN\tLASTCOUNT\n")
+		for _, s := range items {
+			lastRun := "-"
+			if !s.Status.LastRunTime.IsZero() {
+				lastRun = s.Status.LastRunTime.Format(time.RFC3339)
+			}
+			fmt.Printf("%s\t%d\t%t\t%s\t%d\n", s.Metadata.Name, s.Spec.IntervalSeconds, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount)
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
@@ -327,6 +340,8 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		out, err = kc.GetMachineInstanceType(ctx, ns, name)
 	case "migrationpolicy", "migrationpolicies":
 		out, err = kc.GetMigrationPolicy(ctx, ns, name)
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		out, err = kc.GetMachineSnapshotSchedule(ctx, ns, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -412,6 +427,9 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 		return
 	case "migrationpolicy", "migrationpolicies":
 		cmdCreateMigrationPolicy(ctx, kc, args[1:])
+		return
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		cmdCreateSnapshotSchedule(ctx, kc, args[1:])
 		return
 	}
 	name := args[0]
@@ -551,6 +569,48 @@ func cmdCreateMigrationPolicy(ctx context.Context, kc *kube.Client, args []strin
 	fmt.Printf("migrationpolicy/%s created\n", out.Metadata.Name)
 }
 
+// cmdCreateSnapshotSchedule handles `kaironctl create snapshotschedule NAME
+// --selector k=v --interval-seconds N [flags]`, dispatched from cmdCreate.
+func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create snapshotschedule NAME --selector k=v --interval-seconds N [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create snapshotschedule", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "label key=value a Machine must match to be snapshotted (repeatable, required)")
+	intervalSeconds := fs.Int("interval-seconds", 0, "minimum seconds between runs (required, minimum 60)")
+	volumeSnapshotClassName := fs.String("volume-snapshot-class", "", "VolumeSnapshotClassName passed through to every MachineSnapshot this schedule creates")
+	suspend := fs.Bool("suspend", false, "create the schedule already suspended")
+	_ = fs.Parse(args[1:])
+	if len(selector) == 0 {
+		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
+	}
+	if *intervalSeconds < 60 {
+		fatal(fmt.Errorf("--interval-seconds N is required and must be at least 60"))
+	}
+	selectorMap, err := parseKeyValues(selector)
+	if err != nil {
+		fatal(err)
+	}
+	s := model.MachineSnapshotSchedule{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshotSchedule},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.MachineSnapshotScheduleSpec{
+			Selector:                selectorMap,
+			IntervalSeconds:         *intervalSeconds,
+			VolumeSnapshotClassName: *volumeSnapshotClassName,
+			Suspend:                 *suspend,
+		},
+	}
+	out, err := kc.CreateMachineSnapshotSchedule(ctx, *ns, s)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("snapshotschedule/%s created\n", out.Metadata.Name)
+}
+
 // cmdScale mutates spec.replicas on an existing MachineSet -- the only
 // resource kind this verb supports for a first cut, since no other kind
 // kaironctl manages has a sensible "scale" operation. Takes its own
@@ -583,20 +643,29 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 // only the ones an explicit flag was actually passed for on this
 // invocation (tracked via fs.Visit, never a flag's zero-value default) so
 // an omitted flag can never clobber an already-set value back to zero.
-// migrationpolicy is the only kind this verb supports for a first cut.
+// migrationpolicy and snapshotschedule are the only kinds this verb
+// supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
-	if kind != "migrationpolicy" && kind != "migrationpolicies" {
-		fatal(fmt.Errorf("edit only supports migrationpolicy, got %q", kind))
+	switch kind {
+	case "migrationpolicy", "migrationpolicies":
+		cmdEditMigrationPolicy(ctx, kc, name, args[2:])
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		cmdEditSnapshotSchedule(ctx, kc, name, args[2:])
+	default:
+		fatal(fmt.Errorf("edit only supports migrationpolicy or snapshotschedule, got %q", kind))
 	}
-	fs := flag.NewFlagSet("edit", flag.ExitOnError)
+}
+
+func cmdEditMigrationPolicy(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit migrationpolicy", flag.ExitOnError)
 	ns := fs.String("namespace", "default", "namespace")
 	bandwidth := fs.Uint64("bandwidth-mbps", 0, "new default migration bandwidth")
 	maxConcurrent := fs.Int("max-concurrent", 0, "new cap on simultaneous non-terminal migrations")
-	_ = fs.Parse(args[2:])
+	_ = fs.Parse(args)
 	spec := map[string]any{}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -613,6 +682,30 @@ func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(err)
 	}
 	fmt.Printf("migrationpolicy/%s updated\n", name)
+}
+
+func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit snapshotschedule", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	suspend := fs.Bool("suspend", false, "pause (true) or resume (false) this schedule")
+	intervalSeconds := fs.Int("interval-seconds", 0, "new minimum seconds between runs (minimum 60)")
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "suspend":
+			spec["suspend"] = *suspend
+		case "interval-seconds":
+			spec["intervalSeconds"] = *intervalSeconds
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend or --interval-seconds"))
+	}
+	if err := kc.PatchMachineSnapshotSchedule(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("snapshotschedule/%s updated\n", name)
 }
 
 func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
@@ -641,6 +734,8 @@ func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
 		canonical, err = "instancetype", kc.DeleteMachineInstanceType(ctx, ns, name)
 	case "migrationpolicy", "migrationpolicies":
 		canonical, err = "migrationpolicy", kc.DeleteMigrationPolicy(ctx, ns, name)
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		canonical, err = "snapshotschedule", kc.DeleteMachineSnapshotSchedule(ctx, ns, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -1077,7 +1172,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit migrationpolicy NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [migrationpolicy|snapshotschedule] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
