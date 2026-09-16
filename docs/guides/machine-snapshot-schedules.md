@@ -56,6 +56,57 @@ call never resets it.
 `MachineSnapshot` this schedule creates, mirroring
 `MachineSnapshot.spec.volumeSnapshotClassName` exactly.
 
+## Previewing what would fire right now (`kaironctl describe`)
+
+`describe` for every other kind in this project uniformly prints the raw
+object as JSON and nothing else. `kaironctl describe snapshotschedule`
+is the one deliberate exception: it prints that same JSON, then appends a
+preview of exactly what the *next* reconcile tick would do with this
+schedule, right now:
+
+```console
+$ kaironctl describe snapshotschedule nightly
+{
+  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "kind": "MachineSnapshotSchedule",
+  ...
+}
+
+Matching machines (2) -- due now, the next reconcile tick will snapshot these:
+  web-1
+  web-2
+```
+
+or, for a schedule that isn't due yet:
+
+```console
+$ kaironctl describe snapshotschedule nightly
+...
+Matching machines (2) -- not due yet (next projected run: 2026-09-17T02:00:00Z):
+  web-1
+  web-2
+```
+
+The machine list is exactly which `Machine`s in the schedule's own
+namespace currently satisfy `spec.selector` -- the same `LabelsMatch` check
+`reconcileMachineSnapshotSchedules` itself uses -- and the due/not-due
+verdict comes from calling the schedule's own `Spec.Due(status.lastRunTime,
+time.Now())`, the identical pure function the controller calls every
+reconcile tick, so this preview can never disagree with what actually
+happens next. A selector matching zero Machines prints an explicit `(none
+-- check spec.selector against these Machines' own labels)` hint instead of
+a bare, unexplained empty list -- useful for catching a typo'd label value
+before assuming the schedule is simply working correctly with nothing to
+do.
+
+This is a real, useful question to ask before loosening or tightening a
+selector, or before shortening/lengthening `intervalSeconds` -- without it,
+the only way to find out was to wait for the next tick and check
+`status.lastRunSnapshotCount` after the fact. It's a snapshot of *this
+instant*, though, not a guarantee: a Machine's own labels, or the
+schedule's `selector`/`suspend`/`intervalSeconds` fields, can change
+between running `describe` and the actual next reconcile tick.
+
 ## Retention (`spec.keepLast`)
 
 Set, `spec.keepLast: N` bounds how many of THIS schedule's own
@@ -194,3 +245,10 @@ Each reconcile tick:
   the raw stored value (or a blank cell if the schedule has never fired),
   even while suspended. Check `spec.suspend`/the `Suspend` column
   alongside it in a `kubectl`-only workflow.
+- **`kaironctl describe snapshotschedule`'s preview is a snapshot of this
+  instant, not a guarantee.** It's a plain read-then-compute at the moment
+  you ran it -- a Machine's labels, or the schedule's own `selector`/
+  `suspend`/`intervalSeconds`, can change before the next actual reconcile
+  tick runs, and this preview does nothing to lock or reserve anything.
+  There's also no equivalent preview in the dashboard or via `kubectl` --
+  it's `kaironctl`-only for now.

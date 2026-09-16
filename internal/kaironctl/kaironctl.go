@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -335,6 +336,15 @@ func resourceKindAndName(verb string, args []string) (kind, name string) {
 func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	ns, args := nsFlag(args)
 	kind, name := resourceKindAndName("describe", args)
+	switch kind {
+	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
+		// The one kind describe doesn't just raw-JSON-dump -- see
+		// describeSnapshotSchedule's own doc comment for why this
+		// narrow exception is justified for this specific CRD and isn't
+		// a generalized richer-describe change for every kind.
+		describeSnapshotSchedule(ctx, kc, ns, name)
+		return
+	}
 	var (
 		out any
 		err error
@@ -358,8 +368,6 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		out, err = kc.GetMachineInstanceType(ctx, ns, name)
 	case "migrationpolicy", "migrationpolicies":
 		out, err = kc.GetMigrationPolicy(ctx, ns, name)
-	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
-		out, err = kc.GetMachineSnapshotSchedule(ctx, ns, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -369,6 +377,61 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(b))
+}
+
+// describeSnapshotSchedule prints a MachineSnapshotSchedule the same
+// raw-JSON way every other kind's `describe` does, then appends a
+// "Matching machines" preview: exactly which Machines the schedule's own
+// spec.selector currently matches in its namespace, and whether the very
+// next reconcile tick would actually fire a new round of snapshots for
+// them -- evaluated by calling the schedule's own Spec.Due(status.
+// lastRunTime, time.Now()), the identical pure function
+// reconcileMachineSnapshotSchedules itself calls every tick, so this
+// preview can never drift from what the controller will actually do.
+//
+// This is a deliberate, narrow exception to this project's otherwise
+// uniform "describe just dumps the raw object as JSON" convention (every
+// other kind still does exactly that, unchanged) -- justified because
+// kubectl's own `describe` already appends non-raw derived information
+// beyond an object's literal fields when it's operationally useful (e.g.
+// related Events), and "which Machines would this schedule snapshot right
+// now, and would it even fire" is a real question an operator asks before
+// loosening/tightening spec.selector or spec.intervalSeconds, not
+// something a generalized richer-describe-for-every-kind change would be
+// needed for.
+func describeSnapshotSchedule(ctx context.Context, kc *kube.Client, ns, name string) {
+	sched, err := kc.GetMachineSnapshotSchedule(ctx, ns, name)
+	if err != nil {
+		fatal(err)
+	}
+	b, _ := json.MarshalIndent(sched, "", "  ")
+	fmt.Println(string(b))
+
+	machines, err := kc.ListMachinesNamespace(ctx, sched.Namespace())
+	if err != nil {
+		fatal(err)
+	}
+	var matches []string
+	for _, m := range machines {
+		if model.LabelsMatch(m.Metadata.Labels, sched.Spec.Selector) {
+			matches = append(matches, m.Metadata.Name)
+		}
+	}
+	sort.Strings(matches)
+
+	fmt.Println()
+	if sched.Spec.Due(sched.Status.LastRunTime, time.Now()) {
+		fmt.Printf("Matching machines (%d) -- due now, the next reconcile tick will snapshot these:\n", len(matches))
+	} else {
+		fmt.Printf("Matching machines (%d) -- not due yet (next projected run: %s):\n", len(matches), formatNextRun(sched))
+	}
+	if len(matches) == 0 {
+		fmt.Println("  (none -- check spec.selector against these Machines' own labels)")
+		return
+	}
+	for _, m := range matches {
+		fmt.Printf("  %s\n", m)
+	}
 }
 
 // machineSpecFromFlags registers the Machine-spec-shaped flags shared by a

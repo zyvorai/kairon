@@ -4,16 +4,46 @@
 package kaironctl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
+
+// captureStdout runs fn with os.Stdout redirected to an in-memory pipe and
+// returns everything fn printed -- describeSnapshotSchedule (unlike every
+// verb this file otherwise tests, which is exercised purely via the HTTP
+// boundary or a pure function's return value) prints its "Matching
+// machines" preview straight to stdout, so this is the only way to assert
+// on it directly.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return buf.String()
+}
 
 func TestMigrationStillPending(t *testing.T) {
 	for phase, want := range map[string]bool{
@@ -508,5 +538,104 @@ func TestFormatNextRun(t *testing.T) {
 				t.Errorf("formatNextRun() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// describeScheduleTestServer is a minimal in-memory fake of the two
+// endpoints describeSnapshotSchedule calls, mirroring
+// evacuateTestServer's own inline-httptest-server convention above.
+type describeScheduleTestServer struct {
+	schedule model.MachineSnapshotSchedule
+	machines []model.Machine
+}
+
+func (s *describeScheduleTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"+s.schedule.Metadata.Name:
+			_ = json.NewEncoder(w).Encode(s.schedule)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+// TestDescribeSnapshotScheduleShowsMatchingMachinesWhenDue confirms the
+// "what would fire right now" preview: only Machines matching
+// spec.selector are listed, printed sorted rather than in arbitrary
+// listing order, and a never-yet-run schedule (immediately Due, per
+// Spec.Due's own doc comment) is reported as "due now".
+func TestDescribeSnapshotScheduleShowsMatchingMachinesWhenDue(t *testing.T) {
+	sched := model.MachineSnapshotSchedule{
+		Metadata: model.ObjectMeta{Name: "nightly", Namespace: "default"},
+		Spec:     model.MachineSnapshotScheduleSpec{Selector: map[string]string{"tier": "web"}, IntervalSeconds: 3600},
+	}
+	s := &describeScheduleTestServer{
+		schedule: sched,
+		machines: []model.Machine{
+			{Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+			{Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+			{Metadata: model.ObjectMeta{Name: "vm-db", Namespace: "default", Labels: map[string]string{"tier": "db"}}},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeSnapshotSchedule(context.Background(), kc, "default", "nightly")
+	})
+	if !strings.Contains(out, "due now") {
+		t.Errorf("expected \"due now\" in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Matching machines (2)") {
+		t.Errorf("expected 2 matches, got:\n%s", out)
+	}
+	if i1, i2 := strings.Index(out, "vm-1"), strings.Index(out, "vm-2"); i1 == -1 || i2 == -1 || i1 > i2 {
+		t.Errorf("expected vm-1 listed before vm-2 (sorted), got:\n%s", out)
+	}
+	if strings.Contains(out, "vm-db") {
+		t.Errorf("vm-db doesn't match spec.selector, must not appear:\n%s", out)
+	}
+}
+
+// TestDescribeSnapshotScheduleNotDueYetShowsProjectedNextRun confirms a
+// schedule that ran recently (well inside its own interval) is reported
+// as not due, alongside its projected next run, and a selector matching
+// zero Machines prints the explicit "(none ...)" hint rather than an
+// empty, unexplained list.
+func TestDescribeSnapshotScheduleNotDueYetShowsProjectedNextRun(t *testing.T) {
+	lastRun := time.Now().Add(-time.Minute)
+	sched := model.MachineSnapshotSchedule{
+		Metadata: model.ObjectMeta{Name: "nightly", Namespace: "default"},
+		Spec:     model.MachineSnapshotScheduleSpec{Selector: map[string]string{"tier": "web"}, IntervalSeconds: 3600},
+		Status:   model.MachineSnapshotScheduleStatus{LastRunTime: lastRun, NextRunTime: lastRun.Add(time.Hour)},
+	}
+	s := &describeScheduleTestServer{schedule: sched}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeSnapshotSchedule(context.Background(), kc, "default", "nightly")
+	})
+	if !strings.Contains(out, "not due yet") {
+		t.Errorf("expected \"not due yet\" in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Matching machines (0)") {
+		t.Errorf("expected 0 matches, got:\n%s", out)
+	}
+	if !strings.Contains(out, "(none") {
+		t.Errorf("expected the no-matches hint, got:\n%s", out)
 	}
 }
