@@ -221,6 +221,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/migration-policies", s.handleListMigrationPolicies)
 	api.HandleFunc("GET /api/v1/snapshot-schedules", s.handleListMachineSnapshotSchedules)
 	api.HandleFunc("PATCH /api/v1/snapshot-schedules/{namespace}/{name}/suspend", s.handleSuspendMachineSnapshotSchedule)
+	api.HandleFunc("GET /api/v1/network-policies", s.handleListNetworkPolicies)
+	api.HandleFunc("GET /api/v1/security-groups", s.handleListSecurityGroups)
 
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	api.HandleFunc("GET /api/v1/nodes/{node}/sandboxes", s.handleListNodeSandboxes)

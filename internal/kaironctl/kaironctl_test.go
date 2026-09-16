@@ -355,6 +355,44 @@ func TestCmdCreateMigrationPolicyPostsExpectedSpec(t *testing.T) {
 	}
 }
 
+// TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup covers the one
+// piece of kaironctl wiring that was entirely missing for these two CRDs
+// before this change -- get/describe/delete, exactly what every other
+// kind already has (see resourceKindAndName's doc comment for why KIND is
+// always the first of two positional args here).
+func TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	ctx := context.Background()
+
+	cmdGet(ctx, kc, []string{"networkpolicies"})
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies" {
+		t.Fatalf("get networkpolicies: method=%s path=%s", s.method, s.path)
+	}
+	cmdGet(ctx, kc, []string{"securitygroups"})
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups" {
+		t.Fatalf("get securitygroups: method=%s path=%s", s.method, s.path)
+	}
+
+	cmdDescribe(ctx, kc, []string{"networkpolicy", "web-edge"})
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		t.Fatalf("describe networkpolicy: method=%s path=%s", s.method, s.path)
+	}
+	cmdDescribe(ctx, kc, []string{"securitygroup", "frontend"})
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+		t.Fatalf("describe securitygroup: method=%s path=%s", s.method, s.path)
+	}
+
+	cmdDelete(ctx, kc, []string{"networkpolicy", "web-edge"})
+	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		t.Fatalf("delete networkpolicy: method=%s path=%s", s.method, s.path)
+	}
+	cmdDelete(ctx, kc, []string{"securitygroup", "frontend"})
+	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+		t.Fatalf("delete securitygroup: method=%s path=%s", s.method, s.path)
+	}
+}
+
 func TestCmdScalePatchesReplicas(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)

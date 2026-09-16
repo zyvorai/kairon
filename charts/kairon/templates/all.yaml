@@ -860,6 +860,15 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshotschedules"]
     verbs: ["get", "list", "watch", "patch"]
+  # Read-only: the dashboard's new MachineNetworkPolicy/NetworkSecurityGroup
+  # list pages (GET /api/v1/network-policies, /security-groups) -- see
+  # internal/uiapi/fleet.go's handleListNetworkPolicies/
+  # handleListSecurityGroups. List-only, matching every other newly-added
+  # dashboard route above except machinesets: kaironctl/kubectl remain how
+  # these get mutated.
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinenetworkpolicies", "networksecuritygroups"]
+    verbs: ["get", "list", "watch"]
 {{ if .Values.ui.auth.rbacConsoleCheck }}
   - apiGroups: ["authorization.k8s.io"]
     # ui.auth.rbacConsoleCheck's own SubjectAccessReview call -- see

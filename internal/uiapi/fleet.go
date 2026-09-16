@@ -135,3 +135,33 @@ func (s *Server) handleSuspendMachineSnapshotSchedule(w http.ResponseWriter, r *
 	}
 	writeJSON(w, http.StatusOK, updated)
 }
+
+// handleListNetworkPolicies and handleListSecurityGroups give
+// MachineNetworkPolicy/NetworkSecurityGroup the same dashboard visibility
+// every other CRD here already has -- read-only, any-authenticated-
+// operator, matching this file's own pattern exactly. Until now these two
+// (which drive FluxVM's real eBPF/TC enforcement, see
+// docs/guides/network-policy.md) had no kairon-ui route at all: an
+// operator using only the dashboard could see a Machine's *effective*
+// network policy and drop reasons (the existing network-observability
+// endpoints in network_observability.go) but had no way to see the
+// MachineNetworkPolicy/NetworkSecurityGroup objects that produced it.
+// List-only, like four of the five CRDs above -- kaironctl/kubectl remain
+// how they get mutated.
+func (s *Server) handleListNetworkPolicies(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Kube.ListMachineNetworkPoliciesNamespace(r.Context(), namespaceParam(r))
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) handleListSecurityGroups(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Kube.ListNetworkSecurityGroupsNamespace(r.Context(), namespaceParam(r))
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}

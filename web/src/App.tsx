@@ -10,6 +10,8 @@ import MachineSets from './pages/MachineSets';
 import InstanceTypes from './pages/InstanceTypes';
 import MigrationPolicies from './pages/MigrationPolicies';
 import SnapshotSchedules from './pages/SnapshotSchedules';
+import NetworkPolicies from './pages/NetworkPolicies';
+import SecurityGroups from './pages/SecurityGroups';
 import Account from './pages/Account';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
@@ -81,6 +83,8 @@ export default function App() {
     instancetypes: <InstanceTypes />,
     'migration-policies': <MigrationPolicies />,
     'snapshot-schedules': <SnapshotSchedules />,
+    'network-policies': <NetworkPolicies />,
+    'security-groups': <SecurityGroups />,
     account: <Account />,
   }[page];
 

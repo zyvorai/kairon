@@ -67,6 +67,31 @@ func TestListMachineInstanceTypesNamespaceAndListMigrationPoliciesNamespace(t *t
 	}
 }
 
+func TestListMachineNetworkPoliciesNamespaceAndListNetworkSecurityGroupsNamespace(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinenetworkpolicies":
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: []model.MachineNetworkPolicy{{Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "prod"}}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/networksecuritygroups":
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{Items: []model.NetworkSecurityGroup{{Metadata: model.ObjectMeta{Name: "frontend", Namespace: "prod"}}}})
+		default:
+			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "", "", false)
+	c.HTTP = s.Client()
+
+	policies, err := c.ListMachineNetworkPoliciesNamespace(context.Background(), "prod")
+	if err != nil || len(policies) != 1 || policies[0].Metadata.Name != "web-edge" {
+		t.Fatalf("policies=%v err=%v", policies, err)
+	}
+	groups, err := c.ListNetworkSecurityGroupsNamespace(context.Background(), "prod")
+	if err != nil || len(groups) != 1 || groups[0].Metadata.Name != "frontend" {
+		t.Fatalf("groups=%v err=%v", groups, err)
+	}
+}
+
 func TestLeaseCreateGetUpdateAndConflict(t *testing.T) {
 	const wantPath = "/apis/coordination.k8s.io/v1/namespaces/kairon-system/leases/kairon-controller"
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +213,10 @@ func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(model.MachineInstanceType{Metadata: model.ObjectMeta{Name: "type1", Namespace: "prod"}})
 		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/migrationpolicies/policy1":
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicy{Metadata: model.ObjectMeta{Name: "policy1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinenetworkpolicies/netpol1":
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicy{Metadata: model.ObjectMeta{Name: "netpol1", Namespace: "prod"}})
+		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/networksecuritygroups/group1":
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroup{Metadata: model.ObjectMeta{Name: "group1", Namespace: "prod"}})
 		default:
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
 		}
@@ -221,6 +250,12 @@ func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
 	if got, err := c.GetMigrationPolicy(ctx, "prod", "policy1"); err != nil || got.Metadata.Name != "policy1" {
 		t.Fatalf("GetMigrationPolicy: got=%v err=%v", got, err)
 	}
+	if got, err := c.GetMachineNetworkPolicy(ctx, "prod", "netpol1"); err != nil || got.Metadata.Name != "netpol1" {
+		t.Fatalf("GetMachineNetworkPolicy: got=%v err=%v", got, err)
+	}
+	if got, err := c.GetNetworkSecurityGroup(ctx, "prod", "group1"); err != nil || got.Metadata.Name != "group1" {
+		t.Fatalf("GetNetworkSecurityGroup: got=%v err=%v", got, err)
+	}
 
 	if err := c.DeleteMachineMigration(ctx, "prod", "mig1"); err != nil {
 		t.Fatalf("DeleteMachineMigration: %v", err)
@@ -246,7 +281,13 @@ func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
 	if err := c.DeleteMigrationPolicy(ctx, "prod", "policy1"); err != nil {
 		t.Fatalf("DeleteMigrationPolicy: %v", err)
 	}
-	if len(deleted) != 8 {
-		t.Fatalf("deleted=%v, want 8 DELETE calls", deleted)
+	if err := c.DeleteMachineNetworkPolicy(ctx, "prod", "netpol1"); err != nil {
+		t.Fatalf("DeleteMachineNetworkPolicy: %v", err)
+	}
+	if err := c.DeleteNetworkSecurityGroup(ctx, "prod", "group1"); err != nil {
+		t.Fatalf("DeleteNetworkSecurityGroup: %v", err)
+	}
+	if len(deleted) != 10 {
+		t.Fatalf("deleted=%v, want 10 DELETE calls", deleted)
 	}
 }

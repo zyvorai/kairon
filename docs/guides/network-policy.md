@@ -121,6 +121,18 @@ On delete, matched Running Machines on this node are reset to
 4. If `Machine.spec.network.dataplaneRequired` and attach is unhealthy, Machine
    reconcile errors (policy may still attempt apply independently).
 
+## Inspecting policy objects
+
+`kaironctl get networkpolicies` / `kaironctl get securitygroups` list every
+`MachineNetworkPolicy`/`NetworkSecurityGroup` in a namespace (aliases:
+`networkpolicy`/`machinenetworkpolicies`, `securitygroup`/
+`networksecuritygroups`); `kaironctl describe networkpolicy NAME` /
+`describe securitygroup NAME` and `kaironctl delete ...` round it out —
+until now these two CRDs had no `kaironctl` support at all, unlike every
+other kind. The dashboard's **Network policies** and **Security groups**
+pages give the same read-only view; both stay list-only there —
+`kaironctl`/`kubectl` remain how they get created or edited.
+
 ## Troubleshooting: why is traffic being allowed/blocked?
 
 Four read-only, any-authenticated-operator API endpoints (API-only, no

@@ -301,6 +301,29 @@ func (c *Client) ListMachineNetworkPolicies(ctx context.Context) ([]model.Machin
 	return list.Items, err
 }
 
+// ListMachineNetworkPoliciesNamespace, GetMachineNetworkPolicy, and
+// DeleteMachineNetworkPolicy give MachineNetworkPolicy the same
+// get/describe/delete surface every other CRD already has through
+// kaironctl/kairon-ui -- until now, this security-relevant CRD (it drives
+// FluxVM's real eBPF/TC enforcement, see docs/guides/network-policy.md)
+// could only be inspected via `kubectl get machinenetworkpolicies`, unlike
+// MachineQuota/MachineSet/MigrationPolicy/etc.
+func (c *Client) ListMachineNetworkPoliciesNamespace(ctx context.Context, ns string) ([]model.MachineNetworkPolicy, error) {
+	var list model.MachineNetworkPolicyList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinenetworkpolicies"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineNetworkPolicy(ctx context.Context, ns, name string) (model.MachineNetworkPolicy, error) {
+	var p model.MachineNetworkPolicy
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinenetworkpolicies", name), nil, &p, "")
+	return p, err
+}
+
+func (c *Client) DeleteMachineNetworkPolicy(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinenetworkpolicies", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
+}
+
 func (c *Client) PatchMachineNetworkPolicy(ctx context.Context, ns, name string, patch map[string]any) error {
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinenetworkpolicies", name), patch, nil, "application/merge-patch+json")
 }
@@ -313,6 +336,26 @@ func (c *Client) ListNetworkSecurityGroups(ctx context.Context) ([]model.Network
 	var list model.NetworkSecurityGroupList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups", nil, &list, "")
 	return list.Items, err
+}
+
+// ListNetworkSecurityGroupsNamespace, GetNetworkSecurityGroup, and
+// DeleteNetworkSecurityGroup mirror the three MachineNetworkPolicy methods
+// above, for the same reason: NetworkSecurityGroup had no get/describe/
+// delete path either.
+func (c *Client) ListNetworkSecurityGroupsNamespace(ctx context.Context, ns string) ([]model.NetworkSecurityGroup, error) {
+	var list model.NetworkSecurityGroupList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "networksecuritygroups"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetNetworkSecurityGroup(ctx context.Context, ns, name string) (model.NetworkSecurityGroup, error) {
+	var g model.NetworkSecurityGroup
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "networksecuritygroups", name), nil, &g, "")
+	return g, err
+}
+
+func (c *Client) DeleteNetworkSecurityGroup(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "networksecuritygroups", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
 
 func (c *Client) PatchNetworkSecurityGroup(ctx context.Context, ns, name string, patch map[string]any) error {

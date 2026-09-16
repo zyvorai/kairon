@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Route, Shield, UserCog } from 'lucide-react';
+import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Network, Route, Shield, ShieldCheck, UserCog } from 'lucide-react';
 
 export type Page =
   | 'overview'
@@ -11,6 +11,8 @@ export type Page =
   | 'instancetypes'
   | 'migration-policies'
   | 'snapshot-schedules'
+  | 'network-policies'
+  | 'security-groups'
   | 'account';
 
 const ITEMS: [Page, React.ReactNode, string][] = [
@@ -24,6 +26,8 @@ const ITEMS: [Page, React.ReactNode, string][] = [
   ['instancetypes', <Cpu size={17} key="i" />, 'Instance types'],
   ['migration-policies', <Route size={17} key="i" />, 'Migration policies'],
   ['snapshot-schedules', <Calendar size={17} key="i" />, 'Snapshot schedules'],
+  ['network-policies', <Network size={17} key="i" />, 'Network policies'],
+  ['security-groups', <ShieldCheck size={17} key="i" />, 'Security groups'],
 ];
 
 export default function Nav({

@@ -142,3 +142,36 @@ export interface MachineSnapshotSchedule {
   };
   status?: { lastRunTime?: string; lastRunSnapshotCount?: number; lastRunError?: string; nextRunTime?: string };
 }
+
+// VmNetworkPolicy mirrors internal/model/network.go's struct of the same
+// name -- the FluxVM-shaped edge policy embedded in both CRDs below.
+export interface VmNetworkPolicy {
+  defaultAllow: boolean;
+  allowCidrs?: string[];
+  denyCidrs?: string[];
+  allowPorts?: string[];
+  maxEgressMbps?: number;
+  maxEgressPps?: number;
+  allowFqdns?: string[];
+  groups?: string[];
+  labels?: string[];
+  entities?: string[];
+  auditMode?: boolean;
+  allowIcmp?: boolean;
+  sampleRate?: number;
+}
+
+// MachineNetworkPolicy and NetworkSecurityGroup: list-only, same as the
+// five resource kinds above -- kaironctl/kubectl remain the way to create
+// or mutate either.
+export interface MachineNetworkPolicy {
+  metadata: ObjectMeta;
+  spec: { machineName?: string; selector?: Record<string, string>; policy: VmNetworkPolicy };
+  status?: { phase?: string; message?: string; observedMachines?: number; lastAppliedTime?: string; effectiveSynced?: boolean };
+}
+
+export interface NetworkSecurityGroup {
+  metadata: ObjectMeta;
+  spec: { groupName?: string; labels?: string[]; priority?: number; description?: string; policy: VmNetworkPolicy };
+  status?: { phase?: string; message?: string; identity?: number; appliedOn?: string };
+}

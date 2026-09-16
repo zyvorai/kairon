@@ -281,6 +281,39 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 			}
 			fmt.Printf("%s\t%d\t%s\t%t\t%s\t%d\t%s\n", s.Metadata.Name, s.Spec.IntervalSeconds, deadline, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
 		}
+	// networkpolicy/securitygroup: MachineNetworkPolicy and
+	// NetworkSecurityGroup drive FluxVM's real eBPF/TC enforcement (see
+	// docs/guides/network-policy.md) but, unlike every other kind here,
+	// previously had no kaironctl support at all -- an operator debugging
+	// "why is my traffic blocked" could reach for the four network-*
+	// diagnostic endpoints but couldn't even list the policy objects
+	// themselves without kubectl.
+	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
+		items, err := kc.ListMachineNetworkPoliciesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tTARGET\tDEFAULTALLOW\tPHASE\tSYNCED\n")
+		for _, p := range items {
+			target := dash(p.Spec.MachineName)
+			if target == "-" && len(p.Spec.Selector) > 0 {
+				target = fmt.Sprintf("selector(%d)", len(p.Spec.Selector))
+			}
+			fmt.Printf("%s\t%s\t%t\t%s\t%t\n", p.Metadata.Name, target, p.Spec.Policy.DefaultAllow, dash(p.Status.Phase), p.Status.EffectiveSynced)
+		}
+	case "securitygroup", "securitygroups", "networksecuritygroups":
+		items, err := kc.ListNetworkSecurityGroupsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("NAME\tGROUPNAME\tPRIORITY\tDEFAULTALLOW\tPHASE\tAPPLIEDON\n")
+		for _, g := range items {
+			groupName := g.Spec.GroupName
+			if groupName == "" {
+				groupName = g.Metadata.Name
+			}
+			fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\n", g.Metadata.Name, groupName, g.Spec.Priority, g.Spec.Policy.DefaultAllow, dash(g.Status.Phase), dash(g.Status.AppliedOn))
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
@@ -372,6 +405,10 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		out, err = kc.GetMachineInstanceType(ctx, ns, name)
 	case "migrationpolicy", "migrationpolicies":
 		out, err = kc.GetMigrationPolicy(ctx, ns, name)
+	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
+		out, err = kc.GetMachineNetworkPolicy(ctx, ns, name)
+	case "securitygroup", "securitygroups", "networksecuritygroups":
+		out, err = kc.GetNetworkSecurityGroup(ctx, ns, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -1044,6 +1081,10 @@ func cmdDelete(ctx context.Context, kc *kube.Client, args []string) {
 		canonical, err = "migrationpolicy", kc.DeleteMigrationPolicy(ctx, ns, name)
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
 		canonical, err = "snapshotschedule", kc.DeleteMachineSnapshotSchedule(ctx, ns, name)
+	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
+		canonical, err = "networkpolicy", kc.DeleteMachineNetworkPolicy(ctx, ns, name)
+	case "securitygroup", "securitygroups", "networksecuritygroups":
+		canonical, err = "securitygroup", kc.DeleteNetworkSecurityGroup(ctx, ns, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -1480,7 +1521,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

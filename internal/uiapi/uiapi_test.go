@@ -38,6 +38,8 @@ type fakeKube struct {
 	instanceTypes     map[string]model.MachineInstanceType
 	migrationPolicies map[string]model.MigrationPolicy
 	snapshotSchedules map[string]model.MachineSnapshotSchedule
+	networkPolicies   map[string]model.MachineNetworkPolicy
+	securityGroups    map[string]model.NetworkSecurityGroup
 	nodes             []model.Node
 	// secrets holds only stringData, keyed by "namespace/name" -- enough
 	// to exercise Client.PatchSecretStringData (see
@@ -61,6 +63,8 @@ func newFakeKube() *fakeKube {
 		instanceTypes:     map[string]model.MachineInstanceType{},
 		migrationPolicies: map[string]model.MigrationPolicy{},
 		snapshotSchedules: map[string]model.MachineSnapshotSchedule{},
+		networkPolicies:   map[string]model.MachineNetworkPolicy{},
+		securityGroups:    map[string]model.NetworkSecurityGroup{},
 		secrets:           map[string]map[string]string{},
 	}
 }
@@ -234,6 +238,18 @@ func (f *fakeKube) handler() http.Handler {
 			s.Spec.Suspend = patch.Spec.Suspend
 			f.snapshotSchedules[name] = s
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies":
+			items := make([]model.MachineNetworkPolicy, 0, len(f.networkPolicies))
+			for _, p := range f.networkPolicies {
+				items = append(items, p)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups":
+			items := make([]model.NetworkSecurityGroup, 0, len(f.securityGroups))
+			for _, g := range f.securityGroups {
+				items = append(items, g)
+			}
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{Items: items})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"):
 			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/")
 			s, ok := f.snapshotSchedules[name]
@@ -802,6 +818,36 @@ func TestListQuotasBudgetsMachineSetsInstanceTypesMigrationPolicies(t *testing.T
 		{"/api/v1/machinesets", "ms1"},
 		{"/api/v1/instancetypes", "it1"},
 		{"/api/v1/migration-policies", "mp1"},
+	}
+	for _, c := range cases {
+		rr := doJSON(t, h, http.MethodGet, c.path, "", nil)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d: %s", c.path, rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), c.want) {
+			t.Fatalf("%s: expected body to contain %q, got %s", c.path, c.want, rr.Body.String())
+		}
+	}
+}
+
+// TestListNetworkPoliciesAndSecurityGroups covers the two routes that
+// close kairon-ui's last CRD visibility gap: until now, MachineNetworkPolicy
+// and NetworkSecurityGroup -- the objects that actually drive FluxVM's
+// eBPF/TC enforcement -- had no dashboard/REST route at all, unlike every
+// other kairon.zyvor.dev kind.
+func TestListNetworkPoliciesAndSecurityGroups(t *testing.T) {
+	fk := newFakeKube()
+	fk.networkPolicies["np1"] = model.MachineNetworkPolicy{Metadata: model.ObjectMeta{Name: "np1", Namespace: "default"}}
+	fk.securityGroups["sg1"] = model.NetworkSecurityGroup{Metadata: model.ObjectMeta{Name: "sg1", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/api/v1/network-policies", "np1"},
+		{"/api/v1/security-groups", "sg1"},
 	}
 	for _, c := range cases {
 		rr := doJSON(t, h, http.MethodGet, c.path, "", nil)
