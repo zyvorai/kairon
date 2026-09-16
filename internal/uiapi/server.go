@@ -216,6 +216,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/quotas", s.handleListQuotas)
 	api.HandleFunc("GET /api/v1/disruption-budgets", s.handleListBudgets)
 	api.HandleFunc("GET /api/v1/machinesets", s.handleListMachineSets)
+	api.HandleFunc("DELETE /api/v1/machinesets/{namespace}/{name}", s.handleDeleteMachineSet)
 	api.HandleFunc("GET /api/v1/instancetypes", s.handleListInstanceTypes)
 	api.HandleFunc("GET /api/v1/migration-policies", s.handleListMigrationPolicies)
 

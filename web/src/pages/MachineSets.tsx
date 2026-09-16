@@ -16,6 +16,16 @@ export default function MachineSets() {
     return () => clearInterval(t);
   }, []);
 
+  const remove = async (name: string) => {
+    if (!confirm(`Delete MachineSet "${name}"? Its already-created Machines are left running, no longer managed.`)) return;
+    try {
+      await api(`/api/v1/machinesets/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      refresh();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
   return (
     <div className="grid">
       <div className="card span4">
@@ -43,6 +53,14 @@ export default function MachineSets() {
             { header: 'Updated', render: (s) => s.status?.updatedReplicas ?? 0 },
             { header: 'Strategy', render: (s) => s.spec.strategy || 'RollingUpdate' },
             { header: 'Message', render: (s) => s.status?.message || '-' },
+            {
+              header: '',
+              render: (s) => (
+                <button className="danger" onClick={() => remove(s.metadata.name)}>
+                  Delete
+                </button>
+              ),
+            },
           ]}
         />
       </div>

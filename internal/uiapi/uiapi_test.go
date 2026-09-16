@@ -190,6 +190,14 @@ func (f *fakeKube) handler() http.Handler {
 				items = append(items, ms)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: items})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+			if _, ok := f.machineSets[name]; !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			delete(f.machineSets, name)
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes":
 			items := make([]model.MachineInstanceType, 0, len(f.instanceTypes))
 			for _, it := range f.instanceTypes {
@@ -771,6 +779,26 @@ func TestListQuotasBudgetsMachineSetsInstanceTypesMigrationPolicies(t *testing.T
 		if !strings.Contains(rr.Body.String(), c.want) {
 			t.Fatalf("%s: expected body to contain %q, got %s", c.path, c.want, rr.Body.String())
 		}
+	}
+}
+
+func TestDeleteMachineSet(t *testing.T) {
+	fk := newFakeKube()
+	fk.machineSets["ms1"] = model.MachineSet{Metadata: model.ObjectMeta{Name: "ms1", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodDelete, "/api/v1/machinesets/default/ms1", "", nil)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if _, ok := fk.machineSets["ms1"]; ok {
+		t.Fatal("expected ms1 to be deleted from the fake store")
+	}
+
+	rr = doJSON(t, h, http.MethodDelete, "/api/v1/machinesets/default/nope", "", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("delete missing: expected 404, got %d", rr.Code)
 	}
 }
 

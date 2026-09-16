@@ -14,9 +14,23 @@ import "net/http"
 // or MachineSet/MachineInstanceType/MigrationPolicy state. Read-only,
 // any-authenticated-operator (matching every other read-only
 // cross-checkable resource this project exposes, e.g. runtime
-// diagnostics/network observability) -- there is no create/update/delete
-// route here, matching this first cut's narrow scope; kaironctl and
-// kubectl remain the way to mutate any of these five kinds.
+// diagnostics/network observability) for four of the five.
+//
+// MachineSet is the one exception: it now also has a DELETE route
+// (handleDeleteMachineSet, below), matching handleDeleteMachine's own
+// any-authenticated-operator gate exactly (no separate admin check --
+// deleting a MachineSet is no more privileged than deleting a Machine
+// directly, which any operator can already do). MachineSet was picked
+// over the other four because it's the one an operator manages as a
+// day-to-day fleet-sizing operation (create/scale/edit all landed via
+// kaironctl this same session) rather than a GitOps-managed policy
+// object (MachineQuota/MachineDisruptionBudget/MigrationPolicy) or a
+// mostly-static reference value (MachineInstanceType) -- deleting a
+// MachineSet only ever stops it managing replicas going forward; any
+// Machines it already created are ordinary Machines afterward, not
+// cascade-deleted (MachineSet carries no finalizer). The other four
+// stay list-only, matching this first cut's narrow scope; kaironctl and
+// kubectl remain the way to mutate them.
 
 func (s *Server) handleListQuotas(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Kube.ListMachineQuotasNamespace(r.Context(), namespaceParam(r))
@@ -43,6 +57,18 @@ func (s *Server) handleListMachineSets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// handleDeleteMachineSet mirrors handleDeleteMachine's shape exactly
+// (internal/uiapi/machines.go) -- a plain apiserver delete, no separate
+// admin gate, no cascade cleanup of Machines the MachineSet already
+// created (see the file-level comment above for why that's correct).
+func (s *Server) handleDeleteMachineSet(w http.ResponseWriter, r *http.Request) {
+	if err := s.Kube.DeleteMachineSet(r.Context(), r.PathValue("namespace"), r.PathValue("name")); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleListInstanceTypes(w http.ResponseWriter, r *http.Request) {
