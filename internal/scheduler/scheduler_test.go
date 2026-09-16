@@ -5,6 +5,7 @@ package scheduler
 
 import (
 	"hash/fnv"
+	"strings"
 	"testing"
 
 	"github.com/zyvorai/kairon/internal/model"
@@ -390,5 +391,59 @@ func TestChooseWithNoSoftSignalsIgnoresUnrelatedDRAHint(t *testing.T) {
 	got, err := s.Choose(m, []model.Node{a}, nil, map[string]int{"a": 0}, "some-other-node")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v, want a", got, err)
+	}
+}
+
+func TestChooseNamesTheBlockingConstraintWhenEveryNodeIsFiltered(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "default"},
+		Spec:     model.MachineSpec{Placement: model.PlacementSpec{NodeSelector: map[string]string{"zone": "us-east"}}},
+	}
+	a := node("a", true, true)
+	b := node("b", true, true)
+	_, err := s.Choose(m, []model.Node{a, b}, nil, map[string]int{"a": 0, "b": 0}, "")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "2 node(s): nodeSelector zone=us-east not satisfied") {
+		t.Fatalf("error doesn't name the blocking constraint: %v", err)
+	}
+}
+
+func TestChooseAggregatesDistinctBlockingReasonsAcrossNodes(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "default"},
+		Spec:     model.MachineSpec{Placement: model.PlacementSpec{Architecture: "arm64"}},
+	}
+	amd := node("amd-node", true, true)
+	notReady := node("down-node", false, true)
+	_, err := s.Choose(m, []model.Node{amd, notReady}, nil, map[string]int{}, "")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), `1 node(s): requires architecture "arm64"`) {
+		t.Fatalf("error doesn't name the architecture mismatch: %v", err)
+	}
+	if !strings.Contains(err.Error(), "1 node(s): node is unschedulable or not Ready") {
+		t.Fatalf("error doesn't name the not-Ready node separately: %v", err)
+	}
+}
+
+func TestChooseNamesInsufficientPinnableCPUs(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "pinned", Namespace: "default"},
+		Spec:     model.MachineSpec{Resources: model.ResourceSpec{CPU: "8", CPUPinning: true}},
+	}
+	a := node("a", true, true)
+	a.Metadata.Labels[model.PinnableCPUsLabel] = "2-5"
+	_, err := s.Choose(m, []model.Node{a}, nil, map[string]int{}, "")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "cpuPinning requests 8 vCPU(s), only 4 free") {
+		t.Fatalf("error doesn't name the cpuPinning shortfall: %v", err)
 	}
 }

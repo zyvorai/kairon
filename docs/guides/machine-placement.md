@@ -25,6 +25,15 @@ constraint can *also* hard-filter (see below) if you ask it to. None of
 these fields influence an already-scheduled Machine (`spec.nodeName` is
 set once, at scheduling time, same as `spec.image`/`spec.resources`).
 
+When every node is filtered out, the resulting error names which
+constraint(s) actually did it -- aggregated per distinct reason across
+every excluded node (e.g. `2 node(s): nodeSelector zone=us-east not
+satisfied; 1 node(s): cpuPinning requests 8 vCPU(s), only 4 free`) --
+rather than one undifferentiated "no nodes match" message, so debugging a
+stuck `Machine` doesn't require guessing which of `architecture`/
+`nodeSelector`/affinity/anti-affinity/`cpuPinning` capacity is the actual
+blocker.
+
 ## Affinity and anti-affinity
 
 ```yaml

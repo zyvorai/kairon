@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -40,13 +41,17 @@ type Scheduler struct {
 // same node.
 func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.Machine, assigned map[string]int, draPreferredNode string) (string, error) {
 	var preSkew []model.Node
+	reasons := map[string]int{}
 	for _, n := range nodes {
-		if s.eligible(m, n, nodes, machines) {
+		ok, reason := s.eligible(m, n, nodes, machines)
+		if ok {
 			preSkew = append(preSkew, n)
+			continue
 		}
+		reasons[reason]++
 	}
 	if len(preSkew) == 0 {
-		return "", fmt.Errorf("no Ready Kairon-capable nodes match placement constraints")
+		return "", fmt.Errorf("no Ready Kairon-capable nodes match placement constraints: %s", summarizeEligibilityReasons(reasons, len(nodes)))
 	}
 	eligible := s.filterMaxSkew(m, preSkew, nodes, machines)
 	if len(eligible) == 0 {
@@ -247,41 +252,70 @@ func minAfterPlacingOn(counts map[string]int, target string) int {
 	return min
 }
 
-func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine) bool {
+// eligible reports whether n is a hard-filter match for m, and if not, a
+// short human-readable reason naming which specific constraint excluded it
+// -- surfaced (aggregated across every filtered-out node) in Choose's own
+// error when every node is excluded, so an operator debugging "why won't
+// this Machine schedule" sees which constraint actually did it (insufficient
+// pinnable CPUs vs. an unsatisfied nodeSelector vs. architecture, etc.)
+// instead of one undifferentiated "no nodes match" message.
+func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine) (bool, string) {
 	if n.Spec.Unschedulable || !ready(n) {
-		return false
+		return false, "node is unschedulable or not Ready"
 	}
 	if s.RequireCapableLabel && n.Metadata.Labels[model.CapableLabel] != "true" {
-		return false
+		return false, fmt.Sprintf("missing %s=true label", model.CapableLabel)
 	}
 	if arch := m.Spec.Placement.Architecture; arch != "" && n.Metadata.Labels["kubernetes.io/arch"] != arch {
-		return false
+		return false, fmt.Sprintf("requires architecture %q, node is %q", arch, n.Metadata.Labels["kubernetes.io/arch"])
 	}
 	for k, v := range m.Spec.Placement.NodeSelector {
 		if n.Metadata.Labels[k] != v {
-			return false
+			return false, fmt.Sprintf("nodeSelector %s=%s not satisfied", k, v)
 		}
 	}
 	for _, term := range m.Spec.Placement.Affinity {
 		if !termSatisfied(m, n, nodes, machines, term) {
-			return false
+			return false, "a required affinity term is not satisfied"
 		}
 	}
 	for _, term := range m.Spec.Placement.AntiAffinity {
 		if termSatisfied(m, n, nodes, machines, term) {
-			return false
+			return false, "a required anti-affinity term is violated"
 		}
 	}
 	if m.Spec.Resources.CPUPinning {
 		requested, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 		if err != nil {
-			return false // an unparseable spec.resources.cpu is caught elsewhere with a real error; just not eligible here
+			return false, "unparseable spec.resources.cpu" // caught elsewhere with a real error; just not eligible here
 		}
-		if uint32(len(freePinnableCPUs(n, machines))) < requested {
-			return false
+		if free := uint32(len(freePinnableCPUs(n, machines))); free < requested {
+			return false, fmt.Sprintf("cpuPinning requests %d vCPU(s), only %d free", requested, free)
 		}
 	}
-	return true
+	return true, ""
+}
+
+// summarizeEligibilityReasons renders the per-reason exclusion counts
+// collected across every node Choose considered, so a fully-blocked
+// schedule attempt names what actually blocked it rather than leaving an
+// operator to guess. Deterministic order (sorted) so the same input always
+// produces the same message, e.g. in a test assertion or a repeated log
+// line.
+func summarizeEligibilityReasons(reasons map[string]int, totalNodes int) string {
+	if len(reasons) == 0 {
+		return fmt.Sprintf("no nodes were considered (cluster has %d node(s))", totalNodes)
+	}
+	keys := make([]string, 0, len(reasons))
+	for r := range reasons {
+		keys = append(keys, r)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, r := range keys {
+		parts = append(parts, fmt.Sprintf("%d node(s): %s", reasons[r], r))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // freePinnableCPUs returns a candidate node's PinnableCPUsLabel-asserted
