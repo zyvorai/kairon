@@ -5,6 +5,14 @@ package uiapi
 
 import "net/http"
 
+// suspendScheduleRequest is the body handleSuspendMachineSnapshotSchedule
+// expects -- a single boolean, mirroring `kaironctl edit snapshotschedule
+// --suspend`'s own one-field-at-a-time patch shape rather than accepting an
+// arbitrary spec patch from the dashboard.
+type suspendScheduleRequest struct {
+	Suspend bool `json:"suspend"`
+}
+
 // This file wraps five CRDs that kaironctl already has full get/describe/
 // delete support for (see internal/kaironctl/kaironctl.go), but that
 // kairon-ui's own REST API had no route for at all until now: an operator
@@ -87,4 +95,43 @@ func (s *Server) handleListMigrationPolicies(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// handleListMachineSnapshotSchedules and handleSuspendMachineSnapshotSchedule
+// give MachineSnapshotSchedule (added after this file's other five routes)
+// its own dashboard visibility -- any-authenticated-operator list, matching
+// every other read-only resource here, plus one write action: pausing or
+// resuming a schedule without deleting it. Suspend/resume was picked as
+// this CRD's one dashboard mutation for the same reason MachineSet got
+// delete (see the file-level comment above) -- it's the one action an
+// operator reaches for as routine fleet management (pause backups during a
+// maintenance window), not a full spec edit; changing selector/interval/
+// keepLast still needs kaironctl/kubectl.
+func (s *Server) handleListMachineSnapshotSchedules(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Kube.ListMachineSnapshotSchedulesNamespace(r.Context(), namespaceParam(r))
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) handleSuspendMachineSnapshotSchedule(w http.ResponseWriter, r *http.Request) {
+	var req suspendScheduleRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	patch := map[string]any{"spec": map[string]any{"suspend": req.Suspend}}
+	if err := s.Kube.PatchMachineSnapshotSchedule(r.Context(), namespace, name, patch); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	updated, err := s.Kube.GetMachineSnapshotSchedule(r.Context(), namespace, name)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }

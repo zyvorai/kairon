@@ -37,6 +37,7 @@ type fakeKube struct {
 	machineSets       map[string]model.MachineSet
 	instanceTypes     map[string]model.MachineInstanceType
 	migrationPolicies map[string]model.MigrationPolicy
+	snapshotSchedules map[string]model.MachineSnapshotSchedule
 	nodes             []model.Node
 	// secrets holds only stringData, keyed by "namespace/name" -- enough
 	// to exercise Client.PatchSecretStringData (see
@@ -59,6 +60,7 @@ func newFakeKube() *fakeKube {
 		machineSets:       map[string]model.MachineSet{},
 		instanceTypes:     map[string]model.MachineInstanceType{},
 		migrationPolicies: map[string]model.MigrationPolicy{},
+		snapshotSchedules: map[string]model.MachineSnapshotSchedule{},
 		secrets:           map[string]map[string]string{},
 	}
 }
@@ -210,6 +212,36 @@ func (f *fakeKube) handler() http.Handler {
 				items = append(items, p)
 			}
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: items})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules":
+			items := make([]model.MachineSnapshotSchedule, 0, len(f.snapshotSchedules))
+			for _, s := range f.snapshotSchedules {
+				items = append(items, s)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: items})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/")
+			s, ok := f.snapshotSchedules[name]
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			var patch struct {
+				Spec struct {
+					Suspend bool `json:"suspend"`
+				} `json:"spec"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&patch)
+			s.Spec.Suspend = patch.Spec.Suspend
+			f.snapshotSchedules[name] = s
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/")
+			s, ok := f.snapshotSchedules[name]
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(s)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: f.nodes})
@@ -799,6 +831,45 @@ func TestDeleteMachineSet(t *testing.T) {
 	rr = doJSON(t, h, http.MethodDelete, "/api/v1/machinesets/default/nope", "", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("delete missing: expected 404, got %d", rr.Code)
+	}
+}
+
+func TestListAndSuspendMachineSnapshotSchedule(t *testing.T) {
+	fk := newFakeKube()
+	fk.snapshotSchedules["daily"] = model.MachineSnapshotSchedule{
+		Metadata: model.ObjectMeta{Name: "daily", Namespace: "default"},
+		Spec:     model.MachineSnapshotScheduleSpec{Selector: map[string]string{"backup": "true"}, IntervalSeconds: 86400},
+	}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodGet, "/api/v1/snapshot-schedules", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "daily") {
+		t.Fatalf("list: expected body to contain %q, got %s", "daily", rr.Body.String())
+	}
+
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/snapshot-schedules/default/daily/suspend", "", map[string]any{"suspend": true})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("suspend: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !fk.snapshotSchedules["daily"].Spec.Suspend {
+		t.Fatal("expected daily.spec.suspend to be true after suspending")
+	}
+
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/snapshot-schedules/default/daily/suspend", "", map[string]any{"suspend": false})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if fk.snapshotSchedules["daily"].Spec.Suspend {
+		t.Fatal("expected daily.spec.suspend to be false after resuming")
+	}
+
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/snapshot-schedules/default/nope/suspend", "", map[string]any{"suspend": true})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("suspend missing: expected 404, got %d", rr.Code)
 	}
 }
 

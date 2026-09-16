@@ -130,3 +130,15 @@ export interface MigrationPolicy {
   spec: { selector: Record<string, string>; bandwidthMbps?: number; maxConcurrent?: number };
   status?: { activeMigrations?: number };
 }
+
+export interface MachineSnapshotSchedule {
+  metadata: ObjectMeta;
+  spec: {
+    selector: Record<string, string>;
+    intervalSeconds: number;
+    volumeSnapshotClassName?: string;
+    suspend?: boolean;
+    keepLast?: number;
+  };
+  status?: { lastRunTime?: string; lastRunSnapshotCount?: number; lastRunError?: string };
+}

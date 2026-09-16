@@ -9,6 +9,7 @@ import DisruptionBudgets from './pages/DisruptionBudgets';
 import MachineSets from './pages/MachineSets';
 import InstanceTypes from './pages/InstanceTypes';
 import MigrationPolicies from './pages/MigrationPolicies';
+import SnapshotSchedules from './pages/SnapshotSchedules';
 import Account from './pages/Account';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
@@ -79,6 +80,7 @@ export default function App() {
     machinesets: <MachineSets />,
     instancetypes: <InstanceTypes />,
     'migration-policies': <MigrationPolicies />,
+    'snapshot-schedules': <SnapshotSchedules />,
     account: <Account />,
   }[page];
 

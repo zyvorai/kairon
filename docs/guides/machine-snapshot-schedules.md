@@ -41,6 +41,11 @@ $ kaironctl edit snapshotschedule nightly --keep-last 7
 snapshotschedule/nightly updated
 ```
 
+Or from the dashboard: the **Snapshot schedules** page lists every schedule
+in the `default` namespace with its interval, retention, and last-run
+status, and a **Suspend**/**Resume** button toggles `spec.suspend` without
+needing `kaironctl`/`kubectl` for that one action.
+
 `--selector` is repeatable for a multi-label selector (`--selector tier=web
 --selector env=prod`), same as `create migrationpolicy`. `edit` only patches
 the flags you actually pass -- omitting `--interval-seconds` on an `edit`
@@ -134,5 +139,8 @@ Each reconcile tick:
 - **Namespace-scoped only** -- a `MachineSnapshotSchedule` only ever
   matches Machines in its own namespace, same as `MigrationPolicy`/
   `MachineDisruptionBudget`.
-- **No dashboard page yet** -- API/`kaironctl`/`kubectl` only, matching how
-  most CRDs in this project ship before getting a dashboard page.
+- **Dashboard is list + suspend/resume only.** The **Snapshot schedules**
+  page shows every schedule and its last-run status, and can toggle
+  `spec.suspend` with a click -- but editing `selector`/`intervalSeconds`/
+  `keepLast`/`volumeSnapshotClassName`, or creating/deleting a schedule,
+  still needs `kaironctl`/`kubectl`.
