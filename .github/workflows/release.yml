@@ -90,7 +90,7 @@ jobs:
           cosign sign --yes "$image"
           cosign attest --yes --type spdxjson --predicate "sbom-${{ matrix.target }}.spdx.json" "$image"
       - name: Upload SBOM artifact for ${{ matrix.target }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.target }}-${{ github.ref_name }}
           path: sbom-${{ matrix.target }}.spdx.json
