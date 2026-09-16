@@ -840,6 +840,26 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshots"]
     verbs: ["get", "list", "watch", "create"]
+  # Read-only: the six CRDs kairon-ui's own dashboard/REST routes list (see
+  # internal/uiapi/fleet.go) -- GET /api/v1/quotas/disruption-budgets/
+  # machinesets/instancetypes/migration-policies/snapshot-schedules. This
+  # ClusterRole never granted get/list/watch on any of them, so every one
+  # of those routes has 403'd against a real apiserver since the day it
+  # shipped -- the fake httptest.Server every uiapi test runs against
+  # doesn't enforce RBAC at all, so nothing caught it. machinesets also
+  # needs delete (the dashboard's "Delete" row action,
+  # handleDeleteMachineSet) and machinesnapshotschedules needs patch (the
+  # suspend/resume toggle, handleSuspendMachineSnapshotSchedule) -- both
+  # already-shipped mutations that were equally broken.
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinequotas", "machinedisruptionbudgets", "machineinstancetypes", "migrationpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesets"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshotschedules"]
+    verbs: ["get", "list", "watch", "patch"]
 {{ if .Values.ui.auth.rbacConsoleCheck }}
   - apiGroups: ["authorization.k8s.io"]
     # ui.auth.rbacConsoleCheck's own SubjectAccessReview call -- see
