@@ -1,3 +1,7 @@
+# Unreleased: RELEASE_NOTES.md's newest batch (24 fixes/features) -- no live-cluster verification this round
+
+This file's own convention is specifically **real, live-cluster/live-host verification beyond source-level gates** -- every entry below documents an actual deployment, a real API call against a running FluxVM/Kubernetes, or a bug a real environment surfaced that unit tests alone didn't. Being honest about that bar: the batch of 24 fixes/features described in RELEASE_NOTES.md's newest `## Added`/`## Changed` entries (MachineQuota hotplug self-check through the migration heartbeat/reaper) was verified via `go build`/`go vet`/the full `go test ./...` suite (including `-race` for the migration heartbeat/reaper's concurrency-critical path, run repeatedly), `gofmt`, `helm lint`, `helm template`, and `python3 scripts/validate.py` -- real, and in several cases (the reaper's per-session locking) deliberately adversarial test design proving a specific race can't happen -- but none of it was exercised against an actual running Kubernetes cluster or a live FluxVM host. No live cluster/host was available in this working session. Recorded here plainly rather than either skipping the gap silently or writing an entry that reads like the live-verification bar above was met when it wasn't.
+
 # Unreleased: guest-agent real guest-IP reporting test report
 
 ## Result
