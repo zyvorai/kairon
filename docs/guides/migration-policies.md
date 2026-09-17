@@ -73,6 +73,59 @@ concurrency caps are already checked):
   `MachineDisruptionBudget`'s own purely-observational status
   reconciliation.
 
+## Previewing what a migration would get right now (`kaironctl describe`)
+
+`describe` for every other kind in this project uniformly prints the raw
+object as JSON and nothing else. `kaironctl describe migrationpolicy` is one
+of only two deliberate exceptions (the other is
+[`kaironctl describe snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe)):
+it prints that same JSON, then appends exactly which `Machine`s in the
+policy's own namespace currently satisfy `spec.selector`, and for each one,
+what creating a `MachineMigration` for it *right now* would actually get
+from this policy:
+
+```console
+$ kaironctl describe migrationpolicy web-tier
+{
+  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "kind": "MigrationPolicy",
+  ...
+}
+
+Matching machines (2) -- status.activeMigrations 1/2; a migration created for each of these right now, in this order, would get:
+  web-1                    admitted                                 500 Mbps (this policy)
+  web-2                    BLOCKED (MigrationPolicy prod/web-tier: maxConcurrent reached)  500 Mbps (this policy)
+```
+
+Both columns come from calling `kairon-controller`'s own exported, pure
+`controller.AdmitMigrationPolicy`/`controller.BandwidthMbpsFromPolicies` --
+the identical functions the migration reconcile loop itself calls for every
+`MachineMigration` it admits -- so this preview can never disagree with what
+the controller will actually do:
+
+- **Admission** walks matching Machines in a stable, name-sorted order and
+  spends this policy's own `maxConcurrent` cap as it goes, exactly like a
+  real sequential batch of migrations created in that order would -- so
+  once the cap is spent, every later match in the list correctly reports
+  `BLOCKED`, with the same blocker message the controller itself would
+  record.
+- **Bandwidth** reports what `bandwidthMbps` a new migration for that
+  Machine would actually inherit. When more than one `MigrationPolicy` in
+  the namespace matches the same Machine, `spec.bandwidthMbps`
+  first-match-wins semantics (see above) mean an *earlier* overlapping
+  policy can win over the one you're describing -- the preview says so
+  explicitly (`from "other-policy", an earlier-matching MigrationPolicy,
+  not this one`) rather than silently reporting the wrong policy's number
+  as this policy's own.
+
+A selector matching zero Machines prints the same explicit `(none -- check
+spec.selector against these Machines' own labels)` hint
+`describe snapshotschedule` uses. Like that preview, this is a snapshot of
+*this instant*, not a guarantee -- a Machine's labels, this policy's own
+`spec.selector`/`maxConcurrent`/`bandwidthMbps`, another overlapping
+policy's fields, or `status.activeMigrations` itself can all change between
+running `describe` and whenever a migration is actually created.
+
 ## Real limits today (first cut)
 
 - **Namespace-scoped only** -- a `MigrationPolicy` only ever matches
@@ -91,3 +144,7 @@ concurrency caps are already checked):
   you need one Machine to definitely get a specific bandwidth regardless
   of policy overlap, set `spec.bandwidthMbps` on the `MachineMigration`
   directly instead of relying on policy defaulting.
+- **The `describe` preview is `kaironctl`/`kubectl`-only, no dashboard
+  equivalent yet.** `kairon-ui`'s "Migration policies" page still shows
+  only the raw object and `status.activeMigrations`, not the per-Machine
+  admission/bandwidth preview above.

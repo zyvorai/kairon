@@ -65,7 +65,7 @@ func TestAdmitMigrationPolicyIgnoresNonMatchingMachine(t *testing.T) {
 func TestBandwidthMbpsFromPoliciesReturnsFirstMatch(t *testing.T) {
 	machine := webMachine("web-1", "node-a", "Running")
 	states := LoadMigrationPolicyStates([]model.MigrationPolicy{webPolicy("web-mp", 0, 500)}, []model.Machine{machine}, nil)
-	if bw := bandwidthMbpsFromPolicies(states, machine); bw != 500 {
+	if bw := BandwidthMbpsFromPolicies(states, machine); bw != 500 {
 		t.Fatalf("expected bandwidth 500, got %d", bw)
 	}
 }
@@ -73,7 +73,7 @@ func TestBandwidthMbpsFromPoliciesReturnsFirstMatch(t *testing.T) {
 func TestBandwidthMbpsFromPoliciesReturnsZeroWhenNoneMatch(t *testing.T) {
 	other := model.Machine{Metadata: model.ObjectMeta{Name: "db-1", Namespace: "prod", Labels: map[string]string{"tier": "db"}}}
 	states := LoadMigrationPolicyStates([]model.MigrationPolicy{webPolicy("web-mp", 0, 500)}, []model.Machine{other}, nil)
-	if bw := bandwidthMbpsFromPolicies(states, other); bw != 0 {
+	if bw := BandwidthMbpsFromPolicies(states, other); bw != 0 {
 		t.Fatalf("expected 0 for a non-matching Machine, got %d", bw)
 	}
 }

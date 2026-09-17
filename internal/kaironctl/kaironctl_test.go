@@ -1139,6 +1139,135 @@ func TestDescribeSnapshotScheduleDueButDeadlineExceededShowsSkipped(t *testing.T
 	}
 }
 
+// describeMigrationPolicyTestServer is a minimal in-memory fake of the four
+// endpoints describeMigrationPolicy calls, mirroring
+// describeScheduleTestServer's own convention above. policies/migrations
+// are served for every MigrationPolicy/MachineMigration in the namespace
+// (not just the one named in the URL), matching what
+// ListMigrationPoliciesNamespace/ListMachineMigrationsNamespace actually
+// return.
+type describeMigrationPolicyTestServer struct {
+	policies   []model.MigrationPolicy
+	machines   []model.Machine
+	migrations []model.MachineMigration
+}
+
+func (s *describeMigrationPolicyTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: s.migrations})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies":
+			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: s.policies})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/")
+			for _, p := range s.policies {
+				if p.Metadata.Name == name {
+					_ = json.NewEncoder(w).Encode(p)
+					return
+				}
+			}
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+// TestDescribeMigrationPolicyShowsAdmissionAndBandwidth confirms the
+// preview's two per-machine decisions: only Machines matching
+// spec.selector are listed (sorted by name), status.activeMigrations/
+// spec.maxConcurrent is reported up front, matching bandwidthMbps is
+// applied, and once MaxConcurrent's shared cap is spent by an earlier
+// Machine in the walk, every later match correctly reports BLOCKED --
+// exactly what a real sequential batch of migration creations would hit.
+func TestDescribeMigrationPolicyShowsAdmissionAndBandwidth(t *testing.T) {
+	policy := model.MigrationPolicy{
+		Metadata: model.ObjectMeta{Name: "web-policy", Namespace: "default"},
+		Spec:     model.MigrationPolicySpec{Selector: map[string]string{"tier": "web"}, BandwidthMbps: 500, MaxConcurrent: 1},
+	}
+	s := &describeMigrationPolicyTestServer{
+		policies: []model.MigrationPolicy{policy},
+		machines: []model.Machine{
+			{Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+			{Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+			{Metadata: model.ObjectMeta{Name: "vm-db", Namespace: "default", Labels: map[string]string{"tier": "db"}}},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeMigrationPolicy(context.Background(), kc, "default", "web-policy")
+	})
+	if !strings.Contains(out, "Matching machines (2)") {
+		t.Errorf("expected 2 matches, got:\n%s", out)
+	}
+	if !strings.Contains(out, "status.activeMigrations 0/1") {
+		t.Errorf("expected the active/max header, got:\n%s", out)
+	}
+	if strings.Contains(out, "vm-db") {
+		t.Errorf("vm-db doesn't match spec.selector, must not appear:\n%s", out)
+	}
+	i1, i2 := strings.Index(out, "vm-1"), strings.Index(out, "vm-2")
+	if i1 == -1 || i2 == -1 || i1 > i2 {
+		t.Fatalf("expected vm-1 listed before vm-2 (sorted), got:\n%s", out)
+	}
+	vm1Line := out[i1:i2]
+	if !strings.Contains(vm1Line, "admitted") || !strings.Contains(vm1Line, "500 Mbps (this policy)") {
+		t.Errorf("expected vm-1 admitted with this policy's bandwidth, got:\n%s", vm1Line)
+	}
+	vm2Line := out[i2:]
+	if !strings.Contains(vm2Line, "BLOCKED") {
+		t.Errorf("expected vm-2 BLOCKED once MaxConcurrent=1 is spent by vm-1, got:\n%s", vm2Line)
+	}
+}
+
+// TestDescribeMigrationPolicyBandwidthFromOtherPolicy confirms that when an
+// earlier (list-order) overlapping MigrationPolicy also matches a Machine
+// and sets its own spec.bandwidthMbps, the preview attributes the winning
+// value to THAT policy by name, not to the policy being described.
+func TestDescribeMigrationPolicyBandwidthFromOtherPolicy(t *testing.T) {
+	earlier := model.MigrationPolicy{
+		Metadata: model.ObjectMeta{Name: "policy-a", Namespace: "default"},
+		Spec:     model.MigrationPolicySpec{Selector: map[string]string{"tier": "web"}, BandwidthMbps: 200},
+	}
+	describing := model.MigrationPolicy{
+		Metadata: model.ObjectMeta{Name: "policy-b", Namespace: "default"},
+		Spec:     model.MigrationPolicySpec{Selector: map[string]string{"tier": "web"}, BandwidthMbps: 900},
+	}
+	s := &describeMigrationPolicyTestServer{
+		policies: []model.MigrationPolicy{earlier, describing}, // list order matters: earlier wins
+		machines: []model.Machine{
+			{Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeMigrationPolicy(context.Background(), kc, "default", "policy-b")
+	})
+	if !strings.Contains(out, `200 Mbps (from "policy-a", an earlier-matching MigrationPolicy, not this one)`) {
+		t.Errorf("expected policy-a's bandwidth attributed to policy-a, got:\n%s", out)
+	}
+	if strings.Contains(out, "900 Mbps") {
+		t.Errorf("policy-b's own bandwidth must not win when policy-a matches first, got:\n%s", out)
+	}
+}
+
 func TestHasFlag(t *testing.T) {
 	cases := []struct {
 		args []string

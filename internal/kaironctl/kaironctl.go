@@ -433,11 +433,16 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	kind, name := resourceKindAndName("describe", args)
 	switch kind {
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
-		// The one kind describe doesn't just raw-JSON-dump -- see
+		// One of two kinds describe doesn't just raw-JSON-dump -- see
 		// describeSnapshotSchedule's own doc comment for why this
 		// narrow exception is justified for this specific CRD and isn't
 		// a generalized richer-describe change for every kind.
 		describeSnapshotSchedule(ctx, kc, ns, name)
+		return
+	case "migrationpolicy", "migrationpolicies":
+		// The other of the two -- see describeMigrationPolicy's own doc
+		// comment.
+		describeMigrationPolicy(ctx, kc, ns, name)
 		return
 	}
 	var (
@@ -496,11 +501,12 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 //
 // This is a deliberate, narrow exception to this project's otherwise
 // uniform "describe just dumps the raw object as JSON" convention (every
-// other kind still does exactly that, unchanged) -- justified because
-// kubectl's own `describe` already appends non-raw derived information
-// beyond an object's literal fields when it's operationally useful (e.g.
-// related Events), and "which Machines would this schedule snapshot right
-// now, and would it even fire" is a real question an operator asks before
+// other kind still does exactly that, unchanged -- describeMigrationPolicy
+// below is the only other exception) -- justified because kubectl's own
+// `describe` already appends non-raw derived information beyond an
+// object's literal fields when it's operationally useful (e.g. related
+// Events), and "which Machines would this schedule snapshot right now, and
+// would it even fire" is a real question an operator asks before
 // loosening/tightening spec.selector or spec.intervalSeconds, not
 // something a generalized richer-describe-for-every-kind change would be
 // needed for.
@@ -543,6 +549,108 @@ func describeSnapshotSchedule(ctx context.Context, kc *kube.Client, ns, name str
 	for _, m := range matches {
 		fmt.Printf("  %s\n", m)
 	}
+}
+
+// describeMigrationPolicy is `describe`'s other raw-JSON-plus-preview
+// exception (see describeSnapshotSchedule's doc comment just above for why
+// this is deliberately narrow, not a generalized richer-describe change):
+// after the usual raw-JSON dump, it appends exactly which Machines in the
+// policy's own namespace currently match spec.selector, and for each one,
+// what creating a migration for it *right now* would actually get from
+// this policy -- the same two decisions kairon-controller's own migration
+// reconcile loop makes for every migration, computed by calling its own
+// exported, pure controller.AdmitMigrationPolicy/
+// controller.BandwidthMbpsFromPolicies rather than re-deriving either
+// decision, so this preview can never drift from what the controller will
+// actually do (identical justification, and identical mechanism, to
+// describeSnapshotSchedule calling the schedule's own Spec.Due/
+// DeadlineExceeded).
+//
+// Both decisions depend on state beyond this one policy, which this preview
+// surfaces rather than hides: AdmitMigrationPolicy spends a shared
+// per-policy MaxConcurrent slot as it's asked about each matching Machine
+// in turn -- mirroring a real sequential batch of migration creations, not
+// a static "would it fit in isolation" check per Machine -- so Machines are
+// walked in the same stable (name-sorted) order every run, and once a
+// policy's own cap is exhausted, every remaining match correctly reports
+// blocked, exactly like a real batch created in that order would.
+// BandwidthMbpsFromPolicies additionally depends on every other
+// MigrationPolicy in the namespace, not just this one: when an earlier
+// (list-order) policy also matches a Machine and sets its own
+// spec.bandwidthMbps, that other policy's value wins over this policy's --
+// firstOverlappingBandwidthPolicy below identifies which policy actually
+// won by name, so this never misattributes another policy's number as this
+// policy's own (a real, silent surprise this preview exists to head off).
+func describeMigrationPolicy(ctx context.Context, kc *kube.Client, ns, name string) {
+	policy, err := kc.GetMigrationPolicy(ctx, ns, name)
+	if err != nil {
+		fatal(err)
+	}
+	b, _ := json.MarshalIndent(policy, "", "  ")
+	fmt.Println(string(b))
+
+	machines, err := kc.ListMachinesNamespace(ctx, ns)
+	if err != nil {
+		fatal(err)
+	}
+	migrations, err := kc.ListMachineMigrationsNamespace(ctx, ns)
+	if err != nil && !kube.IsNotFound(err) {
+		fatal(err)
+	}
+	policies, err := kc.ListMigrationPoliciesNamespace(ctx, ns)
+	if err != nil && !kube.IsNotFound(err) {
+		fatal(err)
+	}
+	states := controller.LoadMigrationPolicyStates(policies, machines, migrations)
+
+	var matches []model.Machine
+	for _, m := range machines {
+		if model.LabelsMatch(m.Metadata.Labels, policy.Spec.Selector) {
+			matches = append(matches, m)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Metadata.Name < matches[j].Metadata.Name })
+
+	fmt.Println()
+	limit := "unlimited"
+	if policy.Spec.MaxConcurrent > 0 {
+		limit = fmt.Sprintf("%d", policy.Spec.MaxConcurrent)
+	}
+	fmt.Printf("Matching machines (%d) -- status.activeMigrations %d/%s; a migration created for each of these right now, in this order, would get:\n", len(matches), policy.Status.ActiveMigrations, limit)
+	if len(matches) == 0 {
+		fmt.Println("  (none -- check spec.selector against these Machines' own labels)")
+		return
+	}
+	for _, m := range matches {
+		verdict := "admitted"
+		if blocker := controller.AdmitMigrationPolicy(states, m); blocker != "" {
+			verdict = "BLOCKED (" + blocker + ")"
+		}
+		bwLine := "no bandwidth override"
+		if bw := controller.BandwidthMbpsFromPolicies(states, m); bw > 0 {
+			if winner := firstOverlappingBandwidthPolicy(policies, m); winner == policy.Metadata.Name {
+				bwLine = fmt.Sprintf("%d Mbps (this policy)", bw)
+			} else {
+				bwLine = fmt.Sprintf("%d Mbps (from %q, an earlier-matching MigrationPolicy, not this one)", bw, winner)
+			}
+		}
+		fmt.Printf("  %-24s %-40s %s\n", m.Metadata.Name, verdict, bwLine)
+	}
+}
+
+// firstOverlappingBandwidthPolicy names the first (list-order) policy that
+// both matches m's labels and sets a nonzero spec.bandwidthMbps -- the same
+// selection controller.BandwidthMbpsFromPolicies makes internally to pick a
+// *value*, walked here only to attach a human-readable name to that value
+// for describeMigrationPolicy's output, never to make or duplicate the
+// admission/bandwidth decision itself.
+func firstOverlappingBandwidthPolicy(policies []model.MigrationPolicy, m model.Machine) string {
+	for _, p := range policies {
+		if model.LabelsMatch(m.Metadata.Labels, p.Spec.Selector) && p.Spec.BandwidthMbps > 0 {
+			return p.Metadata.Name
+		}
+	}
+	return ""
 }
 
 // cmdTrigger dispatches `kaironctl trigger KIND NAME` -- deliberately its

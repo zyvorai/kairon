@@ -67,12 +67,16 @@ func AdmitMigrationPolicy(states []*MigrationPolicyState, machine model.Machine)
 	return ""
 }
 
-// bandwidthMbpsFromPolicies returns the first matching MigrationPolicy's
+// BandwidthMbpsFromPolicies returns the first matching MigrationPolicy's
 // BandwidthMbps (list order, not otherwise sorted -- see
 // MigrationPolicySpec.BandwidthMbps's own doc comment for why this is
 // deliberately "first match," not merged), or 0 if none match or none set
-// one.
-func bandwidthMbpsFromPolicies(states []*MigrationPolicyState, machine model.Machine) uint64 {
+// one. Exported (not just called from controller.go's reconcile loop
+// anymore) so kaironctl's `describe migrationpolicy` preview can compute
+// the identical "what bandwidth would this machine actually get" answer
+// without duplicating this decision -- same reasoning as AdmitMigrationPolicy
+// already being exported for kaironctl's evacuate preview.
+func BandwidthMbpsFromPolicies(states []*MigrationPolicyState, machine model.Machine) uint64 {
 	for _, st := range states {
 		if machine.Namespace() != st.policy.Namespace() || !model.LabelsMatch(machine.Metadata.Labels, st.policy.Spec.Selector) {
 			continue
@@ -86,7 +90,7 @@ func bandwidthMbpsFromPolicies(states []*MigrationPolicyState, machine model.Mac
 
 // loadMigrationPolicyStates lists every MigrationPolicy and computes its
 // current state -- called once per Reconcile tick, before the migration
-// admission loop, so AdmitMigrationPolicy/bandwidthMbpsFromPolicies see
+// admission loop, so AdmitMigrationPolicy/BandwidthMbpsFromPolicies see
 // (and spend against) the same states every reconcileMigration call this
 // tick shares. Returns nil (not an error) if the CRD isn't installed --
 // same tolerant-of-absence convention every other optional CRD kind in

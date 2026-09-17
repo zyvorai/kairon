@@ -365,7 +365,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 			return c.blockMigration(ctx, migration, fmt.Sprintf("target node %s has reached its concurrent migration limit (%d active, max %d)", target, load.byNode[target], c.MaxConcurrentPerNode))
 		}
 		if migration.Spec.BandwidthMbps == 0 {
-			if bw := bandwidthMbpsFromPolicies(policyStates, machine); bw > 0 {
+			if bw := BandwidthMbpsFromPolicies(policyStates, machine); bw > 0 {
 				if err := c.Kube.PatchMachineMigration(ctx, migration.Namespace(), migration.Metadata.Name, map[string]any{"spec": map[string]any{"bandwidthMbps": bw}}); err != nil {
 					c.Log.Error("migration policy bandwidth default patch failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
 				}
