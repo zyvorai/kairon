@@ -39,9 +39,18 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: sigstore/cosign-installer@v3
-        with:
-          cosign-release: 'v3.1.3'
+      # cosign-installer@v3's own verification logic unconditionally
+      # expects a legacy detached .sig file, which cosign itself has fully
+      # stopped publishing (confirmed against v3.1.3 -- this workflow's
+      # previous explicit pin -- and v3.0.6, cosign-installer@v3's own
+      # default: neither ships cosign-linux-amd64.sig anymore, only the
+      # newer Sigstore-bundle .sigstore.json, so every download 404'd,
+      # curl exit 22 -- confirmed the first time this workflow ever
+      # actually ran, on v0.5.0's tag push). cosign-installer@v4's
+      # verification logic was updated for the bundle format; no explicit
+      # cosign-release override needed, its own default is a real,
+      # correctly-verifiable cosign release.
+      - uses: sigstore/cosign-installer@v4
       # push: false/load: true here on purpose: build the exact bits once,
       # scan those exact bits, and only then `docker push` them -- not a
       # second build-and-push that could, even if only in principle,
