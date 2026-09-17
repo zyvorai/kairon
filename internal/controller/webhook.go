@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -59,6 +60,17 @@ import (
 // before -- containing that blast radius would mean changing
 // BuildQuotaTrackers' own error contract, a separate, more invasive
 // change left out of scope here.
+//
+// validateNetworkMAC (called from both validateMachineCreate and
+// validateMachineResize, same as validateResourceQuantities above)
+// closes a fourth instance of the same family of gap, but for a
+// field with no FluxVM-specific grammar to mirror at all:
+// Machine.spec.network.mac is passed straight through to FluxVM's
+// CreateVmRequest.network.mac field exactly as authored (see
+// docs/network-fabric.md's field-mapping table), with nothing on
+// either side of kairon ever parsing it. A malformed value sails
+// through kubectl apply and only fails once kairon-node actually asks
+// FluxVM to attach the NIC, at VM create or edit time.
 func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
@@ -221,6 +233,45 @@ func validateResourceQuantities(res model.ResourceSpec) error {
 	return nil
 }
 
+// validateNetworkMAC checks Machine.spec.network.mac, when set, is a
+// syntactically valid Ethernet hardware address. Unlike
+// validateResourceQuantities/validateImageSource above, this isn't
+// mirroring a grammar FluxVM re-parses server-side for its own business
+// rules -- MAC syntax is a fixed, universal standard (six colon- or
+// hyphen-separated hex octets, e.g. "52:54:00:12:34:56" per
+// docs/guides/machine-network.md's own tap/macvtap examples), not a
+// FluxVM-specific one. Nothing in kairon checks this today:
+// NetworkSpec.MAC is passed straight through, unparsed, from the
+// Machine spec to FluxVM's CreateVmRequest.network.mac field
+// (internal/fluxvm/network.go) -- see docs/network-fabric.md's
+// field-mapping table ("VM create / edit"). A malformed value (odd
+// hex-digit count, non-hex characters, a wrong separator) sails
+// through kubectl apply and only ever fails once kairon-node actually
+// asks FluxVM to attach the NIC, at VM create or edit time -- the
+// identical "stuck retrying forever, no self-heal" failure mode
+// 1c2ae6c and c6bb5b6 already closed for CIDR/port and CPU/memory
+// syntax.
+//
+// net.ParseMAC also accepts an EUI-64 (8-byte) and a 20-byte
+// InfiniBand link-layer form; only the 6-byte EUI-48 form is a valid
+// Ethernet NIC address, which is what every one of FluxVM's network
+// modes (user/tap/macvtap) actually attaches, so those other two
+// widths are rejected here too rather than silently accepted as some
+// other kind of "valid" hardware address.
+func validateNetworkMAC(ns model.NetworkSpec) error {
+	if ns.MAC == "" {
+		return nil
+	}
+	hw, err := net.ParseMAC(ns.MAC)
+	if err != nil {
+		return fmt.Errorf("spec.network.mac %q: %v", ns.MAC, err)
+	}
+	if len(hw) != 6 {
+		return fmt.Errorf("spec.network.mac %q: must be a 6-octet Ethernet address (e.g. 52:54:00:12:34:56), got %d octets", ns.MAC, len(hw))
+	}
+	return nil
+}
+
 func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Request) admission.Decision {
 	var m model.Machine
 	if err := json.Unmarshal(req.Object, &m); err != nil {
@@ -239,6 +290,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 		return admission.Deny(err.Error())
 	}
 	if err := validateResourceQuantities(m.Spec.Resources); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := validateNetworkMAC(m.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
@@ -276,9 +330,17 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	// short-circuit below: a malformed resize should be rejected
 	// regardless of whether this Machine happens to count toward a quota
 	// right now, the same way validateMachineCreate's own
-	// validateResourceQuantities call runs before quotas even enter the
-	// picture.
+	// validateResourceQuantities/validateNetworkMAC calls run before
+	// quotas even enter the picture. validateNetworkMAC matters here too,
+	// not just on CREATE: an UPDATE is also how spec.network.mac gets
+	// edited on an already-existing Machine (docs/network-fabric.md's
+	// field-mapping table lists "VM create / edit" together), and this is
+	// the same validateMachineResize call that handles every Machine
+	// UPDATE, not just a resource resize.
 	if err := validateResourceQuantities(newM.Spec.Resources); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := validateNetworkMAC(newM.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if !MachineCountsTowardQuota(oldM) {

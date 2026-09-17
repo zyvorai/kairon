@@ -284,6 +284,77 @@ func TestValidateMachineAllowsCreateWithEmptyResourcesAwaitingInstanceType(t *te
 	}
 }
 
+func TestValidateNetworkMAC(t *testing.T) {
+	cases := []struct {
+		name    string
+		mac     string
+		wantErr bool
+	}{
+		{"unset mac allowed", "", false},
+		{"well-formed colon-separated mac", "52:54:00:12:34:56", false},
+		{"well-formed hyphen-separated mac", "52-54-00-12-34-56", false},
+		{"malformed: not hex", "gg:54:00:12:34:56", true},
+		{"malformed: wrong separator", "52.54.00.12.34.56", true},
+		{"malformed: too few octets", "52:54:00:12:34", true},
+		{"rejected: EUI-64 width", "52:54:00:ff:fe:12:34:56", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateNetworkMAC(model.NetworkSpec{MAC: tc.mac})
+			if tc.wantErr && err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateMachineDeniesCreateWithMalformedMAC(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec:     model.MachineSpec{Network: model.NetworkSpec{MAC: "not-a-mac"}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected a malformed spec.network.mac to be denied")
+	}
+}
+
+func TestValidateMachineAllowsCreateWithWellFormedMAC(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec:     model.MachineSpec{Network: model.NetworkSpec{MAC: "52:54:00:12:34:56"}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected a well-formed spec.network.mac to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+// TestValidateMachineResizeDeniesMalformedMACOnEdit confirms
+// validateNetworkMAC is also enforced on UPDATE, not just CREATE:
+// spec.network.mac can be introduced or changed by a plain Machine edit
+// (there's no dedicated "resize" API distinct from a generic UPDATE --
+// validateMachineResize handles every Machine UPDATE), and
+// docs/network-fabric.md's field-mapping table lists spec.network as
+// valid on "VM create / edit" both.
+func TestValidateMachineResizeDeniesMalformedMACOnEdit(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	old := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"}}}
+	updated := old
+	updated.Spec.Network.MAC = "not-a-mac"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, updated, old)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected an edit introducing a malformed spec.network.mac to be denied")
+	}
+}
+
 func TestValidateMachineResizeDeniesMalformedMaxCPU(t *testing.T) {
 	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
 	old := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"}}}

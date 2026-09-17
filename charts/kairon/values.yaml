@@ -371,7 +371,9 @@ webhook:
   # free-form CPU/memory quantity strings (spec.resources.cpu/memory/
   # maxCpu/maxMemory, spec.maxTotalCpu/maxTotalMemory) aren't valid
   # quantities at all -- see validateResourceQuantities/
-  # validateMachineQuotaObject in internal/controller/webhook.go. Off by
+  # validateMachineQuotaObject in internal/controller/webhook.go. Also
+  # rejects a Machine whose spec.network.mac isn't a syntactically valid
+  # Ethernet address -- see validateNetworkMAC in the same file. Off by
   # default -- like
   # migration.tlsSecretName/console.tls.secretName above, this chart does
   # not mint a serving certificate for you; the webhook can't come up

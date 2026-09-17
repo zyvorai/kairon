@@ -54,6 +54,11 @@ spec:
 - `staticNetwork: true` — sets FluxVM `cloud_init.static_network` so the guest
   does not depend on DHCP.
 - `dataplaneRequired: true` — node agent fail-closes if eBPF attach is unhealthy.
+- `mac` — must be a standard 6-octet Ethernet address (colon- or
+  hyphen-separated hex, like the example above). With
+  `webhook.enabled` set, a malformed `mac` is rejected immediately on
+  `kubectl apply`/edit instead of only failing once `kairon-node` asks
+  FluxVM to attach the NIC -- see [SECURITY.md](../../SECURITY.md#machine-network-mac-address-admission).
 
 ### Macvtap
 
