@@ -43,9 +43,12 @@ type scaleMachineSetRequest struct {
 // same session) rather than a GitOps-managed policy object
 // (MachineQuota/MachineDisruptionBudget/MigrationPolicy) or a
 // mostly-static reference value (MachineInstanceType) -- deleting a
-// MachineSet only ever stops it managing replicas going forward; any
-// Machines it already created are ordinary Machines afterward, not
-// cascade-deleted (MachineSet carries no finalizer). Scaling is the other
+// MachineSet now cascades to delete every Machine it owns too (see
+// model.FinalizerMachineSet / reconcileMachineSetDeletion in
+// internal/controller/machineset.go), so this DELETE route is a real,
+// consequential fleet-wide action, not merely "stop managing replicas
+// going forward" -- the dashboard's confirm-before-delete UX for this row
+// matters more than it once did. Scaling is the other
 // routine fleet-sizing action an operator reaches for constantly (unlike
 // a full spec edit, which still needs kaironctl/kubectl) -- see
 // handleScaleMachineSet's own comment for why replicas is the one field

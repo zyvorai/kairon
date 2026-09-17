@@ -22,7 +22,7 @@ export default function MachineSets() {
   }, []);
 
   const remove = async (name: string) => {
-    if (!confirm(`Delete MachineSet "${name}"? Its already-created Machines are left running, no longer managed.`)) return;
+    if (!confirm(`Delete MachineSet "${name}"? This also deletes every Machine it created.`)) return;
     try {
       await api(`/api/v1/machinesets/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
       refresh();
