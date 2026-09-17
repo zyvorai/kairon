@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -2000,5 +2002,217 @@ func TestCmdGetSelectorRespectsNamespaceFlag(t *testing.T) {
 	})
 	if !called {
 		t.Fatal("expected the listing to be scoped to the -n staging namespace")
+	}
+}
+
+// topTestServer is a minimal in-memory fake serving both the namespaced
+// and cluster-wide machines endpoints `kaironctl top machines`/`top nodes`
+// respectively call -- `top machines` uses ListMachinesNamespace exactly
+// like `get machines` (deleteSelectorTestServer's own single-namespace
+// endpoint would do), but `top nodes` deliberately aggregates cluster-wide
+// via ListMachines (see cmdTop's own doc comment for why), so this fixture
+// needs both paths a plain deleteSelectorTestServer doesn't serve.
+type topTestServer struct {
+	machines []model.Machine
+}
+
+func (s *topTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+func usageMachine(name, node string, cpuPercent float64, memBytes uint64) model.Machine {
+	return model.Machine{
+		Metadata: model.ObjectMeta{Name: name, Namespace: "default"},
+		Spec:     model.MachineSpec{NodeName: node},
+		Status: model.MachineStatus{
+			ResourceUsage: &model.ResourceUsage{CPUPercent: cpuPercent, MemoryBytes: memBytes},
+		},
+	}
+}
+
+// TestCmdTopMachinesPrintsLiveUsage covers `top machines`' happy path: two
+// Machines, one with ResourceUsage already reported, one that has never
+// reported any (Status.ResourceUsage == nil) -- the latter must print
+// dashes rather than panic on the nil pointer or silently omit the row
+// entirely (an operator still wants to see the Machine listed, just with
+// "no data yet").
+func TestCmdTopMachinesPrintsLiveUsage(t *testing.T) {
+	s := &topTestServer{machines: []model.Machine{
+		usageMachine("vm-1", "worker-1", 150, 2*1024*1024*1024),
+		{Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "default"}, Spec: model.MachineSpec{NodeName: "worker-1"}},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdTop(context.Background(), kc, []string{"machines"})
+	})
+	if !strings.Contains(out, "vm-1\tworker-1\t150.00%\t2.0GiB") {
+		t.Errorf("expected vm-1's live usage row, got:\n%s", out)
+	}
+	if !strings.Contains(out, "vm-2\tworker-1\t-\t-\t-\t-") {
+		t.Errorf("expected vm-2 (no ResourceUsage yet) to print dashes, got:\n%s", out)
+	}
+}
+
+// TestCmdTopMachinesSelectorFilters confirms `top machines --selector`
+// narrows which Machines are counted, the exact same selectorFilter
+// semantics `get machines --selector` already has.
+func TestCmdTopMachinesSelectorFilters(t *testing.T) {
+	web := usageMachine("web-1", "worker-1", 10, 1024)
+	web.Metadata.Labels = map[string]string{"tier": "web"}
+	db := usageMachine("db-1", "worker-1", 10, 1024)
+	db.Metadata.Labels = map[string]string{"tier": "db"}
+	s := &topTestServer{machines: []model.Machine{web, db}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdTop(context.Background(), kc, []string{"machines", "--selector", "tier=web"})
+	})
+	if !strings.Contains(out, "web-1") {
+		t.Errorf("expected web-1 listed, got:\n%s", out)
+	}
+	if strings.Contains(out, "db-1") {
+		t.Errorf("must not list the non-matching db-1 machine, got:\n%s", out)
+	}
+}
+
+// TestCmdTopNodesAggregatesAcrossMachines is `top nodes`' core behavior:
+// two Machines on worker-1 (usage must sum) and one on worker-2 (must stay
+// separate), rows sorted by node name.
+func TestCmdTopNodesAggregatesAcrossMachines(t *testing.T) {
+	s := &topTestServer{machines: []model.Machine{
+		usageMachine("vm-1", "worker-1", 100, 1*1024*1024*1024),
+		usageMachine("vm-2", "worker-1", 50, 512*1024*1024),
+		usageMachine("vm-3", "worker-2", 25, 256*1024*1024),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdTop(context.Background(), kc, []string{"nodes"})
+	})
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected header + 2 node rows, got %d lines:\n%s", len(lines), out)
+	}
+	if lines[1] != "worker-1\t2\t150.00%\t1.5GiB" {
+		t.Errorf("worker-1 row = %q, want summed usage across its 2 machines", lines[1])
+	}
+	if lines[2] != "worker-2\t1\t25.00%\t256.0MiB" {
+		t.Errorf("worker-2 row = %q, want its single machine's usage", lines[2])
+	}
+}
+
+// TestCmdTopNodesCountsUnreportedMachinesWithoutPanicking covers a Machine
+// with no ResourceUsage at all sharing a node with one that has reported --
+// it must still count toward "machines" and contribute zero to the sums,
+// never panic on the nil *ResourceUsage.
+func TestCmdTopNodesCountsUnreportedMachinesWithoutPanicking(t *testing.T) {
+	s := &topTestServer{machines: []model.Machine{
+		usageMachine("vm-1", "worker-1", 40, 1024*1024*1024),
+		{Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "default"}, Spec: model.MachineSpec{NodeName: "worker-1"}},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdTop(context.Background(), kc, []string{"nodes"})
+	})
+	if !strings.Contains(out, "worker-1\t2\t40.00%\t1.0GiB") {
+		t.Errorf("expected 2 machines counted with only vm-1's usage summed, got:\n%s", out)
+	}
+}
+
+// TestAggregateUsageByNodeSortsAndGroupsByNode is aggregateUsageByNode's
+// own pure-function unit test, independent of the HTTP/flag-parsing layer
+// the cmdTop tests above already cover.
+func TestAggregateUsageByNodeSortsAndGroupsByNode(t *testing.T) {
+	got := aggregateUsageByNode([]model.Machine{
+		usageMachine("vm-3", "worker-2", 10, 100),
+		usageMachine("vm-1", "worker-1", 20, 200),
+		usageMachine("vm-2", "worker-1", 5, 50),
+	})
+	want := []nodeUsageAggregate{
+		{node: "worker-1", machines: 2, cpuPercent: 25, memoryBytes: 250},
+		{node: "worker-2", machines: 1, cpuPercent: 10, memoryBytes: 100},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("aggregateUsageByNode() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestAggregateUsageByNodeUnscheduledMachineGroupsUnderDash mirrors
+// `kaironctl get machines`' own dash(m.Spec.NodeName) rendering for a
+// not-yet-scheduled Machine (empty Spec.NodeName) -- it must group under
+// "-" rather than under "" or its own uniquely-empty bucket.
+func TestAggregateUsageByNodeUnscheduledMachineGroupsUnderDash(t *testing.T) {
+	got := aggregateUsageByNode([]model.Machine{
+		usageMachine("vm-1", "", 10, 100),
+	})
+	if len(got) != 1 || got[0].node != "-" {
+		t.Fatalf("aggregateUsageByNode() = %+v, want a single row grouped under \"-\"", got)
+	}
+}
+
+func TestFormatBytesHumanReadable(t *testing.T) {
+	cases := map[uint64]string{
+		0:                      "0B",
+		1023:                   "1023B",
+		1024:                   "1.0KiB",
+		1536:                   "1.5KiB",
+		2 * 1024 * 1024:        "2.0MiB",
+		3 * 1024 * 1024 * 1024: "3.0GiB",
+	}
+	for in, want := range cases {
+		if got := formatBytes(in); got != want {
+			t.Errorf("formatBytes(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFormatCPUPercent(t *testing.T) {
+	if got, want := formatCPUPercent(0), "0.00%"; got != want {
+		t.Errorf("formatCPUPercent(0) = %q, want %q", got, want)
+	}
+	if got, want := formatCPUPercent(123.456), "123.46%"; got != want {
+		t.Errorf("formatCPUPercent(123.456) = %q, want %q", got, want)
+	}
+}
+
+// TestCmdTopUnknownResourceFails confirms `top` rejects an unrecognized
+// resource kind the same way `get`'s own default case does, rather than
+// silently printing nothing.
+func TestCmdTopUnknownResourceFails(t *testing.T) {
+	if os.Getenv("KAIRONCTL_TOP_UNKNOWN_SUBPROCESS") == "1" {
+		kc := &kube.Client{BaseURL: "http://127.0.0.1:0", HTTP: http.DefaultClient}
+		cmdTop(context.Background(), kc, []string{"bogus"})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestCmdTopUnknownResourceFails")
+	cmd.Env = append(os.Environ(), "KAIRONCTL_TOP_UNKNOWN_SUBPROCESS=1")
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Success() {
+		t.Fatalf("expected cmdTop to exit non-zero for an unknown resource, got err=%v", err)
 	}
 }

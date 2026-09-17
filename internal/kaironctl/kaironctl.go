@@ -151,6 +151,8 @@ func Run(args []string, version string) int {
 		cmdEdit(ctx, kc, args[1:])
 	case "trigger":
 		cmdTrigger(ctx, kc, args[1:])
+	case "top":
+		cmdTop(ctx, kc, args[1:])
 	default:
 		usage()
 		return 2
@@ -398,6 +400,160 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
+}
+
+// cmdTop is kaironctl's kubectl-top-style view of live, cgroup-derived
+// resource usage: `kaironctl top machines` prints each Machine's own
+// Status.ResourceUsage (populated by internal/agent/agent.go straight from
+// FluxVM's GET /v1/vms/{id}/stats -- see ResourceUsage's own doc comment),
+// and `kaironctl top nodes` rolls those same per-Machine samples up by
+// Spec.NodeName -- the fleet-wide, per-host hotspot view `kaironctl get
+// machines` alone can't answer without an operator mentally grouping and
+// summing rows themselves. Deliberately reuses exactly the data every
+// Machine already reports rather than adding a new metrics pipeline: no new
+// endpoint, no new controller-side aggregation, nothing to keep in sync --
+// a rendering of state that already exists, the same "already-collected
+// data, just not previously surfaced" shape as `kaironctl get nodes`
+// itself.
+//
+// Like cmdGet, --selector k=v (repeatable) narrows which Machines count,
+// via the exact same selectorFilter/model.LabelsMatch semantics; an empty
+// selector means every Machine, never "none". "top machines" defaults to
+// -n/--namespace exactly like "get machines" (cluster-wide only via an
+// explicit selector isn't offered here, matching every other namespaced
+// verb in this file); "top nodes" is cluster-wide by construction (a
+// Machine's Spec.NodeName can span namespaces onto the same physical node),
+// so -n/--namespace has no effect there, the same "ns silently unused for a
+// cluster-scoped kind" precedent `kaironctl get nodes` already sets.
+func cmdTop(ctx context.Context, kc *kube.Client, args []string) {
+	ns, args := nsFlag(args)
+	resource := "machines"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		resource = strings.ToLower(args[0])
+		args = args[1:]
+	}
+	fs := flag.NewFlagSet("top", flag.ExitOnError)
+	var selectorFlag stringSliceFlag
+	fs.Var(&selectorFlag, "selector", "label key=value every counted Machine must carry (repeatable -- every pair must match); omitted counts every Machine, exactly as `kaironctl get`'s own --selector does")
+	_ = fs.Parse(args)
+	selector, err := parseKeyValues(selectorFlag)
+	if err != nil {
+		fatal(err)
+	}
+	switch resource {
+	case "machine", "machines", "vm", "vms":
+		items, err := kc.ListMachinesNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
+		sort.Slice(items, func(i, j int) bool { return items[i].Metadata.Name < items[j].Metadata.Name })
+		fmt.Printf("NAME\tNODE\tCPU%%\tMEMORY\tDISK-READ\tDISK-WRITE\n")
+		for _, m := range items {
+			u := m.Status.ResourceUsage
+			if u == nil {
+				fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, dash(m.Spec.NodeName), "-", "-", "-", "-")
+				continue
+			}
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, dash(m.Spec.NodeName), formatCPUPercent(u.CPUPercent), formatBytes(u.MemoryBytes), formatBytes(u.DiskReadBytes), formatBytes(u.DiskWriteBytes))
+		}
+	case "node", "nodes":
+		// Cluster-wide by construction -- see this function's own doc
+		// comment for why ns is unused here.
+		items, err := kc.ListMachines(ctx)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
+		fmt.Printf("NODE\tMACHINES\tCPU%%\tMEMORY\n")
+		for _, agg := range aggregateUsageByNode(items) {
+			fmt.Printf("%s\t%d\t%s\t%s\n", agg.node, agg.machines, formatCPUPercent(agg.cpuPercent), formatBytes(agg.memoryBytes))
+		}
+	default:
+		fatal(fmt.Errorf("unknown resource %q", resource))
+	}
+}
+
+// nodeUsageAggregate is one row of `kaironctl top nodes` -- every matching
+// Machine's own Status.ResourceUsage summed by the node it's scheduled onto
+// (Spec.NodeName). A Machine with no ResourceUsage yet (never reported by
+// its agent, or not yet scheduled) still counts toward "machines" -- an
+// operator asking "how many Machines are on this node" wants that answer
+// regardless of whether usage stats have arrived -- but contributes zero to
+// the cpu/memory sums, exactly as if it were using none (the honest
+// approximation: "not yet reported" and "using nothing" are indistinguishable
+// from a summed total's point of view, and undercounting is the safer
+// direction for a hotspot-spotting tool than fabricating a number).
+type nodeUsageAggregate struct {
+	node        string
+	machines    int
+	cpuPercent  float64
+	memoryBytes uint64
+}
+
+// aggregateUsageByNode groups machines by Spec.NodeName (dash-rendered
+// "-" for a not-yet-scheduled Machine, exactly matching `kaironctl get
+// machines`' own dash(m.Spec.NodeName) rendering, so an unscheduled
+// Machine's usage -- if it somehow has any -- is never silently dropped
+// nor attributed to a real node) and returns one nodeUsageAggregate per
+// distinct node, sorted by node name for deterministic, diffable output
+// (map iteration order is otherwise unspecified).
+func aggregateUsageByNode(machines []model.Machine) []nodeUsageAggregate {
+	byNode := make(map[string]*nodeUsageAggregate)
+	var order []string
+	for _, m := range machines {
+		node := dash(m.Spec.NodeName)
+		agg, ok := byNode[node]
+		if !ok {
+			agg = &nodeUsageAggregate{node: node}
+			byNode[node] = agg
+			order = append(order, node)
+		}
+		agg.machines++
+		if u := m.Status.ResourceUsage; u != nil {
+			agg.cpuPercent += u.CPUPercent
+			agg.memoryBytes += u.MemoryBytes
+		}
+	}
+	sort.Strings(order)
+	out := make([]nodeUsageAggregate, 0, len(order))
+	for _, node := range order {
+		out = append(out, *byNode[node])
+	}
+	return out
+}
+
+// formatCPUPercent renders ResourceUsage.CPUPercent to two decimal places
+// with a trailing "%" -- kubectl top's own "123m"-style millicore notation
+// doesn't apply here (CPUPercent is already a percentage of one core, per
+// its own doc comment, not a raw core-second count), so this is simply a
+// fixed, readable precision rather than Go's default float formatting
+// (which would print a trailing ".000000000001"-style artifact for values
+// like agent.go's own averaged-over-lifetime computation can produce).
+func formatCPUPercent(p float64) string {
+	return strconv.FormatFloat(p, 'f', 2, 64) + "%"
+}
+
+// formatBytes renders a byte count the same human-readable way `kaironctl`
+// already expects an operator reading a terminal to want (MachineQuota's
+// own MaxTotalMemory/MaxTotalMemoryMiB fields are hand-authored strings for
+// exactly this reason) -- ResourceUsage's fields are raw uint64 byte
+// counts straight off FluxVM's stats endpoint, and printing those
+// unformatted would force every reader to mentally divide by 2^30 anyway.
+// Binary (1024-based) units, matching Kubernetes' own Mi/Gi convention
+// (never SI Mb/Gb) that MachineQuota/MachineInstanceType's own Memory
+// fields already use throughout this codebase.
+func formatBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // nodeReadyStatus renders a Node's core "Ready" NodeCondition for
@@ -2644,7 +2800,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | trigger snapshotschedule NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | trigger snapshotschedule NAME | top [machines|nodes] [--selector k=v] | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
