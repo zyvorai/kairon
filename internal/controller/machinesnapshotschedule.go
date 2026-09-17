@@ -86,7 +86,23 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 			snap := model.MachineSnapshot{
 				TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshot},
 				Metadata: model.ObjectMeta{
-					Name:      fmt.Sprintf("%s-%d", sched.Metadata.Name, now.Unix()),
+					// Includes m.Metadata.Name, not just the schedule name
+					// and timestamp: `now` is computed once per reconcile
+					// tick above, so a schedule whose Selector matches more
+					// than one Machine would otherwise generate the exact
+					// same name for every match this tick. A real apiserver
+					// enforces per-namespace name uniqueness, so only the
+					// first Machine's MachineSnapshot would actually get
+					// created -- every other match's create call would fail
+					// with 409 AlreadyExists, silently dropping snapshots
+					// for every Machine after the first one on every fire of
+					// any schedule matching more than one Machine. The fake
+					// httptest servers this reconciler's own unit tests run
+					// against don't enforce that uniqueness (see
+					// TestReconcileMachineSnapshotSchedulesDueCreatesUniqueNamesPerMachine's
+					// doc comment), so this went uncaught until traced
+					// through by hand.
+					Name:      fmt.Sprintf("%s-%s-%d", sched.Metadata.Name, m.Metadata.Name, now.Unix()),
 					Namespace: sched.Namespace(),
 					Labels:    map[string]string{model.SnapshotScheduleLabel: sched.Metadata.Name},
 				},

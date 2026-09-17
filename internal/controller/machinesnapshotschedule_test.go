@@ -119,6 +119,70 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesOnePerMatch(t *testing.T) {
 	}
 }
 
+// TestReconcileMachineSnapshotSchedulesDueCreatesUniqueNamesPerMachine
+// guards against a real name collision that
+// TestReconcileMachineSnapshotSchedulesDueCreatesOnePerMatch's own fake
+// server can't catch: `now` (the create-name timestamp) is computed once
+// per reconcile tick, so if the generated MachineSnapshot name were built
+// from only the schedule name and that timestamp -- as it once was --
+// every Machine matching the same schedule in the same tick would get the
+// exact same name. A real Kubernetes apiserver enforces per-namespace name
+// uniqueness and would reject every create after the first with 409
+// AlreadyExists, silently dropping snapshots for every Machine after the
+// first one on every single fire of any schedule matching more than one
+// Machine. This fake server reproduces that uniqueness enforcement
+// (something the plain always-200 fake used elsewhere in this file does
+// not), so it actually fails if the collision regresses.
+func TestReconcileMachineSnapshotSchedulesDueCreatesUniqueNamesPerMachine(t *testing.T) {
+	created := map[string]bool{}
+	var createdNames []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
+				snapshotSchedule("hourly", time.Time{}, 3600), // never run -- immediately due
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			var s model.MachineSnapshot
+			_ = json.NewDecoder(r.Body).Decode(&s)
+			if created[s.Metadata.Name] {
+				// Mirrors a real apiserver's 409 AlreadyExists on a
+				// duplicate name within the same namespace.
+				http.Error(w, "machinesnapshots.kairon.zyvor.dev \""+s.Metadata.Name+"\" already exists", http.StatusConflict)
+				return
+			}
+			created[s.Metadata.Name] = true
+			createdNames = append(createdNames, s.Metadata.Name)
+			_ = json.NewEncoder(w).Encode(s)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{
+		webMachine("web-1", "node-a", "Running"),
+		webMachine("web-2", "node-a", "Running"),
+	}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if len(createdNames) != 2 {
+		t.Fatalf("created %v (%d), want 2 distinctly-named MachineSnapshots -- one per matching Machine, not a collision where the second Machine's create was rejected as a duplicate of the first's", createdNames, len(createdNames))
+	}
+	if createdNames[0] == createdNames[1] {
+		t.Fatalf("both Machines got the same MachineSnapshot name %q", createdNames[0])
+	}
+}
+
 // TestReconcileMachineSnapshotSchedulesSkipsWhenStartingDeadlineExceeded
 // confirms the opt-in missed-deadline path: a schedule far enough overdue
 // that its due window is now past spec.startingDeadlineSeconds creates NO
