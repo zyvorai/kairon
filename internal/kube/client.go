@@ -320,6 +320,19 @@ func (c *Client) GetMachineNetworkPolicy(ctx context.Context, ns, name string) (
 	return p, err
 }
 
+// CreateMachineNetworkPolicy completes MachineNetworkPolicy's kaironctl CRUD
+// surface: get/describe/delete/patch all had a path already (see this type's
+// sibling methods' own doc comment above), but nothing let an operator
+// create one without hand-writing YAML for `kubectl apply`, unlike
+// MigrationPolicy/MachineQuota/MachineDisruptionBudget/
+// MachineSnapshotSchedule, which all got a `kaironctl create` subcommand in
+// the same session that gave this CRD its dashboard list page.
+func (c *Client) CreateMachineNetworkPolicy(ctx context.Context, ns string, p model.MachineNetworkPolicy) (model.MachineNetworkPolicy, error) {
+	var out model.MachineNetworkPolicy
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinenetworkpolicies"), p, &out, "")
+	return out, err
+}
+
 func (c *Client) DeleteMachineNetworkPolicy(ctx context.Context, ns, name string) error {
 	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinenetworkpolicies", name), map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Foreground"}, nil, "")
 }
@@ -352,6 +365,15 @@ func (c *Client) GetNetworkSecurityGroup(ctx context.Context, ns, name string) (
 	var g model.NetworkSecurityGroup
 	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "networksecuritygroups", name), nil, &g, "")
 	return g, err
+}
+
+// CreateNetworkSecurityGroup is CreateMachineNetworkPolicy's exact
+// counterpart for NetworkSecurityGroup, closing the same create-side CRUD
+// gap for the same reason.
+func (c *Client) CreateNetworkSecurityGroup(ctx context.Context, ns string, g model.NetworkSecurityGroup) (model.NetworkSecurityGroup, error) {
+	var out model.NetworkSecurityGroup
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "networksecuritygroups"), g, &out, "")
+	return out, err
 }
 
 func (c *Client) DeleteNetworkSecurityGroup(ctx context.Context, ns, name string) error {

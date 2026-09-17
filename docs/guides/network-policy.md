@@ -160,10 +160,37 @@ always.
 `networkpolicy`/`machinenetworkpolicies`, `securitygroup`/
 `networksecuritygroups`); `kaironctl describe networkpolicy NAME` /
 `describe securitygroup NAME` and `kaironctl delete ...` round it out —
-until now these two CRDs had no `kaironctl` support at all, unlike every
-other kind. The dashboard's **Network policies** and **Security groups**
-pages give the same read-only view; both stay list-only there —
-`kaironctl`/`kubectl` remain how they get created or edited.
+these two CRDs had no `kaironctl` support at all until a prior session
+added get/describe/delete; create/edit came later still (this section).
+
+`kaironctl create networkpolicy NAME (--machine-name X | --selector k=v)
+[--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port]
+[--allow-fqdn FQDN] [--policy-group NAME] [--policy-label k=v]
+[--entity NAME] [--default-allow] [--audit-mode] [--allow-icmp]
+[--max-egress-mbps N] [--max-egress-pps N] [--sample-rate N]` and
+`kaironctl create securitygroup NAME [--group-name X] [--group-label k=v]
+[--priority N] [--description TEXT] [same policy flags as above]` round out
+the create side (`spec.cnp`'s free-form CiliumNetworkPolicy-shaped document
+stays kubectl/YAML-only — no sensible flag shape for an arbitrary nested
+JSON document). `create networkpolicy` refuses to create a policy that
+targets no Machine at all: at least one of `--machine-name`/`--selector` is
+required, the same "don't create an object that provably does nothing"
+check `kaironctl create quota` already applies to its own dimensions.
+
+`kaironctl edit networkpolicy NAME [--machine-name X] [--selector k=v]
+[--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port]
+[--default-allow BOOL] [--audit-mode BOOL] [--max-egress-mbps N]
+[--max-egress-pps N]` and `kaironctl edit securitygroup NAME
+[--group-label k=v] [--priority N] [--description TEXT] [same policy flags
+as above]` patch only the fields an explicit flag was passed for, same
+merge-patch convention as `edit quota`/`edit budget`. This is deliberately
+narrower than `create`: `--allow-fqdn`/`--policy-group`/`--policy-label`/
+`--entity`/`--allow-icmp`/`--sample-rate` stay create-time-only through
+`edit` for a first cut, the same way `edit machine` only ever exposed
+`--priority` out of every `Machine.spec` field. The dashboard's **Network
+policies** and **Security groups** pages give the same read-only view and
+stay list-only for now — `kaironctl`/`kubectl` remain the only way to
+create or edit either CRD.
 
 ## Troubleshooting: why is traffic being allowed/blocked?
 

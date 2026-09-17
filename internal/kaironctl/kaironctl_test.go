@@ -749,6 +749,116 @@ func TestCmdEditBudgetSelectorReplacesWholeMap(t *testing.T) {
 	}
 }
 
+// TestCmdCreateNetworkPolicyPostsExpectedSpec covers the create half of the
+// CRUD gap TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup's own doc
+// comment describes: get/describe/delete existed for MachineNetworkPolicy
+// before this change, but create/edit did not.
+func TestCmdCreateNetworkPolicyPostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateNetworkPolicy(context.Background(), kc, []string{
+		"web-edge", "--selector", "app=web",
+		"--allow-cidr", "10.0.0.0/8", "--allow-port", "tcp/443",
+		"--policy-group", "frontend", "--max-egress-mbps", "250", "--audit-mode",
+	})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	selector, _ := spec["selector"].(map[string]any)
+	if selector["app"] != "web" {
+		t.Errorf("selector = %v", selector)
+	}
+	policy, _ := spec["policy"].(map[string]any)
+	allowCidrs, _ := policy["allowCidrs"].([]any)
+	if len(allowCidrs) != 1 || allowCidrs[0] != "10.0.0.0/8" {
+		t.Errorf("allowCidrs = %v", policy["allowCidrs"])
+	}
+	if policy["maxEgressMbps"] != float64(250) {
+		t.Errorf("maxEgressMbps = %v", policy["maxEgressMbps"])
+	}
+	if policy["auditMode"] != true {
+		t.Errorf("auditMode = %v, want true", policy["auditMode"])
+	}
+}
+
+// TestCmdCreateSecurityGroupPostsExpectedSpec covers the create half of the
+// CRUD gap for NetworkSecurityGroup, the exact counterpart of the
+// MachineNetworkPolicy test above.
+func TestCmdCreateSecurityGroupPostsExpectedSpec(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdCreateSecurityGroup(context.Background(), kc, []string{
+		"frontend", "--group-label", "tier=frontend", "--priority", "100",
+		"--description", "HTTPS egress", "--allow-cidr", "10.0.0.0/8", "--allow-icmp",
+	})
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	labels, _ := spec["labels"].([]any)
+	if len(labels) != 1 || labels[0] != "tier=frontend" {
+		t.Errorf("labels = %v", spec["labels"])
+	}
+	if spec["priority"] != float64(100) || spec["description"] != "HTTPS egress" {
+		t.Errorf("spec = %v", spec)
+	}
+	policy, _ := spec["policy"].(map[string]any)
+	if policy["allowIcmp"] != true {
+		t.Errorf("allowIcmp = %v, want true", policy["allowIcmp"])
+	}
+}
+
+// TestCmdEditNetworkPolicyOnlyPatchesFlagsActuallySet mirrors
+// TestCmdEditBudgetOnlyPatchesFlagsActuallySet's own convention: an
+// untouched field must stay entirely absent from the merge-patch body, not
+// present with a zero value, so an omitted flag can never clobber an
+// already-set value.
+func TestCmdEditNetworkPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"networkpolicy", "web-edge", "--audit-mode"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if _, present := spec["machineName"]; present {
+		t.Errorf("machineName should not be present when --machine-name wasn't passed, got %v", spec)
+	}
+	if _, present := spec["selector"]; present {
+		t.Errorf("selector should not be present when --selector wasn't passed, got %v", spec)
+	}
+	policy, _ := spec["policy"].(map[string]any)
+	if policy["auditMode"] != true {
+		t.Errorf("policy.auditMode = %v, want true", policy["auditMode"])
+	}
+	if _, present := policy["allowCidrs"]; present {
+		t.Errorf("policy.allowCidrs should not be present when --allow-cidr wasn't passed, got %v", policy)
+	}
+}
+
+// TestCmdEditSecurityGroupOnlyPatchesFlagsActuallySet is
+// TestCmdEditNetworkPolicyOnlyPatchesFlagsActuallySet's exact counterpart
+// for NetworkSecurityGroup's own top-level spec fields.
+func TestCmdEditSecurityGroupOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"securitygroup", "frontend", "--priority", "50"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["priority"] != float64(50) {
+		t.Errorf("priority = %v, want 50", spec["priority"])
+	}
+	if _, present := spec["labels"]; present {
+		t.Errorf("labels should not be present when --group-label wasn't passed, got %v", spec)
+	}
+	if _, present := spec["policy"]; present {
+		t.Errorf("policy should not be present when no policy flag was passed, got %v", spec)
+	}
+}
+
 // TestCmdCreateStillCreatesAPlainMachine is a regression test: `kaironctl
 // create NAME --image ... [flags]` (no KIND argument) must keep creating a
 // Machine exactly as it did before create machineset/instancetype/

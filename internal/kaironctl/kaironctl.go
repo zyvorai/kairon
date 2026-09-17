@@ -606,7 +606,7 @@ func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, imag
 // create-a-Machine behavior below, byte-for-byte unchanged.
 func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget NAME [flags]"))
+		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME [flags]"))
 	}
 	switch strings.ToLower(args[0]) {
 	case "machineset", "machinesets":
@@ -626,6 +626,12 @@ func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 		return
 	case "budget", "budgets", "machinedisruptionbudgets":
 		cmdCreateBudget(ctx, kc, args[1:])
+		return
+	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
+		cmdCreateNetworkPolicy(ctx, kc, args[1:])
+		return
+	case "securitygroup", "securitygroups", "networksecuritygroups":
+		cmdCreateSecurityGroup(ctx, kc, args[1:])
 		return
 	}
 	name := args[0]
@@ -895,6 +901,143 @@ func cmdCreateBudget(ctx context.Context, kc *kube.Client, args []string) {
 	fmt.Printf("budget/%s created\n", out.Metadata.Name)
 }
 
+// vmNetworkPolicyFromFlags registers every model.VmNetworkPolicy field as a
+// flag on fs and returns a closure that builds the struct from whatever was
+// parsed -- shared between cmdCreateNetworkPolicy and cmdCreateSecurityGroup
+// since both CRDs embed the exact same nested policy shape (see
+// model.VmNetworkPolicy's own doc comment: "mirrors FluxVM VmNetworkPolicy").
+// spec.cnp (MachineNetworkPolicy-only, a free-form FluxVM CiliumNetworkPolicy
+// document) is deliberately not exposed here -- same "stays create-time-only
+// through kubectl/YAML, not a CLI flag" treatment cmdEditMachine already
+// gives every Machine-spec field this CLI doesn't expose flags for; an
+// arbitrary nested JSON document has no sensible flag shape anyway.
+func vmNetworkPolicyFromFlags(fs *flag.FlagSet) func() model.VmNetworkPolicy {
+	defaultAllow := fs.Bool("default-allow", false, "allow everything by default; allow/deny-cidr and allow-port then narrow that instead of building up allowlists from a default-deny baseline")
+	var allowCidrs, denyCidrs, allowPorts, allowFqdns, policyGroups, policyLabels, entities stringSliceFlag
+	fs.Var(&allowCidrs, "allow-cidr", "destination CIDR to allow, e.g. 10.0.0.0/8 (repeatable)")
+	fs.Var(&denyCidrs, "deny-cidr", "destination CIDR to deny (repeatable)")
+	fs.Var(&allowPorts, "allow-port", "proto/port rule to allow, e.g. tcp/443 or udp/53 (repeatable)")
+	fs.Var(&allowFqdns, "allow-fqdn", "FQDN to allow, resolved by FluxVM at apply time (repeatable)")
+	fs.Var(&policyGroups, "policy-group", "NetworkSecurityGroup name whose membership this policy inherits (repeatable)")
+	fs.Var(&policyLabels, "policy-label", "key=value tag this policy matches NetworkSecurityGroup membership against, e.g. tier=frontend (repeatable)")
+	fs.Var(&entities, "entity", "well-known FluxVM entity to allow, e.g. world/cluster (repeatable)")
+	maxEgressMbps := fs.Uint64("max-egress-mbps", 0, "cap egress bandwidth in Mbps; 0 (the default) leaves it uncapped")
+	maxEgressPps := fs.Uint64("max-egress-pps", 0, "cap egress packet rate in packets/sec; 0 (the default) leaves it uncapped")
+	auditMode := fs.Bool("audit-mode", false, "log traffic that would be denied instead of dropping it")
+	allowIcmp := fs.Bool("allow-icmp", false, "permit ICMP/ICMPv6 regardless of --allow-port")
+	sampleRate := fs.Uint("sample-rate", 0, "flow-log sampling rate; 0 (the default) means no sampling")
+	return func() model.VmNetworkPolicy {
+		p := model.VmNetworkPolicy{
+			DefaultAllow: *defaultAllow,
+			AllowCidrs:   []string(allowCidrs),
+			DenyCidrs:    []string(denyCidrs),
+			AllowPorts:   []string(allowPorts),
+			AllowFqdns:   []string(allowFqdns),
+			Groups:       []string(policyGroups),
+			Labels:       []string(policyLabels),
+			Entities:     []string(entities),
+			AuditMode:    *auditMode,
+			AllowIcmp:    *allowIcmp,
+			SampleRate:   uint32(*sampleRate),
+		}
+		if *maxEgressMbps > 0 {
+			v := uint32(*maxEgressMbps)
+			p.MaxEgressMbps = &v
+		}
+		if *maxEgressPps > 0 {
+			v := uint32(*maxEgressPps)
+			p.MaxEgressPps = &v
+		}
+		return p
+	}
+}
+
+// cmdCreateNetworkPolicy handles `kaironctl create networkpolicy NAME
+// (--machine-name X | --selector k=v) [policy flags]`, dispatched from
+// cmdCreate -- closing the same "no kaironctl create for this CRD at all"
+// gap cmdCreateSecurityGroup closes for its sibling. Requires at least one
+// of --machine-name/--selector, the same "don't create an object that
+// provably matches nothing" instinct as cmdCreateQuota's own dimension
+// check: MachineNetworkPolicySpec.MachineName/Selector are both optional at
+// the CRD-schema level, but a policy with neither set matches no Machine at
+// all (model.LabelsMatch's own doc comment: an empty selector never
+// matches), the same silently-does-nothing shape this project has
+// consistently refused to let `create` produce elsewhere.
+func cmdCreateNetworkPolicy(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create networkpolicy NAME (--machine-name X | --selector k=v) [--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port] [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create networkpolicy", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	machineName := fs.String("machine-name", "", "single Machine (same namespace) this policy targets; takes precedence over --selector")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "label key=value a Machine must match when --machine-name is unset (repeatable)")
+	policyFn := vmNetworkPolicyFromFlags(fs)
+	_ = fs.Parse(args[1:])
+	if *machineName == "" && len(selector) == 0 {
+		fatal(fmt.Errorf("at least one of --machine-name or --selector is required -- a policy with neither set matches no Machine"))
+	}
+	selectorMap, err := parseKeyValues(selector)
+	if err != nil {
+		fatal(err)
+	}
+	p := model.MachineNetworkPolicy{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineNetworkPolicy},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.MachineNetworkPolicySpec{
+			MachineName: *machineName,
+			Selector:    selectorMap,
+			Policy:      policyFn(),
+		},
+	}
+	out, err := kc.CreateMachineNetworkPolicy(ctx, *ns, p)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("networkpolicy/%s created\n", out.Metadata.Name)
+}
+
+// cmdCreateSecurityGroup handles `kaironctl create securitygroup NAME
+// [--group-name X] [--priority N] [--description TEXT] [policy flags]`,
+// dispatched from cmdCreate. Unlike MachineNetworkPolicy, NetworkSecurityGroup
+// has no required targeting field -- it's a named, reusable group other
+// policies opt into via their own --policy-group -- so an empty --group-name
+// is fine (Spec.GroupName defaults to metadata.name, see
+// NetworkSecurityGroup.FluxGroupName) and there is no "matches nothing"
+// failure mode to guard against here.
+func cmdCreateSecurityGroup(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create securitygroup NAME [--group-name X] [--priority N] [--description TEXT] [--allow-cidr CIDR] [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create securitygroup", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	groupName := fs.String("group-name", "", "FluxVM group name; defaults to NAME when unset")
+	priority := fs.Uint("priority", 0, "lower value wins on a rate/deny tie against another group")
+	description := fs.String("description", "", "human-readable note carried through to FluxVM")
+	var groupLabels stringSliceFlag
+	fs.Var(&groupLabels, "group-label", "key=value tag FluxVM matches group membership against, e.g. tier=frontend (repeatable)")
+	policyFn := vmNetworkPolicyFromFlags(fs)
+	_ = fs.Parse(args[1:])
+	g := model.NetworkSecurityGroup{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindNetworkSecurityGroup},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.NetworkSecurityGroupSpec{
+			GroupName:   *groupName,
+			Labels:      []string(groupLabels),
+			Priority:    uint32(*priority),
+			Description: *description,
+			Policy:      policyFn(),
+		},
+	}
+	out, err := kc.CreateNetworkSecurityGroup(ctx, *ns, g)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("securitygroup/%s created\n", out.Metadata.Name)
+}
+
 // cmdScale mutates spec.replicas on an existing MachineSet -- the only
 // resource kind this verb supports for a first cut, since no other kind
 // kaironctl manages has a sensible "scale" operation. Takes its own
@@ -1000,11 +1143,11 @@ func cmdScaleSelector(ctx context.Context, kc *kube.Client, args []string) {
 // only the ones an explicit flag was actually passed for on this
 // invocation (tracked via fs.Visit, never a flag's zero-value default) so
 // an omitted flag can never clobber an already-set value back to zero.
-// migrationpolicy, snapshotschedule, quota, budget, and machine are the
-// only kinds this verb supports for a first cut.
+// migrationpolicy, snapshotschedule, quota, budget, machine, networkpolicy,
+// and securitygroup are the only kinds this verb supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X] | edit machine NAME --priority N"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X] | edit machine NAME --priority N | edit networkpolicy NAME [--machine-name X] [--selector k=v] [--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port] [--default-allow BOOL] [--audit-mode BOOL] [--max-egress-mbps N] [--max-egress-pps N] | edit securitygroup NAME [--group-label k=v] [--priority N] [--description TEXT] [policy flags as above]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -1018,8 +1161,12 @@ func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 		cmdEditBudget(ctx, kc, name, args[2:])
 	case "machine", "machines":
 		cmdEditMachine(ctx, kc, name, args[2:])
+	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
+		cmdEditNetworkPolicy(ctx, kc, name, args[2:])
+	case "securitygroup", "securitygroups", "networksecuritygroups":
+		cmdEditSecurityGroup(ctx, kc, name, args[2:])
 	default:
-		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, budget, or machine, got %q", kind))
+		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, budget, machine, networkpolicy, or securitygroup, got %q", kind))
 	}
 }
 
@@ -1180,6 +1327,131 @@ func cmdEditBudget(ctx context.Context, kc *kube.Client, name string, args []str
 		fatal(err)
 	}
 	fmt.Printf("budget/%s updated\n", name)
+}
+
+// editableVmNetworkPolicyFlags registers the subset of model.VmNetworkPolicy
+// fields this project considers safe to change in place on an existing
+// MachineNetworkPolicy/NetworkSecurityGroup -- the same "first cut, narrower
+// than create" scoping cmdEditMachine already applies to Machine.spec (see
+// its own doc comment): --allow-cidr/--deny-cidr/--allow-port/
+// --default-allow/--audit-mode/--max-egress-mbps/--max-egress-pps cover the
+// routine "widen/narrow this rule" and "flip to dry-run before enforcing"
+// edits an incident or a policy review actually needs day to day.
+// --allow-fqdn/--policy-group/--policy-label/--entity/--allow-icmp/
+// --sample-rate stay create-time-only through this CLI for now; kubectl
+// edit/apply is still how those change, exactly like every Machine-spec
+// field cmdEditMachine doesn't expose a flag for. Returns the JSON-tag-keyed
+// patch fragment for spec.policy, or nil if nothing was touched -- the
+// caller merges it under "policy" only when non-nil, so an edit that
+// changes none of these fields (e.g. only --selector) never sends a bogus
+// empty policy object.
+func editableVmNetworkPolicyFlags(fs *flag.FlagSet) func() map[string]any {
+	var allowCidrs, denyCidrs, allowPorts stringSliceFlag
+	fs.Var(&allowCidrs, "allow-cidr", "new destination CIDRs to allow (repeatable; replaces the entire existing list when passed)")
+	fs.Var(&denyCidrs, "deny-cidr", "new destination CIDRs to deny (repeatable; replaces the entire existing list when passed)")
+	fs.Var(&allowPorts, "allow-port", "new proto/port rules to allow, e.g. tcp/443 (repeatable; replaces the entire existing list when passed)")
+	defaultAllow := fs.Bool("default-allow", false, "new default-allow setting")
+	auditMode := fs.Bool("audit-mode", false, "new audit-mode setting (true logs would-be-denied traffic instead of dropping it)")
+	maxEgressMbps := fs.Uint64("max-egress-mbps", 0, "new egress bandwidth cap in Mbps")
+	maxEgressPps := fs.Uint64("max-egress-pps", 0, "new egress packet-rate cap in packets/sec")
+	return func() map[string]any {
+		policy := map[string]any{}
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "allow-cidr":
+				policy["allowCidrs"] = []string(allowCidrs)
+			case "deny-cidr":
+				policy["denyCidrs"] = []string(denyCidrs)
+			case "allow-port":
+				policy["allowPorts"] = []string(allowPorts)
+			case "default-allow":
+				policy["defaultAllow"] = *defaultAllow
+			case "audit-mode":
+				policy["auditMode"] = *auditMode
+			case "max-egress-mbps":
+				policy["maxEgressMbps"] = *maxEgressMbps
+			case "max-egress-pps":
+				policy["maxEgressPps"] = *maxEgressPps
+			}
+		})
+		if len(policy) == 0 {
+			return nil
+		}
+		return policy
+	}
+}
+
+// cmdEditNetworkPolicy patches only the MachineNetworkPolicy fields an
+// explicit flag was passed for, same fs.Visit convention as every other
+// edit subcommand -- see editableVmNetworkPolicyFlags's own doc comment for
+// exactly which spec.policy fields this covers.
+func cmdEditNetworkPolicy(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit networkpolicy", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	machineName := fs.String("machine-name", "", "new single-Machine target; takes precedence over spec.selector")
+	var selector stringSliceFlag
+	fs.Var(&selector, "selector", "new label key=value selector (repeatable; replaces the entire existing selector when passed)")
+	policyFn := editableVmNetworkPolicyFlags(fs)
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "machine-name":
+			spec["machineName"] = *machineName
+		case "selector":
+			selectorMap, err := parseKeyValues(selector)
+			if err != nil {
+				fatal(err)
+			}
+			spec["selector"] = selectorMap
+		}
+	})
+	if policy := policyFn(); policy != nil {
+		spec["policy"] = policy
+	}
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --machine-name, --selector, --allow-cidr, --deny-cidr, --allow-port, --default-allow, --audit-mode, --max-egress-mbps, or --max-egress-pps"))
+	}
+	if err := kc.PatchMachineNetworkPolicy(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("networkpolicy/%s updated\n", name)
+}
+
+// cmdEditSecurityGroup is cmdEditNetworkPolicy's exact counterpart for
+// NetworkSecurityGroup, plus its three own top-level spec fields
+// (--group-label/--priority/--description) in place of
+// --machine-name/--selector.
+func cmdEditSecurityGroup(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit securitygroup", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var groupLabels stringSliceFlag
+	fs.Var(&groupLabels, "group-label", "new key=value tags FluxVM matches group membership against (repeatable; replaces the entire existing list when passed)")
+	priority := fs.Uint("priority", 0, "new priority (lower wins on a rate/deny tie against another group)")
+	description := fs.String("description", "", "new human-readable note")
+	policyFn := editableVmNetworkPolicyFlags(fs)
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "group-label":
+			spec["labels"] = []string(groupLabels)
+		case "priority":
+			spec["priority"] = *priority
+		case "description":
+			spec["description"] = *description
+		}
+	})
+	if policy := policyFn(); policy != nil {
+		spec["policy"] = policy
+	}
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --group-label, --priority, --description, --allow-cidr, --deny-cidr, --allow-port, --default-allow, --audit-mode, --max-egress-mbps, or --max-egress-pps"))
+	}
+	if err := kc.PatchNetworkSecurityGroup(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("securitygroup/%s updated\n", name)
 }
 
 // cmdDelete deletes either a single named resource (`delete [RESOURCE]
@@ -1942,7 +2214,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
