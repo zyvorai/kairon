@@ -68,6 +68,31 @@ const (
 	// failure mode kairon-node must never silently abandon.
 	AnnotationQuiesceRequest = "kairon.zyvor.dev/quiesce-request"
 	AnnotationQuiesceStatus  = "kairon.zyvor.dev/quiesce-status"
+	// AnnotationSnapshotScheduleTriggerNow requests an immediate,
+	// out-of-band MachineSnapshotSchedule run -- kairon-controller's
+	// analog of `kubectl create job --from=cronjob`, but implemented as
+	// the same durable request/status-handled annotation pattern
+	// AnnotationQuiesceRequest/AnnotationCordonEvacuateAttemptedAt already
+	// establish, rather than a bespoke RPC or subresource of its own. Set
+	// (typically by `kaironctl trigger snapshotschedule NAME`, though any
+	// distinct value works -- a plain `kubectl annotate --overwrite` with
+	// any new string is just as valid a request) to any value that
+	// doesn't already equal status.lastHandledTriggerTime,
+	// reconcileMachineSnapshotSchedules treats that as an unhandled
+	// request on its very next tick and fires this schedule immediately,
+	// bypassing BOTH spec.suspend and spec.startingDeadlineSeconds (a
+	// request to run right now is never "too late", and a paused schedule
+	// can still be asked for one snapshot without permanently unpausing
+	// it first) -- but never spec.selector, which still governs which
+	// Machines actually get a new MachineSnapshot. The value itself is
+	// never parsed as a timestamp by kairon-controller (unlike
+	// AnnotationQuiesceRequest's "<name>@<time>" wire format) -- it's
+	// compared only for equality against status.lastHandledTriggerTime,
+	// so `kaironctl trigger`'s use of an RFC3339 timestamp is a convention
+	// for human readability, not a contract this annotation itself
+	// enforces. See MachineSnapshotScheduleStatus.LastHandledTriggerTime
+	// and TriggerNowRequested.
+	AnnotationSnapshotScheduleTriggerNow = "kairon.zyvor.dev/trigger-now"
 	// ConditionNodeUnreachable is a MachineStatus.Conditions[].Type
 	// kairon-controller sets/clears every reconcile tick to reflect
 	// whether spec.nodeName currently names a Ready, present Kubernetes

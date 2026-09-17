@@ -164,6 +164,24 @@ func (s MachineSnapshotScheduleSpec) NextRunAfter(firedAt time.Time) time.Time {
 	return firedAt.Add(time.Duration(s.IntervalSeconds) * time.Second)
 }
 
+// TriggerNowRequested reports whether annotationValue (the live
+// AnnotationSnapshotScheduleTriggerNow value on a MachineSnapshotSchedule,
+// or "" if unset) names a manual run kairon-controller hasn't handled yet
+// (lastHandled, its own status.lastHandledTriggerTime). An empty
+// annotationValue is never a request, regardless of lastHandled --
+// removing the annotation entirely, or never having set it, must never be
+// mistaken for "handle this again." A non-empty annotationValue that
+// exactly equals lastHandled is a request that's already been handled --
+// the common steady-state case: a schedule sits with a matching pair
+// between manual triggers -- so only a genuinely new, different value is
+// an outstanding request. See AnnotationSnapshotScheduleTriggerNow's own
+// doc comment for the full protocol this implements, and Due/
+// DeadlineExceeded above for the two other pure yes/no questions
+// reconcileMachineSnapshotSchedules asks about a schedule every tick.
+func TriggerNowRequested(annotationValue, lastHandled string) bool {
+	return annotationValue != "" && annotationValue != lastHandled
+}
+
 // MachineSnapshotScheduleStatus is purely observational, written once per
 // schedule at the end of every reconcile tick that found it due -- mirrors
 // MigrationPolicyStatus/MachineDisruptionBudgetStatus's own
@@ -195,4 +213,20 @@ type MachineSnapshotScheduleStatus struct {
 	// meaningful. Zero (the default) means "never yet fired" -- see
 	// MachineSnapshotScheduleSpec.NextRunAfter's own doc comment.
 	NextRunTime time.Time `json:"nextRunTime,omitempty"`
+	// LastHandledTriggerTime records the exact
+	// AnnotationSnapshotScheduleTriggerNow value kairon-controller has
+	// already acted on -- see TriggerNowRequested and
+	// AnnotationSnapshotScheduleTriggerNow's own doc comment for the full
+	// request/handled protocol. Empty (the default) means no manual
+	// trigger has ever been handled for this schedule. Only ever written
+	// alongside LastRunTime/LastRunSnapshotCount/NextRunTime, on the exact
+	// tick that actually handles a pending request -- a tick that fires
+	// for the ordinary due-interval reason, or skips one for
+	// StartingDeadlineSeconds, leaves this field completely untouched
+	// (both by this project's json:",omitempty" + merge-patch convention,
+	// and by reconcileMachineSnapshotSchedules never setting it on those
+	// two paths), so a stale, already-superseded annotation value from a
+	// much earlier manual request is never rewritten by an unrelated
+	// automatic run.
+	LastHandledTriggerTime string `json:"lastHandledTriggerTime,omitempty"`
 }

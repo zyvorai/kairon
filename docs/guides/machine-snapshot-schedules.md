@@ -139,6 +139,83 @@ Retention is per-Machine, not per-schedule-in-total: a schedule matching 5
 Machines with `keepLast: 3` keeps up to 3 snapshots *for each* of those 5
 Machines, not 3 total across all of them.
 
+## Running one right now (`kaironctl trigger`)
+
+Every example above waits for `spec.intervalSeconds` to elapse. Sometimes
+that's not what you want -- you're about to do something risky to a fleet
+of Machines and want one fresh backup first, or you just tightened
+`spec.selector` and want to confirm the new selection actually works,
+without waiting up to a full `intervalSeconds` (potentially 24 hours or
+more) to find out:
+
+```console
+$ kaironctl trigger snapshotschedule nightly
+snapshotschedule/nightly: manual run requested; kairon-controller will snapshot every matching Machine on its next reconcile tick, regardless of spec.suspend or the normal interval
+```
+
+This patches a request annotation
+(`kairon.zyvor.dev/trigger-now: <RFC3339 timestamp>`) onto the schedule --
+the same durable "ask the controller to do a thing on its next tick, not a
+bespoke RPC" pattern this project already uses for guest quiesce around
+`MachineSnapshot` itself. `reconcileMachineSnapshotSchedules` notices any
+value that doesn't already match `status.lastHandledTriggerTime` as an
+unhandled request, fires this schedule exactly like a normal due run on its
+very next tick (the same per-Machine create loop, the same `spec.keepLast`
+pruning if set), and copies the handled value into
+`status.lastHandledTriggerTime` in that same status patch -- so the same
+request is never re-fired on a later tick, and a crash between "fired" and
+"marked handled" can't happen (either both landed in that one patch, or
+neither did, in which case the next tick just retries).
+
+A manually triggered run **bypasses both `spec.suspend` and
+`spec.startingDeadlineSeconds`**:
+
+- A schedule you've paused (`kaironctl edit snapshotschedule nightly
+  --suspend true`) can still be asked for one snapshot right now, without
+  permanently unpausing it first -- you get your one backup, then it stays
+  paused exactly as you left it.
+- `startingDeadlineSeconds` exists to answer "is this run too late to still
+  count as on-schedule" -- a question that has no meaning for a request
+  that's explicitly asking to run at this exact instant. A manual trigger
+  is never "too late."
+
+It does **not** bypass `spec.selector`: a manually triggered schedule that
+currently matches zero Machines still counts as handled (`status` advances
+exactly like a normal zero-match tick), it just creates nothing -- the
+same "check `spec.selector` against these Machines' own labels" caveat
+`describe`'s preview already gives.
+
+A manually triggered run also still advances `status.lastRunTime`/
+`nextRunTime` exactly like any other fire -- the schedule's normal interval
+countdown restarts from the moment of the manual run rather than getting a
+"bonus" run layered on top of the pre-existing schedule. If `nightly` last
+fired at midnight on a 24-hour interval and you manually trigger it at
+9am, its next automatic run is now expected around 9am the following day,
+not still at midnight.
+
+`kaironctl describe snapshotschedule` reports an outstanding, not-yet-handled
+manual trigger request as its own distinct preview outcome, ahead of the
+usual due/not-due/skipped verdicts (see "Previewing what would fire right
+now" above):
+
+```console
+$ kaironctl trigger snapshotschedule nightly
+snapshotschedule/nightly: manual run requested; ...
+$ kaironctl describe snapshotschedule nightly
+...
+Matching machines (2) -- manual run requested (kaironctl trigger snapshotschedule), the next reconcile tick will snapshot these regardless of spec.suspend or the normal interval:
+  web-1
+  web-2
+```
+
+There's no dashboard or `kubectl`-only equivalent yet -- requesting a
+manual run is `kaironctl`-only for now (though `kubectl annotate --overwrite
+machinesnapshotschedule nightly kairon.zyvor.dev/trigger-now="$(date
+--rfc-3339=seconds)"` works exactly as well; the annotation's value is
+never parsed as a real timestamp by `kairon-controller`, only compared for
+equality against the last one it handled, so any new, distinct string is a
+valid request).
+
 ## Missed runs (`spec.startingDeadlineSeconds`)
 
 Every `MachineSnapshotSchedule`'s original behavior is: however overdue a
@@ -234,23 +311,29 @@ create-time that the CRD's own OpenAPI schema (`intervalSeconds: minimum
 
 Each reconcile tick:
 
-1. Every `MachineSnapshotSchedule` is checked against
-   `status.lastRunTime`: due if it's never run before, or if at least
-   `spec.intervalSeconds` have elapsed since the last run, and not
-   `spec.suspend`d.
-2. If `spec.startingDeadlineSeconds` is set and this due run is more than
+1. Every `MachineSnapshotSchedule` is first checked for an unhandled
+   `kairon.zyvor.dev/trigger-now` request (its value differs from
+   `status.lastHandledTriggerTime`) -- if so, it's treated as due
+   regardless of everything in step 2, ahead of the normal due check
+   entirely. See "Running one right now" above.
+2. Otherwise, it's checked against `status.lastRunTime`: due if it's never
+   run before, or if at least `spec.intervalSeconds` have elapsed since
+   the last run, and not `spec.suspend`d.
+3. If `spec.startingDeadlineSeconds` is set and this due run is more than
    that many seconds late, it's skipped instead: no `MachineSnapshot` is
    created, but `status.lastRunTime`/`nextRunTime` still advance and
-   `status.lastRunError` records the skip -- see "Missed runs" above.
-3. Otherwise, for each due schedule, every `Machine` in the same namespace
+   `status.lastRunError` records the skip -- see "Missed runs" above. (A
+   manually triggered run from step 1 never takes this branch --
+   `startingDeadlineSeconds` doesn't apply to it.)
+4. Otherwise, for each due schedule, every `Machine` in the same namespace
    matching `spec.selector` gets a new `MachineSnapshot`, named
    `<schedule-name>-<unix-timestamp>` and labeled
    `kairon.zyvor.dev/snapshot-schedule: <schedule-name>`.
-4. If `spec.keepLast` is set, right after each successful create the
+5. If `spec.keepLast` is set, right after each successful create the
    schedule's own ready-to-use `MachineSnapshot`s for that same Machine
    (matched by the label above) beyond `keepLast` are deleted, oldest
    first -- see "Retention" above for exactly what does and doesn't count.
-4. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError`/`nextRunTime`
+6. `status.lastRunTime`/`lastRunSnapshotCount`/`lastRunError`/`nextRunTime`
    are patched once, after every match has been attempted -- a schedule
    matching zero Machines still gets `lastRunTime`/`nextRunTime` patched,
    so it doesn't re-fire every tick forever waiting for a Machine that may
@@ -260,6 +343,10 @@ Each reconcile tick:
    is logged and counted
    (`kairon_reconcile_item_errors_total{kind="snapshotschedule"}`) but
    never stops the rest of that schedule's matches from being attempted.
+   A run that satisfied step 1's manual trigger also gets
+   `status.lastHandledTriggerTime` set to the request's value in this same
+   patch, so it's never re-fired on a later tick -- see "Running one right
+   now" above.
 
 ## Real limits today (first cut)
 
@@ -287,8 +374,17 @@ Each reconcile tick:
   page shows every schedule and its last-run status (including a skipped
   run's `lastRunError`, in the **Last error** column), and can toggle
   `spec.suspend` with a click -- but editing `selector`/`intervalSeconds`/
-  `keepLast`/`volumeSnapshotClassName`/`startingDeadlineSeconds`, or
-  creating/deleting a schedule, still needs `kaironctl`/`kubectl`.
+  `keepLast`/`volumeSnapshotClassName`/`startingDeadlineSeconds`, requesting
+  a manual run, or creating/deleting a schedule, still needs
+  `kaironctl`/`kubectl`.
+- **Manual trigger request is `kaironctl`/`kubectl annotate`-only, no
+  dashboard button yet.** `kaironctl trigger snapshotschedule NAME` (or
+  hand-annotating with `kubectl annotate --overwrite`) is the only way to
+  ask for one today. The request also waits for the next reconcile tick
+  like everything else in this CRD -- there's no synchronous "wait for it
+  to actually finish" mode; check `status.lastRunTime`/
+  `lastHandledTriggerTime` (or just watch for the new `MachineSnapshot`)
+  to see it land.
 - **`startingDeadlineSeconds` only ever skips a whole due window, never
   partially.** If a schedule matches 5 Machines and the run is found too
   late, all 5 are skipped together for that window -- there's no

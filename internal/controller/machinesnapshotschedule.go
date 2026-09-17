@@ -14,12 +14,13 @@ import (
 )
 
 // reconcileMachineSnapshotSchedules lists every MachineSnapshotSchedule and,
-// for each one Due, creates a MachineSnapshot for every Machine matching its
-// Selector -- mirrors reconcileDisruptionBudgetsStatus's own "list all,
-// compute, patch status" shape (disruption.go), plus the actual
-// object-creation side-effect a pure status reconciler doesn't have. Tolerant
-// of the CRD not being installed, like every other optional CRD kind in this
-// reconcile loop. A create failure for one Machine is logged and counted
+// for each one Due (or manually triggered -- see below), creates a
+// MachineSnapshot for every Machine matching its Selector -- mirrors
+// reconcileDisruptionBudgetsStatus's own "list all, compute, patch status"
+// shape (disruption.go), plus the actual object-creation side-effect a pure
+// status reconciler doesn't have. Tolerant of the CRD not being installed,
+// like every other optional CRD kind in this reconcile loop. A create
+// failure for one Machine is logged and counted
 // (kairon_reconcile_item_errors_total{kind="snapshotschedule"}), never fails
 // the whole tick or skips the rest of that schedule's matches.
 //
@@ -32,6 +33,19 @@ import (
 // opt-in behavior; startingDeadlineSeconds unset (0, the default) never
 // takes this branch, preserving the original always-fire-once-due behavior
 // for every existing schedule.
+//
+// A schedule carrying an unhandled AnnotationSnapshotScheduleTriggerNow
+// request (model.TriggerNowRequested) is a fourth outcome, checked first,
+// ahead of Due/DeadlineExceeded entirely: it fires exactly like a normal due
+// run (same per-Machine create loop, same spec.keepLast pruning), but
+// bypasses BOTH spec.suspend and spec.startingDeadlineSeconds -- "run this
+// right now" is never "too late", and a paused schedule can still be asked
+// for one snapshot without permanently unpausing it first. It cannot fire
+// twice for the same request: the handled annotation value is copied into
+// status.lastHandledTriggerTime in the same status patch, so an unchanged
+// annotation is no longer an outstanding request on the next tick. A
+// schedule that's both manually triggered and separately Due this same tick
+// still only fires once, not twice.
 func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, machines []model.Machine) error {
 	schedules, err := c.Kube.ListMachineSnapshotSchedules(ctx)
 	if err != nil {
@@ -42,10 +56,12 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 	}
 	now := time.Now()
 	for _, sched := range schedules {
-		if !sched.Spec.Due(sched.Status.LastRunTime, now) {
+		triggerRequest := sched.Metadata.Annotations[model.AnnotationSnapshotScheduleTriggerNow]
+		manual := model.TriggerNowRequested(triggerRequest, sched.Status.LastHandledTriggerTime)
+		if !manual && !sched.Spec.Due(sched.Status.LastRunTime, now) {
 			continue
 		}
-		if sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now) {
+		if !manual && sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now) {
 			c.Log.Warn("scheduled snapshot run skipped: starting deadline exceeded", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "startingDeadlineSeconds", sched.Spec.StartingDeadlineSeconds)
 			status := model.MachineSnapshotScheduleStatus{
 				LastRunTime:          now,
@@ -57,6 +73,9 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 				c.Log.Error("machine snapshot schedule status patch failed", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", statusErr)
 			}
 			continue
+		}
+		if manual {
+			c.Log.Info("scheduled snapshot run manually triggered", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name)
 		}
 		count := 0
 		var firstErr error
@@ -94,6 +113,14 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 		status := model.MachineSnapshotScheduleStatus{LastRunTime: now, LastRunSnapshotCount: count, NextRunTime: sched.Spec.NextRunAfter(now)}
 		if firstErr != nil {
 			status.LastRunError = firstErr.Error()
+		}
+		if manual {
+			// Recorded in the SAME patch as the run it satisfies -- never a
+			// separate write -- so a crash between "fired" and "marked
+			// handled" can't happen: either both landed, or neither did (in
+			// which case the next tick just sees the same unhandled request
+			// and correctly retries).
+			status.LastHandledTriggerTime = triggerRequest
 		}
 		if statusErr := c.Kube.PatchMachineSnapshotScheduleStatus(ctx, sched.Namespace(), sched.Metadata.Name, status); statusErr != nil {
 			c.Log.Error("machine snapshot schedule status patch failed", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", statusErr)

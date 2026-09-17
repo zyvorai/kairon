@@ -119,6 +119,53 @@ func TestMachineSnapshotScheduleSpecDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestTriggerNowRequested(t *testing.T) {
+	tests := []struct {
+		name            string
+		annotationValue string
+		lastHandled     string
+		want            bool
+	}{
+		{
+			name:            "no annotation at all is never a request",
+			annotationValue: "",
+			lastHandled:     "",
+			want:            false,
+		},
+		{
+			name:            "annotation set, never handled before is a request",
+			annotationValue: "2026-01-01T12:00:00Z",
+			lastHandled:     "",
+			want:            true,
+		},
+		{
+			name:            "annotation matches the last handled value is already handled",
+			annotationValue: "2026-01-01T12:00:00Z",
+			lastHandled:     "2026-01-01T12:00:00Z",
+			want:            false,
+		},
+		{
+			name:            "annotation changed to a new value after a previous one was handled is a new request",
+			annotationValue: "2026-01-02T09:00:00Z",
+			lastHandled:     "2026-01-01T12:00:00Z",
+			want:            true,
+		},
+		{
+			name:            "annotation removed after being handled is never a request",
+			annotationValue: "",
+			lastHandled:     "2026-01-01T12:00:00Z",
+			want:            false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TriggerNowRequested(tc.annotationValue, tc.lastHandled); got != tc.want {
+				t.Errorf("TriggerNowRequested(%q, %q) = %v, want %v", tc.annotationValue, tc.lastHandled, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMachineSnapshotScheduleSpecNextRunAfter(t *testing.T) {
 	firedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

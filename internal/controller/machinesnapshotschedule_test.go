@@ -401,6 +401,139 @@ func TestReconcileMachineSnapshotSchedulesPruningDeletesOnlyOldestReadyOwnSnapsh
 	}
 }
 
+// TestReconcileMachineSnapshotSchedulesManualTriggerFiresRegardlessOfSuspend
+// confirms the core value proposition of a manual trigger: a schedule an
+// operator has paused can still be asked for one snapshot right now,
+// without permanently unpausing it -- the annotation bypasses spec.suspend
+// entirely, and status.lastHandledTriggerTime is set to the exact
+// annotation value in the same patch as the run it satisfies.
+func TestReconcileMachineSnapshotSchedulesManualTriggerFiresRegardlessOfSuspend(t *testing.T) {
+	var created []string
+	var patchedStatus model.MachineSnapshotScheduleStatus
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			sched := snapshotSchedule("hourly", time.Now(), 3600) // just ran -- would NOT be due on its own
+			sched.Spec.Suspend = true                             // AND suspended -- would never be due at all
+			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			var s model.MachineSnapshot
+			_ = json.NewDecoder(r.Body).Decode(&s)
+			created = append(created, s.Spec.MachineName)
+			_ = json.NewEncoder(w).Encode(s)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			var body map[string]model.MachineSnapshotScheduleStatus
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			patchedStatus = body["status"]
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("created = %v, want 1 (a manual trigger must fire even though the schedule is suspended and not otherwise due)", created)
+	}
+	if patchedStatus.LastHandledTriggerTime != "2026-01-01T12:00:00Z" {
+		t.Fatalf("LastHandledTriggerTime = %q, want the handled annotation value", patchedStatus.LastHandledTriggerTime)
+	}
+	if patchedStatus.LastRunSnapshotCount != 1 {
+		t.Fatalf("LastRunSnapshotCount = %d, want 1", patchedStatus.LastRunSnapshotCount)
+	}
+}
+
+// TestReconcileMachineSnapshotSchedulesManualTriggerAlreadyHandledDoesNothing
+// confirms a trigger annotation whose value already matches
+// status.lastHandledTriggerTime is NOT treated as a new request -- without
+// this, a schedule would re-fire every single reconcile tick forever after
+// just one manual trigger, since the annotation is never cleared by
+// kaironctl/kubectl on its own.
+func TestReconcileMachineSnapshotSchedulesManualTriggerAlreadyHandledDoesNothing(t *testing.T) {
+	var createCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			sched := snapshotSchedule("hourly", time.Now(), 3600) // not otherwise due
+			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
+			sched.Status.LastHandledTriggerTime = "2026-01-01T12:00:00Z" // this exact request was already handled
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			createCalled = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if createCalled {
+		t.Fatal("expected no MachineSnapshot to be created for a trigger request that was already handled")
+	}
+}
+
+// TestReconcileMachineSnapshotSchedulesManualTriggerBypassesStartingDeadline
+// confirms a manual trigger never takes the startingDeadlineSeconds skip
+// branch, even when the schedule is independently very overdue -- "run
+// right now" has no "too late" to miss.
+func TestReconcileMachineSnapshotSchedulesManualTriggerBypassesStartingDeadline(t *testing.T) {
+	var created []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+			sched := snapshotSchedule("hourly", time.Now().Add(-24*time.Hour), 60) // very overdue
+			sched.Spec.StartingDeadlineSeconds = 300
+			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+			var s model.MachineSnapshot
+			_ = json.NewDecoder(r.Body).Decode(&s)
+			created = append(created, s.Spec.MachineName)
+			_ = json.NewEncoder(w).Encode(s)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	machines := []model.Machine{webMachine("web-1", "node-a", "Running")}
+	if err := ctl.reconcileMachineSnapshotSchedules(context.Background(), machines); err != nil {
+		t.Fatalf("reconcileMachineSnapshotSchedules: %v", err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("created = %v, want 1 (a manual trigger must fire even though the schedule is also past its own startingDeadlineSeconds)", created)
+	}
+}
+
 func TestPruneScheduledSnapshotsNoOpBelowKeepLast(t *testing.T) {
 	var deleteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
