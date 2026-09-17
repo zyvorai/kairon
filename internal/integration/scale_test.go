@@ -140,6 +140,27 @@ func (c *genericCluster) handler() http.Handler {
 				}
 			}
 			http.NotFound(w, r)
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/machinesets/"):
+			// Finalizer add/remove -- reconcileMachineSet adds
+			// FinalizerMachineSet on its first pass over a MachineSet, and
+			// reconcileMachineSetDeletion clears it once every owned Machine
+			// is actually gone.
+			ns, name, ok := splitNamespacedObjectPath(r.URL.Path, "machinesets")
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			for i := range c.machineSets {
+				if c.machineSets[i].Namespace() == ns && c.machineSets[i].Metadata.Name == name {
+					if err := applyMergePatch(r, &c.machineSets[i]); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+			}
+			http.NotFound(w, r)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}

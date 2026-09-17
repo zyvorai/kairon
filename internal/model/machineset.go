@@ -22,6 +22,17 @@ const (
 	LabelMachineSetTemplateHash = "kairon.zyvor.dev/machineset-template-hash"
 )
 
+// FinalizerMachineSet guards a MachineSet's own deletion until every
+// Machine it owns (LabelMachineSet match) is actually gone -- see
+// internal/controller/machineset.go's reconcileMachineSetDeletion. Needed
+// for exactly the reason LabelMachineSet's own doc comment gives: this
+// project has no ownerReference/garbage-collection to cascade a delete
+// through on its own, so without an explicit finalizer a deleted
+// MachineSet would simply vanish from Kubernetes while every replica it
+// created (and each one's own FluxVM VM) kept running underneath it,
+// orphaned.
+const FinalizerMachineSet = "kairon.zyvor.dev/machineset-cleanup"
+
 // MachineSet is a Deployment/ReplicaSet-shaped abstraction over the
 // Machine CRD: kairon-controller creates/deletes plain Machine objects
 // (internal/controller/machineset.go) to match Spec.Replicas, each built

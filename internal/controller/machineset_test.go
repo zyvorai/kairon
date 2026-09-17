@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
@@ -20,15 +21,17 @@ import (
 )
 
 // machineSetTestServer is a minimal fake apiserver serving exactly what
-// reconcileMachineSet calls: creating/deleting Machines and patching a
-// MachineSet's status. Mirrors cordonTestServer's own inline-httptest
-// convention.
+// reconcileMachineSet calls: creating/deleting Machines, patching a
+// MachineSet's status, and patching a MachineSet's own finalizers. Mirrors
+// cordonTestServer's own inline-httptest convention.
 type machineSetTestServer struct {
-	mu       sync.Mutex
-	created  []model.Machine
-	deleted  []string
-	patched  model.MachineSetStatus
-	hadPatch bool
+	mu                sync.Mutex
+	created           []model.Machine
+	deleted           []string
+	patched           model.MachineSetStatus
+	hadPatch          bool
+	finalizerPatches  [][]string
+	finalizerPatchErr bool
 }
 
 func newMachineSetTestController(t *testing.T) (*Controller, *machineSetTestServer) {
@@ -54,6 +57,19 @@ func newMachineSetTestController(t *testing.T) (*Controller, *machineSetTestServ
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			fake.patched = body.Status
 			fake.hadPatch = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesets/ms1":
+			if fake.finalizerPatchErr {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			var body struct {
+				Metadata struct {
+					Finalizers []string `json:"finalizers"`
+				} `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			fake.finalizerPatches = append(fake.finalizerPatches, body.Metadata.Finalizers)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -146,6 +162,177 @@ func TestReconcileMachineSetIgnoresMachinesFromOtherSets(t *testing.T) {
 	}
 	if len(fake.created) != 1 || len(fake.deleted) != 0 {
 		t.Fatalf("expected exactly 1 create and no deletes (unrelated Machine untouched), got created=%d deleted=%d", len(fake.created), len(fake.deleted))
+	}
+}
+
+// TestReconcileMachineSetAddsFinalizerOnFirstReconcile proves a MachineSet
+// with no FinalizerMachineSet yet gets one patched on, before this project's
+// missing ownerReference/garbage-collection mechanism could otherwise let a
+// delete of it slip past reconcileMachineSetDeletion's own fail-closed
+// cascade entirely.
+func TestReconcileMachineSetAddsFinalizerOnFirstReconcile(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := testMachineSet(1, "", "")
+	if _, err := ctl.reconcileMachineSet(context.Background(), ms, nil); err != nil {
+		t.Fatalf("reconcileMachineSet: %v", err)
+	}
+	if len(fake.finalizerPatches) != 1 || len(fake.finalizerPatches[0]) != 1 || fake.finalizerPatches[0][0] != model.FinalizerMachineSet {
+		t.Fatalf("expected exactly one finalizer patch adding %q, got %v", model.FinalizerMachineSet, fake.finalizerPatches)
+	}
+}
+
+// TestReconcileMachineSetSkipsFinalizerPatchWhenAlreadyPresent proves a
+// MachineSet that already carries FinalizerMachineSet (every subsequent
+// tick, in practice) never re-patches it -- the same "add once" shape every
+// other finalizer-guarded reconcile loop in this project (reconcileSecurityGroup,
+// reconcileMachineNetworkPolicy) already follows.
+func TestReconcileMachineSetSkipsFinalizerPatchWhenAlreadyPresent(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := testMachineSet(1, "", "")
+	ms.Metadata.Finalizers = []string{model.FinalizerMachineSet}
+	if _, err := ctl.reconcileMachineSet(context.Background(), ms, nil); err != nil {
+		t.Fatalf("reconcileMachineSet: %v", err)
+	}
+	if len(fake.finalizerPatches) != 0 {
+		t.Fatalf("expected no finalizer patch when already present, got %v", fake.finalizerPatches)
+	}
+}
+
+func deletingMachineSet(finalizers ...string) model.MachineSet {
+	now := time.Now().UTC()
+	return model.MachineSet{
+		Metadata: model.ObjectMeta{Name: "ms1", Namespace: "prod", Finalizers: finalizers, DeletionTimestamp: &now},
+		Spec:     model.MachineSetSpec{Replicas: 1},
+	}
+}
+
+// TestReconcileMachineSetDeletionDeletesEveryOwnedMachine proves the core
+// cascade: a MachineSet being deleted with FinalizerMachineSet still set
+// deletes every Machine carrying its LabelMachineSet label, not just leaves
+// them running orphaned once the MachineSet itself is gone.
+func TestReconcileMachineSetDeletionDeletesEveryOwnedMachine(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := deletingMachineSet(model.FinalizerMachineSet)
+	owned := []model.Machine{ownedMachine("ms1-a", "h", "Running"), ownedMachine("ms1-b", "h", "Running")}
+	ctl.reconcileMachineSetDeletion(context.Background(), ms, owned)
+	if len(fake.deleted) != 2 {
+		t.Fatalf("expected both owned Machines deleted, got %v", fake.deleted)
+	}
+	// Neither owned Machine actually vanished from this tick's own listing
+	// yet (DeleteMachine only requests deletion -- each Machine's own
+	// runtime-cleanup finalizer keeps it around until kairon-node tears down
+	// its FluxVM VM), so the MachineSet's own finalizer must not clear yet.
+	if len(fake.finalizerPatches) != 0 {
+		t.Fatalf("expected the finalizer left in place until owned Machines are actually gone, got patch %v", fake.finalizerPatches)
+	}
+}
+
+// TestReconcileMachineSetDeletionRemovesFinalizerOnceNoOwnedMachinesRemain
+// is the completion case: once a fresh Machine listing shows none of this
+// MachineSet's owned Machines exist any more, the finalizer clears and the
+// object can finally leave Kubernetes.
+func TestReconcileMachineSetDeletionRemovesFinalizerOnceNoOwnedMachinesRemain(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := deletingMachineSet(model.FinalizerMachineSet)
+	ctl.reconcileMachineSetDeletion(context.Background(), ms, nil)
+	if len(fake.deleted) != 0 {
+		t.Fatalf("expected no delete calls with no owned Machines left, got %v", fake.deleted)
+	}
+	if len(fake.finalizerPatches) != 1 || len(fake.finalizerPatches[0]) != 0 {
+		t.Fatalf("expected the finalizer removed, got %v", fake.finalizerPatches)
+	}
+}
+
+// TestReconcileMachineSetDeletionSkipsMachinesAlreadyBeingDeleted proves an
+// owned Machine whose own deletion is already in flight (DeletionTimestamp
+// already set, e.g. a prior tick's DeleteMachine call, or someone deleted
+// it directly) is never re-deleted -- but still counts toward "owned
+// Machines remain," keeping the MachineSet's own finalizer in place until
+// it's actually gone.
+func TestReconcileMachineSetDeletionSkipsMachinesAlreadyBeingDeleted(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := deletingMachineSet(model.FinalizerMachineSet)
+	now := time.Now().UTC()
+	alreadyDeleting := ownedMachine("ms1-a", "h", "Running")
+	alreadyDeleting.Metadata.DeletionTimestamp = &now
+	ctl.reconcileMachineSetDeletion(context.Background(), ms, []model.Machine{alreadyDeleting})
+	if len(fake.deleted) != 0 {
+		t.Fatalf("expected no redundant DeleteMachine call, got %v", fake.deleted)
+	}
+	if len(fake.finalizerPatches) != 0 {
+		t.Fatal("expected the finalizer left in place while the already-deleting Machine is still listed")
+	}
+}
+
+// TestReconcileMachineSetDeletionKeepsFinalizerOnDeleteError proves the
+// fail-closed shape: a genuine DeleteMachine failure must leave
+// FinalizerMachineSet in place (no finalizer-removal patch observed)
+// rather than let the MachineSet vanish from Kubernetes while an owned
+// Machine it never got around to deleting keeps running, unmanaged --
+// mirrors TestReconcileSecurityGroupDeletionKeepsFinalizerOnDeleteError
+// (internal/agent/network_test.go).
+func TestReconcileMachineSetDeletionKeepsFinalizerOnDeleteError(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	fake.mu.Lock()
+	fake.finalizerPatchErr = false
+	fake.mu.Unlock()
+	ms := deletingMachineSet(model.FinalizerMachineSet)
+	// Two owned Machines, but only the underlying server accepts deletes
+	// for "ms1-a" -- "ms1-b" always 404s, simulating a genuine per-Machine
+	// delete failure.
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/ms1-a" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(broken.Close)
+	kc, err := kube.New(broken.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = broken.Client()
+	ctl.Kube = kc
+
+	owned := []model.Machine{ownedMachine("ms1-a", "h", "Running"), ownedMachine("ms1-b", "h", "Running")}
+	ctl.reconcileMachineSetDeletion(context.Background(), ms, owned)
+	if len(fake.finalizerPatches) != 0 {
+		t.Fatal("expected the finalizer left in place after a genuine delete failure")
+	}
+}
+
+// TestReconcileMachineSetDeletionIgnoresMachineSetWithoutFinalizer proves a
+// MachineSet that never carried FinalizerMachineSet in the first place
+// (e.g. deleted in the same tick it was created, before reconcileMachineSet
+// ever got to add it) doesn't attempt any cascade -- nothing to fail closed
+// on, the same "never had it" no-op reconcileMachineNetworkPolicy's own
+// deletion path already takes.
+func TestReconcileMachineSetDeletionIgnoresMachineSetWithoutFinalizer(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := deletingMachineSet() // no finalizers at all
+	owned := []model.Machine{ownedMachine("ms1-a", "h", "Running")}
+	ctl.reconcileMachineSetDeletion(context.Background(), ms, owned)
+	if len(fake.deleted) != 0 || len(fake.finalizerPatches) != 0 {
+		t.Fatalf("expected no delete or finalizer patch, got deleted=%v finalizerPatches=%v", fake.deleted, fake.finalizerPatches)
+	}
+}
+
+// TestReconcileMachineSetsCascadesDeletionThroughTopLevelEntryPoint proves
+// reconcileMachineSets (not just reconcileMachineSetDeletion directly)
+// routes a MachineSet with a DeletionTimestamp to the cascade path instead
+// of silently skipping it -- the actual bug this whole cascade closes: the
+// previous behavior was a bare `continue` for any MachineSet being deleted.
+func TestReconcileMachineSetsCascadesDeletionThroughTopLevelEntryPoint(t *testing.T) {
+	ctl, fake := newMachineSetTestController(t)
+	ms := deletingMachineSet(model.FinalizerMachineSet)
+	owned := []model.Machine{ownedMachine("ms1-a", "h", "Running")}
+	ctl.reconcileMachineSets(context.Background(), []model.MachineSet{ms}, owned)
+	if len(fake.deleted) != 1 || fake.deleted[0] != "ms1-a" {
+		t.Fatalf("expected reconcileMachineSets to cascade-delete the owned Machine, got %v", fake.deleted)
+	}
+	if fake.hadPatch {
+		t.Fatal("a MachineSet being deleted must never receive a status patch (it's not the normal reconcile path)")
 	}
 }
 

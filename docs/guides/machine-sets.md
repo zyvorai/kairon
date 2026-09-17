@@ -70,6 +70,22 @@ separately count matching Machines by hand -- `kairon-ui`'s own "Machine
 sets" dashboard page (read-only, `GET /api/v1/machinesets`) shows the same
 thing.
 
+## Deleting a MachineSet deletes its replicas too
+
+`kubectl delete machineset`/`kaironctl delete machineset` deletes every
+Machine it owns along with it -- Kairon has no Kubernetes
+ownerReference/garbage-collection mechanism to do this for free (no
+`client-go` dependency anywhere in this project to drive one), so
+`kairon-controller` does it explicitly: a `kairon.zyvor.dev/machineset-cleanup`
+finalizer holds the `MachineSet` object in Kubernetes until every Machine
+still carrying its `kairon.zyvor.dev/machineset` label is actually gone
+(not merely deletion-requested -- each Machine's own runtime-cleanup
+finalizer keeps it around for a few more ticks while `kairon-node` tears
+down its FluxVM VM). A single stuck Machine delete leaves the `MachineSet`
+in `Terminating` and is retried every tick from a fresh Machine listing,
+the same fail-closed shape `NetworkSecurityGroup`/`MachineNetworkPolicy`
+deletion already uses.
+
 ## How replicas are reconciled
 
 Every reconcile tick, for each `MachineSet`:

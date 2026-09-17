@@ -20,8 +20,11 @@ const defaultMachineSetMaxUnavailable = "1"
 
 // reconcileMachineSets creates/deletes Machine objects to bring every
 // MachineSet's owned replicas in line with its spec -- see
-// reconcileMachineSet for the per-object logic. Uses the machines this
-// tick's Reconcile already listed; no separate API call for them.
+// reconcileMachineSet for the per-object logic -- and cascades a
+// MachineSet's own deletion to every Machine it owns (see
+// reconcileMachineSetDeletion) rather than leaving them behind, orphaned.
+// Uses the machines this tick's Reconcile already listed; no separate API
+// call for them.
 //
 // observed carries each MachineSet with the fresh replicas/readyReplicas/
 // updatedReplicas tally reconcileMachineSet just computed from this same
@@ -38,6 +41,7 @@ func (c *Controller) reconcileMachineSets(ctx context.Context, machineSets []mod
 	observed := make([]model.MachineSet, 0, len(machineSets))
 	for _, ms := range machineSets {
 		if ms.Metadata.DeletionTimestamp != nil {
+			c.reconcileMachineSetDeletion(ctx, ms, machines)
 			continue
 		}
 		status, err := c.reconcileMachineSet(ctx, ms, machines)
@@ -80,6 +84,64 @@ func ownedMachines(ms model.MachineSet, machines []model.Machine) []model.Machin
 		}
 	}
 	return owned
+}
+
+// reconcileMachineSetDeletion cascades a MachineSet's own deletion to every
+// Machine it owns. This project has no ownerReference/garbage-collection
+// mechanism to do this for free (see LabelMachineSet's own doc comment) --
+// without this, deleting a MachineSet would simply remove that one
+// Kubernetes object while every replica it created (each one a real,
+// independently-running FluxVM VM, per MachineSet's own doc comment) kept
+// running underneath it, orphaned: no MachineSet left to scale, roll out,
+// or account for them, yet each replica's own resources (quota usage,
+// attached volumes, network policy, ...) keep being consumed indefinitely.
+//
+// Fails closed exactly like every other finalizer-guarded delete in this
+// project (reconcileSecurityGroup, reconcileMachineNetworkPolicy,
+// Agent.cleanup): FinalizerMachineSet is only removed once every Machine
+// still carrying this MachineSet's LabelMachineSet label is actually gone,
+// not merely deletion-requested -- a Machine's own runtime-cleanup
+// finalizer (internal/agent) can keep it around for several more ticks
+// after DeleteMachine is called, and a MachineSet whose finalizer cleared
+// early would vanish from Kubernetes while that Machine (and its FluxVM VM)
+// was still very much alive. A DeleteMachine failure on one owned Machine
+// leaves the finalizer in place and returns without touching the rest this
+// tick -- retried whole, from the same live listing, next tick -- rather
+// than silently skip over the one that failed.
+func (c *Controller) reconcileMachineSetDeletion(ctx context.Context, ms model.MachineSet, machines []model.Machine) {
+	if !model.HasFinalizerList(ms.Metadata.Finalizers, model.FinalizerMachineSet) {
+		// Never carried the finalizer (created before this existed, or the
+		// initial finalizer-add patch never landed before delete) -- nothing
+		// to fail closed on, exactly like reconcileMachineNetworkPolicy's own
+		// deletion path handles the equivalent case.
+		return
+	}
+	var owned []model.Machine
+	for _, m := range machines {
+		if m.Namespace() == ms.Namespace() && m.Metadata.Labels[model.LabelMachineSet] == ms.Metadata.Name {
+			owned = append(owned, m)
+		}
+	}
+	for _, m := range owned {
+		if m.Metadata.DeletionTimestamp != nil {
+			continue // already being torn down; nothing more to do for it this tick
+		}
+		if err := c.Kube.DeleteMachine(ctx, m.Namespace(), m.Metadata.Name); err != nil {
+			c.Log.Error("machineset deletion: delete owned machine failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "machine", m.Metadata.Name, "error", err)
+			return
+		}
+	}
+	if len(owned) > 0 {
+		// At least one owned Machine still exists (even if every DeleteMachine
+		// call above just succeeded) -- its own finalizer means it isn't gone
+		// from Kubernetes yet. Leave FinalizerMachineSet in place and let a
+		// later tick's fresh Machine listing notice once it truly is.
+		return
+	}
+	finals := model.RemoveFinalizer(ms.Metadata.Finalizers, model.FinalizerMachineSet)
+	if err := c.Kube.PatchMachineSet(ctx, ms.Namespace(), ms.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+		c.Log.Error("machineset deletion: finalizer removal failed", "namespace", ms.Namespace(), "machineset", ms.Metadata.Name, "error", err)
+	}
 }
 
 // reconcileMachineSet advances one MachineSet by exactly one step per
@@ -133,6 +195,18 @@ func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSe
 		Replicas:        len(owned),
 		ReadyReplicas:   readyCurrent,
 		UpdatedReplicas: len(current),
+	}
+
+	// Added once, before any owned Machine is ever created -- guarantees
+	// reconcileMachineSetDeletion's own cascade always has a finalizer to
+	// fail closed on by the time a delete could arrive, the same
+	// finalizer-before-first-mutation ordering reconcileSecurityGroup already
+	// uses.
+	if !model.HasFinalizerList(ms.Metadata.Finalizers, model.FinalizerMachineSet) {
+		finals := append(append([]string{}, ms.Metadata.Finalizers...), model.FinalizerMachineSet)
+		if err := c.Kube.PatchMachineSet(ctx, ms.Namespace(), ms.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+			return status, fmt.Errorf("add machineset finalizer: %w", err)
+		}
 	}
 
 	if err := c.stepMachineSetToward(ctx, ms, hash, strategy, desired, current, outdated, readyCurrent); err != nil {
