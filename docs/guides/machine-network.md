@@ -135,6 +135,15 @@ spec:
         weight: 1
 ```
 
+Membership is removed again the moment this Machine's guest stops being
+reachable: deleting the Machine, or setting `spec.powerState` to `Stopped`
+or `Halted`, all deregister its backend entry from every VIP listed here
+before the operation completes. This is fail-closed, not best-effort — a
+Machine stuck unable to reach FluxVM to deregister stays around (deletion)
+or keeps reporting its last real status (stop/halt) rather than silently
+finishing while a dead backend, or one a completely different Machine's
+DHCP-reused guest IP later inherits, is left registered against the VIP.
+
 ## Status
 
 | Field | Meaning |

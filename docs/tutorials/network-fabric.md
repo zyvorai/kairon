@@ -97,6 +97,9 @@ kubectl delete -f examples/network-fabric-machine.yaml
 
 Deleting `MachineNetworkPolicy` resets matched VMs to `default_allow: true`.
 Deleting `NetworkSecurityGroup` removes the FluxVM group on that node.
+Deleting the `Machine` (or setting its `spec.powerState` to `Stopped`/
+`Halted`) also removes its backend entry from `web-vip` above, so the VIP
+never keeps routing traffic at a guest that is no longer there.
 
 ## Next
 

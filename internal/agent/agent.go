@@ -366,6 +366,16 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 			return err
 		}
 	}
+	// Deregister before status.guestIP is cleared below -- once it's gone
+	// from status there's nothing left to tell FluxVM's Service Fabric to
+	// remove. Fails closed: a real error here returns before the status
+	// patch below runs, so this Machine keeps reporting its old Running
+	// status (not falsely Stopped) and gets retried next tick rather than
+	// silently leaving a now-dead backend registered. See
+	// deregisterServiceFabric's own doc comment.
+	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+		return fmt.Errorf("deregister service fabric membership: %w", err)
+	}
 	status := m.Status
 	status.Phase = "Stopped"
 	status.NodeName = a.NodeName
@@ -447,6 +457,14 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 			return err
 		}
 	}
+	// Same reasoning and fail-closed posture as ensureStopped's own call:
+	// Halted's guest is powered off just the same (only the runtime
+	// record is kept, for a plain Start back to Running), so it's just as
+	// stale a Service Fabric backend once status.guestIP below is
+	// cleared. See deregisterServiceFabric's own doc comment.
+	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+		return fmt.Errorf("deregister service fabric membership: %w", err)
+	}
 	// Deliberately not normalizePhase(rec.Status) -- FluxVM's own Stop
 	// reports the same raw status ("stopped"/"exited") ensureStopped's
 	// full-teardown path does, but Halted keeps the runtime record (and
@@ -514,6 +532,14 @@ func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
 	// spec.image.path, or a hostPath/local-backed volume.
 	if err := a.teardownCSIVolume(ctx, m); err != nil {
 		return fmt.Errorf("tear down CSI volume: %w", err)
+	}
+	// Same fail-closed posture as the FluxVM runtime delete and CSI
+	// teardown above: a real deregistration error leaves the finalizer in
+	// place rather than letting this Machine vanish from Kubernetes while
+	// its guest IP stays a live backend behind a Service Fabric VIP. See
+	// deregisterServiceFabric's own doc comment.
+	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+		return fmt.Errorf("deregister service fabric membership: %w", err)
 	}
 	var finals []string
 	for _, f := range m.Metadata.Finalizers {

@@ -390,6 +390,47 @@ func (c *Client) UpsertNetworkService(ctx context.Context, spec ServiceSpec) err
 	return err
 }
 
+// GetNetworkServiceIfExists is GetNetworkService's deregistration-path
+// counterpart: a service that's already gone (404 -- deleted
+// independently of any Machine, or simply never created) is nothing
+// left to deregister a backend from, so this returns (nil, nil) rather
+// than an error. GetNetworkService itself keeps treating any error, 404
+// included, as fatal -- reconcileServiceFabric's registration path
+// (internal/agent/network.go) wants joining a VIP that doesn't exist
+// surfaced as the real misconfiguration it is, not silently ignored.
+// Hand-rolled rather than routed through do(), same reasoning as
+// DeleteNetworkGroup above: do() treats every non-2xx, 404 included, as
+// an error.
+func (c *Client) GetNetworkServiceIfExists(ctx context.Context, name string) (*ServiceSpec, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v1/network/services/"+url.PathEscape(name), nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fluxvm GET /v1/network/services/%s: HTTP %d: %s", name, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var out ServiceSpec
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode network service: %w", err)
+	}
+	return &out, nil
+}
+
 func (c *Client) NetworkMigrationQuiesce(ctx context.Context, id string) error {
 	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/network/migration/quiesce", map[string]any{})
 	return err

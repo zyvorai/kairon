@@ -325,3 +325,72 @@ func (a *Agent) reconcileServiceFabric(ctx context.Context, m model.Machine, gue
 	}
 	return nil
 }
+
+// deregisterServiceFabric removes guestIP from every ServiceFabricMembership
+// backend list declared in m.Spec.ServiceFabric -- the inverse of
+// reconcileServiceFabric's upsert above. Called from cleanup (Machine
+// deletion), ensureStopped (spec.powerState: Stopped) and ensureHalted
+// (spec.powerState: Halted): the three places a Machine's guest is gone
+// for good without reconcileServiceFabric itself ever running again to
+// notice -- cleanup's Machine object is about to vanish from Kubernetes
+// entirely, and ensureStopped/ensureHalted both clear status.guestIP,
+// leaving nothing afterwards to reconcile membership against. Left
+// alone, FluxVM's Service Fabric
+// VIP keeps routing live traffic at an address that now answers with
+// nothing (Stopped), or -- worse, since guest addresses are commonly
+// DHCP-leased and get reused -- at a completely unrelated Machine that
+// later boots into that same address and silently inherits this one's
+// stale membership.
+//
+// Fails closed like every other FluxVM-side cleanup step in this file
+// (reconcileSecurityGroup's delete, reconcileMachineNetworkPolicy's
+// reset): a genuine deregistration error is returned to the caller, so
+// cleanup's finalizer removal / ensureStopped's status patch never
+// completes and this is retried again next tick, rather than silently
+// leaking the backend entry forever. A service that's already gone, or
+// a backend already removed (a prior tick's retry, or one that was
+// never registered because guestIP was empty for this Machine's whole
+// life), is nothing left to do -- not an error.
+//
+// Known limitation, same shape as policySelectsMachine's own
+// current-spec-only view: this reads m.Spec.ServiceFabric.Services as
+// it is *now*, at delete/stop time. A membership removed from spec
+// while the Machine kept running (without ever being deleted or
+// stopped since) was never deregistered by anything -- reconcileServiceFabric
+// only ever adds/updates, it doesn't prune stale entries either -- so
+// that backend can already be stale before this function is ever
+// reached. Closing that separate gap would mean giving reconcile a
+// record of prior membership to diff against; out of scope here.
+func (a *Agent) deregisterServiceFabric(ctx context.Context, m model.Machine, guestIP string) error {
+	if len(m.Spec.ServiceFabric.Services) == 0 || guestIP == "" {
+		return nil
+	}
+	for _, mem := range m.Spec.ServiceFabric.Services {
+		name := strings.TrimSpace(mem.Name)
+		if name == "" {
+			continue
+		}
+		svc, err := a.Flux.GetNetworkServiceIfExists(ctx, name)
+		if err != nil {
+			return fmt.Errorf("get service %s: %w", name, err)
+		}
+		if svc == nil {
+			continue
+		}
+		idx := -1
+		for i := range svc.Backends {
+			if svc.Backends[i].Address == guestIP && svc.Backends[i].Port == mem.Port {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			continue
+		}
+		svc.Backends = append(svc.Backends[:idx], svc.Backends[idx+1:]...)
+		if err := a.Flux.UpsertNetworkService(ctx, *svc); err != nil {
+			return fmt.Errorf("deregister service %s membership: %w", name, err)
+		}
+	}
+	return nil
+}

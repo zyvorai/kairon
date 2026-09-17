@@ -349,6 +349,384 @@ func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
 	}
 }
 
+// TestDeregisterServiceFabricRemovesOnlyTheMatchingBackend proves
+// deregisterServiceFabric's own backend-list surgery: it removes exactly
+// the (address, port) pair belonging to this Machine and leaves every
+// other backend on the service (including a different port on the same
+// address) untouched.
+func TestDeregisterServiceFabricRemovesOnlyTheMatchingBackend(t *testing.T) {
+	var posted fluxvm.ServiceSpec
+	var postSeen bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			_ = json.NewEncoder(w).Encode(fluxvm.ServiceSpec{
+				Name: "web-vip",
+				VIP:  "10.0.0.1",
+				Port: 8080,
+				Backends: []fluxvm.ServiceBackend{
+					{Address: "10.44.0.9", Port: 8080, Weight: 1},
+					{Address: "10.44.0.9", Port: 9090, Weight: 1}, // different port, same address -- must survive
+					{Address: "10.44.0.5", Port: 8080, Weight: 1}, // unrelated backend -- must survive
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/network/services":
+			postSeen = true
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+	}
+	if err := a.deregisterServiceFabric(context.Background(), m, "10.44.0.9"); err != nil {
+		t.Fatalf("deregisterServiceFabric: %v", err)
+	}
+	if !postSeen {
+		t.Fatal("expected the pruned service to be posted back")
+	}
+	if len(posted.Backends) != 2 {
+		t.Fatalf("got %d backends, want the two unrelated ones kept: %+v", len(posted.Backends), posted.Backends)
+	}
+	for _, b := range posted.Backends {
+		if b.Address == "10.44.0.9" && b.Port == 8080 {
+			t.Fatalf("the deregistered backend is still present: %+v", posted.Backends)
+		}
+	}
+}
+
+// TestDeregisterServiceFabricToleratesMissingService proves a service
+// that's already gone (404) is nothing left to deregister from -- not an
+// error, and no POST is issued to recreate it.
+func TestDeregisterServiceFabricToleratesMissingService(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+	}
+	if err := a.deregisterServiceFabric(context.Background(), m, "10.44.0.9"); err != nil {
+		t.Fatalf("deregisterServiceFabric: %v (want a missing service tolerated as nothing-to-do)", err)
+	}
+}
+
+// TestDeregisterServiceFabricNoopWithoutGuestIP proves an empty guestIP
+// (never resolved, or already cleared) short-circuits before any FluxVM
+// call -- there is no address to look up or remove.
+func TestDeregisterServiceFabricNoopWithoutGuestIP(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected FluxVM call with no guestIP: %s %s", r.Method, r.URL.Path)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+	}
+	if err := a.deregisterServiceFabric(context.Background(), m, ""); err != nil {
+		t.Fatalf("deregisterServiceFabric: %v", err)
+	}
+}
+
+// TestCleanupDeregistersServiceFabricBeforeRemovingFinalizer proves
+// cleanup (Machine deletion) now removes this Machine's Service Fabric
+// backend membership as part of tearing the runtime down, so a deleted
+// Machine's now-dead guest IP stops being routed live traffic by FluxVM.
+func TestCleanupDeregistersServiceFabricBeforeRemovingFinalizer(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+	}
+	var postSeen bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-9":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			_ = json.NewEncoder(w).Encode(fluxvm.ServiceSpec{Name: "web-vip", Backends: []fluxvm.ServiceBackend{{Address: "10.44.0.9", Port: 8080}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/network/services":
+			postSeen = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	var finalizerCleared bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web" {
+			var body struct {
+				Metadata model.ObjectMeta `json:"metadata"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			finalizerCleared = len(body.Metadata.Finalizers) == 0
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.cleanup(context.Background(), m); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if !postSeen {
+		t.Fatal("expected the Service Fabric backend to be deregistered during cleanup")
+	}
+	if !finalizerCleared {
+		t.Fatal("expected the finalizer to be removed after a successful cleanup")
+	}
+}
+
+// TestCleanupFailsClosedWhenServiceFabricDeregistrationFails proves
+// cleanup fails closed exactly like the FluxVM runtime delete and CSI
+// teardown steps it already fails closed on: a genuine deregistration
+// error must leave the finalizer in place (no finalizer-removal Patch
+// observed) rather than letting the Machine vanish from Kubernetes while
+// its guest IP stays a live, now-orphaned Service Fabric backend.
+func TestCleanupFailsClosedWhenServiceFabricDeregistrationFails(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+	}
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-9":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	var finalizerPatchSeen bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web" {
+			finalizerPatchSeen = true
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	err := a.cleanup(context.Background(), m)
+	if err == nil {
+		t.Fatal("expected an error from a failed Service Fabric deregistration")
+	}
+	if finalizerPatchSeen {
+		t.Fatal("finalizer must not be removed when Service Fabric deregistration failed")
+	}
+}
+
+// TestEnsureStoppedDeregistersServiceFabricBackend proves
+// spec.powerState: Stopped deregisters this Machine's Service Fabric
+// membership too, not just Machine deletion -- a Stopped guest is just
+// as unreachable as a deleted one, and status.guestIP below is about to
+// be cleared, leaving no later reconcile to notice the stale backend.
+func TestEnsureStoppedDeregistersServiceFabricBackend(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+	}
+	var postSeen bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-9", Status: "Running"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-9":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			_ = json.NewEncoder(w).Encode(fluxvm.ServiceSpec{Name: "web-vip", Backends: []fluxvm.ServiceBackend{{Address: "10.44.0.9", Port: 8080}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/network/services":
+			postSeen = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	var statusPhase string
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			statusPhase = p.Status.Phase
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.ensureStopped(context.Background(), m); err != nil {
+		t.Fatalf("ensureStopped: %v", err)
+	}
+	if !postSeen {
+		t.Fatal("expected the Service Fabric backend to be deregistered on stop")
+	}
+	if statusPhase != "Stopped" {
+		t.Fatalf("got status.Phase %q, want Stopped", statusPhase)
+	}
+}
+
+// TestEnsureStoppedFailsClosedWhenServiceFabricDeregistrationFails proves
+// ensureStopped, like cleanup, never reports Stopped until Service
+// Fabric deregistration actually succeeds -- a Machine that fails this
+// step keeps reporting its prior (Running) status honestly and is
+// retried next tick, rather than lying about being Stopped while a live
+// VIP backend entry for it is still left behind.
+func TestEnsureStoppedFailsClosedWhenServiceFabricDeregistrationFails(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", Phase: "Running"},
+	}
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-9", Status: "Running"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/vms/vm-9":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	var statusPatchSeen bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+			statusPatchSeen = true
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	err := a.ensureStopped(context.Background(), m)
+	if err == nil {
+		t.Fatal("expected an error from a failed Service Fabric deregistration")
+	}
+	if statusPatchSeen {
+		t.Fatal("status must not be patched to Stopped when Service Fabric deregistration failed")
+	}
+}
+
+// TestEnsureHaltedDeregistersServiceFabricBackend proves
+// spec.powerState: Halted deregisters Service Fabric membership too --
+// Halted keeps the FluxVM runtime record around (unlike Stopped), but
+// the guest itself is just as powered-off and unreachable.
+func TestEnsureHaltedDeregistersServiceFabricBackend(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+	}
+	var postSeen bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-9":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-9", Status: "Running"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/stop":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-9", Status: "Stopped"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/network/services/web-vip":
+			_ = json.NewEncoder(w).Encode(fluxvm.ServiceSpec{Name: "web-vip", Backends: []fluxvm.ServiceBackend{{Address: "10.44.0.9", Port: 8080}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/network/services":
+			postSeen = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+
+	var statusPhase string
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			statusPhase = p.Status.Phase
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.ensureHalted(context.Background(), m); err != nil {
+		t.Fatalf("ensureHalted: %v", err)
+	}
+	if !postSeen {
+		t.Fatal("expected the Service Fabric backend to be deregistered on halt")
+	}
+	if statusPhase != "Halted" {
+		t.Fatalf("got status.Phase %q, want Halted", statusPhase)
+	}
+}
+
 func deletingSecurityGroup() model.NetworkSecurityGroup {
 	now := time.Now().UTC()
 	return model.NetworkSecurityGroup{
