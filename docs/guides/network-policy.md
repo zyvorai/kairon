@@ -170,6 +170,60 @@ always.
 4. If `Machine.spec.network.dataplaneRequired` and attach is unhealthy, Machine
    reconcile errors (policy may still attempt apply independently).
 
+## Opt-in default-deny for unmatched Machines (`node.networkDefaultDeny`)
+
+A Machine matched by zero `MachineNetworkPolicy`/`NetworkSecurityGroup`
+objects is never touched by the reconcile rules above at all — it silently
+keeps FluxVM's own native default, `defaultAllow: true`. Since these CRDs'
+selectors are pure L3/L4 CIDR/port matching with zero namespace-awareness,
+the practical effect on a cluster with no policies written yet is that any
+Machine in any namespace can reach any other Machine in any other
+namespace by default, cluster-wide, until someone writes a policy for it.
+
+`node.networkDefaultDeny` (Helm value; `kairon-node -network-default-deny`
+flag; `Agent.NetworkDefaultDeny` in code) closes that specific gap, opt-in,
+off by default:
+
+```yaml
+node:
+  networkDefaultDeny: true
+```
+
+Once enabled, every reconcile tick, after every current
+`MachineNetworkPolicy` has already applied its own `spec.policy` to the
+Machines it selects, `kairon-node` pushes `defaultAllow: false` to every
+*other* Machine on that node — one currently matched by nothing at all.
+A Machine that later starts matching a real policy is simply left alone by
+this pass from then on; that policy's own apply is what actually governs
+it, so there's never a double-push or flicker between the synthetic deny
+and a real policy.
+
+**This is a coarse, global toggle, not namespace-aware isolation.** It
+does not make policy matching itself namespace-aware — a
+`MachineNetworkPolicy` selector still can't reference namespace at all,
+same as before. Turning this on requires a policy for same-namespace
+traffic too, not just cross-namespace traffic: once enabled, *any* Machine
+with no matching policy gets cut off from everything, including Machines
+in its own namespace it may have been relying on reaching by default.
+
+**This is explicitly disruptive if flipped on blind.** Enabling
+`node.networkDefaultDeny` on an existing cluster with no
+`MachineNetworkPolicy` objects written yet cuts all VM-to-VM connectivity
+on every node it's enabled on, immediately, on the very next reconcile
+tick — the same posture `webhook.enabled` already has for admission, and
+why this defaults to `false`. Write and verify the policies you need
+*first*, then enable this toggle, not the other way around.
+
+Like every other FluxVM-side push in this file, a `SetVMNetworkPolicy`
+failure here fails closed: it's logged and left for the next reconcile
+tick to retry (the "matched by nothing" condition that triggered it is
+still true then) — it never marks anything as having succeeded, and one
+Machine's push failure doesn't block the same pass from continuing on to
+other Machines. There's no new status field for this either:
+`status.network.dataplane.policyFingerprint`/`.policySynced`, already
+patched by the existing status projection, reflect whatever's actually
+applied to a Machine, default-deny included.
+
 ## Inspecting policy objects
 
 `kaironctl get networkpolicies` / `kaironctl get securitygroups` list every

@@ -383,6 +383,7 @@ spec:
 {{ if .Values.node.livenessLease.enabled }}
             - "--liveness-lease-duration={{ .Values.node.livenessLease.duration }}"
 {{ end }}
+            - "--network-default-deny={{ .Values.node.networkDefaultDeny }}"
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}

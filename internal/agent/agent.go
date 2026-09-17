@@ -84,6 +84,18 @@ type Agent struct {
 	// LivenessLeaseDuration overrides nodeliveness.DefaultLeaseDuration
 	// when non-zero.
 	LivenessLeaseDuration time.Duration
+	// NetworkDefaultDeny, when true, makes reconcileNetworkResources
+	// (network.go) push DefaultAllow: false onto every Machine on this
+	// node that isn't currently matched by any MachineNetworkPolicy/
+	// NetworkSecurityGroup-derived policy -- closing the gap where such a
+	// Machine is never touched at all and silently keeps FluxVM's native
+	// defaultAllow: true. False (the default) is today's unchanged
+	// behavior: an unmatched Machine is left alone. This is a coarse,
+	// global toggle, not namespace-aware isolation -- turning it on with
+	// no policies written yet cuts all VM-to-VM connectivity outright, the
+	// same disruptive-if-flipped-blind posture webhook.enabled already
+	// has, hence off by default. See docs/guides/network-policy.md.
+	NetworkDefaultDeny bool
 	// csiConn caches the dialed connection to kairon-csi-node's local
 	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
 	// same reason guestIPCheckedAt below is: Reconcile only ever runs

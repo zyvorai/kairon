@@ -121,6 +121,17 @@ node:
     enabled: false
     # Seconds; 0 uses nodeliveness.DefaultLeaseDuration (60s).
     duration: 0s
+  # networkDefaultDeny: opt-in, off by default -- when enabled,
+  # kairon-node pushes DefaultAllow: false onto every Machine on that node
+  # not currently matched by any MachineNetworkPolicy/NetworkSecurityGroup
+  # -derived policy, instead of silently leaving it on FluxVM's native
+  # defaultAllow: true. Global, not per-namespace -- these CRDs' selectors
+  # are pure L3/L4 CIDR/port matching with zero namespace-awareness, so
+  # enabling this cuts VM-to-VM connectivity cluster-wide (including
+  # same-namespace traffic) for any Machine with no matching policy yet,
+  # not just cross-namespace traffic. Disruptive on an existing cluster
+  # with no policies written first -- see docs/guides/network-policy.md.
+  networkDefaultDeny: false
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

@@ -54,7 +54,76 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 			_ = a.Kube.PatchMachineNetworkPolicyStatus(ctx, p.Namespace(), p.Metadata.Name, status)
 		}
 	}
+
+	if a.NetworkDefaultDeny {
+		a.enforceNetworkDefaultDeny(ctx, policies, machines)
+	}
 	return nil
+}
+
+// enforceNetworkDefaultDeny is NetworkDefaultDeny's opt-in second pass,
+// run after every current MachineNetworkPolicy has already applied its own
+// Spec.Policy above: for every Machine on this node not matched by any
+// still-current (non-deleting) policy -- reusing policySelectsMachine, the
+// exact same predicate the per-policy loop above already uses, so "matched"
+// here can never drift from what that loop itself considers a match --
+// push the same SetVMNetworkPolicy call the reset-to-allow paths elsewhere
+// in this file already make, just inverted (DefaultAllow: false) and
+// triggered by "matched by nothing" rather than "just stopped matching
+// something."
+//
+// A Machine that becomes matched by a real policy on a later tick is
+// simply skipped here from then on -- that policy's own apply (already ran
+// its turn in the loop above, earlier this same tick) is what's actually
+// in effect; this pass never re-pushes DefaultAllow: false on top of it,
+// so there's no double-push or flicker between the synthetic deny and a
+// real policy.
+//
+// Fails closed on a per-Machine basis: a genuine SetVMNetworkPolicy error
+// is logged and left for the next reconcile tick to retry (the "matched by
+// nothing" condition that triggered it is still true then, so nothing
+// needs to be remembered here) -- it never aborts the rest of this pass
+// for other Machines, matching every other per-object loop in this file.
+// There's no new status field to gate on either way: unlike a
+// MachineNetworkPolicy's own EffectiveSynced, an unmatched Machine has no
+// owning policy object to patch, so whether the push actually landed is
+// only ever observable the same way it already is for every Machine --
+// status.network.dataplane's own PolicyFingerprint/PolicySynced, read back
+// fresh from FluxVM by projectNetworkStatus.
+func (a *Agent) enforceNetworkDefaultDeny(ctx context.Context, policies []model.MachineNetworkPolicy, machines []model.Machine) {
+	for _, m := range machines {
+		if m.Spec.NodeName != a.NodeName {
+			continue
+		}
+		if m.Status.Phase != "Running" || m.Status.RuntimeID == "" {
+			continue
+		}
+		if anyCurrentPolicySelects(policies, m) {
+			continue
+		}
+		if err := a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, model.VmNetworkPolicy{DefaultAllow: false}); err != nil {
+			a.Log.Error("network default-deny push failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
+			continue
+		}
+	}
+}
+
+// anyCurrentPolicySelects reports whether some non-deleting
+// MachineNetworkPolicy in m's own namespace currently selects m -- the
+// same per-namespace, skip-deleting-objects shape anotherPolicyStillSelects
+// below already establishes, just without an "exclude" policy (every
+// caller of this one is asking "is this Machine matched by anything at
+// all", not "by anything other than the one I'm already looking at").
+func anyCurrentPolicySelects(policies []model.MachineNetworkPolicy, m model.Machine) bool {
+	for _, p := range policies {
+		if p.Namespace() != m.Namespace() || p.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if policySelectsMachine(p, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // reconcileSecurityGroup drives a NetworkSecurityGroup's FluxVM-side

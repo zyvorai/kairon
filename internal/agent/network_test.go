@@ -1351,3 +1351,226 @@ func TestReconcileMachineNetworkPolicyDeletionToleratesAlreadyGoneVM(t *testing.
 		t.Fatal("expected the finalizer to be removed once the FluxVM-side VM is confirmed already gone")
 	}
 }
+
+// TestEnforceNetworkDefaultDenyPushesForUnmatchedMachine confirms a
+// Machine matched by zero current MachineNetworkPolicy objects gets
+// DefaultAllow: false pushed once enforceNetworkDefaultDeny runs -- the
+// opt-in NetworkDefaultDeny toggle's whole point.
+func TestEnforceNetworkDefaultDenyPushesForUnmatchedMachine(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "unmatched"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+
+	var pushedDeny bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			var body fluxvm.WireVmNetworkPolicy
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.DefaultAllow {
+				t.Errorf("expected DefaultAllow: false, got %+v", body)
+			}
+			pushedDeny = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: true}
+
+	a.enforceNetworkDefaultDeny(context.Background(), nil, []model.Machine{machine})
+	if !pushedDeny {
+		t.Fatal("expected DefaultAllow: false to be pushed for the unmatched Machine")
+	}
+}
+
+// TestEnforceNetworkDefaultDenySkipsMachineMatchedByAPolicy confirms a
+// Machine currently matched by a real, non-deleting MachineNetworkPolicy
+// is left alone here -- that policy's own apply (earlier in the same
+// reconcile tick) is what actually governs it, so there's no double-push
+// or flicker between a real policy and this synthetic deny.
+func TestEnforceNetworkDefaultDenySkipsMachineMatchedByAPolicy(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "default"},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}},
+		},
+	}
+
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("must not push a synthetic deny for a Machine a real policy already matches")
+	}))
+	defer fs.Close()
+
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: true}
+
+	a.enforceNetworkDefaultDeny(context.Background(), []model.MachineNetworkPolicy{policy}, []model.Machine{machine})
+}
+
+// TestEnforceNetworkDefaultDenyIgnoresDeletingPolicy confirms a policy
+// currently being deleted (DeletionTimestamp set) doesn't count as "still
+// matched" -- the same treatment anotherPolicyStillSelects already gives
+// a deleting policy in the per-policy prune pass.
+func TestEnforceNetworkDefaultDenyIgnoresDeletingPolicy(t *testing.T) {
+	now := time.Now()
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "default", DeletionTimestamp: &now},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false},
+		},
+	}
+
+	var pushedDeny bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			pushedDeny = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: true}
+
+	a.enforceNetworkDefaultDeny(context.Background(), []model.MachineNetworkPolicy{policy}, []model.Machine{machine})
+	if !pushedDeny {
+		t.Fatal("expected a deleting policy to not count as still matching -- deny should still be pushed")
+	}
+}
+
+// TestEnforceNetworkDefaultDenyFailsClosedOnPushError confirms a genuine
+// SetVMNetworkPolicy error is logged and simply skipped -- it never panics
+// or aborts the rest of the pass, and (there being no owning status object
+// for an unmatched Machine) nothing is left claiming the push succeeded;
+// the same "matched by nothing" condition just remains true for the next
+// reconcile tick to retry.
+func TestEnforceNetworkDefaultDenyFailsClosedOnPushError(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "simulated FluxVM error", http.StatusInternalServerError)
+	}))
+	defer fs.Close()
+
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: true}
+
+	// Must not panic; nothing to assert beyond that the call returns.
+	a.enforceNetworkDefaultDeny(context.Background(), nil, []model.Machine{machine})
+}
+
+// TestReconcileNetworkResourcesSkipsDefaultDenyWhenDisabled confirms
+// NetworkDefaultDeny: false (the default) leaves an unmatched Machine
+// alone end to end through reconcileNetworkResources -- today's unchanged
+// behavior.
+func TestReconcileNetworkResourcesSkipsDefaultDenyWhenDisabled(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("NetworkDefaultDeny is false -- FluxVM must not be called at all")
+	}))
+	defer fs.Close()
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: false}
+
+	if err := a.reconcileNetworkResources(context.Background()); err != nil {
+		t.Fatalf("reconcileNetworkResources: %v", err)
+	}
+}
+
+// TestReconcileNetworkResourcesAppliesDefaultDenyWhenEnabled confirms the
+// NetworkDefaultDeny gate in reconcileNetworkResources itself actually
+// reaches enforceNetworkDefaultDeny, not just enforceNetworkDefaultDeny in
+// isolation above.
+func TestReconcileNetworkResourcesAppliesDefaultDenyWhenEnabled(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	var pushedDeny bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			pushedDeny = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), NetworkDefaultDeny: true}
+
+	if err := a.reconcileNetworkResources(context.Background()); err != nil {
+		t.Fatalf("reconcileNetworkResources: %v", err)
+	}
+	if !pushedDeny {
+		t.Fatal("expected NetworkDefaultDeny: true to reach enforceNetworkDefaultDeny through reconcileNetworkResources")
+	}
+}
