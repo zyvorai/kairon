@@ -77,8 +77,11 @@ concurrency caps are already checked):
 
 `describe` for every other kind in this project uniformly prints the raw
 object as JSON and nothing else. `kaironctl describe migrationpolicy` is one
-of only two deliberate exceptions (the other is
-[`kaironctl describe snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe)):
+of only four deliberate exceptions (the others are
+[`kaironctl describe snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe),
+[`kaironctl describe quota`](machine-quotas.md#previewing-usage-right-now-kaironctl-describe),
+and [`kaironctl describe
+budget`](machine-disruption-budgets.md#previewing-who-counts-right-now-kaironctl-describe)):
 it prints that same JSON, then appends exactly which `Machine`s in the
 policy's own namespace currently satisfy `spec.selector`, and for each one,
 what creating a `MachineMigration` for it *right now* would actually get

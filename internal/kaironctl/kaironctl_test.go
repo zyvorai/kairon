@@ -1268,6 +1268,204 @@ func TestDescribeMigrationPolicyBandwidthFromOtherPolicy(t *testing.T) {
 	}
 }
 
+// describeQuotaTestServer is a minimal in-memory fake of the two endpoints
+// describeQuota calls, mirroring describeScheduleTestServer's own
+// inline-httptest-server convention above.
+type describeQuotaTestServer struct {
+	quota    model.MachineQuota
+	machines []model.Machine
+}
+
+func (s *describeQuotaTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas/"+s.quota.Metadata.Name:
+			_ = json.NewEncoder(w).Encode(s.quota)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+// TestDescribeQuotaShowsUsageAndCountedMachines confirms describeQuota's
+// preview correlates spec's human-unit limits against usage recomputed
+// (in matching units) from the namespace's current Machines -- counting
+// only Machines controller.MachineCountsTowardQuota would count (scheduled,
+// not deleted, not desired-Stopped/Halted) -- and lists exactly those
+// Machines with their own per-Machine footprint.
+func TestDescribeQuotaShowsUsageAndCountedMachines(t *testing.T) {
+	maxMachines := 5
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "team-a", Namespace: "default"},
+		Spec: model.MachineQuotaSpec{
+			MaxMachines:    &maxMachines,
+			MaxTotalCPU:    "4",
+			MaxTotalMemory: "8Gi",
+		},
+	}
+	s := &describeQuotaTestServer{
+		quota: quota,
+		machines: []model.Machine{
+			{
+				Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "default"},
+				Spec:     model.MachineSpec{NodeName: "node-1", Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}},
+			},
+			{
+				Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "default"},
+				Spec:     model.MachineSpec{NodeName: "node-1", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+			},
+			// Not scheduled yet (no spec.nodeName) -- must not count toward
+			// usage, mirroring MachineCountsTowardQuota's own doc comment.
+			{
+				Metadata: model.ObjectMeta{Name: "vm-pending", Namespace: "default"},
+				Spec:     model.MachineSpec{Resources: model.ResourceSpec{CPU: "8", Memory: "8Gi"}},
+			},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeQuota(context.Background(), kc, "default", "team-a")
+	})
+	if !strings.Contains(out, "machines  2 / 5") {
+		t.Errorf("expected 2/5 machines used, got:\n%s", out)
+	}
+	if !strings.Contains(out, `3 vCPU / 4 vCPU (spec.maxTotalCpu "4"; 1 vCPU headroom)`) {
+		t.Errorf("expected 3/4 vCPU with 1 vCPU headroom, got:\n%s", out)
+	}
+	if !strings.Contains(out, `3072 MiB / 8192 MiB (spec.maxTotalMemory "8Gi"; 5120 MiB headroom)`) {
+		t.Errorf("expected 3072/8192 MiB with 5120 MiB headroom, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Counted machines (2)") {
+		t.Errorf("expected 2 counted machines (vm-pending excluded), got:\n%s", out)
+	}
+	if strings.Contains(out, "vm-pending") {
+		t.Errorf("unscheduled vm-pending must not be counted:\n%s", out)
+	}
+	i1, i2 := strings.Index(out, "vm-1"), strings.Index(out, "vm-2")
+	if i1 == -1 || i2 == -1 || i1 > i2 {
+		t.Errorf("expected vm-1 listed before vm-2 (sorted), got:\n%s", out)
+	}
+}
+
+// TestDescribeQuotaNoLimitSetShowsNoLimit confirms an unset quota dimension
+// prints "(no limit)" rather than a bogus 0/0.
+func TestDescribeQuotaNoLimitSetShowsNoLimit(t *testing.T) {
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "unbounded", Namespace: "default"},
+	}
+	s := &describeQuotaTestServer{quota: quota}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeQuota(context.Background(), kc, "default", "unbounded")
+	})
+	if !strings.Contains(out, "machines  0 / (no limit)") {
+		t.Errorf("expected no machines limit, got:\n%s", out)
+	}
+	if !strings.Contains(out, "cpu       0 vCPU / (no limit)") {
+		t.Errorf("expected no cpu limit, got:\n%s", out)
+	}
+	if !strings.Contains(out, "memory    0 MiB / (no limit)") {
+		t.Errorf("expected no memory limit, got:\n%s", out)
+	}
+	if !strings.Contains(out, "(none -- no scheduled") {
+		t.Errorf("expected the no-counted-machines hint, got:\n%s", out)
+	}
+}
+
+// describeBudgetTestServer is a minimal in-memory fake of the three
+// endpoints describeBudget calls, mirroring describeMigrationPolicyTestServer's
+// own convention above.
+type describeBudgetTestServer struct {
+	budget     model.MachineDisruptionBudget
+	machines   []model.Machine
+	migrations []model.MachineMigration
+}
+
+func (s *describeBudgetTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets/"+s.budget.Metadata.Name:
+			_ = json.NewEncoder(w).Encode(s.budget)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: s.migrations})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+// TestDescribeBudgetShowsMatchingMachinesAndWhyUnhealthy confirms
+// describeBudget's per-Machine breakdown: a Running Machine with no
+// in-flight migration is healthy, a non-Running Machine says so by its own
+// status.phase, and a Running Machine with a non-terminal MachineMigration
+// is reported unhealthy for that reason instead -- and the aggregate
+// numbers printed match controller.LoadBudgetStates' own computed status.
+func TestDescribeBudgetShowsMatchingMachinesAndWhyUnhealthy(t *testing.T) {
+	budget := model.MachineDisruptionBudget{
+		Metadata: model.ObjectMeta{Name: "web-pdb", Namespace: "default"},
+		Spec:     model.MachineDisruptionBudgetSpec{Selector: map[string]string{"tier": "web"}, MinAvailable: "1"},
+	}
+	s := &describeBudgetTestServer{
+		budget: budget,
+		machines: []model.Machine{
+			{Metadata: model.ObjectMeta{Name: "vm-healthy", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Status: model.MachineStatus{Phase: "Running"}},
+			{Metadata: model.ObjectMeta{Name: "vm-migrating", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Status: model.MachineStatus{Phase: "Running"}},
+			{Metadata: model.ObjectMeta{Name: "vm-stopped", Namespace: "default", Labels: map[string]string{"tier": "web"}}, Status: model.MachineStatus{Phase: "Stopped"}},
+			{Metadata: model.ObjectMeta{Name: "vm-other", Namespace: "default", Labels: map[string]string{"tier": "db"}}, Status: model.MachineStatus{Phase: "Running"}},
+		},
+		migrations: []model.MachineMigration{
+			{Metadata: model.ObjectMeta{Name: "mig-1", Namespace: "default"}, Spec: model.MachineMigrationSpec{MachineName: "vm-migrating"}, Status: model.MachineMigrationStatus{Phase: "Migrating"}},
+		},
+	}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeBudget(context.Background(), kc, "default", "web-pdb")
+	})
+	if !strings.Contains(out, "3 matching, 1 healthy, 1 desired healthy, 0 disruptions allowed") {
+		t.Errorf("expected the aggregate status line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Matching machines (3)") {
+		t.Errorf("expected 3 matches (vm-other excluded by selector), got:\n%s", out)
+	}
+	if strings.Contains(out, "vm-other") {
+		t.Errorf("vm-other doesn't match spec.selector, must not appear:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("  %-24s %s\n", "vm-healthy", "healthy")) {
+		t.Errorf("expected vm-healthy reported healthy, got:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("  %-24s %s\n", "vm-migrating", "NOT healthy (non-terminal MachineMigration in flight)")) {
+		t.Errorf("expected vm-migrating reported unhealthy for its in-flight migration, got:\n%s", out)
+	}
+	if !strings.Contains(out, fmt.Sprintf("  %-24s %s\n", "vm-stopped", `NOT healthy (status.phase "Stopped", not Running)`)) {
+		t.Errorf("expected vm-stopped reported unhealthy for its own phase, got:\n%s", out)
+	}
+}
+
 func TestHasFlag(t *testing.T) {
 	cases := []struct {
 		args []string

@@ -61,10 +61,14 @@ call never resets it.
 ## Previewing what would fire right now (`kaironctl describe`)
 
 `describe` for every other kind in this project uniformly prints the raw
-object as JSON and nothing else. `kaironctl describe snapshotschedule`
-is the one deliberate exception: it prints that same JSON, then appends a
-preview of exactly what the *next* reconcile tick would do with this
-schedule, right now:
+object as JSON and nothing else. `kaironctl describe snapshotschedule` is
+one of only four deliberate exceptions (the others are [`kaironctl describe
+migrationpolicy`](migration-policies.md#previewing-what-a-migration-would-get-right-now-kaironctl-describe),
+[`kaironctl describe quota`](machine-quotas.md#previewing-usage-right-now-kaironctl-describe),
+and [`kaironctl describe
+budget`](machine-disruption-budgets.md#previewing-who-counts-right-now-kaironctl-describe)):
+it prints that same JSON, then appends a preview of exactly what the *next*
+reconcile tick would do with this schedule, right now:
 
 ```console
 $ kaironctl describe snapshotschedule nightly

@@ -433,16 +433,23 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 	kind, name := resourceKindAndName("describe", args)
 	switch kind {
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
-		// One of two kinds describe doesn't just raw-JSON-dump -- see
+		// One of four kinds describe doesn't just raw-JSON-dump -- see
 		// describeSnapshotSchedule's own doc comment for why this
 		// narrow exception is justified for this specific CRD and isn't
 		// a generalized richer-describe change for every kind.
 		describeSnapshotSchedule(ctx, kc, ns, name)
 		return
 	case "migrationpolicy", "migrationpolicies":
-		// The other of the two -- see describeMigrationPolicy's own doc
-		// comment.
+		// The second -- see describeMigrationPolicy's own doc comment.
 		describeMigrationPolicy(ctx, kc, ns, name)
+		return
+	case "quota", "quotas", "machinequotas":
+		// The third -- see describeQuota's own doc comment.
+		describeQuota(ctx, kc, ns, name)
+		return
+	case "budget", "budgets", "machinedisruptionbudgets":
+		// The fourth -- see describeBudget's own doc comment.
+		describeBudget(ctx, kc, ns, name)
 		return
 	}
 	var (
@@ -651,6 +658,187 @@ func firstOverlappingBandwidthPolicy(policies []model.MigrationPolicy, m model.M
 		}
 	}
 	return ""
+}
+
+// describeQuota is describe's third raw-JSON-plus-preview exception (see
+// describeSnapshotSchedule's doc comment above for why these are
+// deliberately narrow, not a generalized richer-describe change). A
+// MachineQuota's raw JSON already contains both spec.maxTotalCpu/
+// maxTotalMemory (human strings like "8Gi") and status.usedTotalCpuCores/
+// usedTotalMemoryMiB (normalized numbers, written by kairon-controller's
+// own reconcileQuotasStatus-equivalent tally every tick) -- but they sit in
+// two disjoint top-level objects, in two different unit systems, so reading
+// "how close is this namespace to its cap" out of the raw dump means
+// mentally converting a Gi string to MiB and cross-referencing it against a
+// separate field by eye. This preview does that conversion once, lines used
+// up against limit in matching units the way `kubectl describe
+// resourcequota` lines up its own Used/Hard columns, and additionally lists
+// exactly which Machines are counted -- the same "don't just report a
+// number, show the receipts" precedent describeSnapshotSchedule's own
+// "Matching machines" list and describeMigrationPolicy's per-Machine
+// breakdown already established.
+//
+// Usage is recomputed fresh from the namespace's current Machines via
+// controller.MachineCountsTowardQuota/MachineFootprint -- the exact
+// predicate and footprint calculation kairon-controller's own scheduling
+// loop uses to admit or block a new Machine (see internal/controller/
+// quota.go) -- rather than trusted from status, which is only ever as
+// fresh as the last reconcile tick's patch. That also means this preview's
+// totals can very occasionally read a few Machines ahead of status.used* if
+// run between a Machine's admission and the next tick's status patch; that
+// is a real, honest gap (not a bug to paper over), so the header below says
+// "recomputed fresh" rather than implying it's reading status verbatim.
+func describeQuota(ctx context.Context, kc *kube.Client, ns, name string) {
+	quota, err := kc.GetMachineQuota(ctx, ns, name)
+	if err != nil {
+		fatal(err)
+	}
+	b, _ := json.MarshalIndent(quota, "", "  ")
+	fmt.Println(string(b))
+
+	machines, err := kc.ListMachinesNamespace(ctx, ns)
+	if err != nil {
+		fatal(err)
+	}
+	var counted []model.Machine
+	for _, m := range machines {
+		if controller.MachineCountsTowardQuota(m) {
+			counted = append(counted, m)
+		}
+	}
+	sort.Slice(counted, func(i, j int) bool { return counted[i].Metadata.Name < counted[j].Metadata.Name })
+
+	var usedMachines int
+	var usedCPU uint32
+	var usedMemMiB uint64
+	for _, m := range counted {
+		usedMachines++
+		cpu, mem := controller.MachineFootprint(m)
+		usedCPU += cpu
+		usedMemMiB += mem
+	}
+
+	fmt.Println()
+	fmt.Println("Usage (recomputed fresh from Machines counted right now -- same MachineCountsTowardQuota predicate kairon-controller's own scheduling loop uses):")
+	if quota.Spec.MaxMachines != nil {
+		fmt.Printf("  %-9s %d / %d\n", "machines", usedMachines, *quota.Spec.MaxMachines)
+	} else {
+		fmt.Printf("  %-9s %d / (no limit)\n", "machines", usedMachines)
+	}
+	if quota.Spec.MaxTotalCPU != "" {
+		max, _ := model.ParseVCPUs(quota.Spec.MaxTotalCPU) // already admitted onto this object, so already valid
+		fmt.Printf("  %-9s %d vCPU / %d vCPU (spec.maxTotalCpu %q; %d vCPU headroom)\n", "cpu", usedCPU, max, quota.Spec.MaxTotalCPU, int64(max)-int64(usedCPU))
+	} else {
+		fmt.Printf("  %-9s %d vCPU / (no limit)\n", "cpu", usedCPU)
+	}
+	if quota.Spec.MaxTotalMemory != "" {
+		max, _ := model.ParseMemoryMiB(quota.Spec.MaxTotalMemory) // already admitted onto this object, so already valid
+		fmt.Printf("  %-9s %d MiB / %d MiB (spec.maxTotalMemory %q; %d MiB headroom)\n", "memory", usedMemMiB, max, quota.Spec.MaxTotalMemory, int64(max)-int64(usedMemMiB))
+	} else {
+		fmt.Printf("  %-9s %d MiB / (no limit)\n", "memory", usedMemMiB)
+	}
+
+	fmt.Println()
+	fmt.Printf("Counted machines (%d):\n", len(counted))
+	if len(counted) == 0 {
+		fmt.Println("  (none -- no scheduled, non-Stopped/Halted Machine in this namespace counts against this quota right now)")
+		return
+	}
+	for _, m := range counted {
+		cpu, mem := controller.MachineFootprint(m)
+		fmt.Printf("  %-24s %d vCPU  %d MiB\n", m.Metadata.Name, cpu, mem)
+	}
+}
+
+// describeBudget is describe's fourth (and, for now, last -- see
+// describeQuota's own doc comment for the third) raw-JSON-plus-preview
+// exception. Unlike MachineQuota's status, a MachineDisruptionBudget's
+// status.expectedMachines/currentHealthy/desiredHealthy/disruptionsAllowed
+// are already four clearly-labeled, already-resolved counts in the same
+// unit (Machines) -- reading the raw JSON tells an operator the *numbers*
+// perfectly well on its own. What it can't tell them is *which* Machines
+// are counted, and specifically *why* any of them isn't currently healthy
+// -- the same "show the receipts behind the number" gap describeQuota's
+// counted-machines list and describeSnapshotSchedule's/
+// describeMigrationPolicy's own matching-machines lists already exist to
+// close for their own CRDs. That's the one genuine addition this preview
+// makes: list every Machine spec.selector currently matches, and for any
+// that isn't counted as healthy, say whether it's because status.phase
+// isn't Running or because a non-terminal MachineMigration already has it
+// in flight.
+//
+// Status is recomputed fresh via controller.LoadBudgetStates -- the exact
+// function both `kaironctl evacuate` and the opt-in admission webhook call
+// to decide the same thing -- rather than trusted from status.*, which
+// (like MachineQuota's) is only ever as fresh as the last reconcile tick.
+// The per-Machine in-flight check below deliberately duplicates
+// LoadBudgetStates' own inline terminal-phase test rather than importing
+// it (that helper is unexported, and internal/controller/disruption.go's
+// BudgetState doc comment already establishes this codebase's precedent of
+// each consumer keeping its own narrow copy of a one-boolean predicate
+// rather than exporting it for a single caller) -- so if that set of
+// terminal phases ever changes, this comment is the reminder to update
+// both places together.
+func describeBudget(ctx context.Context, kc *kube.Client, ns, name string) {
+	budget, err := kc.GetMachineDisruptionBudget(ctx, ns, name)
+	if err != nil {
+		fatal(err)
+	}
+	b, _ := json.MarshalIndent(budget, "", "  ")
+	fmt.Println(string(b))
+
+	machines, err := kc.ListMachinesNamespace(ctx, ns)
+	if err != nil {
+		fatal(err)
+	}
+	migrations, err := kc.ListMachineMigrationsNamespace(ctx, ns)
+	if err != nil && !kube.IsNotFound(err) {
+		fatal(err)
+	}
+	states, err := controller.LoadBudgetStates([]model.MachineDisruptionBudget{budget}, machines, migrations)
+	if err != nil {
+		fatal(err)
+	}
+	status := states[0].Status()
+
+	inFlight := map[string]bool{}
+	for _, mig := range migrations {
+		terminal := false
+		switch mig.Status.Phase {
+		case "Succeeded", "Failed", "Blocked", "Cancelled", "":
+			terminal = true
+		}
+		if !terminal {
+			inFlight[mig.Namespace()+"/"+mig.Spec.MachineName] = true
+		}
+	}
+
+	var matches []model.Machine
+	for _, m := range machines {
+		if model.LabelsMatch(m.Metadata.Labels, budget.Spec.Selector) {
+			matches = append(matches, m)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].Metadata.Name < matches[j].Metadata.Name })
+
+	fmt.Println()
+	fmt.Printf("Status (recomputed fresh from Machines/MachineMigrations right now): %d matching, %d healthy, %d desired healthy, %d disruptions allowed\n",
+		status.ExpectedMachines, status.CurrentHealthy, status.DesiredHealthy, status.DisruptionsAllowed)
+	fmt.Printf("Matching machines (%d):\n", len(matches))
+	if len(matches) == 0 {
+		fmt.Println("  (none -- check spec.selector against these Machines' own labels)")
+		return
+	}
+	for _, m := range matches {
+		health := "healthy"
+		switch {
+		case m.Status.Phase != "Running":
+			health = fmt.Sprintf("NOT healthy (status.phase %q, not Running)", m.Status.Phase)
+		case inFlight[m.Namespace()+"/"+m.Metadata.Name]:
+			health = "NOT healthy (non-terminal MachineMigration in flight)"
+		}
+		fmt.Printf("  %-24s %s\n", m.Metadata.Name, health)
+	}
 }
 
 // cmdTrigger dispatches `kaironctl trigger KIND NAME` -- deliberately its

@@ -108,6 +108,51 @@ NAME       MINAVAILABLE  MAXUNAVAILABLE  EXPECTED  HEALTHY  DESIRED  ALLOWED
 web-tier   2             -               3         3        2        1
 ```
 
+## Previewing who counts right now (`kaironctl describe`)
+
+`describe` for every other kind in this project uniformly prints the raw
+object as JSON and nothing else. `kaironctl describe budget` is one of only
+four deliberate exceptions (the others are [`kaironctl describe
+snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe),
+[`kaironctl describe migrationpolicy`](migration-policies.md#previewing-what-a-migration-would-get-right-now-kaironctl-describe),
+and `kaironctl describe quota`, see
+[machine-quotas.md](machine-quotas.md#previewing-usage-right-now-kaironctl-describe)).
+Unlike `MachineQuota`'s status, this object's `status.expectedMachines`/
+`currentHealthy`/`desiredHealthy`/`disruptionsAllowed` are already four
+clearly-labeled, already-resolved counts in the same unit (Machines) --
+reading the raw JSON tells you the *numbers* perfectly well on its own. What
+it can't tell you is *which* Machines are counted, and specifically *why*
+any of them isn't currently healthy:
+
+```console
+$ kaironctl describe budget web-tier
+{
+  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "kind": "MachineDisruptionBudget",
+  ...
+}
+
+Status (recomputed fresh from Machines/MachineMigrations right now): 3 matching, 2 healthy, 2 desired healthy, 0 disruptions allowed
+Matching machines (3):
+  web-1                    healthy
+  web-2                    healthy
+  web-3                    NOT healthy (non-terminal MachineMigration in flight)
+```
+
+Each non-healthy Machine says whether it's because `status.phase` isn't
+`Running`, or because a non-terminal `MachineMigration` already has it in
+flight -- the same "don't just report a number, show the receipts"
+precedent the other three `describe` exceptions already established (the
+`quota` preview's counted-Machines list, and the `snapshotschedule`/
+`migrationpolicy` previews' own matching-Machines lists).
+
+Status here is recomputed fresh via the same `LoadBudgetStates` function
+`kaironctl evacuate` and the opt-in admission webhook both call to decide
+the same thing -- not read back from `status.*`, which (like every other
+reconciled status on this page) can be up to one reconcile interval stale.
+A selector matching zero Machines prints the same explicit hint every other
+`describe` exception uses instead of an empty, unexplained list.
+
 ## Prometheus metrics and alerting
 
 Until now, this status was only visible by polling `kubectl get mdb`/

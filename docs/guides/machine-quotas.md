@@ -70,6 +70,61 @@ before it would otherwise assign a Machine to a node:
 Already-scheduled Machines are never evicted retroactively if a quota is
 lowered below what's already running -- quota only blocks *new* scheduling.
 
+## Previewing usage right now (`kaironctl describe`)
+
+`describe` for every other kind in this project uniformly prints the raw
+object as JSON and nothing else. `kaironctl describe quota` is one of only
+four deliberate exceptions (the others are [`kaironctl describe
+snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe),
+[`kaironctl describe migrationpolicy`](migration-policies.md#previewing-what-a-migration-would-get-right-now-kaironctl-describe),
+and `kaironctl describe budget`, see
+[machine-disruption-budgets.md](machine-disruption-budgets.md#previewing-who-counts-right-now-kaironctl-describe)).
+It's warranted here for a reason the other two don't share: a `MachineQuota`'s
+raw JSON puts `spec.maxTotalCpu`/`maxTotalMemory` (human strings like `"8Gi"`)
+and `status.usedTotalCpuCores`/`usedTotalMemoryMiB` (already-normalized
+numbers) in two separate top-level objects, in two different unit systems --
+reading "how close is this namespace to its cap" out of the raw dump means
+mentally converting a `Gi` string to `MiB` and cross-referencing it against a
+separate field by eye:
+
+```console
+$ kaironctl describe quota team-payments
+{
+  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "kind": "MachineQuota",
+  ...
+}
+
+Usage (recomputed fresh from Machines counted right now -- same MachineCountsTowardQuota predicate kairon-controller's own scheduling loop uses):
+  machines  12 / 20
+  cpu       28 vCPU / 40 vCPU (spec.maxTotalCpu "40"; 12 vCPU headroom)
+  memory    98304 MiB / 163840 MiB (spec.maxTotalMemory "160Gi"; 65536 MiB headroom)
+
+Counted machines (12):
+  db-1                     4 vCPU  16384 MiB
+  db-2                     4 vCPU  16384 MiB
+  ...
+```
+
+This lines used up against limit in matching units (like `kubectl describe
+resourcequota`'s own Used/Hard columns), computes remaining headroom instead
+of leaving that subtraction to the reader, and lists exactly which Machines
+are counted -- the same "don't just report a number, show the receipts"
+precedent the other three `describe` exceptions already established.
+
+Usage is recomputed fresh from the namespace's current Machines via the
+controller's own exported `MachineCountsTowardQuota`/`MachineFootprint` (the
+identical predicate and footprint calculation the scheduling loop uses to
+admit or block a new Machine), not read back from `status.used*` -- which is
+only ever as fresh as the last reconcile tick's patch. That means this
+preview's totals can very occasionally read a Machine or two ahead of
+`status.used*` if run between a Machine's admission and the next tick's
+status patch; that's a real, honest gap, which is why the header says
+"recomputed fresh" rather than implying it's reading `status` verbatim. A
+dimension with no configured cap prints `(no limit)` rather than a bogus
+`0 / 0`, and zero counted Machines prints an explicit hint instead of an
+empty, unexplained list.
+
 ## Prometheus metrics and alerting
 
 Until now, seeing a namespace approach its limit meant either watching
