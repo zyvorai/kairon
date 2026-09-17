@@ -268,6 +268,43 @@ func TestParseKeyValues(t *testing.T) {
 	}
 }
 
+// TestSelectorFilter unit-tests selectorFilter directly (no HTTP fixture
+// needed, unlike the cmdGet-level tests below): a nil/empty selector must
+// be a true no-op returning items unchanged, a non-empty selector must
+// keep only items whose labels satisfy every pair (model.LabelsMatch's own
+// AND semantics), and the result must never alias the input slice's
+// backing array.
+func TestSelectorFilter(t *testing.T) {
+	items := []model.Machine{
+		labeledMachine("web-1", map[string]string{"tier": "web"}),
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+		labeledMachine("web-2", map[string]string{"tier": "web", "env": "prod"}),
+	}
+	labels := func(m model.Machine) map[string]string { return m.Metadata.Labels }
+
+	if got := selectorFilter(items, nil, labels); len(got) != len(items) {
+		t.Fatalf("nil selector: got %d items, want all %d unchanged", len(got), len(items))
+	}
+
+	got := selectorFilter(items, map[string]string{"tier": "web"}, labels)
+	var names []string
+	for _, m := range got {
+		names = append(names, m.Metadata.Name)
+	}
+	if !equalStrings(names, []string{"web-1", "web-2"}) {
+		t.Errorf("tier=web: got %v, want [web-1 web-2]", names)
+	}
+
+	got = selectorFilter(items, map[string]string{"tier": "web", "env": "prod"}, labels)
+	if len(got) != 1 || got[0].Metadata.Name != "web-2" {
+		t.Errorf("tier=web,env=prod: got %v, want just web-2", got)
+	}
+
+	if got := selectorFilter(items, map[string]string{"tier": "staging"}, labels); len(got) != 0 {
+		t.Errorf("non-matching selector: got %v, want empty", got)
+	}
+}
+
 // recordingServer captures the last request it received (method, path, and
 // decoded JSON body) so a test can assert exactly what kaironctl sent
 // without standing up a full fake apiserver per resource kind -- these new
@@ -1132,4 +1169,126 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestCmdGetSelectorFiltersMachines is `kaironctl get`'s read-side
+// counterpart to TestCmdDeleteSelectorDeletesOnlyMatchingMachines above:
+// the same three-Machine fixture (two tier=web, one tier=db), but via
+// `get machine --selector tier=web` this must only ever print rows for the
+// two web Machines -- nothing is deleted here, deleteSelectorTestServer's
+// GET handler is reused purely as a convenient in-memory Machine list.
+func TestCmdGetSelectorFiltersMachines(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("web-2", map[string]string{"tier": "web"}),
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+		labeledMachine("web-1", map[string]string{"tier": "web"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdGet(context.Background(), kc, []string{"machine", "--selector", "tier=web"})
+	})
+	if !strings.Contains(out, "web-1") || !strings.Contains(out, "web-2") {
+		t.Errorf("expected both web-1 and web-2 listed, got:\n%s", out)
+	}
+	if strings.Contains(out, "db-1") {
+		t.Errorf("must not list the non-matching db-1 machine, got:\n%s", out)
+	}
+	if len(s.deleted) != 0 {
+		t.Fatalf("get must never delete anything, got deleted=%v", s.deleted)
+	}
+}
+
+// TestCmdGetSelectorNoMatchesPrintsHeaderOnly covers a selector matching no
+// existing Machine: unlike bulk delete (which prints an explicit "nothing
+// to delete"), get has always printed just its header row for an empty
+// list (e.g. an empty namespace) -- a selector matching nothing must
+// behave identically, not grow a special-cased message of its own.
+func TestCmdGetSelectorNoMatchesPrintsHeaderOnly(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdGet(context.Background(), kc, []string{"machine", "--selector", "tier=web"})
+	})
+	if strings.Contains(out, "db-1") {
+		t.Errorf("must not list the non-matching db-1 machine, got:\n%s", out)
+	}
+	if got := strings.TrimRight(out, "\n"); got != "NAME\tNODE\tPHASE\tCPU\tMEMORY\tIP" {
+		t.Errorf("expected only the header row, got:\n%q", out)
+	}
+}
+
+// TestCmdGetWithoutSelectorStillListsEverything is the regression this
+// whole feature must never break: `kaironctl get machine` with no
+// --selector at all is by far the most common invocation, and must keep
+// listing every Machine in the namespace exactly as it always has.
+func TestCmdGetWithoutSelectorStillListsEverything(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("web-1", map[string]string{"tier": "web"}),
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdGet(context.Background(), kc, []string{"machine"})
+	})
+	if !strings.Contains(out, "web-1") || !strings.Contains(out, "db-1") {
+		t.Errorf("expected both machines listed with no --selector given, got:\n%s", out)
+	}
+}
+
+// TestCmdGetSelectorWorksAcrossKinds exercises `get --selector` against a
+// second kind (MachineSet), mirroring
+// TestCmdDeleteSelectorWorksAcrossKinds's own cross-kind check for delete.
+func TestCmdGetSelectorWorksAcrossKinds(t *testing.T) {
+	s := &deleteSelectorTestServer{machineSets: []model.MachineSet{
+		{Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+		{Metadata: model.ObjectMeta{Name: "db", Namespace: "default", Labels: map[string]string{"tier": "db"}}},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdGet(context.Background(), kc, []string{"machineset", "--selector", "tier=web"})
+	})
+	if !strings.Contains(out, "web") {
+		t.Errorf("expected the web machineset listed, got:\n%s", out)
+	}
+	if strings.Contains(out, "\ndb\t") || strings.HasPrefix(out, "db\t") {
+		t.Errorf("must not list the non-matching db machineset, got:\n%s", out)
+	}
+}
+
+// TestCmdGetSelectorRespectsNamespaceFlag confirms `-n`/`--namespace`
+// still scopes the listing once --selector is also given, mirroring
+// TestCmdDeleteSelectorRespectsNamespaceFlag for get.
+func TestCmdGetSelectorRespectsNamespaceFlag(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machines" {
+			called = true
+			_ = json.NewEncoder(w).Encode(model.MachineList{})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	captureStdout(t, func() {
+		cmdGet(context.Background(), kc, []string{"-n", "staging", "machine", "--selector", "tier=web"})
+	})
+	if !called {
+		t.Fatal("expected the listing to be scoped to the -n staging namespace")
+	}
 }

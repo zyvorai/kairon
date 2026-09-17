@@ -168,11 +168,53 @@ func nsFlag(args []string) (string, []string) {
 	return ns, out
 }
 
+// selectorFilter narrows items to those whose labels (as returned by the
+// caller-supplied accessor) satisfy every key=value pair in selector, via
+// model.LabelsMatch -- the exact same "all pairs must match, an empty
+// selector matches nothing" rule `kaironctl delete RESOURCE --selector`
+// already applies for bulk delete, now shared by `kaironctl get`'s
+// read-side equivalent. A generic helper rather than one filter function
+// per kind (as cmdGet has a dozen of), since every kind's only difference
+// here is how to reach its model.ObjectMeta.Labels -- Go generics can't
+// express "any struct with a Metadata field" structurally, so the accessor
+// closure stands in for that. An empty selector is a no-op (returns items
+// unchanged) rather than the empty-matches-nothing rule below it, since
+// unlike delete's --selector, get's is optional and its absence must keep
+// meaning "list everything", exactly as it always has.
+func selectorFilter[T any](items []T, selector map[string]string, labels func(T) map[string]string) []T {
+	if len(selector) == 0 {
+		return items
+	}
+	out := items[:0:0] // fresh backing array: never alias the caller's slice
+	for _, it := range items {
+		if model.LabelsMatch(labels(it), selector) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// cmdGet lists every resource of one kind (default "machine", same as
+// describe/delete's single-object form), optionally narrowed to those
+// whose labels satisfy --selector k=v (repeatable, logical AND) -- the
+// read-side counterpart to `kaironctl delete RESOURCE --selector` above,
+// so an operator can preview exactly which objects a selector reaches (or
+// just list, say, every Machine from one load test) without reaching for
+// `kubectl get -l` or piping through grep.
 func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 	ns, args := nsFlag(args)
 	resource := "machines"
-	if len(args) > 0 {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		resource = strings.ToLower(args[0])
+		args = args[1:]
+	}
+	fs := flag.NewFlagSet("get", flag.ExitOnError)
+	var selectorFlag stringSliceFlag
+	fs.Var(&selectorFlag, "selector", "label key=value every listed resource must carry (repeatable -- every pair must match); omitted lists every resource of this kind, exactly as before this flag existed")
+	_ = fs.Parse(args)
+	selector, err := parseKeyValues(selectorFlag)
+	if err != nil {
+		fatal(err)
 	}
 	switch resource {
 	case "machine", "machines", "vm", "vms":
@@ -180,6 +222,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
 		fmt.Printf("NAME\tNODE\tPHASE\tCPU\tMEMORY\tIP\n")
 		for _, m := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, dash(m.Spec.NodeName), dash(m.Status.Phase), m.Spec.Resources.CPU, m.Spec.Resources.Memory, dash(m.Status.GuestIP))
@@ -189,6 +232,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(m model.MachineMigration) map[string]string { return m.Metadata.Labels })
 		fmt.Printf("NAME\tMACHINE\tSTRATEGY\tSOURCE\tTARGET\tPHASE\n")
 		for _, m := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", m.Metadata.Name, m.Spec.MachineName, dash(m.Status.EffectiveStrategy), dash(m.Status.SourceNode), dash(m.Status.TargetNode), dash(m.Status.Phase))
@@ -198,6 +242,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(s model.MachineSnapshot) map[string]string { return s.Metadata.Labels })
 		fmt.Printf("NAME\tMACHINE\tPHASE\tREADY\n")
 		for _, s := range items {
 			fmt.Printf("%s\t%s\t%s\t%t\n", s.Metadata.Name, s.Spec.MachineName, dash(s.Status.Phase), s.Status.ReadyToUse)
@@ -207,6 +252,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(r model.MachineSnapshotRestore) map[string]string { return r.Metadata.Labels })
 		fmt.Printf("NAME\tSNAPSHOT\tCLAIM\tPHASE\n")
 		for _, r := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\n", r.Metadata.Name, r.Spec.SnapshotName, dash(r.Status.RestoredClaimName), dash(r.Status.Phase))
@@ -216,6 +262,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(q model.MachineQuota) map[string]string { return q.Metadata.Labels })
 		fmt.Printf("NAME\tMAXMACHINES\tMAXCPU\tMAXMEMORY\tUSEDMACHINES\tUSEDCPU\tUSEDMEMORYMIB\n")
 		for _, q := range items {
 			maxMachines := "-"
@@ -229,6 +276,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(b model.MachineDisruptionBudget) map[string]string { return b.Metadata.Labels })
 		fmt.Printf("NAME\tMINAVAILABLE\tMAXUNAVAILABLE\tEXPECTED\tHEALTHY\tDESIRED\tALLOWED\n")
 		for _, b := range items {
 			fmt.Printf("%s\t%s\t%s\t%d\t%d\t%d\t%d\n", b.Metadata.Name, dash(b.Spec.MinAvailable), dash(b.Spec.MaxUnavailable), b.Status.ExpectedMachines, b.Status.CurrentHealthy, b.Status.DesiredHealthy, b.Status.DisruptionsAllowed)
@@ -238,6 +286,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(s model.MachineSet) map[string]string { return s.Metadata.Labels })
 		fmt.Printf("NAME\tSTRATEGY\tREPLICAS\tREADY\tUPDATED\n")
 		for _, s := range items {
 			fmt.Printf("%s\t%s\t%d\t%d\t%d\n", s.Metadata.Name, dash(defaultStrategy(s.Spec.Strategy)), s.Spec.Replicas, s.Status.ReadyReplicas, s.Status.UpdatedReplicas)
@@ -247,6 +296,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(it model.MachineInstanceType) map[string]string { return it.Metadata.Labels })
 		fmt.Printf("NAME\tCPU\tMEMORY\n")
 		for _, it := range items {
 			fmt.Printf("%s\t%s\t%s\n", it.Metadata.Name, dash(it.Spec.Resources.CPU), dash(it.Spec.Resources.Memory))
@@ -256,6 +306,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(p model.MigrationPolicy) map[string]string { return p.Metadata.Labels })
 		fmt.Printf("NAME\tBANDWIDTHMBPS\tACTIVEMIGRATIONS\n")
 		for _, p := range items {
 			bw := "-"
@@ -269,6 +320,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(s model.MachineSnapshotSchedule) map[string]string { return s.Metadata.Labels })
 		fmt.Printf("NAME\tINTERVALSECONDS\tSTARTINGDEADLINE\tSUSPEND\tLASTRUN\tLASTCOUNT\tNEXTRUN\n")
 		for _, s := range items {
 			lastRun := "-"
@@ -293,6 +345,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(p model.MachineNetworkPolicy) map[string]string { return p.Metadata.Labels })
 		fmt.Printf("NAME\tTARGET\tDEFAULTALLOW\tPHASE\tSYNCED\n")
 		for _, p := range items {
 			target := dash(p.Spec.MachineName)
@@ -306,6 +359,7 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		if err != nil {
 			fatal(err)
 		}
+		items = selectorFilter(items, selector, func(g model.NetworkSecurityGroup) map[string]string { return g.Metadata.Labels })
 		fmt.Printf("NAME\tGROUPNAME\tPRIORITY\tDEFAULTALLOW\tPHASE\tAPPLIEDON\n")
 		for _, g := range items {
 			groupName := g.Spec.GroupName
@@ -1777,7 +1831,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {
