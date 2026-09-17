@@ -514,6 +514,24 @@ spec:
                     lastTransitionTime:
                       type: string
                       format: date-time
+              # kairon-node's own ground truth of exactly which Service
+              # Fabric (service, port, guestIP) backends it has registered
+              # for this Machine -- FluxVM has no query for this, so
+              # reconcileServiceFabric diffs against this field (not
+              # against current spec) to prune a stale backend left behind
+              # by a guestIP change or a spec.serviceFabric.services edit,
+              # see internal/agent/network.go.
+              appliedServiceFabricMemberships:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    port:
+                      type: integer
+                    guestIP:
+                      type: string
               network:
                 type: object
                 properties:
