@@ -50,7 +50,10 @@ jobs:
       # verification logic was updated for the bundle format; no explicit
       # cosign-release override needed, its own default is a real,
       # correctly-verifiable cosign release.
-      - uses: sigstore/cosign-installer@v4
+      # Pinned to an exact tag, not a "@v4" moving major -- unlike @v3,
+      # this action doesn't publish a moving major-version tag at all
+      # (confirmed via the GitHub API: only exact vX.Y.Z tags exist).
+      - uses: sigstore/cosign-installer@v4.1.2
       # push: false/load: true here on purpose: build the exact bits once,
       # scan those exact bits, and only then `docker push` them -- not a
       # second build-and-push that could, even if only in principle,
