@@ -225,6 +225,8 @@ func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
 			quotaStatusPatched = true
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
+			w.WriteHeader(http.StatusCreated)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
@@ -241,6 +243,81 @@ func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
 	}
 	if !quotaStatusPatched {
 		t.Fatal("expected MachineQuota.status to be patched with observed usage")
+	}
+}
+
+// TestReconcileBlockedQuotaRecordsEvent confirms admitQuota's blocker
+// branch calls RecordEvent exactly once for a quota-blocked Machine, with
+// the same blocker reason string already patched into status.Message --
+// purely observing a decision already made, not a second independent
+// computation of it.
+func TestReconcileBlockedQuotaRecordsEvent(t *testing.T) {
+	existing := model.Machine{
+		Metadata: model.ObjectMeta{Name: "existing", Namespace: "prod"},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	pending := model.Machine{
+		Metadata: model.ObjectMeta{Name: "pending", Namespace: "prod", UID: "pending-uid"},
+		Spec:     model.MachineSpec{PowerState: "Running", Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	quota := model.MachineQuota{
+		Metadata: model.ObjectMeta{Name: "prod-quota", Namespace: "prod"},
+		Spec:     model.MachineQuotaSpec{MaxMachines: intPtr(1)},
+	}
+	var pendingStatus model.MachineStatus
+	var events []model.Event
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{existing, pending}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
+			var n model.Node
+			n.Metadata.Name = "worker-1"
+			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
+			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
+			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pending/status":
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			pendingStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
+			var ev model.Event
+			_ = json.NewDecoder(r.Body).Decode(&ev)
+			events = append(events, ev)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	ctl := &Controller{Kube: kc, Scheduler: scheduler.Scheduler{RequireCapableLabel: true}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := ctl.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected exactly one RecordEvent POST, got %d: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.InvolvedObject.Kind != "Machine" || ev.InvolvedObject.Name != "pending" || ev.InvolvedObject.Namespace != "prod" || ev.InvolvedObject.UID != "pending-uid" {
+		t.Errorf("unexpected involvedObject: %+v", ev.InvolvedObject)
+	}
+	if ev.Reason != "QuotaBlocked" {
+		t.Errorf("expected reason QuotaBlocked, got %q", ev.Reason)
+	}
+	if ev.Type != "Warning" {
+		t.Errorf("expected type Warning, got %q", ev.Type)
+	}
+	if ev.Message != pendingStatus.Message {
+		t.Errorf("expected event message to match status.Message %q, got %q", pendingStatus.Message, ev.Message)
 	}
 }
 
@@ -295,6 +372,8 @@ func TestReconcileAdmitsHigherPriorityMachineFirst(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
+			w.WriteHeader(http.StatusCreated)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}

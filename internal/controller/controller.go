@@ -229,6 +229,16 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 			}
+			// Same blocker string already patched into status.Message
+			// above, also recorded as a real Event -- purely observing a
+			// decision already made, no new logic -- so it shows up in
+			// `kubectl describe machine`'s Events tab too, not just a
+			// status field an operator has to already know to read. Best
+			// effort: a failure here never blocks scheduling or retries
+			// this tick's status patch, it's just logged.
+			if evErr := c.Kube.RecordEvent(ctx, m.Namespace(), "Machine", m.Metadata.Name, m.Metadata.UID, "QuotaBlocked", blocker, "Warning"); evErr != nil {
+				c.Log.Error("machine quota-blocked event record failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", evErr)
+			}
 			continue
 		}
 		specPatch := map[string]any{"nodeName": node}

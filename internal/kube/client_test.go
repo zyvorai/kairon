@@ -291,3 +291,77 @@ func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
 		t.Fatalf("deleted=%v, want 10 DELETE calls", deleted)
 	}
 }
+
+// TestRecordEventPostsRealCoreV1Event confirms RecordEvent's request shape
+// against a fake apiserver double: method, path, and a well-formed
+// core/v1 Event body carrying involvedObject/reason/message/type, with a
+// generated, non-empty metadata.name (no caller-supplied one) so repeated
+// calls for the same object never collide.
+func TestRecordEventPostsRealCoreV1Event(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotContentType string
+	var ev model.Event
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotContentType = r.Header.Get("Content-Type")
+		if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "", "", false)
+	c.HTTP = s.Client()
+
+	err := c.RecordEvent(context.Background(), "prod", "Machine", "vm-1", "vm-1-uid", "QuotaBlocked", "MachineQuota prod-quota: max machines (5) reached", "Warning")
+	if err != nil {
+		t.Fatalf("RecordEvent: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/namespaces/prod/events" {
+		t.Errorf("path = %q, want /api/v1/namespaces/prod/events", gotPath)
+	}
+	if gotContentType != "application/json" {
+		t.Errorf("content-type = %q, want application/json", gotContentType)
+	}
+	if ev.APIVersion != "v1" || ev.Kind != "Event" {
+		t.Errorf("unexpected TypeMeta: %+v", ev.TypeMeta)
+	}
+	if ev.Metadata.Namespace != "prod" {
+		t.Errorf("metadata.namespace = %q, want prod", ev.Metadata.Namespace)
+	}
+	if ev.Metadata.Name == "" {
+		t.Error("expected a generated, non-empty metadata.name")
+	}
+	if ev.InvolvedObject.Kind != "Machine" || ev.InvolvedObject.Name != "vm-1" || ev.InvolvedObject.Namespace != "prod" || ev.InvolvedObject.UID != "vm-1-uid" {
+		t.Errorf("unexpected involvedObject: %+v", ev.InvolvedObject)
+	}
+	if ev.Reason != "QuotaBlocked" {
+		t.Errorf("reason = %q, want QuotaBlocked", ev.Reason)
+	}
+	if ev.Message != "MachineQuota prod-quota: max machines (5) reached" {
+		t.Errorf("unexpected message: %q", ev.Message)
+	}
+	if ev.Type != "Warning" {
+		t.Errorf("type = %q, want Warning", ev.Type)
+	}
+	if ev.Count != 1 {
+		t.Errorf("count = %d, want 1", ev.Count)
+	}
+	if ev.FirstTimestamp.IsZero() || ev.LastTimestamp.IsZero() {
+		t.Error("expected non-zero first/last timestamps")
+	}
+
+	// A second call for the same involved object must not collide on
+	// metadata.name.
+	firstName := ev.Metadata.Name
+	if err := c.RecordEvent(context.Background(), "prod", "Machine", "vm-1", "vm-1-uid", "QuotaBlocked", "still blocked", "Warning"); err != nil {
+		t.Fatalf("second RecordEvent: %v", err)
+	}
+	if ev.Metadata.Name == firstName {
+		t.Errorf("expected a distinct generated metadata.name on the second call, got the same %q twice", firstName)
+	}
+}

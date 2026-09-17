@@ -38,6 +38,9 @@ spec:
     - name: IP
       type: string
       jsonPath: .status.guestIP
+    - name: Message
+      type: string
+      jsonPath: .status.message
     schema:
       openAPIV3Schema:
         type: object

@@ -3,6 +3,8 @@
 
 package model
 
+import "time"
+
 // ConfigMap is the minimal core/v1 ConfigMap shape Kairon needs -- not a
 // general-purpose client. Used by internal/uiapi.Server to share session
 // revocation, login-lockout, and console-ticket state across kairon-ui
@@ -44,4 +46,38 @@ type LeaseSpec struct {
 	AcquireTime          *MicroTime `json:"acquireTime,omitempty"`
 	RenewTime            *MicroTime `json:"renewTime,omitempty"`
 	LeaseTransitions     *int32     `json:"leaseTransitions,omitempty"`
+}
+
+// Event is the minimal core/v1 Event shape Kairon needs to record one --
+// not a general-purpose client. Used by internal/kube.Client.RecordEvent
+// (called from internal/controller's admitQuota blocker branch) so a
+// quota-blocked Machine shows up in `kubectl describe machine`'s Events
+// tab, not just status.message -- the same object kubectl/the dashboard
+// already know how to render, rather than a Kairon-specific notification
+// channel of its own.
+type Event struct {
+	TypeMeta       `json:",inline"`
+	Metadata       ObjectMeta      `json:"metadata"`
+	InvolvedObject ObjectReference `json:"involvedObject"`
+	Reason         string          `json:"reason,omitempty"`
+	Message        string          `json:"message,omitempty"`
+	Source         EventSource     `json:"source,omitempty"`
+	FirstTimestamp time.Time       `json:"firstTimestamp,omitempty"`
+	LastTimestamp  time.Time       `json:"lastTimestamp,omitempty"`
+	Count          int32           `json:"count,omitempty"`
+	Type           string          `json:"type,omitempty"`
+}
+
+// ObjectReference is the minimal core/v1 ObjectReference shape Kairon
+// needs -- just enough to populate Event.InvolvedObject.
+type ObjectReference struct {
+	Kind      string `json:"kind,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	UID       string `json:"uid,omitempty"`
+}
+
+// EventSource identifies the component that reported an Event.
+type EventSource struct {
+	Component string `json:"component,omitempty"`
 }

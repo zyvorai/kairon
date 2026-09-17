@@ -91,6 +91,11 @@ HELM_SET_FLAGS = [
 # its method name carries no Get/List/Create/... verb prefix to key off of).
 OVERRIDES = {
     "SubjectAccessReview": ("authorization.k8s.io", "subjectaccessreviews", "create"),
+    # RecordEvent posts a core/v1 Event -- its name doesn't start with any
+    # of VERB_PREFIXES (a plain Get/List/Create/... prefix would misread as
+    # "this is an Event *reader*"), so it needs the same explicit override
+    # SubjectAccessReview above does.
+    "RecordEvent": ("", "events", "create"),
 }
 
 VERB_PREFIXES = [

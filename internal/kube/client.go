@@ -748,6 +748,45 @@ func (c *Client) UpdateLease(ctx context.Context, ns string, lease model.Lease) 
 	return out, err
 }
 
+// RecordEvent posts a real core/v1 Event for involvedObject (a Machine, in
+// every caller today), so it shows up in `kubectl describe machine`'s
+// Events tab -- not a Kairon-specific notification channel of its own.
+// Used by internal/controller's admitQuota blocker branch to surface a
+// quota-blocked Machine's already-computed status.Message as a real Event
+// too, not just a status field an operator has to already know to read.
+// metadata.name is generated the same way client-go's own EventBroadcaster
+// names one it creates -- "<involvedObjectName>.<hex nanosecond
+// timestamp>" -- so repeated calls for the same object never collide, and
+// no separate uniqueness/dedup logic is needed here. There is deliberately
+// no per-Event aggregation/counting (Count always 1): a Machine stuck
+// blocked for hours produces a proportionally noisy Event history, the
+// same honest first-cut limit as this feature's rest.
+func (c *Client) RecordEvent(ctx context.Context, namespace, involvedObjectKind, involvedObjectName, involvedObjectUID, reason, message, eventType string) error {
+	now := time.Now().UTC()
+	ev := model.Event{
+		TypeMeta: model.TypeMeta{APIVersion: "v1", Kind: "Event"},
+		Metadata: model.ObjectMeta{
+			Name:      fmt.Sprintf("%s.%x", involvedObjectName, now.UnixNano()),
+			Namespace: namespace,
+		},
+		InvolvedObject: model.ObjectReference{
+			Kind:      involvedObjectKind,
+			Namespace: namespace,
+			Name:      involvedObjectName,
+			UID:       involvedObjectUID,
+		},
+		Reason:         reason,
+		Message:        message,
+		Source:         model.EventSource{Component: "kairon-controller"},
+		FirstTimestamp: now,
+		LastTimestamp:  now,
+		Count:          1,
+		Type:           eventType,
+	}
+	path := fmt.Sprintf("/api/v1/namespaces/%s/events", url.PathEscape(namespace))
+	return c.request(ctx, http.MethodPost, path, ev, nil, "")
+}
+
 // SubjectAccessReview posts a built-in authorization.k8s.io/v1
 // SubjectAccessReview and returns its Status -- the caller's own
 // ServiceAccount (this Client's Token) must hold "create" on
