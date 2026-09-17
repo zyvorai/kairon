@@ -149,6 +149,14 @@ empty for a Machine using Kairon's own driver (or no CSI volume at all) --
 existing Machines created before this field existed keep working
 unchanged.
 
+Editing `spec.volumes[0].claimName` away from a third-party-backed PVC (to
+a different one, or removing `spec.volumes` entirely) tears down the old
+volume via *its* driver's socket (`status.volumeDriver`, read before it's
+overwritten) before the new one is ever recorded in status -- the same
+"don't leak the volume being replaced" behavior
+[`docs/guides/machine-storage-csi.md`](machine-storage-csi.md) describes
+in full for Kairon's own driver; it applies identically here.
+
 ## Real limits today (first cut)
 
 - **`attachRequired: false` drivers only.** No `ControllerPublishVolume`

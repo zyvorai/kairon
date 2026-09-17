@@ -155,6 +155,30 @@ func TestTeardownCSIVolumeRoutesToThirdPartyDriver(t *testing.T) {
 	}
 }
 
+func TestPruneStaleCSIVolumeRoutesToThirdPartyDriverForTheOldVolume(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{ThirdPartyCSIDrivers: map[string]string{"rbd.csi.ceph.com": socketPath}}
+	// Simulates editing spec.volumes[0] away from an RBD-backed PVC to a
+	// Kairon-driver-backed one -- the OLD status names the third-party
+	// driver; pruneStaleCSIVolume must route the OLD volume's teardown to
+	// it, not to Kairon's own (unconfigured here) socket.
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Status: model.MachineStatus{
+			VolumeStagingPath: "/staged", VolumePublishPath: "/published",
+			VolumeHandle: "rbd-image-123", VolumeDriver: "rbd.csi.ceph.com",
+		},
+	}
+	next := csiVolumeStatus{VolumeID: "iscsi|new|i|0"} // Driver == "" -- Kairon's own driver now
+	if err := a.pruneStaleCSIVolume(context.Background(), m, next); err != nil {
+		t.Fatalf("pruneStaleCSIVolume: %v", err)
+	}
+	if len(fake.unpublish) != 1 || fake.unpublish[0].GetVolumeId() != "rbd-image-123" {
+		t.Fatalf("expected the old RBD volume to be torn down via its own driver socket, got %+v", fake.unpublish)
+	}
+}
+
 func TestTeardownCSIVolumeStillRoutesToOwnDriverWhenVolumeDriverEmpty(t *testing.T) {
 	fake := &fakeCSINodeServer{}
 	socketPath := startFakeCSINode(t, fake)

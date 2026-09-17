@@ -133,6 +133,26 @@ other boot-disk source uses. `status.volumeStagingPath`/
 `status.volumePublishPath`/`status.volumeHandle` record the result so this
 only happens once, not every reconcile tick.
 
+**Editing `spec.volumes[0].claimName` (or removing `spec.volumes`
+entirely) on an existing Machine tears down the volume it's replacing.**
+Every reconcile tick re-resolves `spec.volumes[0]` and compares the
+result against what `status.volume*` already recorded from a previous
+tick; if a still-running Machine now resolves to a genuinely different
+volume (a different `claimName`, or none at all, falling back to plain
+`spec.image.path`) than the one already staged/published for it,
+`kairon-node` calls `NodeUnpublishVolume`/`NodeUnstageVolume` against the
+*old* one before ever recording the new one in status. Without this, the
+old iSCSI login/mount would simply be abandoned -- not even reachable at
+Machine delete time, since by then `status.volume*` already names the
+new volume -- leaking a live iSCSI session against the old target
+indefinitely, and, for a `ReadWriteOnce` volume, permanently blocking it
+from ever being attached elsewhere. Fails closed like every other
+teardown step here: an error tearing down the old volume is returned
+before the new one's staging path is ever committed to status, so the
+old (still-accurate) status keeps being reported and this is retried
+next tick rather than silently losing track of which volume is actually
+attached.
+
 **CHAP authentication**: supported by the driver itself (for a real
 Kubernetes Pod using it via kubelet, which resolves a `nodeStageSecretRef`
 Secret with its own properly-scoped RBAC) but **not** for Kairon's own

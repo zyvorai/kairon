@@ -123,10 +123,13 @@ func (a *Agent) resolveCSIVolume(ctx context.Context, m model.Machine, pv model.
 }
 
 // teardownCSIVolume unpublishes and unstages a Machine's CSI-backed
-// volume, if it ever resolved one -- called from cleanup before a
-// Machine's finalizer is removed, the same "don't finish deleting until
+// volume, if it ever resolved one. Two callers: cleanup, before a
+// Machine's finalizer is removed (the same "don't finish deleting until
 // this succeeds" posture already applied to the FluxVM runtime delete
-// call. A no-op (nil error) when the Machine never staged/published a
+// call), and pruneStaleCSIVolume, mid-lifecycle, once a still-running
+// Machine's spec.volumes resolves to a genuinely different volume than
+// the one already staged/published for it -- see that function's own doc
+// comment. A no-op (nil error) when the Machine never staged/published a
 // CSI volume in the first place (the overwhelmingly common case: plain
 // spec.image.path, or a hostPath/local-backed volume, neither of which
 // this ever touches). Routes to teardownThirdPartyCSIVolume when
@@ -157,6 +160,52 @@ func (a *Agent) teardownCSIVolume(ctx context.Context, m model.Machine) error {
 		}); err != nil {
 			return fmt.Errorf("NodeUnstageVolume: %w", err)
 		}
+	}
+	return nil
+}
+
+// pruneStaleCSIVolume tears down a Machine's *previously* staged/published
+// CSI volume (as recorded in m.Status, i.e. the last-committed status,
+// before this tick's reconcileMachine overwrites it) when this tick
+// resolves a genuinely different one for it -- resolveCSIVolume and
+// resolveThirdPartyCSIVolume only ever stage+publish whatever
+// spec.volumes[0] currently names; neither one notices, or has any reason
+// to notice, that the *previous* volume it staged/published on an earlier
+// tick is no longer the one now-current. Without this, editing
+// spec.volumes[0].claimName to point at a different PersistentVolumeClaim
+// (or removing spec.volumes entirely, falling back to spec.image.path) on
+// an existing Machine would leak the old NodeStageVolume/NodePublishVolume
+// forever: teardownCSIVolume only ever runs from cleanup at Machine
+// delete, against whatever status.volume* points to *at that later time*
+// -- which by then is already the new volume. The old one is simply gone
+// from status, unreachable, and never torn down by anything -- not even
+// eventually. The same "spec-change cleanup, not just delete" gap the
+// Service Fabric backend-membership fix (19aa87e) closed for VIP
+// registrations; see that commit's own log message for the sibling bug.
+//
+// A no-op when there was nothing staged/published yet (the overwhelmingly
+// common first-reconcile and non-CSI cases), and a no-op when the newly
+// resolved volume is the same one already recorded (resolveCSIVolume's own
+// idempotent early-return path returns exactly the same StagingPath/
+// PublishPath/VolumeID/Driver in that case, so this correctly does
+// nothing rather than redundantly unpublishing and immediately
+// re-publishing the very volume the Machine is still using).
+//
+// Fails closed like every other teardown step in this file: an error here
+// must be returned by the caller before it commits the new volStatus into
+// status, so the previous, still-accurate status keeps being reported and
+// this is retried next tick rather than silently losing track of a live
+// CSI attachment.
+func (a *Agent) pruneStaleCSIVolume(ctx context.Context, m model.Machine, next csiVolumeStatus) error {
+	prev := m.Status
+	if prev.VolumeStagingPath == "" && prev.VolumePublishPath == "" {
+		return nil
+	}
+	if prev.VolumeHandle == next.VolumeID && prev.VolumeDriver == next.Driver {
+		return nil
+	}
+	if err := a.teardownCSIVolume(ctx, m); err != nil {
+		return fmt.Errorf("tear down stale CSI volume (handle %q, driver %q): %w", prev.VolumeHandle, prev.VolumeDriver, err)
 	}
 	return nil
 }

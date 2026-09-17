@@ -285,6 +285,17 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			return err
 		}
 	}
+	// Prune whatever CSI volume this Machine had staged/published *before*
+	// this tick -- using m.Status, not the not-yet-committed status below
+	// -- before it's overwritten by volStatus and lost. Fails closed: an
+	// error here returns before status.Volume* is ever set to volStatus,
+	// so the previous (still-accurate, still-mounted) volume keeps being
+	// reported and this is retried next tick rather than silently
+	// orphaning a live CSI attachment. See pruneStaleCSIVolume's own doc
+	// comment.
+	if err := a.pruneStaleCSIVolume(ctx, m, volStatus); err != nil {
+		return err
+	}
 	status := m.Status
 	status.Phase = normalizePhase(rec.Status)
 	status.NodeName = a.NodeName

@@ -198,3 +198,90 @@ func TestTeardownCSIVolumeNoOpsWhenNeverStaged(t *testing.T) {
 		t.Fatalf("expected a no-op for a Machine that never staged a CSI volume, got: %v", err)
 	}
 }
+
+func TestPruneStaleCSIVolumeNoOpWhenNothingStagedYet(t *testing.T) {
+	// No CSISocketPath either -- proves this never even attempts to dial
+	// when m.Status has no staged/published volume to begin with (the
+	// overwhelmingly common first-reconcile and non-CSI cases).
+	a := &Agent{}
+	if err := a.pruneStaleCSIVolume(context.Background(), model.Machine{}, csiVolumeStatus{VolumeID: "iscsi|p|i|0"}); err != nil {
+		t.Fatalf("expected a no-op, got: %v", err)
+	}
+}
+
+func TestPruneStaleCSIVolumeNoOpWhenUnchanged(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath}
+
+	m := model.Machine{Status: model.MachineStatus{
+		VolumeStagingPath: "/stage/pv-1", VolumePublishPath: "/publish/pv-1", VolumeHandle: "iscsi|p|i|0",
+	}}
+	// Same VolumeID/Driver resolveCSIVolume's own idempotent path would
+	// return unchanged -- must not redundantly unpublish/unstage the
+	// volume the Machine is still actively using.
+	next := csiVolumeStatus{StagingPath: "/stage/pv-1", PublishPath: "/publish/pv-1", VolumeID: "iscsi|p|i|0"}
+	if err := a.pruneStaleCSIVolume(context.Background(), m, next); err != nil {
+		t.Fatalf("pruneStaleCSIVolume: %v", err)
+	}
+	if len(fake.unpublish) != 0 || len(fake.unstage) != 0 {
+		t.Fatalf("expected no teardown calls for an unchanged volume, got unpublish=%d unstage=%d", len(fake.unpublish), len(fake.unstage))
+	}
+}
+
+func TestPruneStaleCSIVolumeTearsDownOldVolumeOnHandleChange(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath}
+
+	// Simulates editing spec.volumes[0].claimName to point at a different
+	// PVC/PV -- the newly resolved volume (next) has a different handle
+	// than what m.Status still records from a previous tick.
+	m := model.Machine{Status: model.MachineStatus{
+		VolumeStagingPath: "/stage/old", VolumePublishPath: "/publish/old", VolumeHandle: "iscsi|old|i|0",
+	}}
+	next := csiVolumeStatus{StagingPath: "/stage/new", PublishPath: "/publish/new", VolumeID: "iscsi|new|i|0"}
+	if err := a.pruneStaleCSIVolume(context.Background(), m, next); err != nil {
+		t.Fatalf("pruneStaleCSIVolume: %v", err)
+	}
+	if len(fake.unpublish) != 1 || fake.unpublish[0].GetTargetPath() != "/publish/old" {
+		t.Fatalf("expected the OLD volume's publish path to be torn down, got %+v", fake.unpublish)
+	}
+	if len(fake.unstage) != 1 || fake.unstage[0].GetStagingTargetPath() != "/stage/old" {
+		t.Fatalf("expected the OLD volume's staging path to be torn down, got %+v", fake.unstage)
+	}
+}
+
+func TestPruneStaleCSIVolumeTearsDownOldVolumeWhenSpecVolumesRemoved(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath}
+
+	// Simulates removing spec.volumes entirely (falling back to plain
+	// spec.image.path) -- reconcileMachine's own volStatus for that path
+	// is the zero value, matching nothing that was ever staged.
+	m := model.Machine{Status: model.MachineStatus{
+		VolumeStagingPath: "/stage/old", VolumePublishPath: "/publish/old", VolumeHandle: "iscsi|old|i|0",
+	}}
+	if err := a.pruneStaleCSIVolume(context.Background(), m, csiVolumeStatus{}); err != nil {
+		t.Fatalf("pruneStaleCSIVolume: %v", err)
+	}
+	if len(fake.unpublish) != 1 || len(fake.unstage) != 1 {
+		t.Fatalf("expected the abandoned volume to be torn down, got unpublish=%d unstage=%d", len(fake.unpublish), len(fake.unstage))
+	}
+}
+
+func TestPruneStaleCSIVolumeFailsClosedOnTeardownError(t *testing.T) {
+	// No CSISocketPath configured -- teardownCSIVolume's dial/call will
+	// fail, and that failure must propagate rather than being swallowed,
+	// so reconcileMachine's caller never commits the new volStatus over a
+	// volume that's still actually attached.
+	a := &Agent{}
+	m := model.Machine{Status: model.MachineStatus{
+		VolumeStagingPath: "/stage/old", VolumePublishPath: "/publish/old", VolumeHandle: "iscsi|old|i|0",
+	}}
+	next := csiVolumeStatus{VolumeID: "iscsi|new|i|0"}
+	if err := a.pruneStaleCSIVolume(context.Background(), m, next); err == nil {
+		t.Fatal("expected pruneStaleCSIVolume to fail closed when the old volume's teardown itself errors")
+	}
+}
