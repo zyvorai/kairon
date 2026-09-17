@@ -291,6 +291,12 @@ table.datatable .rowactions button {
   color: #888;
 }
 
+.priorityInput {
+  width: 64px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

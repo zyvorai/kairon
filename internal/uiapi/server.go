@@ -192,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/pause", s.handlePowerMachine("Paused"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/resume", s.handlePowerMachine("Running"))
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/halt", s.handlePowerMachine("Halted"))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/priority", s.handleSetMachinePriority)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.handleConsoleTicket)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.handleExec)
 	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.handleAgentPutFile)

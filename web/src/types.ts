@@ -18,6 +18,7 @@ export interface Machine {
     network?: { mode?: string; netns?: boolean };
     powerState?: string;
     guestAgent?: { enabled?: boolean; console?: boolean };
+    priority?: number;
   };
   status?: {
     phase?: string;

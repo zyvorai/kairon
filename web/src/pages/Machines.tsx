@@ -82,6 +82,12 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [execFor, setExecFor] = useState<string | null>(null);
   const [agentFilesFor, setAgentFilesFor] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
+  // priorityEdits holds an in-progress, not-yet-saved priority value per
+  // Machine name -- keyed separately from `items` so a value the operator
+  // is mid-typing never gets clobbered by the 5s poll in `refresh` (see
+  // the useEffect below), the same reason `form`/create isn't derived
+  // from `items` either.
+  const [priorityEdits, setPriorityEdits] = useState<Record<string, string>>({});
   // consoleEnabled also gates exec: both ride the exact same kairon-ui ->
   // kairon-node relay (internal/consoleproxy), so a deployment either has
   // that relay configured or it doesn't -- see internal/uiapi/exec.go's
@@ -128,6 +134,32 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     setMsg('');
     try {
       await api(`/api/v1/machines/default/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+      await refresh();
+    } catch (err) {
+      setMsg(String(err));
+    }
+  }
+
+  // setPriority patches spec.priority via the same single-field pattern
+  // `power` above uses for spec.powerState -- kairon-ui's own counterpart
+  // to `kaironctl edit machine NAME --priority N` (see
+  // docs/guides/machine-placement.md's "Scheduling priority" section),
+  // which until now was kaironctl/kubectl-only.
+  async function setPriority(name: string) {
+    const raw = priorityEdits[name];
+    const priority = Number(raw);
+    if (raw === undefined || raw.trim() === '' || !Number.isInteger(priority)) {
+      setMsg('Priority must be a whole number');
+      return;
+    }
+    setMsg('');
+    try {
+      await apiJSON(`/api/v1/machines/default/${encodeURIComponent(name)}/priority`, 'POST', { priority });
+      setPriorityEdits((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
       await refresh();
     } catch (err) {
       setMsg(String(err));
@@ -223,6 +255,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
               <th>CPU</th>
               <th>Memory</th>
               <th>IP</th>
+              <th>Priority</th>
               <th />
             </tr>
           </thead>
@@ -249,6 +282,23 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                 <td>{m.status?.guestIP || '-'}</td>
                 <td>
                   <div className="rowactions">
+                    <input
+                      type="number"
+                      step={1}
+                      className="priorityInput"
+                      value={priorityEdits[m.metadata.name] ?? String(m.spec.priority ?? 0)}
+                      onChange={(e) =>
+                        setPriorityEdits((prev) => ({ ...prev, [m.metadata.name]: e.target.value }))
+                      }
+                    />
+                    {priorityEdits[m.metadata.name] !== undefined &&
+                      priorityEdits[m.metadata.name] !== String(m.spec.priority ?? 0) && (
+                        <button onClick={() => setPriority(m.metadata.name)}>Set</button>
+                      )}
+                  </div>
+                </td>
+                <td>
+                  <div className="rowactions">
                     <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
                     <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
                     {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'pause')}>Pause</button>}
@@ -269,7 +319,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={7} className="msg">
+                <td colSpan={8} className="msg">
                   No machines yet.
                 </td>
               </tr>

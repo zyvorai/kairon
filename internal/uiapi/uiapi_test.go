@@ -109,10 +109,16 @@ func (f *fakeKube) handler() http.Handler {
 			var patch struct {
 				Spec struct {
 					PowerState string `json:"powerState"`
+					Priority   *int32 `json:"priority"`
 				} `json:"spec"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&patch)
-			m.Spec.PowerState = patch.Spec.PowerState
+			if patch.Spec.PowerState != "" {
+				m.Spec.PowerState = patch.Spec.PowerState
+			}
+			if patch.Spec.Priority != nil {
+				m.Spec.Priority = *patch.Spec.Priority
+			}
 			f.machines[name] = m
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
@@ -660,6 +666,42 @@ func TestPowerMachine(t *testing.T) {
 	fk.mu.Unlock()
 	if got != "Stopped" {
 		t.Fatalf("expected powerState Stopped, got %q", got)
+	}
+}
+
+func TestSetMachinePriority(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["db"] = model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/db/priority", "", setPriorityRequest{Priority: 20})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fk.mu.Lock()
+	got := fk.machines["db"].Spec.Priority
+	fk.mu.Unlock()
+	if got != 20 {
+		t.Fatalf("expected priority 20, got %d", got)
+	}
+}
+
+func TestSetMachinePriorityAllowsNegative(t *testing.T) {
+	fk := newFakeKube()
+	fk.machines["db"] = model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "default"}, Spec: model.MachineSpec{Priority: 5}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/machines/default/db/priority", "", setPriorityRequest{Priority: -3})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fk.mu.Lock()
+	got := fk.machines["db"].Spec.Priority
+	fk.mu.Unlock()
+	if got != -3 {
+		t.Fatalf("expected priority -3 (no fixed range, same as kaironctl edit machine), got %d", got)
 	}
 }
 

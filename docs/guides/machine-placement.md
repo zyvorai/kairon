@@ -185,6 +185,16 @@ delete/recreate — the one Machine-spec field this project's `edit` verb
 supports patching after creation, since it only ever affects a *future*
 tick's admission order.
 
+The dashboard (kairon-ui) has the same capability: each row on the
+Machines page carries a Priority field with a "Set" button that appears
+once you change it, which `POST`s to
+`/api/v1/machines/{namespace}/{name}/priority`
+(`internal/uiapi/machines.go`'s `handleSetMachinePriority`) — the same
+narrow, single-field `spec.priority` merge-patch `kaironctl edit machine`
+issues, reusing the `patch` verb the ClusterRole already grants kairon-ui
+on `machines` for power actions (no new RBAC). Any whole number is
+accepted, including negative, same as the CLI.
+
 **This is not preemption.** A high-`priority` Machine created after a
 lower-`priority` one is already running never evicts, migrates, or
 otherwise disturbs it — `priority` only ever orders Machines that are

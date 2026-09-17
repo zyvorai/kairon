@@ -9,6 +9,15 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+// setPriorityRequest is handleSetMachinePriority's own request body --
+// deliberately just the one field, mirroring cmdEditMachine's own
+// "priority is the one Machine-spec field this project's edit verb
+// supports patching after creation" posture (see kaironctl's own
+// cmdEditMachine doc comment and docs/guides/machine-placement.md).
+type setPriorityRequest struct {
+	Priority int32 `json:"priority"`
+}
+
 // createMachineRequest mirrors cmd/kaironctl's cmdCreate flags exactly
 // (image/cpu/memory/backend/network/netns/forward/hostname/user/ssh-key/
 // package/runcmd), not the full MachineSpec -- the UI's create form offers
@@ -99,6 +108,30 @@ func (s *Server) handleCreateMachine(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteMachine(w http.ResponseWriter, r *http.Request) {
 	if err := s.Kube.DeleteMachine(r.Context(), r.PathValue("namespace"), r.PathValue("name")); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSetMachinePriority patches spec.priority via the exact same
+// single-field merge-patch pattern handlePowerMachine already uses for
+// spec.powerState -- the dashboard's own counterpart to
+// `kaironctl edit machine NAME --priority N`
+// (docs/guides/machine-placement.md's "Scheduling priority" section),
+// which until now was kaironctl/kubectl-only. Any int32 is accepted,
+// including negative or zero (the field's own default) -- there's no
+// fixed range for priority, same posture kaironctl's own cmdEditMachine
+// already takes. Reuses the ClusterRole's existing "patch" grant on
+// machines (already required for power actions); no new RBAC.
+func (s *Server) handleSetMachinePriority(w http.ResponseWriter, r *http.Request) {
+	var req setPriorityRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	patch := map[string]any{"spec": map[string]any{"priority": req.Priority}}
+	if err := s.Kube.PatchMachine(r.Context(), r.PathValue("namespace"), r.PathValue("name"), patch); err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
