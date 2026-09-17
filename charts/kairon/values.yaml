@@ -357,12 +357,17 @@ console:
     # something Helm should be minting for you.
     secretName: ""
 webhook:
-  # Validating admission webhooks closing the two gaps documented on
+  # Validating admission webhooks closing the gaps documented on
   # MachineQuota/MachineDisruptionBudget: without this, a namespace can
   # always create a Machine object even over quota (it just stays Pending,
   # see internal/controller/quota.go), and a MachineMigration created
   # directly through the API bypasses any MachineDisruptionBudget entirely
-  # (see internal/controller/disruption.go). Off by default -- like
+  # (see internal/controller/disruption.go). Also rejects a
+  # MachineNetworkPolicy/NetworkSecurityGroup whose spec.policy has a CIDR
+  # or port-rule syntax FluxVM's own eBPF dataplane will never accept --
+  # see model.ValidateVmNetworkPolicy's doc comment for why that used to
+  # be a permanent, silently-retried Error status instead of an immediate
+  # `kubectl apply` rejection. Off by default -- like
   # migration.tlsSecretName/console.tls.secretName above, this chart does
   # not mint a serving certificate for you; the webhook can't come up
   # without one, so leaving it off is the only safe default.
@@ -379,9 +384,9 @@ webhook:
   caBundle: ""
   port: 8443
   # Fail closes the actual bypass (a webhook outage blocks all Machine/
-  # MachineMigration writes cluster-wide); Ignore trades that guarantee
-  # for availability -- enforcement becomes best-effort, same as before
-  # this webhook existed.
+  # MachineMigration/MachineNetworkPolicy/NetworkSecurityGroup writes
+  # cluster-wide); Ignore trades that guarantee for availability --
+  # enforcement becomes best-effort, same as before this webhook existed.
   failurePolicy: Fail
 metrics:
   # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,

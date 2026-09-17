@@ -3,7 +3,13 @@
 
 package model
 
-import "time"
+import (
+	"fmt"
+	"net/netip"
+	"strconv"
+	"strings"
+	"time"
+)
 
 const (
 	KindMachineNetworkPolicy = "MachineNetworkPolicy"
@@ -178,4 +184,97 @@ func LabelsMatch(labels, selector map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// vmNetworkPolicyL4Protocols mirrors FluxVM's own
+// crates/fluxvm-network/src/ebpf.rs parse_port_rule exactly: the set of
+// proto tokens its eBPF dataplane accepts in an AllowPorts entry.
+var vmNetworkPolicyL4Protocols = map[string]bool{
+	"tcp": true, "udp": true, "sctp": true, "icmp": true, "icmp6": true, "icmpv6": true,
+}
+
+// ValidateVmNetworkPolicy checks the free-form AllowCidrs/DenyCidrs/
+// AllowPorts/MaxEgress* fields of a VmNetworkPolicy against exactly the
+// same syntax FluxVM's own ebpf::validate_policy enforces server-side
+// (crates/fluxvm-network/src/ebpf.rs, called from groups.rs's
+// UpsertNetworkGroup handler and dataplane.rs's SetVMNetworkPolicy
+// handler) -- deliberately reimplemented here rather than shared, the
+// same small-helper-duplication convention
+// internal/controller/webhook.go's validateImageSource already follows
+// for internal/agent's own validateImageSource: Kairon is a pure Go
+// module with no dependency on FluxVM's Rust crates, and this is a
+// small, stable contract.
+//
+// Until kairon-controller's admission webhook called this
+// (validateMachineNetworkPolicy/validateNetworkSecurityGroup in
+// internal/controller/webhook.go), a malformed entry -- a CIDR missing
+// its /prefix, a port rule using an unsupported protocol, an
+// out-of-range prefix, maxEgressMbps/maxEgressPps explicitly set to
+// zero -- sailed straight through `kubectl apply` and only ever failed
+// once kairon-node's agent actually tried to apply it, at which point
+// reconcileSecurityGroup/reconcileMachineNetworkPolicy
+// (internal/agent/network.go) set the object's status to Error and
+// retried it, forever, on every subsequent reconcile tick, on every
+// node the policy selected a Machine on -- a syntax error that can
+// never self-heal, spamming logs and status updates indefinitely
+// instead of failing once, clearly, at write time.
+func ValidateVmNetworkPolicy(p VmNetworkPolicy) error {
+	for _, cidr := range p.AllowCidrs {
+		if err := validateNetworkPolicyCIDR(cidr); err != nil {
+			return fmt.Errorf("allowCidrs: %w", err)
+		}
+	}
+	for _, cidr := range p.DenyCidrs {
+		if err := validateNetworkPolicyCIDR(cidr); err != nil {
+			return fmt.Errorf("denyCidrs: %w", err)
+		}
+	}
+	for _, rule := range p.AllowPorts {
+		if err := validateNetworkPolicyPortRule(rule); err != nil {
+			return fmt.Errorf("allowPorts: %w", err)
+		}
+	}
+	if p.MaxEgressMbps != nil && *p.MaxEgressMbps == 0 {
+		return fmt.Errorf("maxEgressMbps must be greater than zero when set")
+	}
+	if p.MaxEgressPps != nil && *p.MaxEgressPps == 0 {
+		return fmt.Errorf("maxEgressPps must be greater than zero when set")
+	}
+	return nil
+}
+
+// validateNetworkPolicyCIDR mirrors FluxVM's parse_ip_cidr: an address,
+// a literal "/", and a prefix length (<=32 for IPv4, <=128 for IPv6).
+// netip.ParsePrefix enforces exactly that shape and range on both
+// families in one call -- unlike net.ParseCIDR, it rejects a bare
+// address with no "/prefix" instead of silently accepting one.
+func validateNetworkPolicyCIDR(raw string) error {
+	if _, err := netip.ParsePrefix(raw); err != nil {
+		return fmt.Errorf("invalid CIDR %q (must include /prefix): %w", raw, err)
+	}
+	return nil
+}
+
+// validateNetworkPolicyPortRule mirrors FluxVM's parse_port_rule:
+// "proto/port" where proto is tcp/udp/sctp/icmp/icmp6/icmpv6
+// (case-insensitive) and port is 1-65535, except icmp/icmp6/icmpv6
+// where port 0 is allowed (those protocols have no port number; FluxVM
+// only ever checks the field is present and parses as a plain uint16).
+func validateNetworkPolicyPortRule(raw string) error {
+	proto, portStr, ok := strings.Cut(raw, "/")
+	if !ok {
+		return fmt.Errorf("port rule %q must be proto/PORT", raw)
+	}
+	proto = strings.ToLower(strings.TrimSpace(proto))
+	if !vmNetworkPolicyL4Protocols[proto] {
+		return fmt.Errorf("port rule %q: unsupported protocol %q; use tcp, udp, sctp, icmp, or icmp6", raw, proto)
+	}
+	port, err := strconv.ParseUint(strings.TrimSpace(portStr), 10, 16)
+	if err != nil {
+		return fmt.Errorf("port rule %q: invalid port: %w", raw, err)
+	}
+	if port == 0 && proto != "icmp" && proto != "icmp6" && proto != "icmpv6" {
+		return fmt.Errorf("port rule %q: port must be 1-65535", raw)
+	}
+	return nil
 }

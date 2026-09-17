@@ -307,6 +307,107 @@ func TestValidateMachineMigrationAllowsWithinBudget(t *testing.T) {
 	}
 }
 
+// TestValidateMachineNetworkPolicyIgnoresNonMatchingResourcesAndOperations
+// confirms validateMachineNetworkPolicy is scoped exactly like
+// validateMachine/validateMachineMigration -- a no-op Kubernetes lookup
+// away, since unlike those two this validator never touches c.Kube at
+// all (there's no reconcile-loop decision function to reuse here, see
+// WebhookHandler's own doc comment), so the *Controller in these tests
+// never needs a fake API server.
+func TestValidateMachineNetworkPolicyIgnoresNonMatchingResourcesAndOperations(t *testing.T) {
+	ctl := &Controller{}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, model.MachineNetworkPolicy{})
+	if d := ctl.validateMachineNetworkPolicy(r, req); !d.Allowed {
+		t.Fatalf("expected non-matching resource to be ignored, got denied: %s", d.Reason)
+	}
+	r, req = admissionReq(t, "machinenetworkpolicies", "prod", "DELETE", model.MachineNetworkPolicy{})
+	if d := ctl.validateMachineNetworkPolicy(r, req); !d.Allowed {
+		t.Fatalf("expected DELETE to be ignored, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineNetworkPolicyAllowsWellFormedPolicy(t *testing.T) {
+	ctl := &Controller{}
+	p := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "web-edge"},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{AllowCidrs: []string{"10.0.0.0/8"}, AllowPorts: []string{"tcp/443"}},
+		},
+	}
+	for _, op := range []string{admission.OperationCreate, admission.OperationUpdate} {
+		r, req := admissionReq(t, "machinenetworkpolicies", "prod", op, p)
+		if d := ctl.validateMachineNetworkPolicy(r, req); !d.Allowed {
+			t.Fatalf("%s: expected a well-formed policy to be allowed, got denied: %s", op, d.Reason)
+		}
+	}
+}
+
+func TestValidateMachineNetworkPolicyDeniesMalformedCIDR(t *testing.T) {
+	ctl := &Controller{}
+	p := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "web-edge"},
+		Spec:     model.MachineNetworkPolicySpec{Policy: model.VmNetworkPolicy{AllowCidrs: []string{"10.0.0.0"}}},
+	}
+	r, req := admissionReq(t, "machinenetworkpolicies", "prod", admission.OperationCreate, p)
+	d := ctl.validateMachineNetworkPolicy(r, req)
+	if d.Allowed {
+		t.Fatal("expected a CIDR missing /prefix to be denied")
+	}
+	if d.Reason == "" {
+		t.Fatal("expected a non-empty denial reason")
+	}
+}
+
+func TestValidateMachineNetworkPolicyDeniesMalformedPortRuleOnUpdate(t *testing.T) {
+	ctl := &Controller{}
+	p := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "web-edge"},
+		Spec:     model.MachineNetworkPolicySpec{Policy: model.VmNetworkPolicy{AllowPorts: []string{"http/443"}}},
+	}
+	r, req := admissionReq(t, "machinenetworkpolicies", "prod", admission.OperationUpdate, p)
+	if d := ctl.validateMachineNetworkPolicy(r, req); d.Allowed {
+		t.Fatal("expected `kubectl edit` introducing an unsupported protocol to be denied on UPDATE, not just CREATE")
+	}
+}
+
+func TestValidateNetworkSecurityGroupIgnoresNonMatchingResourcesAndOperations(t *testing.T) {
+	ctl := &Controller{}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, model.NetworkSecurityGroup{})
+	if d := ctl.validateNetworkSecurityGroup(r, req); !d.Allowed {
+		t.Fatalf("expected non-matching resource to be ignored, got denied: %s", d.Reason)
+	}
+	r, req = admissionReq(t, "networksecuritygroups", "prod", "DELETE", model.NetworkSecurityGroup{})
+	if d := ctl.validateNetworkSecurityGroup(r, req); !d.Allowed {
+		t.Fatalf("expected DELETE to be ignored, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateNetworkSecurityGroupAllowsWellFormedPolicy(t *testing.T) {
+	ctl := &Controller{}
+	g := model.NetworkSecurityGroup{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "frontend"},
+		Spec:     model.NetworkSecurityGroupSpec{Policy: model.VmNetworkPolicy{AllowCidrs: []string{"10.0.0.0/8"}, AllowPorts: []string{"tcp/443", "udp/53"}}},
+	}
+	r, req := admissionReq(t, "networksecuritygroups", "prod", admission.OperationCreate, g)
+	if d := ctl.validateNetworkSecurityGroup(r, req); !d.Allowed {
+		t.Fatalf("expected a well-formed group policy to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateNetworkSecurityGroupDeniesZeroMaxEgressMbps(t *testing.T) {
+	ctl := &Controller{}
+	zero := uint32(0)
+	g := model.NetworkSecurityGroup{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "frontend"},
+		Spec:     model.NetworkSecurityGroupSpec{Policy: model.VmNetworkPolicy{MaxEgressMbps: &zero}},
+	}
+	r, req := admissionReq(t, "networksecuritygroups", "prod", admission.OperationCreate, g)
+	if d := ctl.validateNetworkSecurityGroup(r, req); d.Allowed {
+		t.Fatal("expected an explicit maxEgressMbps: 0 to be denied")
+	}
+}
+
 // TestWebhookHandlerEndToEnd exercises the real AdmissionReview HTTP
 // envelope (internal/admission), not just the Validator functions directly
 // -- confirms encode/decode round-trips through WebhookHandler correctly.
@@ -464,5 +565,60 @@ func TestWebhookHandlerConvertMachineQuotaEndToEnd(t *testing.T) {
 	spec := converted["spec"].(map[string]any)
 	if spec["maxCpu"] != "16" {
 		t.Fatalf("expected spec.maxTotalCpu to be renamed to spec.maxCpu, got %+v", spec)
+	}
+}
+
+// TestWebhookHandlerNetworkPolicyRoutesEndToEnd exercises
+// /validate-machinenetworkpolicy and /validate-networksecuritygroup
+// through the real AdmissionReview HTTP envelope -- confirms
+// WebhookHandler actually wires both routes to
+// validateMachineNetworkPolicy/validateNetworkSecurityGroup, not just
+// that those two functions work in isolation (already covered above).
+func TestWebhookHandlerNetworkPolicyRoutesEndToEnd(t *testing.T) {
+	ctl := &Controller{}
+	h := ctl.WebhookHandler()
+
+	post := func(t *testing.T, path, resource string, obj any) *admission.Review {
+		t.Helper()
+		raw, _ := json.Marshal(obj)
+		review := admission.Review{
+			APIVersion: admission.APIVersion,
+			Kind:       "AdmissionReview",
+			Request: &admission.Request{
+				UID:       "net-1",
+				Resource:  admission.GroupVersionResource{Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: resource},
+				Namespace: "prod",
+				Operation: admission.OperationCreate,
+				Object:    raw,
+			},
+		}
+		body, _ := json.Marshal(review)
+		httpReq := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httpReq)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("POST %s: got %d", path, rr.Code)
+		}
+		var out admission.Review
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return &out
+	}
+
+	deniedPolicy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "bad"},
+		Spec:     model.MachineNetworkPolicySpec{Policy: model.VmNetworkPolicy{AllowCidrs: []string{"10.0.0.0"}}},
+	}
+	if out := post(t, "/validate-machinenetworkpolicy", "machinenetworkpolicies", deniedPolicy); out.Response.Allowed {
+		t.Fatal("expected /validate-machinenetworkpolicy to deny a CIDR missing /prefix")
+	}
+
+	okGroup := model.NetworkSecurityGroup{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "frontend"},
+		Spec:     model.NetworkSecurityGroupSpec{Policy: model.VmNetworkPolicy{AllowCidrs: []string{"10.0.0.0/8"}}},
+	}
+	if out := post(t, "/validate-networksecuritygroup", "networksecuritygroups", okGroup); !out.Response.Allowed {
+		t.Fatalf("expected /validate-networksecuritygroup to allow a well-formed group, got denied: %+v", out.Response.Status)
 	}
 }

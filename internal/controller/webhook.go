@@ -21,7 +21,7 @@ import (
 )
 
 // WebhookHandler returns the mux for kairon-controller's validating
-// admission webhook: closes the two gaps documented on
+// admission webhook: closes the gaps documented on
 // MachineQuota/MachineDisruptionBudget (see internal/model/quota.go,
 // internal/model/disruption.go) by rejecting the writes that used to just
 // slip through -- a Machine create that would immediately push its
@@ -30,10 +30,21 @@ import (
 // functions the reconcile loop (admitQuota) and `kaironctl evacuate`
 // (AdmitDisruption) already use -- this file is only the HTTP/admission
 // wiring around them, no new enforcement logic.
+//
+// /validate-machinenetworkpolicy and /validate-networksecuritygroup are
+// different in kind, not just target: unlike the two above, there is no
+// pre-existing in-process decision function to reuse here, because
+// nothing in kairon-controller or kairon-node ever validated
+// AllowCidrs/DenyCidrs/AllowPorts syntax before this -- see
+// model.ValidateVmNetworkPolicy's doc comment for the failure mode this
+// closes (a malformed policy stuck retrying forever instead of being
+// rejected once, at write time).
 func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration, c.observeWebhookDecision))
+	mux.HandleFunc("POST /validate-machinenetworkpolicy", admission.Handler(c.Log, c.validateMachineNetworkPolicy, c.observeWebhookDecision))
+	mux.HandleFunc("POST /validate-networksecuritygroup", admission.Handler(c.Log, c.validateNetworkSecurityGroup, c.observeWebhookDecision))
 	// /convert/machinequotas is a scaffold, not live enforcement: no
 	// MachineQuota CRD registers a second version yet, so the API server
 	// never actually calls this route today. It exists, and is tested,
@@ -255,6 +266,61 @@ func (c *Controller) validateMachineMigration(r *http.Request, req *admission.Re
 	}
 	if blocker := AdmitDisruption(states, target); blocker != "" {
 		return admission.Deny(blocker)
+	}
+	return admission.Allow()
+}
+
+// validateMachineNetworkPolicy rejects a MachineNetworkPolicy whose
+// spec.policy has a syntax FluxVM's own eBPF dataplane will never
+// accept -- see model.ValidateVmNetworkPolicy's doc comment for exactly
+// which fields and why this exists at all (until now, nothing checked
+// these at write time; a malformed entry only ever surfaced as a status
+// stuck permanently in Error, retried forever by every node the policy
+// selected a Machine on). Both CREATE and UPDATE are checked: unlike
+// MachineMigration, a MachineNetworkPolicy is routinely edited in place
+// (`kubectl edit`) and internal/agent/network.go re-applies whatever is
+// currently in spec on every reconcile tick regardless of which
+// operation last changed it.
+func (c *Controller) validateMachineNetworkPolicy(r *http.Request, req *admission.Request) admission.Decision {
+	if req.Resource.Resource != "machinenetworkpolicies" {
+		return admission.Allow()
+	}
+	switch req.Operation {
+	case admission.OperationCreate, admission.OperationUpdate:
+	default:
+		return admission.Allow()
+	}
+	var p model.MachineNetworkPolicy
+	if err := json.Unmarshal(req.Object, &p); err != nil {
+		return admission.Deny(fmt.Sprintf("decode MachineNetworkPolicy: %v", err))
+	}
+	if err := model.ValidateVmNetworkPolicy(p.Spec.Policy); err != nil {
+		return admission.Deny(fmt.Sprintf("spec.policy.%v", err))
+	}
+	return admission.Allow()
+}
+
+// validateNetworkSecurityGroup is validateMachineNetworkPolicy's exact
+// counterpart for NetworkSecurityGroup -- same underlying
+// model.VmNetworkPolicy embedded field, same FluxVM-side consumer
+// (UpsertNetworkGroup instead of SetVMNetworkPolicy), same
+// reconcile-loop-retries-forever failure mode without this
+// (reconcileSecurityGroup in internal/agent/network.go).
+func (c *Controller) validateNetworkSecurityGroup(r *http.Request, req *admission.Request) admission.Decision {
+	if req.Resource.Resource != "networksecuritygroups" {
+		return admission.Allow()
+	}
+	switch req.Operation {
+	case admission.OperationCreate, admission.OperationUpdate:
+	default:
+		return admission.Allow()
+	}
+	var g model.NetworkSecurityGroup
+	if err := json.Unmarshal(req.Object, &g); err != nil {
+		return admission.Deny(fmt.Sprintf("decode NetworkSecurityGroup: %v", err))
+	}
+	if err := model.ValidateVmNetworkPolicy(g.Spec.Policy); err != nil {
+		return admission.Deny(fmt.Sprintf("spec.policy.%v", err))
 	}
 	return admission.Allow()
 }

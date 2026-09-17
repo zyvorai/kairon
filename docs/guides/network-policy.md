@@ -113,6 +113,38 @@ Posted to `/v1/network/cnp` before the VM policy upsert.
 On delete, matched Running Machines on this node are reset to
 `defaultAllow: true` (finalizer `kairon.zyvor.dev/network-policy`).
 
+## Admission webhook (`webhook.enabled`)
+
+Neither CRD's `spec.policy` was ever validated at write time until now --
+`allowCidrs`/`denyCidrs`/`allowPorts` are free-form strings, and the only
+thing that ever checked their syntax was FluxVM's own eBPF dataplane
+(`validate_policy` in `crates/fluxvm-network/src/ebpf.rs`), called only
+once the agent above actually tries to apply the policy to a real
+Machine or upsert a group. A typo -- `10.0.0.0` with no `/prefix`,
+`http/443` instead of `tcp/443`, `maxEgressMbps: 0` -- sailed straight
+through `kubectl apply` and only ever surfaced as `status.phase: Error`,
+retried forever on every subsequent reconcile tick (see "Reconcile
+rules" below) since the same malformed spec is reapplied unchanged each
+time -- a mistake with no path to self-heal.
+
+An opt-in validating admission webhook on `kairon-controller`
+(`webhook.enabled`, off by default -- see the Helm chart's `webhook`
+values and `SECURITY.md`) now rejects a malformed `MachineNetworkPolicy`
+or `NetworkSecurityGroup` outright, on both `CREATE` and `UPDATE`
+(`kubectl edit` on either CRD hits this the same as a fresh apply), with
+a specific message pointing at the bad field instead of a generic
+"webhook denied." The check
+(`model.ValidateVmNetworkPolicy`, `internal/model/network.go`)
+deliberately mirrors FluxVM's own `validate_policy` grammar exactly --
+same CIDR `/prefix` requirement, same `tcp`/`udp`/`sctp`/`icmp`/`icmp6`
+protocol set, same `maxEgressMbps`/`maxEgressPps` "greater than zero
+when set" rule -- reimplemented in Go rather than shared, since Kairon
+has no dependency on FluxVM's Rust crates.
+
+With `webhook.enabled` false (the default), nothing changes: a malformed
+policy still isn't caught until an agent tries to apply it, same as
+always.
+
 ## Reconcile rules
 
 1. Machine must be on this node (`spec.nodeName`).

@@ -65,4 +65,46 @@ webhooks:
         resources: ["machinemigrations"]
         operations: ["CREATE"]
         scope: Namespaced
+  - name: machinenetworkpolicy.kairon.zyvor.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-machinenetworkpolicy
+        port: 443
+    rules:
+      - apiGroups: ["kairon.zyvor.dev"]
+        apiVersions: ["v1alpha1"]
+        resources: ["machinenetworkpolicies"]
+        # UPDATE included, unlike machinemigration.kairon.zyvor.dev above:
+        # a MachineNetworkPolicy is routinely edited in place (`kubectl
+        # edit`), and internal/agent/network.go re-applies whatever spec.policy
+        # currently holds on every reconcile tick regardless of which
+        # operation last changed it -- see
+        # internal/controller/webhook.go's validateMachineNetworkPolicy.
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
+  - name: networksecuritygroup.kairon.zyvor.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-networksecuritygroup
+        port: 443
+    rules:
+      - apiGroups: ["kairon.zyvor.dev"]
+        apiVersions: ["v1alpha1"]
+        resources: ["networksecuritygroups"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
 {{ end }}
