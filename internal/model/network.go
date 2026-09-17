@@ -45,6 +45,25 @@ type ServiceFabricSpec struct {
 	Services []ServiceFabricMembership `json:"services,omitempty"`
 }
 
+// AppliedServiceFabricMembership records one Service Fabric backend entry
+// Kairon has actually told FluxVM to register for a Machine -- the
+// (name, port, guestIP) triple that was live at the time it was applied,
+// not just the current spec.serviceFabric.services -- so a later reconcile
+// can tell exactly which backend entries are now stale and must be
+// deregistered: a membership removed from spec, or the same membership
+// re-applied against a *different* guestIP (a DHCP re-lease, a guest
+// reboot landing on a new address, ...) since it was last applied. Without
+// keeping this ground truth in status, only guestIP as of *this* tick
+// could ever be reasoned about, and a prior tick's now-superseded address
+// would never be found again to remove. See
+// internal/agent/network.go's reconcileServiceFabric and
+// deregisterServiceFabric for how this is produced and consumed.
+type AppliedServiceFabricMembership struct {
+	Name    string `json:"name"`
+	Port    uint16 `json:"port"`
+	GuestIP string `json:"guestIP"`
+}
+
 // ServiceFabricMembership registers the Machine guest IP as a backend of a named service.
 type ServiceFabricMembership struct {
 	Name   string `json:"name"`

@@ -144,6 +144,18 @@ or keeps reporting its last real status (stop/halt) rather than silently
 finishing while a dead backend, or one a completely different Machine's
 DHCP-reused guest IP later inherits, is left registered against the VIP.
 
+The same fail-closed pruning also runs on every reconcile tick while the
+Machine keeps running, not just at delete/stop/halt — so two other real
+cases are covered too, neither of which needs the Machine to ever stop:
+removing an entry from `serviceFabric.services` while the Machine keeps
+running, and the guest's IP address itself changing (a DHCP re-lease, or
+a reboot landing on a different lease). Before this pruning existed, an
+IP change in particular just registered the new address as an *additional*
+backend and left the VIP still routing traffic at the old one forever —
+Kairon now tracks exactly which `(service, port, guestIP)` triples it has
+applied in `status.appliedServiceFabricMemberships` precisely so it can
+notice and retract one that's no longer current.
+
 ## Status
 
 | Field | Meaning |
@@ -156,6 +168,7 @@ DHCP-reused guest IP later inherits, is left registered against the VIP.
 | `status.network.dataplane.schemaVersion` | BPF schema |
 | `status.network.dataplane.policyFingerprint` | Committed policy fingerprint |
 | `status.network.dataplane.policySynced` | Maps match durable policy |
+| `status.appliedServiceFabricMemberships` | Ground truth of which `(service, port, guestIP)` backends Kairon has actually registered -- used to prune stale ones, see above |
 
 ## Node readiness
 

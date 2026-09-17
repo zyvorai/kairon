@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -282,65 +283,122 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 	return nil
 }
 
-func (a *Agent) reconcileServiceFabric(ctx context.Context, m model.Machine, guestIP string) error {
-	if len(m.Spec.ServiceFabric.Services) == 0 || guestIP == "" {
-		return nil
-	}
-	for _, mem := range m.Spec.ServiceFabric.Services {
-		name := strings.TrimSpace(mem.Name)
-		if name == "" || mem.Port == 0 {
-			return fmt.Errorf("serviceFabric.services entries require name and port")
-		}
-		svc, err := a.Flux.GetNetworkService(ctx, name)
-		if err != nil {
-			return fmt.Errorf("get service %s: %w", name, err)
-		}
-		weight := mem.Weight
-		if weight == 0 {
-			weight = 1
-		}
-		enabled := true
-		found := false
-		for i := range svc.Backends {
-			if svc.Backends[i].Address == guestIP && svc.Backends[i].Port == mem.Port {
-				svc.Backends[i].Weight = weight
-				svc.Backends[i].Enabled = &enabled
-				svc.Backends[i].State = "ready"
-				found = true
-				break
+// reconcileServiceFabric merges guestIP into every VIP backend list
+// m.Spec.ServiceFabric declares, then -- unlike before this pruning
+// existed -- also removes any backend entry Kairon previously applied for
+// this Machine (m.Status.AppliedServiceFabricMemberships, the prior
+// tick's return value from here) that isn't part of the freshly-applied
+// set below. That covers two real, guaranteed-to-happen cases neither
+// deregisterServiceFabric's own delete/stop/halt callers ever see:
+//   - a membership removed (or renamed/reported) from spec while the
+//     Machine keeps running -- reconcileServiceFabric itself is the only
+//     thing that ever added it, so it's the only thing that can know it's
+//     gone;
+//   - guestIP itself changing while the Machine keeps running -- a DHCP
+//     re-lease, or a guest reboot landing on a new address. Before this,
+//     a new guestIP was simply appended as an additional backend (no
+//     existing entry matches its address), and the *old* address's
+//     backend entry was never found again by anything to remove -- it
+//     stayed registered, routing live VIP traffic at a now-dead address
+//     forever, or -- worse, since guest addresses are commonly
+//     DHCP-leased and get reused -- at a completely unrelated Machine
+//     that later boots into that same address.
+//
+// Returns the freshly-applied set on success so the caller can persist it
+// as the new ground truth in status. Fails closed like every other
+// Service Fabric step in this file: a genuine error (upserting the new
+// membership, or pruning a stale one) is returned before the caller ever
+// commits a new applied set, so the previous one -- still accurate,
+// since nothing here partially committed past the failure -- is retried
+// again next tick.
+func (a *Agent) reconcileServiceFabric(ctx context.Context, m model.Machine, guestIP string) ([]model.AppliedServiceFabricMembership, error) {
+	previous := m.Status.AppliedServiceFabricMemberships
+	var applied []model.AppliedServiceFabricMembership
+	if guestIP != "" {
+		for _, mem := range m.Spec.ServiceFabric.Services {
+			name := strings.TrimSpace(mem.Name)
+			if name == "" || mem.Port == 0 {
+				return previous, fmt.Errorf("serviceFabric.services entries require name and port")
 			}
-		}
-		if !found {
-			svc.Backends = append(svc.Backends, fluxvm.ServiceBackend{
-				Address: guestIP,
-				Port:    mem.Port,
-				Weight:  weight,
-				Enabled: &enabled,
-				State:   "ready",
-			})
-		}
-		if err := a.Flux.UpsertNetworkService(ctx, *svc); err != nil {
-			return fmt.Errorf("upsert service %s membership: %w", name, err)
+			svc, err := a.Flux.GetNetworkService(ctx, name)
+			if err != nil {
+				return previous, fmt.Errorf("get service %s: %w", name, err)
+			}
+			weight := mem.Weight
+			if weight == 0 {
+				weight = 1
+			}
+			enabled := true
+			found := false
+			for i := range svc.Backends {
+				if svc.Backends[i].Address == guestIP && svc.Backends[i].Port == mem.Port {
+					svc.Backends[i].Weight = weight
+					svc.Backends[i].Enabled = &enabled
+					svc.Backends[i].State = "ready"
+					found = true
+					break
+				}
+			}
+			if !found {
+				svc.Backends = append(svc.Backends, fluxvm.ServiceBackend{
+					Address: guestIP,
+					Port:    mem.Port,
+					Weight:  weight,
+					Enabled: &enabled,
+					State:   "ready",
+				})
+			}
+			if err := a.Flux.UpsertNetworkService(ctx, *svc); err != nil {
+				return previous, fmt.Errorf("upsert service %s membership: %w", name, err)
+			}
+			applied = append(applied, model.AppliedServiceFabricMembership{Name: name, Port: mem.Port, GuestIP: guestIP})
 		}
 	}
-	return nil
+
+	stillApplied := make(map[string]struct{}, len(applied))
+	for _, am := range applied {
+		stillApplied[serviceFabricMembershipKey(am)] = struct{}{}
+	}
+	for _, prev := range previous {
+		if _, ok := stillApplied[serviceFabricMembershipKey(prev)]; ok {
+			continue
+		}
+		if err := a.removeServiceFabricBackend(ctx, prev.Name, prev.Port, prev.GuestIP); err != nil {
+			return previous, fmt.Errorf("prune stale service fabric membership %s: %w", prev.Name, err)
+		}
+	}
+	return applied, nil
 }
 
-// deregisterServiceFabric removes guestIP from every ServiceFabricMembership
-// backend list declared in m.Spec.ServiceFabric -- the inverse of
-// reconcileServiceFabric's upsert above. Called from cleanup (Machine
-// deletion), ensureStopped (spec.powerState: Stopped) and ensureHalted
-// (spec.powerState: Halted): the three places a Machine's guest is gone
-// for good without reconcileServiceFabric itself ever running again to
-// notice -- cleanup's Machine object is about to vanish from Kubernetes
-// entirely, and ensureStopped/ensureHalted both clear status.guestIP,
-// leaving nothing afterwards to reconcile membership against. Left
-// alone, FluxVM's Service Fabric
-// VIP keeps routing live traffic at an address that now answers with
-// nothing (Stopped), or -- worse, since guest addresses are commonly
-// DHCP-leased and get reused -- at a completely unrelated Machine that
-// later boots into that same address and silently inherits this one's
-// stale membership.
+func serviceFabricMembershipKey(m model.AppliedServiceFabricMembership) string {
+	return m.Name + "\x00" + m.GuestIP + "\x00" + strconv.Itoa(int(m.Port))
+}
+
+// deregisterServiceFabric removes every backend entry Kairon has actually
+// applied for this Machine (m.Status.AppliedServiceFabricMemberships) --
+// the inverse of reconcileServiceFabric's upsert above. Called from
+// cleanup (Machine deletion), ensureStopped (spec.powerState: Stopped) and
+// ensureHalted (spec.powerState: Halted): the three places a Machine's
+// guest is gone for good without reconcileServiceFabric itself ever
+// running again to notice -- cleanup's Machine object is about to vanish
+// from Kubernetes entirely, and ensureStopped/ensureHalted both clear
+// status.guestIP, leaving nothing afterwards to reconcile membership
+// against. Left alone, FluxVM's Service Fabric VIP keeps routing live
+// traffic at an address that now answers with nothing (Stopped), or --
+// worse, since guest addresses are commonly DHCP-leased and get reused --
+// at a completely unrelated Machine that later boots into that same
+// address and silently inherits this one's stale membership.
+//
+// Deliberately reads status.AppliedServiceFabricMemberships rather than
+// m.Spec.ServiceFabric.Services (an earlier version of this function did,
+// and only ever removed a backend still named in the *current* spec):
+// status is the ground truth of what was actually registered, including
+// the exact guestIP each entry was registered against, so a membership
+// edited or removed from spec while the Machine kept running is torn
+// down correctly here too, not just left for reconcileServiceFabric's own
+// pruning to have already caught (which it always will have, for a
+// Machine that stayed Running the whole time -- this function only ever
+// runs for the delete/stop/halt transition itself).
 //
 // Fails closed like every other FluxVM-side cleanup step in this file
 // (reconcileSecurityGroup's delete, reconcileMachineNetworkPolicy's
@@ -351,46 +409,46 @@ func (a *Agent) reconcileServiceFabric(ctx context.Context, m model.Machine, gue
 // a backend already removed (a prior tick's retry, or one that was
 // never registered because guestIP was empty for this Machine's whole
 // life), is nothing left to do -- not an error.
-//
-// Known limitation, same shape as policySelectsMachine's own
-// current-spec-only view: this reads m.Spec.ServiceFabric.Services as
-// it is *now*, at delete/stop time. A membership removed from spec
-// while the Machine kept running (without ever being deleted or
-// stopped since) was never deregistered by anything -- reconcileServiceFabric
-// only ever adds/updates, it doesn't prune stale entries either -- so
-// that backend can already be stale before this function is ever
-// reached. Closing that separate gap would mean giving reconcile a
-// record of prior membership to diff against; out of scope here.
-func (a *Agent) deregisterServiceFabric(ctx context.Context, m model.Machine, guestIP string) error {
-	if len(m.Spec.ServiceFabric.Services) == 0 || guestIP == "" {
+func (a *Agent) deregisterServiceFabric(ctx context.Context, m model.Machine) error {
+	for _, mem := range m.Status.AppliedServiceFabricMemberships {
+		if err := a.removeServiceFabricBackend(ctx, mem.Name, mem.Port, mem.GuestIP); err != nil {
+			return fmt.Errorf("deregister service %s membership: %w", mem.Name, err)
+		}
+	}
+	return nil
+}
+
+// removeServiceFabricBackend removes the single (address, port) backend
+// entry from the named FluxVM Service Fabric VIP, if both the service and
+// that exact backend still exist -- the shared primitive both
+// deregisterServiceFabric (delete/stop/halt) and reconcileServiceFabric's
+// own stale-membership pruning (a live spec edit or guestIP change) use
+// to actually retract a previously-applied membership.
+func (a *Agent) removeServiceFabricBackend(ctx context.Context, name string, port uint16, address string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || address == "" {
 		return nil
 	}
-	for _, mem := range m.Spec.ServiceFabric.Services {
-		name := strings.TrimSpace(mem.Name)
-		if name == "" {
-			continue
+	svc, err := a.Flux.GetNetworkServiceIfExists(ctx, name)
+	if err != nil {
+		return fmt.Errorf("get service %s: %w", name, err)
+	}
+	if svc == nil {
+		return nil
+	}
+	idx := -1
+	for i := range svc.Backends {
+		if svc.Backends[i].Address == address && svc.Backends[i].Port == port {
+			idx = i
+			break
 		}
-		svc, err := a.Flux.GetNetworkServiceIfExists(ctx, name)
-		if err != nil {
-			return fmt.Errorf("get service %s: %w", name, err)
-		}
-		if svc == nil {
-			continue
-		}
-		idx := -1
-		for i := range svc.Backends {
-			if svc.Backends[i].Address == guestIP && svc.Backends[i].Port == mem.Port {
-				idx = i
-				break
-			}
-		}
-		if idx == -1 {
-			continue
-		}
-		svc.Backends = append(svc.Backends[:idx], svc.Backends[idx+1:]...)
-		if err := a.Flux.UpsertNetworkService(ctx, *svc); err != nil {
-			return fmt.Errorf("deregister service %s membership: %w", name, err)
-		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	svc.Backends = append(svc.Backends[:idx], svc.Backends[idx+1:]...)
+	if err := a.Flux.UpsertNetworkService(ctx, *svc); err != nil {
+		return fmt.Errorf("upsert service %s: %w", name, err)
 	}
 	return nil
 }

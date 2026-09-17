@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,6 +350,165 @@ func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
 	}
 }
 
+// fakeNetworkServiceStore is a minimal stateful double for FluxVM's
+// /v1/network/services routes, keyed by service name -- unlike the
+// single-request fakes most other tests in this file use, exercising
+// reconcileServiceFabric's own stale-membership pruning takes more than
+// one GET/POST round trip against the *same* evolving service object
+// (upsert the new backend, then separately remove the stale one), so the
+// fake has to actually remember state between calls rather than always
+// serving the same canned response.
+type fakeNetworkServiceStore struct {
+	mu       chan struct{} // 1-buffered mutex; avoids importing sync for one field
+	services map[string]fluxvm.ServiceSpec
+}
+
+func newFakeNetworkServiceStore(seed ...fluxvm.ServiceSpec) *fakeNetworkServiceStore {
+	s := &fakeNetworkServiceStore{mu: make(chan struct{}, 1), services: map[string]fluxvm.ServiceSpec{}}
+	s.mu <- struct{}{}
+	for _, svc := range seed {
+		s.services[svc.Name] = svc
+	}
+	return s
+}
+
+func (s *fakeNetworkServiceStore) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		<-s.mu
+		defer func() { s.mu <- struct{}{} }()
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/network/services/"):
+			name := strings.TrimPrefix(r.URL.Path, "/v1/network/services/")
+			svc, ok := s.services[name]
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(svc)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/network/services":
+			var svc fluxvm.ServiceSpec
+			if err := json.NewDecoder(r.Body).Decode(&svc); err != nil {
+				t.Fatalf("decode posted service: %v", err)
+			}
+			s.services[svc.Name] = svc
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}
+}
+
+func (s *fakeNetworkServiceStore) backends(name string) []fluxvm.ServiceBackend {
+	<-s.mu
+	defer func() { s.mu <- struct{}{} }()
+	return append([]fluxvm.ServiceBackend{}, s.services[name].Backends...)
+}
+
+// TestReconcileServiceFabricPrunesStaleBackendOnGuestIPChange proves the
+// real, guaranteed-to-happen leak this exists to close: before pruning
+// existed, a guestIP change on an otherwise still-Running Machine (a DHCP
+// re-lease, a guest reboot landing on a new address) only ever appended a
+// *new* backend entry -- nothing matched the old address to update, and
+// nothing ever went back to remove it, so the VIP kept routing live
+// traffic at a stale, possibly since-reused address forever. Here, the
+// Machine's guestIP moves from 10.44.0.9 to 10.44.0.20 between two
+// reconcile ticks; the second tick must both register the new address and
+// remove the old one.
+func TestReconcileServiceFabricPrunesStaleBackendOnGuestIPChange(t *testing.T) {
+	store := newFakeNetworkServiceStore(fluxvm.ServiceSpec{
+		Name:     "web-vip",
+		Backends: []fluxvm.ServiceBackend{{Address: "10.44.0.9", Port: 8080, Weight: 1}},
+	})
+	fs := httptest.NewServer(store.handler(t))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
+	}
+
+	applied, err := a.reconcileServiceFabric(context.Background(), m, "10.44.0.20")
+	if err != nil {
+		t.Fatalf("reconcileServiceFabric: %v", err)
+	}
+	want := []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.20"}}
+	if len(applied) != 1 || applied[0] != want[0] {
+		t.Fatalf("got applied %+v, want %+v", applied, want)
+	}
+
+	backends := store.backends("web-vip")
+	if len(backends) != 1 {
+		t.Fatalf("got %d backends, want exactly the new address (old one pruned): %+v", len(backends), backends)
+	}
+	if backends[0].Address != "10.44.0.20" || backends[0].Port != 8080 {
+		t.Fatalf("got backend %+v, want address 10.44.0.20 port 8080", backends[0])
+	}
+}
+
+// TestReconcileServiceFabricPrunesMembershipRemovedFromSpec proves the
+// other half of the same gap: a Machine that stays Running the whole time
+// but has a serviceFabric.services entry edited out of spec must have its
+// backend removed too, not just left registered until the Machine is
+// later deleted/stopped/halted (deregisterServiceFabric's own, narrower
+// three-callsite coverage).
+func TestReconcileServiceFabricPrunesMembershipRemovedFromSpec(t *testing.T) {
+	store := newFakeNetworkServiceStore(fluxvm.ServiceSpec{
+		Name:     "web-vip",
+		Backends: []fluxvm.ServiceBackend{{Address: "10.44.0.9", Port: 8080, Weight: 1}},
+	})
+	fs := httptest.NewServer(store.handler(t))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// spec.serviceFabric.services is now empty -- the operator removed the
+	// membership while this Machine kept running.
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Status:   model.MachineStatus{AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
+	}
+
+	applied, err := a.reconcileServiceFabric(context.Background(), m, "10.44.0.9")
+	if err != nil {
+		t.Fatalf("reconcileServiceFabric: %v", err)
+	}
+	if len(applied) != 0 {
+		t.Fatalf("got applied %+v, want none -- spec no longer declares any membership", applied)
+	}
+	if backends := store.backends("web-vip"); len(backends) != 0 {
+		t.Fatalf("got %d backends, want the removed membership's backend pruned: %+v", len(backends), backends)
+	}
+}
+
+// TestReconcileServiceFabricPruneFailsClosed proves pruning shares the
+// same fail-closed posture as the rest of this file: when removing a
+// stale backend genuinely fails, the error is returned (and the caller,
+// reconcileMachine, never commits a new applied set over the old one) --
+// not swallowed as best-effort cleanup.
+func TestReconcileServiceFabricPruneFailsClosed(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Status:   model.MachineStatus{AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
+	}
+
+	if _, err := a.reconcileServiceFabric(context.Background(), m, ""); err == nil {
+		t.Fatal("expected an error when pruning a stale membership fails")
+	}
+}
+
 // TestDeregisterServiceFabricRemovesOnlyTheMatchingBackend proves
 // deregisterServiceFabric's own backend-list surgery: it removes exactly
 // the (address, port) pair belonging to this Machine and leaves every
@@ -387,8 +547,9 @@ func TestDeregisterServiceFabricRemovesOnlyTheMatchingBackend(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
-	if err := a.deregisterServiceFabric(context.Background(), m, "10.44.0.9"); err != nil {
+	if err := a.deregisterServiceFabric(context.Background(), m); err != nil {
 		t.Fatalf("deregisterServiceFabric: %v", err)
 	}
 	if !postSeen {
@@ -423,18 +584,21 @@ func TestDeregisterServiceFabricToleratesMissingService(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
+		Status:   model.MachineStatus{AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
-	if err := a.deregisterServiceFabric(context.Background(), m, "10.44.0.9"); err != nil {
+	if err := a.deregisterServiceFabric(context.Background(), m); err != nil {
 		t.Fatalf("deregisterServiceFabric: %v (want a missing service tolerated as nothing-to-do)", err)
 	}
 }
 
-// TestDeregisterServiceFabricNoopWithoutGuestIP proves an empty guestIP
-// (never resolved, or already cleared) short-circuits before any FluxVM
-// call -- there is no address to look up or remove.
-func TestDeregisterServiceFabricNoopWithoutGuestIP(t *testing.T) {
+// TestDeregisterServiceFabricNoopWithoutAppliedMemberships proves a
+// Machine with nothing recorded in status.appliedServiceFabricMemberships
+// (never resolved a guestIP, or a build predating this tracking) short-
+// circuits before any FluxVM call -- there is no address to look up or
+// remove, even though spec.serviceFabric.services itself is non-empty.
+func TestDeregisterServiceFabricNoopWithoutAppliedMemberships(t *testing.T) {
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("unexpected FluxVM call with no guestIP: %s %s", r.Method, r.URL.Path)
+		t.Fatalf("unexpected FluxVM call with no applied memberships: %s %s", r.Method, r.URL.Path)
 	}))
 	defer fs.Close()
 	fc := fluxvm.New(fs.URL, "")
@@ -445,7 +609,7 @@ func TestDeregisterServiceFabricNoopWithoutGuestIP(t *testing.T) {
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
 	}
-	if err := a.deregisterServiceFabric(context.Background(), m, ""); err != nil {
+	if err := a.deregisterServiceFabric(context.Background(), m); err != nil {
 		t.Fatalf("deregisterServiceFabric: %v", err)
 	}
 }
@@ -458,7 +622,7 @@ func TestCleanupDeregistersServiceFabricBeforeRemovingFinalizer(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Finalizers: []string{model.Finalizer}},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
-		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
 	var postSeen bool
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -518,7 +682,7 @@ func TestCleanupFailsClosedWhenServiceFabricDeregistrationFails(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Finalizers: []string{model.Finalizer}},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
-		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -565,7 +729,7 @@ func TestEnsureStoppedDeregistersServiceFabricBackend(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
-		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
 	var postSeen bool
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -627,7 +791,7 @@ func TestEnsureStoppedFailsClosedWhenServiceFabricDeregistrationFails(t *testing
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
-		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", Phase: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", Phase: "Running", AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -675,7 +839,7 @@ func TestEnsureHaltedDeregistersServiceFabricBackend(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
 		Spec:     model.MachineSpec{ServiceFabric: model.ServiceFabricSpec{Services: []model.ServiceFabricMembership{{Name: "web-vip", Port: 8080}}}},
-		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9"},
+		Status:   model.MachineStatus{RuntimeID: "vm-9", GuestIP: "10.44.0.9", AppliedServiceFabricMemberships: []model.AppliedServiceFabricMembership{{Name: "web-vip", Port: 8080, GuestIP: "10.44.0.9"}}},
 	}
 	var postSeen bool
 	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

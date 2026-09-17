@@ -321,9 +321,11 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		return err
 	}
 	a.reconcileGuestQuiesce(ctx, m, rec)
-	if err := a.reconcileServiceFabric(ctx, m, status.GuestIP); err != nil {
+	appliedServiceFabric, err := a.reconcileServiceFabric(ctx, m, status.GuestIP)
+	if err != nil {
 		return err
 	}
+	status.AppliedServiceFabricMemberships = appliedServiceFabric
 	status.Conditions = []model.Condition{{Type: "Ready", Status: readyStatus(status.Phase), Reason: "FluxVMReconciled", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
@@ -373,7 +375,7 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 	// status (not falsely Stopped) and gets retried next tick rather than
 	// silently leaving a now-dead backend registered. See
 	// deregisterServiceFabric's own doc comment.
-	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+	if err := a.deregisterServiceFabric(ctx, m); err != nil {
 		return fmt.Errorf("deregister service fabric membership: %w", err)
 	}
 	status := m.Status
@@ -383,6 +385,7 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 	status.GuestIP = ""
 	status.Network = nil
 	status.Message = ""
+	status.AppliedServiceFabricMemberships = nil
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "PoweredOff", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
@@ -462,7 +465,7 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 	// record is kept, for a plain Start back to Running), so it's just as
 	// stale a Service Fabric backend once status.guestIP below is
 	// cleared. See deregisterServiceFabric's own doc comment.
-	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+	if err := a.deregisterServiceFabric(ctx, m); err != nil {
 		return fmt.Errorf("deregister service fabric membership: %w", err)
 	}
 	// Deliberately not normalizePhase(rec.Status) -- FluxVM's own Stop
@@ -477,6 +480,7 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 	status.GuestIP = ""
 	status.Network = nil
 	status.Message = ""
+	status.AppliedServiceFabricMemberships = nil
 	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Halted", LastTransitionTime: time.Now().UTC()}}
 	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 }
@@ -538,7 +542,7 @@ func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
 	// place rather than letting this Machine vanish from Kubernetes while
 	// its guest IP stays a live backend behind a Service Fabric VIP. See
 	// deregisterServiceFabric's own doc comment.
-	if err := a.deregisterServiceFabric(ctx, m, m.Status.GuestIP); err != nil {
+	if err := a.deregisterServiceFabric(ctx, m); err != nil {
 		return fmt.Errorf("deregister service fabric membership: %w", err)
 	}
 	var finals []string

@@ -628,6 +628,16 @@ type MachineStatus struct {
 	// from the PV: teardown must route to the correct driver's own socket
 	// even if the PVC/PV is already gone by the time cleanup runs.
 	VolumeDriver string `json:"volumeDriver,omitempty"`
+	// AppliedServiceFabricMemberships is the exact set of Service Fabric
+	// backend entries Kairon has actually registered for this Machine as
+	// of the last successful reconcile -- see
+	// AppliedServiceFabricMembership's own doc comment for why this has to
+	// be tracked as ground truth rather than re-derived from
+	// spec.serviceFabric.services each tick. Cleared to nil once
+	// deregisterServiceFabric successfully removes every entry it names
+	// (Machine deletion, spec.powerState: Stopped, spec.powerState:
+	// Halted).
+	AppliedServiceFabricMemberships []AppliedServiceFabricMembership `json:"appliedServiceFabricMemberships,omitempty"`
 }
 
 type Condition struct {
