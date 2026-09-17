@@ -925,3 +925,211 @@ func TestDescribeSnapshotScheduleDueButDeadlineExceededShowsSkipped(t *testing.T
 		t.Errorf("must not also report the normal due-now outcome, got:\n%s", out)
 	}
 }
+
+func TestHasFlag(t *testing.T) {
+	cases := []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"machine"}, false},
+		{[]string{"machine", "my-vm"}, false},
+		{[]string{"machine", "--selector", "tier=web"}, true},
+		{[]string{"machine", "--selector=tier=web"}, true},
+		{[]string{"machine", "--dry-run", "--selector", "tier=web"}, true},
+		// "--selectorish" must not false-positive on a "--selector" prefix
+		// match -- hasFlag requires the flag name to end exactly at "="
+		// or the argument boundary.
+		{[]string{"machine", "--selectorish", "x"}, false},
+	}
+	for _, c := range cases {
+		if got := hasFlag(c.args, "selector"); got != c.want {
+			t.Errorf("hasFlag(%v, %q) = %v, want %v", c.args, "selector", got, c.want)
+		}
+	}
+}
+
+func TestCanonicalKind(t *testing.T) {
+	for _, alias := range []string{"machine", "machines", "vm", "vms"} {
+		got, err := canonicalKind(alias)
+		if err != nil || got != "machine" {
+			t.Errorf("canonicalKind(%q) = %q, %v, want machine, nil", alias, got, err)
+		}
+	}
+	for _, alias := range []string{"securitygroup", "securitygroups", "networksecuritygroups"} {
+		got, err := canonicalKind(alias)
+		if err != nil || got != "securitygroup" {
+			t.Errorf("canonicalKind(%q) = %q, %v, want securitygroup, nil", alias, got, err)
+		}
+	}
+	if _, err := canonicalKind("bogus"); err == nil {
+		t.Fatal("expected an error for an unrecognized resource kind")
+	}
+}
+
+// deleteSelectorTestServer is a minimal in-memory fake covering exactly the
+// endpoints cmdDeleteSelector's bulk-delete path needs end-to-end: a
+// namespaced list per kind (matchingNames) and a per-name DELETE
+// (deleteByKindName) -- mirroring the inline-httptest-server convention
+// evacuateTestServer above already uses.
+type deleteSelectorTestServer struct {
+	machines    []model.Machine
+	machineSets []model.MachineSet
+	deleted     []string // e.g. "machine:vm-1", recorded in request order
+}
+
+func (s *deleteSelectorTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: s.machineSets})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/")
+			s.deleted = append(s.deleted, "machine:"+name)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+			s.deleted = append(s.deleted, "machineset:"+name)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+func labeledMachine(name string, labels map[string]string) model.Machine {
+	return model.Machine{Metadata: model.ObjectMeta{Name: name, Namespace: "default", Labels: labels}}
+}
+
+// TestCmdDeleteSelectorDeletesOnlyMatchingMachines is the core bulk-delete
+// happy path: three Machines, two labeled tier=web, one tier=db, and
+// `delete machine --selector tier=web` must delete exactly the two web
+// ones (in deterministic, sorted order) and leave the db one alone.
+func TestCmdDeleteSelectorDeletesOnlyMatchingMachines(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("web-2", map[string]string{"tier": "web"}),
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+		labeledMachine("web-1", map[string]string{"tier": "web"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdDelete(context.Background(), kc, []string{"machine", "--selector", "tier=web"})
+	})
+	if got, want := s.deleted, []string{"machine:web-1", "machine:web-2"}; !equalStrings(got, want) {
+		t.Fatalf("deleted = %v, want %v (sorted, web-only)", got, want)
+	}
+	if !strings.Contains(out, "machine/web-1 deleted") || !strings.Contains(out, "machine/web-2 deleted") {
+		t.Errorf("expected both deletions reported, got:\n%s", out)
+	}
+	if strings.Contains(out, "db-1") {
+		t.Errorf("must not mention the non-matching db-1 machine, got:\n%s", out)
+	}
+}
+
+// TestCmdDeleteSelectorDryRunDeletesNothing asserts --dry-run's entire
+// point: the selector still resolves against the live list, but no DELETE
+// request is ever sent.
+func TestCmdDeleteSelectorDryRunDeletesNothing(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("web-1", map[string]string{"tier": "web"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdDelete(context.Background(), kc, []string{"machine", "--selector", "tier=web", "--dry-run"})
+	})
+	if len(s.deleted) != 0 {
+		t.Fatalf("--dry-run must not delete anything, got deleted=%v", s.deleted)
+	}
+	if !strings.Contains(out, "machine/web-1 (dry-run, not deleted)") {
+		t.Errorf("expected a dry-run preview line, got:\n%s", out)
+	}
+}
+
+// TestCmdDeleteSelectorNoMatchesDeletesNothing covers a selector that
+// matches no existing Machine: no DELETE calls, and a plain "nothing to
+// delete" message rather than silence or an error.
+func TestCmdDeleteSelectorNoMatchesDeletesNothing(t *testing.T) {
+	s := &deleteSelectorTestServer{machines: []model.Machine{
+		labeledMachine("db-1", map[string]string{"tier": "db"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdDelete(context.Background(), kc, []string{"machine", "--selector", "tier=web"})
+	})
+	if len(s.deleted) != 0 {
+		t.Fatalf("expected no deletions, got %v", s.deleted)
+	}
+	if !strings.Contains(out, "nothing to delete") {
+		t.Errorf("expected a \"nothing to delete\" message, got:\n%s", out)
+	}
+}
+
+// TestCmdDeleteSelectorWorksAcrossKinds exercises the same bulk-delete
+// path against a second, unrelated kind (MachineSet) to check
+// matchingNames/deleteByKindName's per-kind switches are wired correctly
+// beyond just the Machine case above -- this is not an exhaustive sweep
+// of every one of the 12 kinds delete already supports (get/describe's
+// own tests don't do that either), just enough to confirm the dispatch
+// generalizes.
+func TestCmdDeleteSelectorWorksAcrossKinds(t *testing.T) {
+	s := &deleteSelectorTestServer{machineSets: []model.MachineSet{
+		{Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"tier": "web"}}},
+		{Metadata: model.ObjectMeta{Name: "db", Namespace: "default", Labels: map[string]string{"tier": "db"}}},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	captureStdout(t, func() {
+		cmdDelete(context.Background(), kc, []string{"machineset", "--selector", "tier=web"})
+	})
+	if got, want := s.deleted, []string{"machineset:web"}; !equalStrings(got, want) {
+		t.Fatalf("deleted = %v, want %v", got, want)
+	}
+}
+
+// TestCmdDeleteSelectorRespectsNamespaceFlag confirms `-n`/`--namespace`
+// (stripped by nsFlag before cmdDeleteSelector ever sees args) still
+// scopes the bulk listing/deletion, exactly as it already does for every
+// other verb.
+func TestCmdDeleteSelectorRespectsNamespaceFlag(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machines" {
+			called = true
+			_ = json.NewEncoder(w).Encode(model.MachineList{})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	captureStdout(t, func() {
+		cmdDelete(context.Background(), kc, []string{"-n", "staging", "machine", "--selector", "tier=web"})
+	})
+	if !called {
+		t.Fatal("expected the bulk list to be scoped to the -n staging namespace")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
