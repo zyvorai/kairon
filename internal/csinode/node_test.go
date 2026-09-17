@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // newTestNodeServer builds a NodeServer with every OS-touching seam
@@ -42,6 +44,9 @@ func newTestNodeServer(t *testing.T) *testNodeServerFixture {
 			delete(f.mounted, target)
 			return nil
 		},
+		statfsFn: func(path string) (VolumeStats, error) {
+			return VolumeStats{}, errors.New("statfsFn not stubbed for this test")
+		},
 	}
 	return f
 }
@@ -74,6 +79,7 @@ func TestNodeGetCapabilitiesReportsStageUnstage(t *testing.T) {
 	want := map[csi.NodeServiceCapability_RPC_Type]bool{
 		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME: false,
 		csi.NodeServiceCapability_RPC_EXPAND_VOLUME:        false,
+		csi.NodeServiceCapability_RPC_GET_VOLUME_STATS:     false,
 	}
 	if len(resp.GetCapabilities()) != len(want) {
 		t.Fatalf("expected exactly %d capabilities, got %+v", len(want), resp.GetCapabilities())
@@ -369,5 +375,86 @@ func TestNodeExpandVolumeRejectsUnsupportedFilesystem(t *testing.T) {
 		VolumeId: volumeID, VolumePath: "/staged",
 	}); err == nil {
 		t.Fatal("expected an error for a filesystem this driver doesn't know how to grow")
+	}
+}
+
+func TestNodeGetVolumeStatsRequiresFields(t *testing.T) {
+	f := newTestNodeServer(t)
+	if _, err := f.server.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{VolumePath: "/x"}); err == nil {
+		t.Fatal("expected an error for an empty volume_id")
+	}
+	if _, err := f.server.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{VolumeId: "v1"}); err == nil {
+		t.Fatal("expected an error for an empty volume_path")
+	}
+}
+
+func TestNodeGetVolumeStatsReturnsNotFoundWhenNotMounted(t *testing.T) {
+	f := newTestNodeServer(t)
+	req := &csi.NodeGetVolumeStatsRequest{VolumeId: "v1", VolumePath: t.TempDir() + "/never-mounted"}
+	_, err := f.server.NodeGetVolumeStats(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected an error for a volume path that isn't currently mounted")
+	}
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("expected NotFound, got %v", err)
+	}
+}
+
+func TestNodeGetVolumeStatsReportsUsage(t *testing.T) {
+	f := newTestNodeServer(t)
+	path := t.TempDir() + "/staged"
+	f.mounted[path] = true
+	f.server.statfsFn = func(got string) (VolumeStats, error) {
+		if got != path {
+			t.Fatalf("expected statfs to be called with %q, got %q", path, got)
+		}
+		return VolumeStats{
+			TotalBytes: 1000, UsedBytes: 400, AvailableBytes: 600,
+			TotalInodes: 100, UsedInodes: 10, AvailableInodes: 90,
+		}, nil
+	}
+
+	resp, err := f.server.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{VolumeId: "v1", VolumePath: path})
+	if err != nil {
+		t.Fatalf("NodeGetVolumeStats: %v", err)
+	}
+	usage := resp.GetUsage()
+	if len(usage) != 2 {
+		t.Fatalf("expected exactly 2 usage entries (bytes, inodes), got %+v", usage)
+	}
+	byUnit := map[csi.VolumeUsage_Unit]*csi.VolumeUsage{}
+	for _, u := range usage {
+		byUnit[u.GetUnit()] = u
+	}
+	bytes, ok := byUnit[csi.VolumeUsage_BYTES]
+	if !ok {
+		t.Fatal("expected a BYTES usage entry")
+	}
+	if bytes.GetTotal() != 1000 || bytes.GetUsed() != 400 || bytes.GetAvailable() != 600 {
+		t.Fatalf("unexpected bytes usage: %+v", bytes)
+	}
+	inodes, ok := byUnit[csi.VolumeUsage_INODES]
+	if !ok {
+		t.Fatal("expected an INODES usage entry")
+	}
+	if inodes.GetTotal() != 100 || inodes.GetUsed() != 10 || inodes.GetAvailable() != 90 {
+		t.Fatalf("unexpected inodes usage: %+v", inodes)
+	}
+}
+
+func TestNodeGetVolumeStatsPropagatesStatfsError(t *testing.T) {
+	f := newTestNodeServer(t)
+	path := t.TempDir() + "/staged"
+	f.mounted[path] = true
+	f.server.statfsFn = func(string) (VolumeStats, error) {
+		return VolumeStats{}, errors.New("statfs: input/output error")
+	}
+
+	_, err := f.server.NodeGetVolumeStats(context.Background(), &csi.NodeGetVolumeStatsRequest{VolumeId: "v1", VolumePath: path})
+	if err == nil {
+		t.Fatal("expected the statfs error to propagate rather than fabricating stats")
+	}
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected Internal, got %v", err)
 	}
 }

@@ -31,7 +31,7 @@ const stagingDirPerm = 0o750
 // for the full design, including why this breaks Go-stdlib-only (a real
 // iSCSI initiator and filesystem tooling aren't hand-rolled) and its
 // current, real limits (iSCSI only, mount-type volumes only -- no raw
-// block mode, no volume expansion, no volume health/stats).
+// block mode, no volume health reporting).
 //
 // A PersistentVolume this driver serves can come from either of two
 // places now: an admin still can create one statically (spec.csi.
@@ -69,6 +69,7 @@ type NodeServer struct {
 	isMountPoint func(path string) (bool, error)
 	mountFn      func(source, target, fsType string, flags uintptr, data string) error
 	unmountFn    func(target string) error
+	statfsFn     func(path string) (VolumeStats, error)
 }
 
 // NewNodeServer builds a NodeServer against the real CommandRunner and
@@ -78,7 +79,7 @@ type NodeServer struct {
 func NewNodeServer(nodeID string, runner CommandRunner) *NodeServer {
 	return &NodeServer{
 		NodeID: nodeID, Runner: runner, iscsi: &iscsiClient{run: runner},
-		isMountPoint: IsMountPoint, mountFn: mount, unmountFn: unmount,
+		isMountPoint: IsMountPoint, mountFn: mount, unmountFn: unmount, statfsFn: statfs,
 	}
 }
 
@@ -95,6 +96,49 @@ func (s *NodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabi
 			{Type: &csi.NodeServiceCapability_Rpc{Rpc: &csi.NodeServiceCapability_RPC{
 				Type: csi.NodeServiceCapability_RPC_EXPAND_VOLUME,
 			}}},
+			{Type: &csi.NodeServiceCapability_Rpc{Rpc: &csi.NodeServiceCapability_RPC{
+				Type: csi.NodeServiceCapability_RPC_GET_VOLUME_STATS,
+			}}},
+		},
+	}, nil
+}
+
+// NodeGetVolumeStats reports volume_id's disk usage/capacity by
+// statfs(2)-ing volume_path directly (see statfs's own doc comment) --
+// kubelet calls this on every CSI volume it manages, to serve
+// `kubectl describe pod`'s "Used"/du-free capacity display and
+// ephemeral-storage-based eviction/metrics without kubelet itself needing
+// to know this driver's on-disk layout. volume_path is whatever the CO
+// passed to NodeStageVolume/NodePublishVolume -- either a staging or a
+// publish path is valid per the CSI spec, and IsMountPoint's mountinfo
+// scan recognizes both (a bind mount is its own distinct mountinfo
+// entry). Deliberately fails closed rather than fabricating a number: a
+// path that isn't currently mounted gets NotFound, and a real statfs
+// error gets Internal -- callers make real capacity decisions off this,
+// so a wrong answer is worse than a clear error.
+func (s *NodeServer) NodeGetVolumeStats(_ context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
+	}
+	path := req.GetVolumePath()
+	if path == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_path is required")
+	}
+	mounted, err := s.isMountPoint(path)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "check volume path: %v", err)
+	}
+	if !mounted {
+		return nil, status.Errorf(codes.NotFound, "volume path %s is not a mounted volume", path)
+	}
+	stats, err := s.statfsFn(path)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "statfs %s: %v", path, err)
+	}
+	return &csi.NodeGetVolumeStatsResponse{
+		Usage: []*csi.VolumeUsage{
+			{Unit: csi.VolumeUsage_BYTES, Total: stats.TotalBytes, Used: stats.UsedBytes, Available: stats.AvailableBytes},
+			{Unit: csi.VolumeUsage_INODES, Total: stats.TotalInodes, Used: stats.UsedInodes, Available: stats.AvailableInodes},
 		},
 	}, nil
 }

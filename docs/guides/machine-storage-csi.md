@@ -172,9 +172,23 @@ parameters (the default) preserves demo mode exactly as before.
   grow-only, no shrink (the CSI spec has no shrink verb). Statically
   provisioned volumes still don't support this -- there's no
   `ControllerExpandVolume` call without a `StorageClass`/PVC driving it.
-  **No volume health or stats reporting.**
-  `NodeGetVolumeStats`/`NodeGetVolumeHealth` are both unimplemented (the
-  CSI spec's own `Unimplemented` response).
+- **Volume stats are reported; volume health is not.** `NodeGetVolumeStats`
+  is implemented: it `statfs(2)`s whatever path the CO passed to
+  `NodeStageVolume`/`NodePublishVolume` (pure Go, no `df` binary) and
+  reports real total/used/available bytes *and* inodes -- a filesystem can
+  run out of either independently, so both are reported, not just bytes.
+  This is what feeds `kubectl describe pod`'s per-volume "Used" line and
+  ephemeral-storage-based eviction/metrics for a real Kubernetes Pod using
+  this driver via kubelet; Kairon's own Machine-boot-disk consumption path
+  (`internal/agent`) doesn't call it today (kubelet's periodic volume-stats
+  collector is what normally drives this RPC, and kairon-node bypasses
+  kubelet entirely for its own volumes -- see `NodeServer`'s own doc
+  comment). Fails closed rather than fabricating a number: a
+  `volume_path` that isn't currently a mount point returns `NotFound`, and
+  a real `statfs(2)` error returns `Internal` -- never a guessed value.
+  `NodeGetVolumeHealth` remains unimplemented (the CSI spec's own
+  `Unimplemented` response) -- it's a newer, far-less-adopted alpha RPC
+  with no comparable orchestrator-side consumer to justify it yet.
 - **Volume snapshots are supported for dynamically provisioned volumes**
   (`csiController.enabled` plus the separately-gated
   `csiController.snapshotter.enabled`, off by default): `CreateSnapshot`/
