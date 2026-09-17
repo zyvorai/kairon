@@ -1011,6 +1011,7 @@ spec:
           args:
             - "-listen=:{{ .Values.ui.service.port }}"
             - "-allow-unauthenticated={{ .Values.ui.allowUnauthenticated }}"
+            - "-namespace-scoping-enabled={{ .Values.ui.auth.namespaceScoping.enabled }}"
           env:
             - name: KAIRON_UI_TOKEN
               valueFrom: {secretKeyRef: {name: {{ .Values.ui.existingSecret | default "kairon-ui-token" }}, key: {{ .Values.ui.existingSecretKey | default "token" }}}}
@@ -1053,11 +1054,17 @@ spec:
               value: {{ .Values.ui.oidc.usernameClaim | quote }}
             - name: KAIRON_UI_OIDC_SCOPES
               value: {{ .Values.ui.oidc.scopes | quote }}
-{{ if .Values.ui.oidc.adminGroups }}
+{{ if or .Values.ui.oidc.adminGroups .Values.ui.oidc.namespaceGroups }}
             - name: KAIRON_UI_OIDC_GROUPS_CLAIM
               value: {{ .Values.ui.oidc.groupsClaim | quote }}
+{{ if .Values.ui.oidc.adminGroups }}
             - name: KAIRON_UI_OIDC_ADMIN_GROUPS
               value: {{ .Values.ui.oidc.adminGroups | join "," | quote }}
+{{ end }}
+{{ if .Values.ui.oidc.namespaceGroups }}
+            - name: KAIRON_UI_OIDC_NAMESPACE_GROUPS
+              value: {{ .Values.ui.oidc.namespaceGroups | toJson | quote }}
+{{ end }}
 {{ end }}
 {{ if or .Values.ui.oidc.clientSecret .Values.ui.oidc.existingSecret }}
             - name: KAIRON_UI_OIDC_CLIENT_SECRET

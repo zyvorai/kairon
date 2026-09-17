@@ -156,6 +156,26 @@ type Server struct {
 	// of what this exists to fix -- it must only ever be trusted from the
 	// operator's own known proxy/load-balancer hop.
 	TrustedProxyCIDRs []*net.IPNet
+	// NamespaceScopingEnabled turns on per-namespace authorization
+	// (authorizedForNamespace, auth.go): once true, a non-admin operator
+	// (session-token auth only -- see authorizedForNamespace) may only act
+	// on a namespace listed in their own User.Namespaces or reachable via
+	// an OIDCAuth.NamespaceGroups entry for a group their ID token
+	// carries; every other namespace 403s. False (the default) is
+	// today's unchanged behavior -- kairon-ui's own HTTP layer has no
+	// namespace authorization axis at all, only isAdminIdentity's
+	// admin-vs-not split, and every existing deployment must keep
+	// behaving exactly that way unless this is deliberately opted into.
+	// Flipping it on for a cluster with non-admin ui.auth.users/OIDC
+	// sessions that have no Namespaces/NamespaceGroups configured moves
+	// them from "sees every namespace" to "sees none" -- fail-closed, not
+	// a silent no-op, so review ui.auth.users[].namespaces and
+	// ui.oidc.namespaceGroups before enabling this in
+	// charts/kairon/values.yaml. GET /api/v1/overview is deliberately
+	// exempt (it aggregates cluster-wide regardless), and Node isn't a
+	// namespaced kairon object at all, so node-scoped routes are exempt
+	// too -- see requireNamespace's own call sites in Handler() below.
+	NamespaceScopingEnabled bool
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -181,61 +201,79 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	api := http.NewServeMux()
+	// GET /api/v1/overview is deliberately NOT wrapped by requireNamespace
+	// below -- it aggregates cluster-wide by design (see its own doc
+	// comment in overview.go) regardless of NamespaceScopingEnabled, one
+	// of this feature's documented honest limits.
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
 
-	api.HandleFunc("GET /api/v1/machines", s.handleListMachines)
-	api.HandleFunc("POST /api/v1/machines", s.handleCreateMachine)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}", s.handleGetMachine)
-	api.HandleFunc("DELETE /api/v1/machines/{namespace}/{name}", s.handleDeleteMachine)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/start", s.handlePowerMachine("Running"))
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/stop", s.handlePowerMachine("Stopped"))
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/pause", s.handlePowerMachine("Paused"))
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/resume", s.handlePowerMachine("Running"))
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/halt", s.handlePowerMachine("Halted"))
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/priority", s.handleSetMachinePriority)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.handleConsoleTicket)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.handleExec)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.handleAgentPutFile)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/get", s.handleAgentGetFile)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-exec", s.handleAgentExec)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/qga/fsfreeze-status", s.handleQGAFsfreezeStatus)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/open", s.handleQGAFirewallOpen)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/close", s.handleQGAFirewallClose)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/logs", s.handleLogs)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-snapshot", s.handleVMSnapshot)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-restore-snapshot", s.handleVMRestoreSnapshot)
+	api.HandleFunc("GET /api/v1/machines", s.requireNamespace(namespaceParam, s.handleListMachines))
+	api.HandleFunc("POST /api/v1/machines", s.requireNamespace(namespaceParam, s.handleCreateMachine))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleGetMachine))
+	api.HandleFunc("DELETE /api/v1/machines/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteMachine))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/start", s.requireNamespace(namespaceFromPath, s.handlePowerMachine("Running")))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/stop", s.requireNamespace(namespaceFromPath, s.handlePowerMachine("Stopped")))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/pause", s.requireNamespace(namespaceFromPath, s.handlePowerMachine("Paused")))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/resume", s.requireNamespace(namespaceFromPath, s.handlePowerMachine("Running")))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/halt", s.requireNamespace(namespaceFromPath, s.handlePowerMachine("Halted")))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/priority", s.requireNamespace(namespaceFromPath, s.handleSetMachinePriority))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/console/ticket", s.requireNamespace(namespaceFromPath, s.handleConsoleTicket))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/exec", s.requireNamespace(namespaceFromPath, s.handleExec))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/put", s.requireNamespace(namespaceFromPath, s.handleAgentPutFile))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-file/get", s.requireNamespace(namespaceFromPath, s.handleAgentGetFile))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/agent-exec", s.requireNamespace(namespaceFromPath, s.handleAgentExec))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/qga/fsfreeze-status", s.requireNamespace(namespaceFromPath, s.handleQGAFsfreezeStatus))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/open", s.requireNamespace(namespaceFromPath, s.handleQGAFirewallOpen))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/qga/firewall/close", s.requireNamespace(namespaceFromPath, s.handleQGAFirewallClose))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/logs", s.requireNamespace(namespaceFromPath, s.handleLogs))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-snapshot", s.requireNamespace(namespaceFromPath, s.handleVMSnapshot))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/vm-restore-snapshot", s.requireNamespace(namespaceFromPath, s.handleVMRestoreSnapshot))
 
-	api.HandleFunc("GET /api/v1/migrations", s.handleListMigrations)
-	api.HandleFunc("POST /api/v1/migrations", s.handleCreateMigration)
-	api.HandleFunc("GET /api/v1/migrations/{namespace}/{name}", s.handleGetMigration)
+	api.HandleFunc("GET /api/v1/migrations", s.requireNamespace(namespaceParam, s.handleListMigrations))
+	api.HandleFunc("POST /api/v1/migrations", s.requireNamespace(namespaceParam, s.handleCreateMigration))
+	api.HandleFunc("GET /api/v1/migrations/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleGetMigration))
+	// handleEvacuate is deliberately NOT namespace-scoped: it takes a Node
+	// (not a namespace) and bulk-migrates every Machine currently
+	// assigned to it, cluster-wide, across whatever namespaces those
+	// Machines happen to live in -- there is no single ns to check against
+	// requireNamespace's own getNS(r) shape. An honest first-cut limit of
+	// this feature, not an oversight: enabling NamespaceScopingEnabled
+	// does not scope this one node-shaped bulk action.
 	api.HandleFunc("POST /api/v1/migrations/evacuate", s.handleEvacuate)
-	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/recover", s.handleRecoverMigration)
-	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/cancel", s.handleCancelMigration)
+	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/recover", s.requireNamespace(namespaceFromPath, s.handleRecoverMigration))
+	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/cancel", s.requireNamespace(namespaceFromPath, s.handleCancelMigration))
 
-	api.HandleFunc("GET /api/v1/snapshots", s.handleListSnapshots)
-	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)
-	api.HandleFunc("GET /api/v1/restores", s.handleListRestores)
-	api.HandleFunc("POST /api/v1/restores", s.handleCreateRestore)
-	api.HandleFunc("DELETE /api/v1/restores/{namespace}/{name}", s.handleDeleteRestore)
+	api.HandleFunc("GET /api/v1/snapshots", s.requireNamespace(namespaceParam, s.handleListSnapshots))
+	api.HandleFunc("POST /api/v1/snapshots", s.requireNamespace(namespaceParam, s.handleCreateSnapshot))
+	api.HandleFunc("GET /api/v1/restores", s.requireNamespace(namespaceParam, s.handleListRestores))
+	api.HandleFunc("POST /api/v1/restores", s.requireNamespace(namespaceParam, s.handleCreateRestore))
+	api.HandleFunc("DELETE /api/v1/restores/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteRestore))
 
-	api.HandleFunc("GET /api/v1/quotas", s.handleListQuotas)
-	api.HandleFunc("GET /api/v1/disruption-budgets", s.handleListBudgets)
-	api.HandleFunc("GET /api/v1/machinesets", s.handleListMachineSets)
-	api.HandleFunc("DELETE /api/v1/machinesets/{namespace}/{name}", s.handleDeleteMachineSet)
-	api.HandleFunc("PATCH /api/v1/machinesets/{namespace}/{name}/scale", s.handleScaleMachineSet)
-	api.HandleFunc("GET /api/v1/instancetypes", s.handleListInstanceTypes)
-	api.HandleFunc("GET /api/v1/migration-policies", s.handleListMigrationPolicies)
-	api.HandleFunc("GET /api/v1/snapshot-schedules", s.handleListMachineSnapshotSchedules)
-	api.HandleFunc("PATCH /api/v1/snapshot-schedules/{namespace}/{name}/suspend", s.handleSuspendMachineSnapshotSchedule)
-	api.HandleFunc("GET /api/v1/network-policies", s.handleListNetworkPolicies)
-	api.HandleFunc("GET /api/v1/security-groups", s.handleListSecurityGroups)
+	api.HandleFunc("GET /api/v1/quotas", s.requireNamespace(namespaceParam, s.handleListQuotas))
+	api.HandleFunc("GET /api/v1/disruption-budgets", s.requireNamespace(namespaceParam, s.handleListBudgets))
+	api.HandleFunc("GET /api/v1/machinesets", s.requireNamespace(namespaceParam, s.handleListMachineSets))
+	api.HandleFunc("DELETE /api/v1/machinesets/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteMachineSet))
+	api.HandleFunc("PATCH /api/v1/machinesets/{namespace}/{name}/scale", s.requireNamespace(namespaceFromPath, s.handleScaleMachineSet))
+	api.HandleFunc("GET /api/v1/instancetypes", s.requireNamespace(namespaceParam, s.handleListInstanceTypes))
+	api.HandleFunc("GET /api/v1/migration-policies", s.requireNamespace(namespaceParam, s.handleListMigrationPolicies))
+	api.HandleFunc("GET /api/v1/snapshot-schedules", s.requireNamespace(namespaceParam, s.handleListMachineSnapshotSchedules))
+	api.HandleFunc("PATCH /api/v1/snapshot-schedules/{namespace}/{name}/suspend", s.requireNamespace(namespaceFromPath, s.handleSuspendMachineSnapshotSchedule))
+	api.HandleFunc("GET /api/v1/network-policies", s.requireNamespace(namespaceParam, s.handleListNetworkPolicies))
+	api.HandleFunc("GET /api/v1/security-groups", s.requireNamespace(namespaceParam, s.handleListSecurityGroups))
 
+	// Node-scoped routes below (path carries {node}, not {namespace}) are
+	// deliberately NOT wrapped by requireNamespace: Node isn't a
+	// namespaced kairon object at all (see model.Node), so there is no ns
+	// to check -- an honest model limit of this feature, not an
+	// oversight. The one exception is the sandbox-http proxy route just
+	// below, whose path is /api/v1/machines/{namespace}/{name}/..., not
+	// /api/v1/nodes/{node}/... -- it IS namespace-scoped and IS wrapped.
 	api.HandleFunc("GET /api/v1/nodes", s.handleListNodes)
 	api.HandleFunc("GET /api/v1/nodes/usage", s.handleNodeUsage)
 	api.HandleFunc("GET /api/v1/nodes/{node}/sandboxes", s.handleListNodeSandboxes)
 	api.HandleFunc("GET /api/v1/nodes/{node}/templates", s.handleListTemplates)
 	api.HandleFunc("POST /api/v1/nodes/{node}/templates", s.handleBuildTemplate)
-	api.HandleFunc("/api/v1/machines/{namespace}/{name}/sandbox-http/{port}/{rest...}", s.handleSandboxHTTPProxy)
+	api.HandleFunc("/api/v1/machines/{namespace}/{name}/sandbox-http/{port}/{rest...}", s.requireNamespace(namespaceFromPath, s.handleSandboxHTTPProxy))
 	api.HandleFunc("GET /api/v1/nodes/{node}/catalog", s.handleListCatalog)
 	api.HandleFunc("POST /api/v1/nodes/{node}/catalog", s.handleAddCatalogEntry)
 	api.HandleFunc("DELETE /api/v1/nodes/{node}/catalog/{name}", s.handleRemoveCatalogEntry)
@@ -251,17 +289,22 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/nodes/{node}/pools/{name}", s.handleDeletePool)
 	api.HandleFunc("POST /api/v1/nodes/{node}/pools/{name}/claim", s.handleClaimPool)
 	api.HandleFunc("GET /api/v1/nodes/{node}/capabilities", s.handleRuntimeCapabilities)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/pressure", s.handlePressure)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/cpuset", s.handleCPUSet)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/freeze", s.handleFreeze)
-	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/thaw", s.handleThaw)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/frozen", s.handleFrozen)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-effective", s.handleNetworkEffective)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-stats", s.handleNetworkStats)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-flows", s.handleNetworkFlows)
-	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-drop-reasons", s.handleNetworkDropReasons)
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/pressure", s.requireNamespace(namespaceFromPath, s.handlePressure))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/cpuset", s.requireNamespace(namespaceFromPath, s.handleCPUSet))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/freeze", s.requireNamespace(namespaceFromPath, s.handleFreeze))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/thaw", s.requireNamespace(namespaceFromPath, s.handleThaw))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/frozen", s.requireNamespace(namespaceFromPath, s.handleFrozen))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-effective", s.requireNamespace(namespaceFromPath, s.handleNetworkEffective))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-stats", s.requireNamespace(namespaceFromPath, s.handleNetworkStats))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-flows", s.requireNamespace(namespaceFromPath, s.handleNetworkFlows))
+	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-drop-reasons", s.requireNamespace(namespaceFromPath, s.handleNetworkDropReasons))
+	// GET /api/v1/config reports server-wide feature flags (e.g.
+	// consoleEnabled), not per-namespace state -- not namespace-scoped.
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
 
+	// Neither of these two is namespace-scoped: {username} is not
+	// {namespace}, and a password is a per-account credential, not a
+	// per-namespace one.
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
 	api.HandleFunc("POST /api/v1/users/{username}/password", s.handleResetPassword)
 
@@ -571,6 +614,47 @@ func namespaceParam(r *http.Request) string {
 		return ns
 	}
 	return "default"
+}
+
+// namespaceFromPath is namespaceParam's counterpart for a route registered
+// with a literal "{namespace}" path segment (Go 1.22+ ServeMux pattern
+// syntax) -- e.g. "GET /api/v1/machines/{namespace}/{name}". Safe to call
+// from inside a handler wrapped by requireNamespace below: by the time
+// that wrapper's own next(w, r) call reaches this, the mux has already
+// matched and dispatched to this specific registered pattern, so
+// r.PathValue("namespace") is already populated.
+func namespaceFromPath(r *http.Request) string {
+	return r.PathValue("namespace")
+}
+
+// requireNamespace wraps a namespaced route's handler so it 403s a caller
+// authorizedForNamespace (auth.go) rejects, before next ever runs. getNS
+// extracts the namespace this particular route's request carries --
+// namespaceParam for a query-param route, namespaceFromPath for a
+// {namespace} path-segment route.
+//
+// This wraps each route's own handler, registered directly in api's mux,
+// rather than being one outer middleware layered above api as a whole
+// (the way withAuth/withAudit/withMetrics are) -- deliberately, because
+// it can't work that way here. Handler() below mounts api as
+// `top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))`: withAuth wraps
+// api from *outside*, and Go's http.ServeMux only populates
+// r.PathValue(...) once it has matched and dispatched to the specific
+// registered handler *inside* api -- which hasn't happened yet at that
+// outer layer. A namespaceFromPath call made from an outer wrapper would
+// always see an empty string. Per-route wrapping at registration, as
+// done throughout Handler() below, is what makes r.PathValue("namespace")
+// (and namespaceParam's query-string read) actually available when
+// getNS(r) runs.
+func (s *Server) requireNamespace(getNS func(*http.Request) string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ns := getNS(r)
+		if !s.authorizedForNamespace(r.Context(), ns) {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("not authorized for namespace %q", ns))
+			return
+		}
+		next(w, r)
+	}
 }
 
 // defaultMaxRequestBodyBytes bounds every ordinary JSON request body

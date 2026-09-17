@@ -446,9 +446,14 @@ ui:
     # Set admin: true on an entry to let that account reset another
     # operator's password via POST /api/v1/users/{username}/password
     # (every operator can always change their own via
-    # POST /api/v1/auth/password). Example:
+    # POST /api/v1/auth/password). Set namespaces: [...] on a non-admin
+    # entry to restrict it to those namespaces once
+    # namespaceScoping.enabled (above) is true -- ignored entirely
+    # otherwise, and ignored for an admin: true entry (always
+    # unrestricted). Example:
     #   users:
     #     - {username: alice, passwordHash: "$2a$...", admin: true}
+    #     - {username: bob, passwordHash: "$2a$...", namespaces: [team-bob]}
     # When empty (the default) and nothing above is set either, the chart
     # seeds one default "admin" account instead, with a random password it
     # generates once (see NOTES.txt after install/upgrade) -- so a fresh
@@ -483,6 +488,27 @@ ui:
     # has no real Kubernetes User to check RBAC against, so it's denied
     # outright when this is true. See docs/guides/kairon-ui-console-rbac.md.
     rbacConsoleCheck: false
+    namespaceScoping:
+      # enabled turns on per-namespace authorization for kairon-ui's own
+      # HTTP layer: once true, a non-admin session-token operator (a
+      # ui.auth.users[] account or an OIDC session -- never the legacy
+      # ui.token, which has no per-caller identity to scope by) may only
+      # see and act on a namespace listed in their own
+      # ui.auth.users[].namespaces entry or reachable via
+      # ui.oidc.namespaceGroups below; every other namespace gets a 403.
+      # Off by default -- today, kairon-ui's own ClusterRole is
+      # cluster-scoped and this HTTP layer has no namespace authorization
+      # axis at all, only admin-vs-not (ui.auth.users[].admin), so every
+      # authenticated operator already sees and mutates every namespace's
+      # Machines/quotas/policies. Flipping this on for an existing
+      # deployment without also setting namespaces/namespaceGroups below
+      # moves every non-admin operator from "sees every namespace" to
+      # "sees none" -- fail-closed, not a silent no-op, so review those
+      # fields together with this one. GET /api/v1/overview still
+      # aggregates cluster-wide regardless of this setting, and Node
+      # (which isn't a namespaced kairon object) isn't scoped by it
+      # either -- both documented, honest first-cut limits, not bugs.
+      enabled: false
   rateLimit:
     # trustedProxyHeader, when set alongside trustedProxyCidrs, is the
     # header (e.g. "X-Forwarded-For") kairon-ui reads the real client
@@ -546,6 +572,17 @@ ui:
     # docs/guides/kairon-ui-oidc.md.
     groupsClaim: "groups"
     adminGroups: []
+    # namespaceGroups: map IdP group membership to the namespaces a
+    # member may act on, consulted only once ui.auth.namespaceScoping.
+    # enabled (above) is true -- ignored entirely otherwise. Mirrors
+    # adminGroups' own freshness property (re-checked fresh on every
+    # request, not baked into the session token) and groupsClaim above.
+    # A group not listed here grants no namespaces on its own -- combine
+    # with adminGroups for a group that should bypass scoping entirely.
+    # Example:
+    #   namespaceGroups:
+    #     - {group: team-bob, namespaces: [team-bob, shared]}
+    namespaceGroups: []
   service:
     type: ClusterIP
     # Also the container's actual internal listen port (-listen=:port) --

@@ -56,6 +56,7 @@ func run() int {
 	rateLimitBurst := flag.Int("rate-limit-burst", 40, "requests a remote address may burst above -rate-limit-rps before throttling kicks in")
 	trustedProxyHeader := flag.String("trusted-proxy-header", env("KAIRON_UI_TRUSTED_PROXY_HEADER", ""), "header (e.g. X-Forwarded-For) to read the real client address from for rate limiting, instead of the immediate TCP peer -- only trusted from a peer matching -trusted-proxy-cidrs; empty (the default) is unchanged behavior")
 	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", env("KAIRON_UI_TRUSTED_PROXY_CIDRS", ""), "comma-separated CIDRs (e.g. your Ingress/load-balancer's pod or node network) that -trusted-proxy-header is ever trusted from; required alongside it, otherwise any direct client could spoof that header")
+	namespaceScopingEnabled := flag.Bool("namespace-scoping-enabled", env("KAIRON_UI_NAMESPACE_SCOPING_ENABLED", "false") == "true", "restrict each non-admin session-token operator to the namespaces listed in their own ui.auth.users[].namespaces entry or reachable via ui.oidc.namespaceGroups; false (the default) is today's unchanged behavior -- every authenticated operator sees and acts on every namespace")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -151,12 +152,18 @@ func run() int {
 		trustedProxyNets = append(trustedProxyNets, ipNet)
 	}
 
+	namespaceGroups, err := loadNamespaceGroups(os.Getenv("KAIRON_UI_OIDC_NAMESPACE_GROUPS"))
+	if err != nil {
+		log.Error("parsing $KAIRON_UI_OIDC_NAMESPACE_GROUPS", "error", err)
+		return 1
+	}
+
 	var oidcAuth *uiapi.OIDCAuth
 	if oidcConfigured {
 		discoverCtx, discoverCancel := context.WithTimeout(ctx, 15*time.Second)
 		oidcAuth, err = newOIDCAuth(discoverCtx, oidcIssuerURL, oidcClientID, os.Getenv("KAIRON_UI_OIDC_CLIENT_SECRET"), oidcRedirectURL,
 			env("KAIRON_UI_OIDC_USERNAME_CLAIM", "email"), env("KAIRON_UI_OIDC_GROUPS_CLAIM", "groups"),
-			strings.Split(env("KAIRON_UI_OIDC_SCOPES", "openid,profile,email"), ","), splitNonEmpty(env("KAIRON_UI_OIDC_ADMIN_GROUPS", ""), ","))
+			strings.Split(env("KAIRON_UI_OIDC_SCOPES", "openid,profile,email"), ","), splitNonEmpty(env("KAIRON_UI_OIDC_ADMIN_GROUPS", ""), ","), namespaceGroups)
 		discoverCancel()
 		if err != nil {
 			log.Error("OIDC/SSO setup failed", "error", err)
@@ -200,11 +207,12 @@ func run() int {
 		ConsoleTLS:   consoleTLS,
 		// RBACConsoleCheck false (the default) is unchanged, annotation-
 		// only console authorization -- see uiapi.Server's own doc comment.
-		RBACConsoleCheck:   env("KAIRON_UI_RBAC_CONSOLE_CHECK", "false") == "true",
-		Metrics:            rec,
-		RateLimit:          rateLimiter,
-		TrustedProxyHeader: *trustedProxyHeader,
-		TrustedProxyCIDRs:  trustedProxyNets,
+		RBACConsoleCheck:        env("KAIRON_UI_RBAC_CONSOLE_CHECK", "false") == "true",
+		Metrics:                 rec,
+		RateLimit:               rateLimiter,
+		TrustedProxyHeader:      *trustedProxyHeader,
+		TrustedProxyCIDRs:       trustedProxyNets,
+		NamespaceScopingEnabled: *namespaceScopingEnabled,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
@@ -257,7 +265,7 @@ func consoleTLSConfig(caPath string) (*tls.Config, error) {
 // login -- a misconfigured issuer fails the container immediately (a
 // visible CrashLoopBackOff), not a confusing 500 the first time an
 // operator actually tries to sign in.
-func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL, usernameClaim, groupsClaim string, scopes, adminGroups []string) (*uiapi.OIDCAuth, error) {
+func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL, usernameClaim, groupsClaim string, scopes, adminGroups []string, namespaceGroups map[string][]string) (*uiapi.OIDCAuth, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery against %s: %w", issuerURL, err)
@@ -282,7 +290,46 @@ func newOIDCAuth(ctx context.Context, issuerURL, clientID, clientSecret, redirec
 		// behavior before these existed. See uiapi.Server.isAdminIdentity.
 		GroupsClaim: groupsClaim,
 		AdminGroups: adminGroups,
+		// NamespaceGroups empty (the default) means an OIDC session
+		// contributes no namespaces of its own when
+		// ui.auth.namespaceScoping.enabled is on -- see
+		// uiapi.Server.authorizedForNamespace and loadNamespaceGroups
+		// below.
+		NamespaceGroups: namespaceGroups,
 	}, nil
+}
+
+// namespaceGroupEntry is $KAIRON_UI_OIDC_NAMESPACE_GROUPS's own wire
+// shape -- a JSON array (not a map) because it mirrors
+// ui.oidc.namespaceGroups' own Helm values shape exactly
+// (charts/kairon/values.yaml), which is itself a list of {group,
+// namespaces} entries rather than a map, for the same reason
+// ui.auth.users is a list rather than a map keyed by username: Helm
+// values.yaml lists are easier to append to/override piecemeal than map
+// keys are.
+type namespaceGroupEntry struct {
+	Group      string   `json:"group"`
+	Namespaces []string `json:"namespaces"`
+}
+
+// loadNamespaceGroups parses $KAIRON_UI_OIDC_NAMESPACE_GROUPS (a JSON
+// array of namespaceGroupEntry) into the map[string][]string shape
+// uiapi.OIDCAuth.NamespaceGroups actually uses at request time. Empty
+// input (the default -- ui.oidc.namespaceGroups unset) returns a nil map,
+// same as every other namespace-scoping field defaulting to "off."
+func loadNamespaceGroups(raw string) (map[string][]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var entries []namespaceGroupEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil, fmt.Errorf("parse $KAIRON_UI_OIDC_NAMESPACE_GROUPS: %w", err)
+	}
+	out := make(map[string][]string, len(entries))
+	for _, e := range entries {
+		out[e.Group] = append(out[e.Group], e.Namespaces...)
+	}
+	return out, nil
 }
 
 func env(k, d string) string {

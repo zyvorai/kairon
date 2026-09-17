@@ -64,6 +64,72 @@ func TestLoadUsersRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+// TestLoadUsersParsesNamespaces proves ui.auth.users[].namespaces
+// round-trips through $KAIRON_UI_USERS_JSON into uiapi.User.Namespaces --
+// the same JSON field the Helm chart's users.json Secret carries (see
+// charts/kairon/templates/all.yaml's $usersJSONValue).
+func TestLoadUsersParsesNamespaces(t *testing.T) {
+	users, err := loadUsers(`[{"username":"bob","passwordHash":"$2a$10$abc","namespaces":["team-bob","shared"]}]`, "")
+	if err != nil {
+		t.Fatalf("loadUsers: %v", err)
+	}
+	if len(users) != 1 || len(users[0].Namespaces) != 2 || users[0].Namespaces[0] != "team-bob" || users[0].Namespaces[1] != "shared" {
+		t.Fatalf("expected namespaces [team-bob shared] to round-trip, got %+v", users)
+	}
+}
+
+func TestLoadNamespaceGroupsEmptyInputReturnsNil(t *testing.T) {
+	groups, err := loadNamespaceGroups("")
+	if err != nil {
+		t.Fatalf("loadNamespaceGroups: %v", err)
+	}
+	if groups != nil {
+		t.Fatalf("expected a nil map for empty input, got %+v", groups)
+	}
+}
+
+// TestLoadNamespaceGroupsParsesListIntoMap proves
+// $KAIRON_UI_OIDC_NAMESPACE_GROUPS's own wire shape (a JSON array of
+// {group, namespaces}, mirroring ui.oidc.namespaceGroups' Helm values
+// shape exactly -- see charts/kairon/templates/all.yaml) parses into the
+// map[string][]string shape uiapi.OIDCAuth.NamespaceGroups actually
+// consults at request time, including merging two entries for the same
+// group.
+func TestLoadNamespaceGroupsParsesListIntoMap(t *testing.T) {
+	raw := `[{"group":"team-bob","namespaces":["team-bob","shared"]},{"group":"team-bob","namespaces":["extra"]},{"group":"team-carol","namespaces":["team-carol"]}]`
+	groups, err := loadNamespaceGroups(raw)
+	if err != nil {
+		t.Fatalf("loadNamespaceGroups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 distinct groups, got %+v", groups)
+	}
+	if want := []string{"team-bob", "shared", "extra"}; !equalStrings(groups["team-bob"], want) {
+		t.Fatalf("expected team-bob's two entries to merge into %v, got %v", want, groups["team-bob"])
+	}
+	if want := []string{"team-carol"}; !equalStrings(groups["team-carol"], want) {
+		t.Fatalf("expected %v, got %v", want, groups["team-carol"])
+	}
+}
+
+func TestLoadNamespaceGroupsRejectsMalformedJSON(t *testing.T) {
+	if _, err := loadNamespaceGroups("not json"); err == nil {
+		t.Fatal("expected an error for malformed $KAIRON_UI_OIDC_NAMESPACE_GROUPS")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestHashPasswordPrintsAVerifiableBcryptHash(t *testing.T) {
 	orig := os.Stdout
 	r, w, err := os.Pipe()

@@ -37,6 +37,16 @@ type User struct {
 	// cmd/kairon-ui/main.go); everyone else defaults to false unless
 	// ui.auth.users[].admin is set.
 	IsAdmin bool `json:"admin,omitempty"`
+	// Namespaces is the explicit allowlist of Kubernetes namespaces this
+	// account may act on, consulted only when
+	// Server.NamespaceScopingEnabled is true (see authorizedForNamespace)
+	// -- ignored entirely otherwise, and ignored for an IsAdmin account
+	// regardless (an admin is always unrestricted). Empty/nil means "no
+	// namespaces," not "all namespaces," once scoping is on for a
+	// non-admin account -- an operator upgraded onto a freshly-enabled
+	// ui.auth.namespaceScoping.enabled without an explicit list here sees
+	// nothing, deliberately fail-closed rather than fail-open.
+	Namespaces []string `json:"namespaces,omitempty"`
 }
 
 // dummyHash is compared against on an unknown username so a "no such user"
@@ -283,6 +293,61 @@ func (s *Server) isAdminIdentity(ctx context.Context, username string) bool {
 		return false
 	}
 	return groupsContainAdmin(groupsFromContext(ctx), s.OIDC.AdminGroups)
+}
+
+// authorizedForNamespace reports whether the caller identified by ctx (the
+// same identity isAdminIdentity reads, via usernameFromContext/
+// groupsFromContext) may act on namespace ns.
+//
+// Always true when Server.NamespaceScopingEnabled is false -- today's
+// unchanged behavior, and the default; flipping every existing non-admin
+// operator to "sees nothing" the moment this field existed would be a
+// real break, so scoping is opt-in and this is its single off-switch.
+// Also always true for an admin identity (isAdminIdentity) and for the
+// legacy shared token (usernameFromContext returns "" for it, and for the
+// unauthenticated-dev-mode caller too) -- neither has a per-caller
+// identity to scope by; deploy per-operator ui.auth.users/OIDC instead if
+// namespace scoping matters to you.
+//
+// Otherwise: true iff ns is in the union of the caller's static
+// User.Namespaces and every OIDCAuth.NamespaceGroups entry for a group
+// the caller's ID token currently carries. Both halves are re-derived
+// fresh on every call against current s.Users/s.OIDC state and the
+// request's own groupsFromContext -- never cached on the token or
+// context, exactly like isAdminIdentity, so a config change to
+// ui.auth.users[].namespaces or ui.oidc.namespaceGroups takes effect on a
+// caller's very next request rather than requiring re-login.
+func (s *Server) authorizedForNamespace(ctx context.Context, ns string) bool {
+	if !s.NamespaceScopingEnabled {
+		return true
+	}
+	username := usernameFromContext(ctx)
+	if username == "" {
+		// Legacy shared token (or unauthenticated dev mode, when neither
+		// Token nor Users nor OIDC is configured at all) -- no per-caller
+		// identity exists to scope by, so it stays unrestricted by design.
+		return true
+	}
+	if s.isAdminIdentity(ctx, username) {
+		return true
+	}
+	if user, found := s.findUser(username); found {
+		for _, allowed := range user.Namespaces {
+			if allowed == ns {
+				return true
+			}
+		}
+	}
+	if s.OIDC != nil {
+		for _, g := range groupsFromContext(ctx) {
+			for _, allowed := range s.OIDC.NamespaceGroups[g] {
+				if allowed == ns {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // groupsContainAdmin is isAdminIdentity's OIDC-half, factored out so

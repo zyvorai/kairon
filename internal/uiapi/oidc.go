@@ -58,6 +58,18 @@ type OIDCAuth struct {
 	// identity regardless of what groups an IdP reports, exactly Kairon's
 	// behavior before this field existed.
 	AdminGroups []string
+	// NamespaceGroups maps an IdP group name to the Kubernetes namespaces
+	// a member of that group may act on, consulted only when
+	// Server.NamespaceScopingEnabled is true (see
+	// Server.authorizedForNamespace) -- mirrors AdminGroups' own shape
+	// exactly: re-checked fresh on every request against current config
+	// and the session's own recorded groups (never cached on the token),
+	// so a config change takes effect on a caller's very next request
+	// without them needing to log in again. Empty (the default) means an
+	// OIDC session contributes no namespaces of its own -- only a static
+	// ui.auth.users[] account's own User.Namespaces, or admin status,
+	// grants anything once scoping is on.
+	NamespaceGroups map[string][]string
 }
 
 // oidcStateTTL bounds how long an operator has to complete the redirect
@@ -226,7 +238,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var groups []string
-	if s.OIDC.GroupsClaim != "" && len(s.OIDC.AdminGroups) > 0 {
+	// Only bother decoding the groups claim at all when something would
+	// actually consult it -- AdminGroups (isAdminIdentity) or
+	// NamespaceGroups (Server.authorizedForNamespace); an IdP that never
+	// returns a groups claim, or a deployment using neither feature, costs
+	// nothing extra.
+	if s.OIDC.GroupsClaim != "" && (len(s.OIDC.AdminGroups) > 0 || len(s.OIDC.NamespaceGroups) > 0) {
 		groups = stringClaimSlice(claims[s.OIDC.GroupsClaim])
 	}
 	sessionToken, expires, err := signSession(s.SessionSecret, username, groups, sessionTTL)
