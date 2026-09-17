@@ -20,6 +20,17 @@ linters:
     - bodyclose
     - prealloc
     - dupl
+  exclusions:
+    rules:
+      # Per-test-case duplication (copying a similar test's setup into a
+      # new, independently-readable test function) is idiomatic Go
+      # testing style, not code smell -- sharing brittle helpers across
+      # unrelated test cases would trade that isolation for marginal
+      # line savings. Production code keeps dupl fully enabled (zero
+      # tolerance).
+      - path: _test\.go
+        linters:
+          - dupl
 
 issues:
   max-issues-per-linter: 0
