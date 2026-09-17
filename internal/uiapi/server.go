@@ -214,6 +214,9 @@ func (s *Server) Handler() http.Handler {
 
 	api.HandleFunc("GET /api/v1/snapshots", s.handleListSnapshots)
 	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)
+	api.HandleFunc("GET /api/v1/restores", s.handleListRestores)
+	api.HandleFunc("POST /api/v1/restores", s.handleCreateRestore)
+	api.HandleFunc("DELETE /api/v1/restores/{namespace}/{name}", s.handleDeleteRestore)
 
 	api.HandleFunc("GET /api/v1/quotas", s.handleListQuotas)
 	api.HandleFunc("GET /api/v1/disruption-budgets", s.handleListBudgets)

@@ -850,6 +850,16 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshots"]
     verbs: ["get", "list", "watch", "create"]
+  # machinesnapshotrestores: the dashboard's Restores page (GET/POST
+  # /api/v1/restores, DELETE /api/v1/restores/{namespace}/{name} -- see
+  # internal/uiapi/restores.go). Unlike machinesnapshots just above,
+  # kairon-ui also gets delete here: internal/kube.Client has always had a
+  # DeleteMachineSnapshotRestore (kaironctl delete restore already used
+  # it), so this isn't a new mutation being introduced, just the
+  # dashboard's own RBAC catching up to a capability that already existed.
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshotrestores"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # Read-only: the six CRDs kairon-ui's own dashboard/REST routes list (see
   # internal/uiapi/fleet.go) -- GET /api/v1/quotas/disruption-budgets/
   # machinesets/instancetypes/migration-policies/snapshot-schedules. This

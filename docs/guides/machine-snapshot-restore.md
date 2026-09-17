@@ -49,6 +49,21 @@ Under a `WaitForFirstConsumer` `StorageClass` (the common case, e.g.
 Rancher's `local-path-provisioner`), the PVC stays `Pending` until step 2
 gives it a consumer -- that's normal, not a failure.
 
+Or from the dashboard: the **Restores** page lists every
+`MachineSnapshotRestore` in the `default` namespace with its snapshot,
+target claim, phase, and (once `Succeeded`) the restored claim name, and a
+form creates a new one without needing `kaironctl`/`kubectl` for that one
+action. The **Snapshots** page's own table grows a **Restore** button on
+each row once that snapshot is `readyToUse` -- it jumps to the Restores
+page with `spec.snapshotName` pre-filled, the same "prefill and switch
+page" pattern the **Snapshot** button on the Machines page already uses
+for creating a `MachineSnapshot`. A **Delete** button is also available on
+each restore row -- deleting a `MachineSnapshotRestore` only ever removes
+that bookkeeping object; the `PersistentVolumeClaim` it already created is
+a normal, independent object once `status.phase` reaches `Succeeded` and
+is never cascade-deleted with it (same posture `kubectl delete` on a
+completed `Job` takes toward what the `Job` produced).
+
 **2. Point a new Machine at it** (this is just the existing PVC-backed boot
 disk feature -- see [docs/guides/machine-storage.md](machine-storage.md)):
 

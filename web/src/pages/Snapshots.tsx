@@ -3,7 +3,7 @@ import { api, apiJSON } from '../api';
 import { MachineSnapshot } from '../types';
 import { badgeClass } from '../lib/phase';
 
-export default function Snapshots({ prefillMachine }: { prefillMachine: string }) {
+export default function Snapshots({ prefillMachine, onRestore }: { prefillMachine: string; onRestore: (snapshot: string) => void }) {
   const [items, setItems] = useState<MachineSnapshot[]>([]);
   const [machine, setMachine] = useState(prefillMachine);
   const [volumeClass, setVolumeClass] = useState('');
@@ -72,6 +72,7 @@ export default function Snapshots({ prefillMachine }: { prefillMachine: string }
               <th>Machine</th>
               <th>Phase</th>
               <th>Ready</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -83,11 +84,14 @@ export default function Snapshots({ prefillMachine }: { prefillMachine: string }
                   <span className={badgeClass(s.status?.phase || '')}>{s.status?.phase || 'Pending'}</span>
                 </td>
                 <td>{s.status?.readyToUse ? 'true' : 'false'}</td>
+                <td>
+                  {s.status?.readyToUse && <button onClick={() => onRestore(s.metadata.name)}>Restore</button>}
+                </td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={4} className="msg">
+                <td colSpan={5} className="msg">
                   No snapshots yet.
                 </td>
               </tr>

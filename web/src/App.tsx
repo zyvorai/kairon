@@ -4,6 +4,7 @@ import Overview from './pages/Overview';
 import Machines from './pages/Machines';
 import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
+import Restores from './pages/Restores';
 import Quotas from './pages/Quotas';
 import DisruptionBudgets from './pages/DisruptionBudgets';
 import MachineSets from './pages/MachineSets';
@@ -21,6 +22,7 @@ export default function App() {
   const [page, setPage] = useState<Page>('overview');
   const [signedIn, setSignedIn] = useState(!!token());
   const [prefillMachine, setPrefillMachine] = useState('');
+  const [prefillSnapshot, setPrefillSnapshot] = useState('');
   // No client-side router elsewhere in this app -- this one path is the
   // sole exception, since the OIDC callback (see internal/uiapi/oidc.go)
   // has to land somewhere real rather than at whatever page the operator
@@ -50,6 +52,10 @@ export default function App() {
     setPrefillMachine(machine);
     setPage('snapshots');
   }
+  function goRestore(snapshot: string) {
+    setPrefillSnapshot(snapshot);
+    setPage('restores');
+  }
 
   async function signOut() {
     await logout().catch(() => {});
@@ -76,7 +82,8 @@ export default function App() {
     overview: <Overview />,
     machines: <Machines onMigrate={goMigrate} onSnapshot={goSnapshot} />,
     migrations: <Migrations prefillMachine={prefillMachine} />,
-    snapshots: <Snapshots prefillMachine={prefillMachine} />,
+    snapshots: <Snapshots prefillMachine={prefillMachine} onRestore={goRestore} />,
+    restores: <Restores prefillSnapshot={prefillSnapshot} />,
     quotas: <Quotas />,
     'disruption-budgets': <DisruptionBudgets />,
     machinesets: <MachineSets />,

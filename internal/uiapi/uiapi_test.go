@@ -32,6 +32,7 @@ type fakeKube struct {
 	machines          map[string]model.Machine
 	migrations        map[string]model.MachineMigration
 	snapshots         map[string]model.MachineSnapshot
+	restores          map[string]model.MachineSnapshotRestore
 	quotas            map[string]model.MachineQuota
 	budgets           map[string]model.MachineDisruptionBudget
 	machineSets       map[string]model.MachineSet
@@ -57,6 +58,7 @@ func newFakeKube() *fakeKube {
 		machines:          map[string]model.Machine{},
 		migrations:        map[string]model.MachineMigration{},
 		snapshots:         map[string]model.MachineSnapshot{},
+		restores:          map[string]model.MachineSnapshotRestore{},
 		quotas:            map[string]model.MachineQuota{},
 		budgets:           map[string]model.MachineDisruptionBudget{},
 		machineSets:       map[string]model.MachineSet{},
@@ -187,6 +189,26 @@ func (f *fakeKube) handler() http.Handler {
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			f.snapshots[s.Metadata.Name] = s
 			_ = json.NewEncoder(w).Encode(s)
+
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores":
+			items := make([]model.MachineSnapshotRestore, 0, len(f.restores))
+			for _, res := range f.restores {
+				items = append(items, res)
+			}
+			_ = json.NewEncoder(w).Encode(model.MachineSnapshotRestoreList{Items: items})
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores":
+			var res model.MachineSnapshotRestore
+			_ = json.NewDecoder(r.Body).Decode(&res)
+			f.restores[res.Metadata.Name] = res
+			_ = json.NewEncoder(w).Encode(res)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores/")
+			if _, ok := f.restores[name]; !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			delete(f.restores, name)
+			w.WriteHeader(http.StatusOK)
 
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas":
 			items := make([]model.MachineQuota, 0, len(f.quotas))
@@ -890,6 +912,88 @@ func TestListSnapshots(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Metadata.Name != "s1" {
 		t.Fatalf("expected one snapshot named s1, got %+v", items)
+	}
+}
+
+func TestCreateRestoreRequiresSnapshotAndTargetClaim(t *testing.T) {
+	s := newTestServer(t, newFakeKube(), "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/restores", "", createRestoreRequest{TargetClaimName: "restored-pvc"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 with no snapshotName, got %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doJSON(t, h, http.MethodPost, "/api/v1/restores", "", createRestoreRequest{SnapshotName: "s1"})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 with no targetClaimName, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRestore(t *testing.T) {
+	fk := newFakeKube()
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/restores", "", createRestoreRequest{SnapshotName: "s1", TargetClaimName: "restored-pvc"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var out model.MachineSnapshotRestore
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Metadata.Name == "" {
+		t.Fatal("expected a generated name when Name is left empty")
+	}
+	if out.Spec.SnapshotName != "s1" || out.Spec.TargetClaimName != "restored-pvc" {
+		t.Fatalf("unexpected spec: %+v", out.Spec)
+	}
+	fk.mu.Lock()
+	_, ok := fk.restores[out.Metadata.Name]
+	fk.mu.Unlock()
+	if !ok {
+		t.Fatal("expected the restore to be persisted")
+	}
+}
+
+func TestListRestores(t *testing.T) {
+	fk := newFakeKube()
+	fk.restores["r1"] = model.MachineSnapshotRestore{Metadata: model.ObjectMeta{Name: "r1", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+	rr := doJSON(t, h, http.MethodGet, "/api/v1/restores", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var items []model.MachineSnapshotRestore
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 1 || items[0].Metadata.Name != "r1" {
+		t.Fatalf("expected one restore named r1, got %+v", items)
+	}
+}
+
+func TestDeleteRestore(t *testing.T) {
+	fk := newFakeKube()
+	fk.restores["r1"] = model.MachineSnapshotRestore{Metadata: model.ObjectMeta{Name: "r1", Namespace: "default"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodDelete, "/api/v1/restores/default/r1", "", nil)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fk.mu.Lock()
+	_, ok := fk.restores["r1"]
+	fk.mu.Unlock()
+	if ok {
+		t.Fatal("expected r1 to be deleted")
+	}
+
+	rr = doJSON(t, h, http.MethodDelete, "/api/v1/restores/default/nope", "", nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a nonexistent restore, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

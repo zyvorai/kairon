@@ -78,6 +78,18 @@ export interface MachineSnapshot {
   status?: { phase?: string; readyToUse?: boolean; message?: string };
 }
 
+export interface MachineSnapshotRestore {
+  metadata: ObjectMeta;
+  spec: {
+    snapshotName: string;
+    volumeName?: string;
+    targetClaimName: string;
+    storageClassName?: string;
+    storageSize?: string;
+  };
+  status?: { phase?: string; message?: string; restoredClaimName?: string };
+}
+
 export interface KaironNode {
   metadata: ObjectMeta;
   status?: { addresses?: { type: string; address: string }[] };

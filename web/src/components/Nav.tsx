@@ -1,10 +1,11 @@
-import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Network, Route, Shield, ShieldCheck, UserCog } from 'lucide-react';
+import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Network, RotateCcw, Route, Shield, ShieldCheck, UserCog } from 'lucide-react';
 
 export type Page =
   | 'overview'
   | 'machines'
   | 'migrations'
   | 'snapshots'
+  | 'restores'
   | 'quotas'
   | 'disruption-budgets'
   | 'machinesets'
@@ -20,6 +21,7 @@ const ITEMS: [Page, React.ReactNode, string][] = [
   ['machines', <Box size={17} key="i" />, 'Machines'],
   ['migrations', <ArrowLeftRight size={17} key="i" />, 'Migrations'],
   ['snapshots', <Camera size={17} key="i" />, 'Snapshots'],
+  ['restores', <RotateCcw size={17} key="i" />, 'Restores'],
   ['quotas', <Gauge size={17} key="i" />, 'Quotas'],
   ['disruption-budgets', <Shield size={17} key="i" />, 'Disruption budgets'],
   ['machinesets', <Layers size={17} key="i" />, 'Machine sets'],
