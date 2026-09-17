@@ -899,19 +899,32 @@ func cmdCreateBudget(ctx context.Context, kc *kube.Client, args []string) {
 // lightweight KIND NAME split (not resourceKindAndName, which is shaped
 // for get/describe/delete's "1 arg defaults to machine" convention and
 // doesn't fit a verb that always requires an explicit KIND plus trailing
-// flags).
+// flags). Once --selector appears anywhere after KIND, dispatches to
+// cmdScaleSelector for the bulk "same replica count across every match"
+// form instead of expecting a single trailing NAME -- see
+// cmdScaleSelector's own doc comment for why scale (unlike edit) is a
+// genuinely good fit for that.
 func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
-	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl scale machineset NAME --replicas N"))
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl scale machineset NAME --replicas N | kaironctl scale machineset --selector k=v --replicas N [--dry-run]"))
 	}
-	kind, name := strings.ToLower(args[0]), args[1]
+	kind := strings.ToLower(args[0])
 	if kind != "machineset" && kind != "machinesets" {
 		fatal(fmt.Errorf("scale only supports machineset, got %q", kind))
 	}
+	rest := args[1:]
+	if hasFlag(rest, "selector") {
+		cmdScaleSelector(ctx, kc, rest)
+		return
+	}
+	if len(rest) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl scale machineset NAME --replicas N"))
+	}
+	name := rest[0]
 	fs := flag.NewFlagSet("scale", flag.ExitOnError)
 	ns := fs.String("namespace", "default", "namespace")
 	replicas := fs.Int("replicas", -1, "desired replica count (required)")
-	_ = fs.Parse(args[2:])
+	_ = fs.Parse(rest[1:])
 	if *replicas < 0 {
 		fatal(fmt.Errorf("--replicas N is required"))
 	}
@@ -919,6 +932,66 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(err)
 	}
 	fmt.Printf("machineset/%s scaled to %d replicas\n", name, *replicas)
+}
+
+// cmdScaleSelector implements `scale machineset --selector k=v [--selector
+// k2=v2] --replicas N [--namespace NS] [--dry-run]`: patches spec.replicas
+// to the SAME value on every MachineSet in ns whose labels satisfy every
+// given key=value pair -- e.g. scaling every MachineSet labeled
+// env=staging to 0 before a maintenance window, or every tier=web
+// MachineSet up together after a capacity change. This mirrors
+// cmdDeleteSelector's shape deliberately (matchingNames to resolve the
+// selector, required non-empty --selector, sorted deterministic order,
+// --dry-run, one PATCH per match through the exact same single-object
+// kc.PatchMachineSet call the non-bulk path above uses) since it's the
+// same "resolve a selector to a list of names, then act on each one
+// through the existing single-object path" bulk pattern.
+//
+// scale is a genuinely good fit for this, unlike edit: it has exactly one
+// mutable field (replicas), and a bulk caller wants that ONE value applied
+// identically to every match. edit's kinds (migrationpolicy,
+// snapshotschedule, quota, budget, machine) each expose several
+// independent fields, and "apply the same --max-concurrent to N
+// differently-configured policies at once" is a far less obviously safe
+// or wanted operation than "scale everything matching this selector to
+// N" -- so --selector is intentionally NOT added to cmdEdit.
+func cmdScaleSelector(ctx context.Context, kc *kube.Client, args []string) {
+	fs := flag.NewFlagSet("scale", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	var selectorFlag stringSliceFlag
+	fs.Var(&selectorFlag, "selector", "label key=value every matching MachineSet must carry (repeatable -- every pair must match; required and must be non-empty)")
+	replicas := fs.Int("replicas", -1, "desired replica count applied to every matching MachineSet (required)")
+	dryRun := fs.Bool("dry-run", false, "print what would be scaled without scaling anything")
+	_ = fs.Parse(args)
+	if *replicas < 0 {
+		fatal(fmt.Errorf("--replicas N is required"))
+	}
+	sel, err := parseKeyValues(selectorFlag)
+	if err != nil {
+		fatal(err)
+	}
+	if len(sel) == 0 {
+		fatal(fmt.Errorf("--selector is required and must be non-empty for bulk scale (usage: kaironctl scale machineset --selector k=v --replicas N) -- an empty selector matches nothing, by design, rather than risk being misread as \"everything\""))
+	}
+	names, err := matchingNames(ctx, kc, *ns, "machineset", sel)
+	if err != nil {
+		fatal(err)
+	}
+	if len(names) == 0 {
+		fmt.Println("no machinesets matched selector; nothing to scale")
+		return
+	}
+	sort.Strings(names) // deterministic order for a repeatable dry-run/real-run diff
+	for _, name := range names {
+		if *dryRun {
+			fmt.Printf("machineset/%s (dry-run, not scaled)\n", name)
+			continue
+		}
+		if err := kc.PatchMachineSet(ctx, *ns, name, map[string]any{"spec": map[string]any{"replicas": *replicas}}); err != nil {
+			fatal(fmt.Errorf("scaling machineset/%s: %w", name, err))
+		}
+		fmt.Printf("machineset/%s scaled to %d replicas\n", name, *replicas)
+	}
 }
 
 // cmdEdit patches a subset of an existing object's spec fields, touching

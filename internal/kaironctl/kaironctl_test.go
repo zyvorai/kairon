@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1169,6 +1170,139 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// scaleSelectorTestServer is a minimal in-memory fake covering exactly the
+// endpoints cmdScaleSelector's bulk-scale path needs end-to-end: a
+// namespaced MachineSet list (matchingNames) and a per-name PATCH
+// recording the replicas value it carried -- mirroring
+// deleteSelectorTestServer's shape for the same bulk-selector pattern.
+type scaleSelectorTestServer struct {
+	machineSets []model.MachineSet
+	scaled      []string // e.g. "web:5", recorded in request order
+}
+
+func (s *scaleSelectorTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: s.machineSets})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			spec, _ := body["spec"].(map[string]any)
+			s.scaled = append(s.scaled, fmt.Sprintf("%s:%v", name, spec["replicas"]))
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+func labeledMachineSet(name string, labels map[string]string) model.MachineSet {
+	return model.MachineSet{Metadata: model.ObjectMeta{Name: name, Namespace: "default", Labels: labels}}
+}
+
+// TestCmdScaleSelectorScalesOnlyMatching is `kaironctl scale`'s bulk-mode
+// counterpart to TestCmdDeleteSelectorDeletesOnlyMatchingMachines: three
+// MachineSets, two labeled tier=web, one tier=db, and
+// `scale machineset --selector tier=web --replicas 0` must PATCH exactly
+// the two web ones (in deterministic, sorted order) to replicas=0 and
+// leave the db one alone.
+func TestCmdScaleSelectorScalesOnlyMatching(t *testing.T) {
+	s := &scaleSelectorTestServer{machineSets: []model.MachineSet{
+		labeledMachineSet("web-2", map[string]string{"tier": "web"}),
+		labeledMachineSet("db-1", map[string]string{"tier": "db"}),
+		labeledMachineSet("web-1", map[string]string{"tier": "web"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdScale(context.Background(), kc, []string{"machineset", "--selector", "tier=web", "--replicas", "0"})
+	})
+	if got, want := s.scaled, []string{"web-1:0", "web-2:0"}; !equalStrings(got, want) {
+		t.Fatalf("scaled = %v, want %v (sorted, web-only)", got, want)
+	}
+	if !strings.Contains(out, "machineset/web-1 scaled to 0 replicas") || !strings.Contains(out, "machineset/web-2 scaled to 0 replicas") {
+		t.Errorf("expected both scale results reported, got:\n%s", out)
+	}
+	if strings.Contains(out, "db-1") {
+		t.Errorf("must not mention the non-matching db-1 machineset, got:\n%s", out)
+	}
+}
+
+// TestCmdScaleSelectorDryRunScalesNothing asserts --dry-run's entire
+// point for bulk scale: the selector still resolves against the live
+// list, but no PATCH request is ever sent.
+func TestCmdScaleSelectorDryRunScalesNothing(t *testing.T) {
+	s := &scaleSelectorTestServer{machineSets: []model.MachineSet{
+		labeledMachineSet("web-1", map[string]string{"tier": "web"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdScale(context.Background(), kc, []string{"machineset", "--selector", "tier=web", "--replicas", "3", "--dry-run"})
+	})
+	if len(s.scaled) != 0 {
+		t.Fatalf("--dry-run must not scale anything, got scaled=%v", s.scaled)
+	}
+	if !strings.Contains(out, "machineset/web-1 (dry-run, not scaled)") {
+		t.Errorf("expected a dry-run preview line, got:\n%s", out)
+	}
+}
+
+// TestCmdScaleSelectorNoMatchesScalesNothing covers a selector that
+// matches no existing MachineSet: no PATCH calls, and a plain "nothing to
+// scale" message rather than silence or an error.
+func TestCmdScaleSelectorNoMatchesScalesNothing(t *testing.T) {
+	s := &scaleSelectorTestServer{machineSets: []model.MachineSet{
+		labeledMachineSet("db-1", map[string]string{"tier": "db"}),
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	out := captureStdout(t, func() {
+		cmdScale(context.Background(), kc, []string{"machineset", "--selector", "tier=web", "--replicas", "3"})
+	})
+	if len(s.scaled) != 0 {
+		t.Fatalf("expected no scaling, got %v", s.scaled)
+	}
+	if !strings.Contains(out, "no machinesets matched selector; nothing to scale") {
+		t.Errorf("expected a \"nothing to scale\" message, got:\n%s", out)
+	}
+}
+
+// TestCmdScaleSelectorRespectsNamespaceFlag confirms --namespace (scale's
+// own flag, parsed within cmdScaleSelector itself since scale never uses
+// nsFlag's -n/--namespace stripping the other verbs do) still scopes the
+// bulk listing/patching, exactly as it already does for the single-object
+// scale path.
+func TestCmdScaleSelectorRespectsNamespaceFlag(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machinesets" {
+			called = true
+			_ = json.NewEncoder(w).Encode(model.MachineSetList{})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	captureStdout(t, func() {
+		cmdScale(context.Background(), kc, []string{"machineset", "--selector", "tier=web", "--replicas", "3", "--namespace", "staging"})
+	})
+	if !called {
+		t.Fatal("expected the bulk list to be scoped to the --namespace staging namespace")
+	}
 }
 
 // TestCmdGetSelectorFiltersMachines is `kaironctl get`'s read-side

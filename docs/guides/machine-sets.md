@@ -45,6 +45,11 @@ per-volume claims) still needs `kubectl apply`/YAML, the same limit a plain
 this verb supports beyond create -- editing the template itself still means
 `kubectl edit`/`apply`.
 
+`scale` also supports scaling every `MachineSet` a label selector matches to
+the same replica count in one call (`kaironctl scale machineset --selector
+env=staging --replicas 0`) instead of a single `NAME` -- see
+[`kaironctl-scale-selector.md`](kaironctl-scale-selector.md).
+
 `spec.template.spec` is exactly a `Machine`'s own `spec` -- anything a
 hand-created `Machine` accepts (`image`, `volumes`, `deviceClaims`,
 `network`, `cloudInit`, ...) works here unchanged. `spec.template.labels`
