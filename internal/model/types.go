@@ -163,8 +163,17 @@ type MachineSpec struct {
 	CloudInit        CloudInitSpec     `json:"cloudInit,omitempty"`
 	ServiceFabric    ServiceFabricSpec `json:"serviceFabric,omitempty"`
 	PowerState       string            `json:"powerState,omitempty"`
-	Tenant           string            `json:"tenant,omitempty"`
-	TTLSeconds       int64             `json:"ttlSeconds,omitempty"`
+	// Tenant is not read or enforced anywhere in this codebase -- no
+	// admission check, no controller logic, no kaironctl flag, no
+	// dashboard display. It exists purely as free-form metadata. The one
+	// real multi-tenancy boundary Kairon uses today is the Kubernetes
+	// Namespace this Machine lives in (MachineQuota, MachineDisruptionBudget,
+	// and kairon-ui's own opt-in namespace scoping are all keyed on
+	// Namespace, never on this field). Setting Tenant does not grant or
+	// restrict access, isolate scheduling, or gate anything else -- see
+	// docs/guides/machine-quotas.md's "Real limits today" section.
+	Tenant     string `json:"tenant,omitempty"`
+	TTLSeconds int64  `json:"ttlSeconds,omitempty"`
 	// Priority orders competition among Machines that are all still
 	// unscheduled (spec.nodeName empty) at the start of the same
 	// reconcile tick -- kairon-controller attempts higher-Priority

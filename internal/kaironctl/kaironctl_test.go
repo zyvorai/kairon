@@ -2258,3 +2258,76 @@ func TestCmdTopUnknownResourceFails(t *testing.T) {
 		t.Fatalf("expected cmdTop to exit non-zero for an unknown resource, got err=%v", err)
 	}
 }
+
+// describeMachineTestServer is a minimal in-memory fake of the one endpoint
+// describeMachine calls, mirroring describeQuotaTestServer's own
+// inline-httptest-server convention above.
+type describeMachineTestServer struct {
+	machine model.Machine
+}
+
+func (s *describeMachineTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+s.machine.Metadata.Namespace+"/machines/"+s.machine.Metadata.Name:
+			_ = json.NewEncoder(w).Encode(s.machine)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+// TestDescribeMachineWithTenantSetShowsNonEnforcementNote confirms
+// describeMachine appends its one extra note line -- naming the Machine's
+// own namespace as the real multi-tenancy boundary -- when spec.tenant is
+// set, on top of the same raw JSON dump the default case already produces.
+func TestDescribeMachineWithTenantSetShowsNonEnforcementNote(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm-1", Namespace: "team-a"},
+		Spec:     model.MachineSpec{Tenant: "acme-corp"},
+	}
+	s := &describeMachineTestServer{machine: m}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeMachine(context.Background(), kc, "team-a", "vm-1")
+	})
+	if !strings.Contains(out, `"tenant": "acme-corp"`) {
+		t.Errorf("expected raw JSON dump to include spec.tenant, got:\n%s", out)
+	}
+	want := `note: spec.tenant is set but not enforced by kairon anywhere -- Kubernetes Namespace ("team-a") is kairon's only real multi-tenancy boundary; see docs/guides/machine-quotas.md`
+	if !strings.Contains(out, want) {
+		t.Errorf("expected non-enforcement note, got:\n%s", out)
+	}
+}
+
+// TestDescribeMachineWithoutTenantShowsNoNote confirms describeMachine
+// stays a byte-for-byte plain raw-JSON dump, like every non-carve-out kind,
+// when spec.tenant is unset -- the note is opt-in-by-content, not always
+// printed.
+func TestDescribeMachineWithoutTenantShowsNoNote(t *testing.T) {
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "vm-2", Namespace: "team-a"},
+	}
+	s := &describeMachineTestServer{machine: m}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+
+	out := captureStdout(t, func() {
+		describeMachine(context.Background(), kc, "team-a", "vm-2")
+	})
+	if strings.Contains(out, "note: spec.tenant") {
+		t.Errorf("expected no non-enforcement note when spec.tenant is unset, got:\n%s", out)
+	}
+}

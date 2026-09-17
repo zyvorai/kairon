@@ -251,6 +251,13 @@ spec:
                 default: Running
               tenant:
                 type: string
+                description: >-
+                  Not read or enforced anywhere in kairon -- no admission
+                  check, no controller logic, no kaironctl flag, no
+                  dashboard display. Purely free-form metadata. Kubernetes
+                  Namespace is kairon's one real multi-tenancy boundary
+                  today; see docs/guides/machine-quotas.md's "Real limits
+                  today" section.
               ttlSeconds:
                 type: integer
                 format: int64

@@ -629,6 +629,10 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		// The fourth -- see describeBudget's own doc comment.
 		describeBudget(ctx, kc, ns, name)
 		return
+	case "machine", "machines", "vm", "vms":
+		// The fifth -- see describeMachine's own doc comment.
+		describeMachine(ctx, kc, ns, name)
+		return
 	}
 	var (
 		out any
@@ -1019,6 +1023,31 @@ func describeBudget(ctx context.Context, kc *kube.Client, ns, name string) {
 			health = "NOT healthy (non-terminal MachineMigration in flight)"
 		}
 		fmt.Printf("  %-24s %s\n", m.Metadata.Name, health)
+	}
+}
+
+// describeMachine is describe's fifth (and, for now, last -- see
+// describeBudget's own doc comment for the fourth) raw-JSON-plus-preview
+// exception, and the narrowest of the five: it prints the exact same raw
+// JSON dump the default case already produces for every other kind, then
+// appends exactly one extra line, and only when spec.tenant is actually
+// set. Machine.Spec.Tenant is read by nothing anywhere in this codebase --
+// no admission check, no controller logic, no kaironctl flag, no dashboard
+// display (see its own doc comment in internal/model/types.go) -- so an
+// operator who sets it could easily assume it does something. This note
+// exists purely to make that non-enforcement impossible to miss at the one
+// place an operator is most likely to go looking: describing the Machine
+// itself.
+func describeMachine(ctx context.Context, kc *kube.Client, ns, name string) {
+	m, err := kc.GetMachine(ctx, ns, name)
+	if err != nil {
+		fatal(err)
+	}
+	b, _ := json.MarshalIndent(m, "", "  ")
+	fmt.Println(string(b))
+
+	if m.Spec.Tenant != "" {
+		fmt.Printf("note: spec.tenant is set but not enforced by kairon anywhere -- Kubernetes Namespace (%q) is kairon's only real multi-tenancy boundary; see docs/guides/machine-quotas.md\n", m.Namespace())
 	}
 }
 
