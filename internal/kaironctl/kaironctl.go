@@ -1694,7 +1694,7 @@ func cmdScaleSelector(ctx context.Context, kc *kube.Client, args []string) {
 // and securitygroup are the only kinds this verb supports for a first cut.
 func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 2 {
-		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X] | edit machine NAME --priority N | edit networkpolicy NAME [--machine-name X] [--selector k=v] [--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port] [--default-allow BOOL] [--audit-mode BOOL] [--max-egress-mbps N] [--max-egress-pps N] | edit securitygroup NAME [--group-label k=v] [--priority N] [--description TEXT] [policy flags as above]"))
+		fatal(fmt.Errorf("usage: kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N] | edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N] | edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE] | edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X] | edit machine NAME --priority N | edit machineset NAME [--strategy RollingUpdate|Recreate] [--max-unavailable X] | edit networkpolicy NAME [--machine-name X] [--selector k=v] [--allow-cidr CIDR] [--deny-cidr CIDR] [--allow-port proto/port] [--default-allow BOOL] [--audit-mode BOOL] [--max-egress-mbps N] [--max-egress-pps N] | edit securitygroup NAME [--group-label k=v] [--priority N] [--description TEXT] [policy flags as above]"))
 	}
 	kind, name := strings.ToLower(args[0]), args[1]
 	switch kind {
@@ -1708,12 +1708,14 @@ func cmdEdit(ctx context.Context, kc *kube.Client, args []string) {
 		cmdEditBudget(ctx, kc, name, args[2:])
 	case "machine", "machines":
 		cmdEditMachine(ctx, kc, name, args[2:])
+	case "machineset", "machinesets":
+		cmdEditMachineSet(ctx, kc, name, args[2:])
 	case "networkpolicy", "networkpolicies", "machinenetworkpolicies":
 		cmdEditNetworkPolicy(ctx, kc, name, args[2:])
 	case "securitygroup", "securitygroups", "networksecuritygroups":
 		cmdEditSecurityGroup(ctx, kc, name, args[2:])
 	default:
-		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, budget, machine, networkpolicy, or securitygroup, got %q", kind))
+		fatal(fmt.Errorf("edit only supports migrationpolicy, snapshotschedule, quota, budget, machine, machineset, networkpolicy, or securitygroup, got %q", kind))
 	}
 }
 
@@ -1745,6 +1747,44 @@ func cmdEditMachine(ctx context.Context, kc *kube.Client, name string, args []st
 		fatal(err)
 	}
 	fmt.Printf("machine/%s updated\n", name)
+}
+
+// cmdEditMachineSet patches only the MachineSetSpec rollout knobs an
+// explicit flag was passed for, same fs.Visit convention as every other
+// edit subcommand -- Replicas deliberately stays out of this verb's scope
+// since `kaironctl scale machineset` already exists specifically for it
+// (see cmdScale's own doc comment for why scale and edit are kept
+// separate), and Template is create-time-only through this CLI exactly
+// like a Machine's own image/resources/network fields are under
+// cmdEditMachine -- kubectl edit/apply is still how a replica's template
+// itself changes. --strategy/--max-unavailable are otherwise the entire
+// set of fields cmdCreateMachineSet accepts beyond Replicas/Template, so
+// this closes the one real gap left: before this, changing a MachineSet's
+// rollout strategy or maxUnavailable bound after creation needed
+// kubectl edit/patch, unlike every other CRD kind this project offers a
+// `kaironctl edit` verb for at all.
+func cmdEditMachineSet(ctx context.Context, kc *kube.Client, name string, args []string) {
+	fs := flag.NewFlagSet("edit machineset", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	strategy := fs.String("strategy", "", "new rollout strategy: RollingUpdate | Recreate")
+	maxUnavailable := fs.String("max-unavailable", "", "new integer or percentage bound on simultaneously-missing/outdated replicas during RollingUpdate")
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "strategy":
+			spec["strategy"] = *strategy
+		case "max-unavailable":
+			spec["maxUnavailable"] = *maxUnavailable
+		}
+	})
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --strategy or --max-unavailable"))
+	}
+	if err := kc.PatchMachineSet(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("machineset/%s updated\n", name)
 }
 
 func cmdEditMigrationPolicy(ctx context.Context, kc *kube.Client, name string, args []string) {

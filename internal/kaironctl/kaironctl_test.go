@@ -1011,6 +1011,46 @@ func TestCmdEditMachinePriority(t *testing.T) {
 	}
 }
 
+// TestCmdEditMachineSetOnlyPatchesFlagsActuallySet confirms `edit
+// machineset` (previously missing entirely -- create and scale existed,
+// but changing strategy/maxUnavailable on an already-created MachineSet
+// needed kubectl) patches only spec.strategy when that's the only flag
+// passed, same fs.Visit convention every other edit subcommand already
+// follows.
+func TestCmdEditMachineSetOnlyPatchesFlagsActuallySet(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"machineset", "web", "--strategy", "Recreate"})
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/web" {
+		t.Fatalf("method=%s path=%s", s.method, s.path)
+	}
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["strategy"] != "Recreate" {
+		t.Errorf("strategy = %v, want Recreate", spec["strategy"])
+	}
+	if _, present := spec["maxUnavailable"]; present {
+		t.Errorf("maxUnavailable should not be present when --max-unavailable wasn't passed, got %v", spec)
+	}
+	if _, present := spec["replicas"]; present {
+		t.Errorf("replicas should never be touched by edit machineset (that's kaironctl scale's job), got %v", spec)
+	}
+}
+
+// TestCmdEditMachineSetMaxUnavailable confirms --max-unavailable alone
+// patches spec.maxUnavailable without touching spec.strategy.
+func TestCmdEditMachineSetMaxUnavailable(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	cmdEdit(context.Background(), kc, []string{"machineset", "web", "--max-unavailable", "25%"})
+	spec, _ := s.body["spec"].(map[string]any)
+	if spec["maxUnavailable"] != "25%" {
+		t.Errorf("maxUnavailable = %v, want 25%%", spec["maxUnavailable"])
+	}
+	if _, present := spec["strategy"]; present {
+		t.Errorf("strategy should not be present when --strategy wasn't passed, got %v", spec)
+	}
+}
+
 // TestCmdCreateDispatchesToMachineSetByKeyword confirms `create machineset
 // NAME` is recognized as a KIND, not treated as a Machine named
 // "machineset" -- the design tradeoff documented on cmdCreate itself.

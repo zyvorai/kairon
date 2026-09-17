@@ -342,6 +342,7 @@ kaironctl create securitygroup NAME [--group-name X] [--group-label k=v] [--prio
 kaironctl start|stop NAME
 kaironctl delete [RESOURCE] NAME  # RESOURCE defaults to "machine", same aliases as `get`
 kaironctl scale machineset NAME --replicas N
+kaironctl edit machineset NAME [--strategy RollingUpdate|Recreate] [--max-unavailable X]  # only patches flags you actually pass
 kaironctl edit migrationpolicy NAME [--bandwidth-mbps N] [--max-concurrent N]  # only patches flags you actually pass
 kaironctl edit snapshotschedule NAME [--suspend true|false] [--interval-seconds N] [--keep-last N] [--starting-deadline-seconds N]
 kaironctl edit quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]

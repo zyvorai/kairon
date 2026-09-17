@@ -35,15 +35,18 @@ $ kaironctl create machineset web --image /var/lib/fluxvm/images/web.qcow2 \
 machineset/web created
 $ kaironctl scale machineset web --replicas 5
 machineset/web scaled to 5 replicas
+$ kaironctl edit machineset web --strategy Recreate --max-unavailable 2
+machineset/web updated
 ```
 
 `create machineset` reuses the exact same Machine-spec flags `kaironctl
 create` (a single Machine) already has for `spec.template.spec` -- anything
 those flags don't cover (`spec.placement`, device claims, security,
 per-volume claims) still needs `kubectl apply`/YAML, the same limit a plain
-`create machine` already has for those fields. `scale` is the only mutation
-this verb supports beyond create -- editing the template itself still means
-`kubectl edit`/`apply`.
+`create machine` already has for those fields. `scale` (replicas) and `edit`
+(`--strategy`/`--max-unavailable`) are the only mutations these verbs
+support beyond create -- editing the template itself still means `kubectl
+edit`/`apply`.
 
 `scale` also supports scaling every `MachineSet` a label selector matches to
 the same replica count in one call (`kaironctl scale machineset --selector
