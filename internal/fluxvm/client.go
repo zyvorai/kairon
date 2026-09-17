@@ -502,7 +502,20 @@ func (c *Client) Resume(ctx context.Context, id string) (*Record, error) {
 }
 
 func (c *Client) Delete(ctx context.Context, id string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/vms/"+url.PathEscape(id), nil)
+	return c.deleteIdempotent(ctx, "/v1/vms/"+url.PathEscape(id), "/v1/vms", id)
+}
+
+// deleteIdempotent implements the idempotent-404 raw DELETE shared by
+// Client.Delete (Machine deletion) and DeleteNetworkGroup
+// (internal/fluxvm/network.go's own doc comment explains the
+// idempotent-404 behavior itself): hand-rolled rather than routed
+// through the shared do() helper specifically to get at the raw status
+// code, since do() treats every non-2xx (404 included) as an error.
+// path is the full request path (already url.PathEscape'd by the
+// caller); route and resourceID are used only to format the error
+// message the same way each caller previously did.
+func (c *Client) deleteIdempotent(ctx context.Context, path, route, resourceID string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -519,7 +532,7 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("fluxvm DELETE /v1/vms/%s: HTTP %d: %s", id, resp.StatusCode, strings.TrimSpace(string(data)))
+		return fmt.Errorf("fluxvm DELETE %s/%s: HTTP %d: %s", route, resourceID, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
 }

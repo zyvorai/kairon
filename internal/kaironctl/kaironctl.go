@@ -1792,28 +1792,43 @@ func cmdEditMachine(ctx context.Context, kc *kube.Client, name string, args []st
 // rollout strategy or maxUnavailable bound after creation needed
 // kubectl edit/patch, unlike every other CRD kind this project offers a
 // `kaironctl edit` verb for at all.
+// editSpecFromFlags implements the common "parse only the flags the
+// caller actually passed, build a partial spec patch from them, apply
+// it, print a confirmation" skeleton that cmdEditMachineSet and
+// cmdEditMigrationPolicy both follow: fs must already have its flags
+// defined, setField is called once per flag fs.Visit reports as
+// explicitly set (to populate spec from whatever *flag.Value the
+// caller's closure captured), emptyErr is the "nothing to edit: ..."
+// detail used when no flag was passed, and patch applies the resulting
+// spec (the caller wraps it as {"spec": spec}) via kube.Client.
+func editSpecFromFlags(fs *flag.FlagSet, args []string, setField func(spec map[string]any, flagName string), emptyErr string, patch func(spec map[string]any) error, kind, resourceName string) {
+	_ = fs.Parse(args)
+	spec := map[string]any{}
+	fs.Visit(func(f *flag.Flag) { setField(spec, f.Name) })
+	if len(spec) == 0 {
+		fatal(fmt.Errorf("nothing to edit: %s", emptyErr))
+	}
+	if err := patch(spec); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("%s/%s updated\n", kind, resourceName)
+}
+
 func cmdEditMachineSet(ctx context.Context, kc *kube.Client, name string, args []string) {
 	fs := flag.NewFlagSet("edit machineset", flag.ExitOnError)
 	ns := fs.String("namespace", "default", "namespace")
 	strategy := fs.String("strategy", "", "new rollout strategy: RollingUpdate | Recreate")
 	maxUnavailable := fs.String("max-unavailable", "", "new integer or percentage bound on simultaneously-missing/outdated replicas during RollingUpdate")
-	_ = fs.Parse(args)
-	spec := map[string]any{}
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
+	editSpecFromFlags(fs, args, func(spec map[string]any, flagName string) {
+		switch flagName {
 		case "strategy":
 			spec["strategy"] = *strategy
 		case "max-unavailable":
 			spec["maxUnavailable"] = *maxUnavailable
 		}
-	})
-	if len(spec) == 0 {
-		fatal(fmt.Errorf("nothing to edit: pass at least one of --strategy or --max-unavailable"))
-	}
-	if err := kc.PatchMachineSet(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
-		fatal(err)
-	}
-	fmt.Printf("machineset/%s updated\n", name)
+	}, "pass at least one of --strategy or --max-unavailable", func(spec map[string]any) error {
+		return kc.PatchMachineSet(ctx, *ns, name, map[string]any{"spec": spec})
+	}, "machineset", name)
 }
 
 func cmdEditMigrationPolicy(ctx context.Context, kc *kube.Client, name string, args []string) {
@@ -1821,23 +1836,16 @@ func cmdEditMigrationPolicy(ctx context.Context, kc *kube.Client, name string, a
 	ns := fs.String("namespace", "default", "namespace")
 	bandwidth := fs.Uint64("bandwidth-mbps", 0, "new default migration bandwidth")
 	maxConcurrent := fs.Int("max-concurrent", 0, "new cap on simultaneous non-terminal migrations")
-	_ = fs.Parse(args)
-	spec := map[string]any{}
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
+	editSpecFromFlags(fs, args, func(spec map[string]any, flagName string) {
+		switch flagName {
 		case "bandwidth-mbps":
 			spec["bandwidthMbps"] = *bandwidth
 		case "max-concurrent":
 			spec["maxConcurrent"] = *maxConcurrent
 		}
-	})
-	if len(spec) == 0 {
-		fatal(fmt.Errorf("nothing to edit: pass at least one of --bandwidth-mbps or --max-concurrent"))
-	}
-	if err := kc.PatchMigrationPolicy(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
-		fatal(err)
-	}
-	fmt.Printf("migrationpolicy/%s updated\n", name)
+	}, "pass at least one of --bandwidth-mbps or --max-concurrent", func(spec map[string]any) error {
+		return kc.PatchMigrationPolicy(ctx, *ns, name, map[string]any{"spec": spec})
+	}, "migrationpolicy", name)
 }
 
 func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, args []string) {

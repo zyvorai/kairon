@@ -231,21 +231,7 @@ func (s *Server) handleAgentGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	nodeAddr, err := s.nodeInternalIP(r.Context(), m.Status.NodeName)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
-	defer cancel()
-	if s.Log != nil {
-		s.Log.Info("uiapi agent get-file requested", "username", username, "namespace", namespace, "name", name)
-	}
 	var out agentFileResponse
-	nodePath := "agent-file/get/" + m.Status.RuntimeID
-	if err := s.relayToNode(ctx, nodeAddr, nodePath, req, &out); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	relayGuestAgentRequest(s, w, r, m, req, &out, "agent-file/get/"+m.Status.RuntimeID,
+		"uiapi agent get-file requested", username, namespace, name)
 }

@@ -107,40 +107,29 @@ func (s *Server) handleQGAFsfreezeStatus(w http.ResponseWriter, r *http.Request)
 
 // handleQGAFirewallOpen/handleQGAFirewallClose toggle a named firewall
 // rule inside the guest via qemu-guest-agent -- same relay shape as
-// handleExec/handleAgentPutFile, just a different upstream path.
+// handleExec/handleAgentPutFile, just a different upstream path. Both
+// share handleQGAFirewallToggle below; the only real difference between
+// them is the request body's shape and the "open"/"close" relay path
+// segment.
 func (s *Server) handleQGAFirewallOpen(w http.ResponseWriter, r *http.Request) {
-	namespace, name := r.PathValue("namespace"), r.PathValue("name")
-	m, ok := s.requireQGAAccess(w, r, namespace, name)
-	if !ok {
-		return
-	}
-	var req firewallOpenRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	nodeAddr, err := s.nodeInternalIP(r.Context(), m.Status.NodeName)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
-	defer cancel()
-	var out firewallResponse
-	if err := s.relayToNode(ctx, nodeAddr, "qga-firewall/open/"+m.Status.RuntimeID, req, &out); err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	handleQGAFirewallToggle[firewallOpenRequest](s, w, r, "open")
 }
 
 func (s *Server) handleQGAFirewallClose(w http.ResponseWriter, r *http.Request) {
+	handleQGAFirewallToggle[firewallCloseRequest](s, w, r, "close")
+}
+
+// handleQGAFirewallToggle implements handleQGAFirewallOpen/Close: Req is
+// the request body's concrete type (firewallOpenRequest/
+// firewallCloseRequest) and action is the "open"/"close" relay path
+// segment.
+func handleQGAFirewallToggle[Req any](s *Server, w http.ResponseWriter, r *http.Request, action string) {
 	namespace, name := r.PathValue("namespace"), r.PathValue("name")
 	m, ok := s.requireQGAAccess(w, r, namespace, name)
 	if !ok {
 		return
 	}
-	var req firewallCloseRequest
+	var req Req
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
@@ -153,7 +142,7 @@ func (s *Server) handleQGAFirewallClose(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
 	defer cancel()
 	var out firewallResponse
-	if err := s.relayToNode(ctx, nodeAddr, "qga-firewall/close/"+m.Status.RuntimeID, req, &out); err != nil {
+	if err := s.relayToNode(ctx, nodeAddr, "qga-firewall/"+action+"/"+m.Status.RuntimeID, req, &out); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

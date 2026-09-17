@@ -211,19 +211,34 @@ func (s *Server) handleQGAFirewallClose(w http.ResponseWriter, r *http.Request) 
 	if !s.checkToken(w, r) {
 		return
 	}
-	var req firewallCloseRequest
+	relayFluxRequest(w, r, "qga firewall close",
+		func(ctx context.Context, req firewallCloseRequest) (*fluxvm.QGAExecResult, error) {
+			return s.Flux.QGAFirewallClose(ctx, r.PathValue("runtimeID"), req.Name, req.TimeoutSeconds)
+		},
+		func(result *fluxvm.QGAExecResult) firewallResponse {
+			return firewallResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr}
+		})
+}
+
+// relayFluxRequest is shared by handleQGAFirewallClose and
+// handleAgentExec (near-identical shape otherwise): decode the request
+// body, run call with a bounded timeout, and encode call's result via
+// toResponse. errLabel is the http.Error prefix used only on a
+// Flux-side failure, matching each handler's own previous message.
+func relayFluxRequest[Req, Result, Resp any](w http.ResponseWriter, r *http.Request, errLabel string, call func(ctx context.Context, req Req) (Result, error), toResponse func(Result) Resp) {
+	var req Req
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
 	defer cancel()
-	result, err := s.Flux.QGAFirewallClose(ctx, r.PathValue("runtimeID"), req.Name, req.TimeoutSeconds)
+	result, err := call(ctx, req)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("qga firewall close: %v", err), http.StatusBadGateway)
+		http.Error(w, fmt.Sprintf("%s: %v", errLabel, err), http.StatusBadGateway)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(firewallResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
+	_ = json.NewEncoder(w).Encode(toResponse(result))
 }
 
 // agentPutFileRequest/agentGetFileRequest/agentFileResponse mirror
@@ -311,19 +326,13 @@ func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 	if !s.checkToken(w, r) {
 		return
 	}
-	var req agentExecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("decode request: %v", err), http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), execRelayTimeout)
-	defer cancel()
-	result, err := s.Flux.AgentExec(ctx, r.PathValue("runtimeID"), req.Command, req.TimeoutSeconds)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("agent exec: %v", err), http.StatusBadGateway)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(agentExecResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr})
+	relayFluxRequest(w, r, "agent exec",
+		func(ctx context.Context, req agentExecRequest) (*fluxvm.AgentExecResult, error) {
+			return s.Flux.AgentExec(ctx, r.PathValue("runtimeID"), req.Command, req.TimeoutSeconds)
+		},
+		func(result *fluxvm.AgentExecResult) agentExecResponse {
+			return agentExecResponse{ExitCode: result.ExitCode, Stdout: result.Stdout, Stderr: result.Stderr}
+		})
 }
 
 // vmSnapshotRequest/vmSnapshotResponse mirror the shape of every other

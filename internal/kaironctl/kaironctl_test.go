@@ -291,7 +291,7 @@ func TestSelectorFilter(t *testing.T) {
 	}
 
 	got := selectorFilter(items, map[string]string{"tier": "web"}, labels)
-	var names []string
+	names := make([]string, 0, len(got))
 	for _, m := range got {
 		names = append(names, m.Metadata.Name)
 	}

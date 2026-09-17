@@ -282,11 +282,12 @@ func TestServerHeartbeatIsANoOpOnTerminalPhases(t *testing.T) {
 			if _, err := c.Prepare(context.Background(), ts.URL, testSession()); err != nil {
 				t.Fatal(err)
 			}
-			if phase == "Committed" {
+			switch phase {
+			case "Committed":
 				if err := c.Commit(context.Background(), ts.URL, "kmm-123"); err != nil {
 					t.Fatal(err)
 				}
-			} else if phase == "Aborted" {
+			case "Aborted":
 				if err := c.Abort(context.Background(), ts.URL, "kmm-123"); err != nil {
 					t.Fatal(err)
 				}

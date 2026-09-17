@@ -93,7 +93,7 @@ func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", source, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s: unexpected status %s", source, resp.Status)
 	}
@@ -103,11 +103,11 @@ func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string)
 		return fmt.Errorf("create temp file for %s: %w", source, err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmpPath) }() // no-op once the rename below succeeds
 
 	hasher := sha256.New()
 	if _, err := io.Copy(tmp, io.TeeReader(resp.Body, hasher)); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("download %s: %w", source, err)
 	}
 	if err := tmp.Close(); err != nil {

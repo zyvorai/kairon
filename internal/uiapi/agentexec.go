@@ -6,6 +6,8 @@ package uiapi
 import (
 	"context"
 	"net/http"
+
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 // agentExecRequest/agentExecResponse mirror internal/consoleproxy's own
@@ -45,6 +47,22 @@ func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	// Deliberately not logging req.Command -- a command's own
+	// arguments can carry secrets, the same reasoning handleExec's
+	// own audit line already documents.
+	var out agentExecResponse
+	relayGuestAgentRequest(s, w, r, m, req, &out, "agent-exec/"+m.Status.RuntimeID,
+		"uiapi agent exec requested", username, namespace, name)
+}
+
+// relayGuestAgentRequest is shared by handleAgentExec and
+// handleAgentGetFile (internal/uiapi/agentfile.go): resolve the node
+// address, relay req to kairon-node with a bounded timeout, log an
+// audit line, and write the JSON response. Callers decode their own
+// request body first -- their error messages and body-size limits
+// differ -- and pass the already-decoded req plus a pointer to the
+// response value to fill.
+func relayGuestAgentRequest[Req, Resp any](s *Server, w http.ResponseWriter, r *http.Request, m model.Machine, req Req, out *Resp, nodePath, logMsg, username, namespace, name string) {
 	nodeAddr, err := s.nodeInternalIP(r.Context(), m.Status.NodeName)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -53,16 +71,11 @@ func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
 	defer cancel()
 	if s.Log != nil {
-		// Deliberately not logging req.Command -- a command's own
-		// arguments can carry secrets, the same reasoning handleExec's
-		// own audit line already documents.
-		s.Log.Info("uiapi agent exec requested", "username", username, "namespace", namespace, "name", name)
+		s.Log.Info(logMsg, "username", username, "namespace", namespace, "name", name)
 	}
-	var out agentExecResponse
-	nodePath := "agent-exec/" + m.Status.RuntimeID
-	if err := s.relayToNode(ctx, nodeAddr, nodePath, req, &out); err != nil {
+	if err := s.relayToNode(ctx, nodeAddr, nodePath, req, out); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, *out)
 }

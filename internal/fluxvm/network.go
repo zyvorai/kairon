@@ -346,26 +346,7 @@ func (c *Client) UpsertNetworkGroup(ctx context.Context, group SecurityGroup) (*
 // shared do() helper specifically to get at the raw status code; do()
 // treats every non-2xx (404 included) as an error.
 func (c *Client) DeleteNetworkGroup(ctx context.Context, name string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+"/v1/network/groups/"+url.PathEscape(name), nil)
-	if err != nil {
-		return err
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("fluxvm DELETE /v1/network/groups/%s: HTTP %d: %s", name, resp.StatusCode, strings.TrimSpace(string(data)))
-	}
-	return nil
+	return c.deleteIdempotent(ctx, "/v1/network/groups/"+url.PathEscape(name), "/v1/network/groups", name)
 }
 
 func (c *Client) ApplyCNP(ctx context.Context, doc map[string]any) error {

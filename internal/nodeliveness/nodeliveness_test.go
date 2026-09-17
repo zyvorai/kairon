@@ -140,7 +140,7 @@ func TestRenewBumpsRenewTimeOnAnExistingLease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLease: %v", err)
 	}
-	if !second.Spec.RenewTime.Time.After(first.Spec.RenewTime.Time) {
+	if !second.Spec.RenewTime.After(first.Spec.RenewTime.Time) {
 		t.Fatalf("expected RenewTime to advance: first=%v second=%v", first.Spec.RenewTime, second.Spec.RenewTime)
 	}
 }

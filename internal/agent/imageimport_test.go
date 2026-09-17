@@ -74,7 +74,7 @@ func TestResolveImageSourceDownloadsAndCaches(t *testing.T) {
 	var requests int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
-		w.Write(payload)
+		_, _ = w.Write(payload)
 	}))
 	defer srv.Close()
 
@@ -111,7 +111,7 @@ func TestResolveImageSourceDownloadsAndCaches(t *testing.T) {
 
 func TestResolveImageSourceRejectsDigestMismatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("actual bytes"))
+		_, _ = w.Write([]byte("actual bytes"))
 	}))
 	defer srv.Close()
 

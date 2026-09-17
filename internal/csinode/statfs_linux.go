@@ -21,7 +21,7 @@ func statfs(path string) (VolumeStats, error) {
 	if err := syscall.Statfs(path, &buf); err != nil {
 		return VolumeStats{}, err
 	}
-	bsize := int64(buf.Bsize)
+	bsize := buf.Bsize
 	total := int64(buf.Blocks) * bsize
 	free := int64(buf.Bfree) * bsize
 	avail := int64(buf.Bavail) * bsize

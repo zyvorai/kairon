@@ -109,7 +109,7 @@ func ownedMachine(name, templateHash, phase string) model.Machine {
 func TestMachineSetTemplateHashIsStableAndSensitiveToChange(t *testing.T) {
 	t1 := model.MachineTemplate{Spec: model.MachineSpec{Resources: model.ResourceSpec{CPU: "1"}}}
 	t2 := model.MachineTemplate{Spec: model.MachineSpec{Resources: model.ResourceSpec{CPU: "2"}}}
-	if machineSetTemplateHash(t1) != machineSetTemplateHash(t1) {
+	if machineSetTemplateHash(t1) != machineSetTemplateHash(t1) { //nolint:staticcheck // intentional: verifying determinism, not comparing t1 vs t2
 		t.Fatal("expected the same template to hash the same way twice")
 	}
 	if machineSetTemplateHash(t1) == machineSetTemplateHash(t2) {

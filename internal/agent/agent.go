@@ -250,13 +250,14 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
 	}
 	freshlyCreated := rec == nil
-	if freshlyCreated && m.Spec.Sandbox != nil {
+	switch {
+	case freshlyCreated && m.Spec.Sandbox != nil:
 		rec, err = a.Flux.CreateSandboxForMachine(ctx, m)
 		if err != nil {
 			return err
 		}
 		a.Log.Info("created sandbox runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID())
-	} else if freshlyCreated {
+	case freshlyCreated:
 		vfioDevices, err := a.resolveVFIODevices(ctx, m)
 		if err != nil {
 			return err
@@ -266,7 +267,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			return err
 		}
 		a.Log.Info("created runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID(), "vfioDevices", vfioDevices)
-	} else if strings.EqualFold(rec.Status, "Paused") && m.DesiredPowerState() == "Running" {
+	case strings.EqualFold(rec.Status, "Paused") && m.DesiredPowerState() == "Running":
 		// The only path back from Paused: ensurePaused above only ever
 		// pauses, it's this branch (reached once spec.powerState is
 		// edited back to Running) that resumes.
@@ -274,7 +275,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
-	} else if normalizePhase(rec.Status) == "Stopped" && m.DesiredPowerState() != "Stopped" {
+	case normalizePhase(rec.Status) == "Stopped" && m.DesiredPowerState() != "Stopped":
 		// Reached only with DesiredPowerState() == "Running" -- Stopped,
 		// Paused, and Halted all early-return above, before this chain.
 		// Two distinct real callers land here:
