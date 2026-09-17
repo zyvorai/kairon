@@ -209,6 +209,16 @@ everything else `kaironctl get`/`describe` supports, so `-n`/`--namespace`
 is silently ignored for it; there's no `kaironctl delete node`, since
 deleting a cluster Node is squarely `kubectl`'s job, not Kairon's.
 
+The dashboard now shows the same information: `kairon-ui`'s **Nodes** page
+lists every node's `Ready` condition, `Unschedulable`, taints, and
+addresses, refreshed every 5s like every other list page. `GET
+/api/v1/nodes` already existed (it backed the Overview tile's node count),
+but nothing in the dashboard rendered the list itself until this page --
+an operator working only from the browser, not `kaironctl`/`kubectl`, had
+no way to see a node's taints at all. Read-only, matching `kaironctl get
+nodes`' own scope exactly: no create/edit/delete button, since Node's
+lifecycle stays kubectl's job here too.
+
 **Real limits today**: an untolerated `NoExecute` taint only ever blocks
 *new* scheduling -- unlike real Kubernetes, Kairon has no eviction pass
 that migrates or deletes an *already-running* Machine off a node that

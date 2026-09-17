@@ -68,3 +68,24 @@ export function transferProgress(transferred?: number, total?: number): number |
   const pct = ((transferred ?? 0) / total) * 100;
   return Math.max(0, Math.min(100, Math.round(pct)));
 }
+
+// nodeReadyStatus/nodeTaintsSummary reimplement kaironctl's own
+// nodeReadyStatus/nodeTaintsSummary (internal/kaironctl/kaironctl.go) for
+// the dashboard's Nodes page (web/src/pages/Nodes.tsx) -- same fields, same
+// "Unknown"/"-" fallbacks, so an operator sees the identical answer to "is
+// this node Ready" and "what's tainted" whether they ask kaironctl or the
+// dashboard. Kept as a from-scratch TypeScript reimplementation rather than
+// a shared artifact, the same tradeoff kaironctl's own Go doc comment
+// already made for reusing internal/scheduler's unexported taintKV: two
+// small, purely cosmetic formatting helpers with no shared behavior that
+// could drift out of sync.
+export function nodeReadyStatus(node: { status?: { conditions?: { type: string; status: string }[] } }): string {
+  const cond = (node.status?.conditions || []).find((c) => c.type === 'Ready');
+  return cond ? cond.status : 'Unknown';
+}
+
+export function nodeTaintsSummary(node: { spec?: { taints?: { key: string; value?: string; effect: string }[] } }): string {
+  const taints = node.spec?.taints || [];
+  if (taints.length === 0) return '-';
+  return taints.map((t) => (t.value ? `${t.key}=${t.value}` : t.key) + ':' + t.effect).join(', ');
+}

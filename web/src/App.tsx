@@ -13,6 +13,7 @@ import MigrationPolicies from './pages/MigrationPolicies';
 import SnapshotSchedules from './pages/SnapshotSchedules';
 import NetworkPolicies from './pages/NetworkPolicies';
 import SecurityGroups from './pages/SecurityGroups';
+import Nodes from './pages/Nodes';
 import Account from './pages/Account';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
@@ -92,6 +93,7 @@ export default function App() {
     'snapshot-schedules': <SnapshotSchedules />,
     'network-policies': <NetworkPolicies />,
     'security-groups': <SecurityGroups />,
+    nodes: <Nodes />,
     account: <Account />,
   }[page];
 

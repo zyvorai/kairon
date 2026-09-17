@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { badgeClass, formatBytes, formatDuration, transferProgress } from './phase';
+import { badgeClass, formatBytes, formatDuration, nodeReadyStatus, nodeTaintsSummary, transferProgress } from './phase';
 
 describe('badgeClass', () => {
   it('marks terminal-success phases ok', () => {
@@ -48,6 +48,40 @@ describe('formatDuration', () => {
   });
   it('renders minutes and seconds over one minute', () => {
     expect(formatDuration(90000)).toBe('1m30s');
+  });
+});
+
+describe('nodeReadyStatus', () => {
+  it('returns Unknown when there is no Ready condition at all', () => {
+    expect(nodeReadyStatus({})).toBe('Unknown');
+    expect(nodeReadyStatus({ status: { conditions: [] } })).toBe('Unknown');
+    expect(nodeReadyStatus({ status: { conditions: [{ type: 'DiskPressure', status: 'False' }] } })).toBe('Unknown');
+  });
+  it('returns the Ready condition status verbatim', () => {
+    expect(nodeReadyStatus({ status: { conditions: [{ type: 'Ready', status: 'True' }] } })).toBe('True');
+    expect(nodeReadyStatus({ status: { conditions: [{ type: 'Ready', status: 'False' }] } })).toBe('False');
+  });
+});
+
+describe('nodeTaintsSummary', () => {
+  it('renders a dash for an untainted node', () => {
+    expect(nodeTaintsSummary({})).toBe('-');
+    expect(nodeTaintsSummary({ spec: { taints: [] } })).toBe('-');
+  });
+  it('renders key:Effect when no value is set', () => {
+    expect(nodeTaintsSummary({ spec: { taints: [{ key: 'dedicated', effect: 'NoSchedule' }] } })).toBe('dedicated:NoSchedule');
+  });
+  it('renders key=value:Effect and joins multiple taints', () => {
+    expect(
+      nodeTaintsSummary({
+        spec: {
+          taints: [
+            { key: 'dedicated', value: 'gpu', effect: 'NoSchedule' },
+            { key: 'spot', effect: 'PreferNoSchedule' },
+          ],
+        },
+      })
+    ).toBe('dedicated=gpu:NoSchedule, spot:PreferNoSchedule');
   });
 });
 

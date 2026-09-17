@@ -90,9 +90,23 @@ export interface MachineSnapshotRestore {
   status?: { phase?: string; message?: string; restoredClaimName?: string };
 }
 
+// KaironNode mirrors internal/model.Node -- the real Kubernetes Node
+// object, not a kairon.zyvor.dev CRD (see the block below for those).
+// spec.taints/unschedulable and status.conditions were added alongside
+// this file's own Nodes page (web/src/pages/Nodes.tsx): before that page
+// existed, only status.addresses was ever read by the frontend (the
+// Overview tile only needed a count, from GET /api/v1/overview, not the
+// node list itself), so nothing else was worth mirroring here yet.
 export interface KaironNode {
   metadata: ObjectMeta;
-  status?: { addresses?: { type: string; address: string }[] };
+  spec?: {
+    unschedulable?: boolean;
+    taints?: { key: string; value?: string; effect: string }[];
+  };
+  status?: {
+    conditions?: { type: string; status: string }[];
+    addresses?: { type: string; address: string }[];
+  };
 }
 
 export interface Overview {
