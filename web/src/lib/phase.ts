@@ -51,6 +51,17 @@ export function formatBytes(n?: number): string {
   return `${v.toFixed(decimals)} ${units[i]}`;
 }
 
+// formatCPUPercent mirrors kaironctl's own formatCPUPercent
+// (internal/kaironctl/kaironctl.go): a Machine/Node's CPUPercent is
+// already a percentage of one core (can exceed 100 for a multi-vCPU
+// Machine or a hot node using more than one core's worth of time), not a
+// millicore count, so this is simply a fixed, readable precision --
+// matching `kaironctl top`'s own two-decimal rendering exactly, rather
+// than a kubectl-top-style "123m" notation that doesn't apply here.
+export function formatCPUPercent(p: number): string {
+  return `${p.toFixed(2)}%`;
+}
+
 // formatDuration renders a millisecond count (status.totalTimeMs/downtimeMs)
 // as a short human-readable string.
 export function formatDuration(ms?: number): string {

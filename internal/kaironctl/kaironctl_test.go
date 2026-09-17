@@ -2138,21 +2138,23 @@ func TestCmdTopNodesCountsUnreportedMachinesWithoutPanicking(t *testing.T) {
 	}
 }
 
-// TestAggregateUsageByNodeSortsAndGroupsByNode is aggregateUsageByNode's
-// own pure-function unit test, independent of the HTTP/flag-parsing layer
-// the cmdTop tests above already cover.
+// TestAggregateUsageByNodeSortsAndGroupsByNode is `top nodes`' underlying
+// model.AggregateUsageByNode -- now shared with kairon-ui's Nodes
+// dashboard page (see internal/model/usage.go's own doc comment) --
+// exercised here independent of the HTTP/flag-parsing layer the cmdTop
+// tests above already cover.
 func TestAggregateUsageByNodeSortsAndGroupsByNode(t *testing.T) {
-	got := aggregateUsageByNode([]model.Machine{
+	got := model.AggregateUsageByNode([]model.Machine{
 		usageMachine("vm-3", "worker-2", 10, 100),
 		usageMachine("vm-1", "worker-1", 20, 200),
 		usageMachine("vm-2", "worker-1", 5, 50),
 	})
-	want := []nodeUsageAggregate{
-		{node: "worker-1", machines: 2, cpuPercent: 25, memoryBytes: 250},
-		{node: "worker-2", machines: 1, cpuPercent: 10, memoryBytes: 100},
+	want := []model.NodeUsageAggregate{
+		{Node: "worker-1", Machines: 2, CPUPercent: 25, MemoryBytes: 250},
+		{Node: "worker-2", Machines: 1, CPUPercent: 10, MemoryBytes: 100},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("aggregateUsageByNode() = %+v, want %+v", got, want)
+		t.Fatalf("AggregateUsageByNode() = %+v, want %+v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -2166,11 +2168,11 @@ func TestAggregateUsageByNodeSortsAndGroupsByNode(t *testing.T) {
 // not-yet-scheduled Machine (empty Spec.NodeName) -- it must group under
 // "-" rather than under "" or its own uniquely-empty bucket.
 func TestAggregateUsageByNodeUnscheduledMachineGroupsUnderDash(t *testing.T) {
-	got := aggregateUsageByNode([]model.Machine{
+	got := model.AggregateUsageByNode([]model.Machine{
 		usageMachine("vm-1", "", 10, 100),
 	})
-	if len(got) != 1 || got[0].node != "-" {
-		t.Fatalf("aggregateUsageByNode() = %+v, want a single row grouped under \"-\"", got)
+	if len(got) != 1 || got[0].Node != "-" {
+		t.Fatalf("AggregateUsageByNode() = %+v, want a single row grouped under \"-\"", got)
 	}
 }
 

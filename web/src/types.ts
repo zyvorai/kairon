@@ -109,6 +109,20 @@ export interface KaironNode {
   };
 }
 
+// NodeUsage mirrors internal/model.NodeUsageAggregate -- GET
+// /api/v1/nodes/usage's one row per node, the same rollup `kaironctl top
+// nodes` prints (Status.ResourceUsage of every Machine scheduled there,
+// summed). "node" is "-" for the bucket of not-yet-scheduled Machines
+// (see AggregateUsageByNode's own doc comment), which never matches a
+// real KaironNode's metadata.name, so joining this list onto the Nodes
+// page's own KaironNode rows by name naturally leaves it unmatched.
+export interface NodeUsage {
+  node: string;
+  machines: number;
+  cpuPercent: number;
+  memoryBytes: number;
+}
+
 export interface Overview {
   machines: { total: number; byPhase: Record<string, number> };
   migrations: { total: number; active: number; needsRecovery: number; byPhase: Record<string, number> };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { badgeClass, formatBytes, formatDuration, nodeReadyStatus, nodeTaintsSummary, transferProgress } from './phase';
+import { badgeClass, formatBytes, formatCPUPercent, formatDuration, nodeReadyStatus, nodeTaintsSummary, transferProgress } from './phase';
 
 describe('badgeClass', () => {
   it('marks terminal-success phases ok', () => {
@@ -32,6 +32,16 @@ describe('formatBytes', () => {
     expect(formatBytes(2048)).toBe('2 KiB');
     expect(formatBytes(5 * 1024 * 1024)).toBe('5 MiB');
     expect(formatBytes(1.5 * 1024 * 1024 * 1024)).toBe('1.5 GiB');
+  });
+});
+
+describe('formatCPUPercent', () => {
+  it('renders two decimal places with a trailing percent sign', () => {
+    expect(formatCPUPercent(0)).toBe('0.00%');
+    expect(formatCPUPercent(12.5)).toBe('12.50%');
+  });
+  it('does not cap at 100 for a multi-core machine/node using more than one core', () => {
+    expect(formatCPUPercent(150)).toBe('150.00%');
   });
 });
 

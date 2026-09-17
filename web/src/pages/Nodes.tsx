@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import { KaironNode } from '../types';
-import { badgeClass, nodeReadyStatus, nodeTaintsSummary } from '../lib/phase';
+import { KaironNode, NodeUsage } from '../types';
+import { badgeClass, formatBytes, formatCPUPercent, nodeReadyStatus, nodeTaintsSummary } from '../lib/phase';
 import ResourceTable from '../components/ResourceTable';
 
 function formatAddresses(node: KaironNode): string {
@@ -27,9 +27,22 @@ function formatAddresses(node: KaironNode): string {
 // lifecycle of, not something Kairon ever creates or removes.
 export default function Nodes() {
   const [items, setItems] = useState<KaironNode[]>([]);
+  const [usage, setUsage] = useState<Record<string, NodeUsage>>({});
   const [msg, setMsg] = useState('');
 
-  const refresh = () => api<KaironNode[]>('/api/v1/nodes').then(setItems).catch((e) => setMsg(String(e)));
+  const refresh = () => {
+    api<KaironNode[]>('/api/v1/nodes').then(setItems).catch((e) => setMsg(String(e)));
+    // A dedicated GET request, not derived from `items` above: usage is
+    // rolled up cluster-wide from every Machine's own Status.ResourceUsage
+    // (internal/uiapi's handleNodeUsage), an entirely different resource
+    // than the Node list itself, so it can 404/500 independently -- a
+    // usage fetch failure here is swallowed (falling back to "-" cells
+    // below) rather than clobbering `msg` and hiding an otherwise-healthy
+    // Node list behind an error banner.
+    api<NodeUsage[]>('/api/v1/nodes/usage')
+      .then((rows) => setUsage(Object.fromEntries(rows.map((r) => [r.node, r]))))
+      .catch(() => setUsage({}));
+  };
 
   useEffect(() => {
     refresh();
@@ -52,6 +65,9 @@ export default function Nodes() {
             { header: 'Unschedulable', render: (n) => (n.spec?.unschedulable ? 'true' : 'false') },
             { header: 'Taints', render: (n) => nodeTaintsSummary(n) },
             { header: 'Addresses', render: (n) => formatAddresses(n) },
+            { header: 'Machines', render: (n) => usage[n.metadata.name]?.machines ?? 0 },
+            { header: 'CPU', render: (n) => (usage[n.metadata.name] ? formatCPUPercent(usage[n.metadata.name].cpuPercent) : '-') },
+            { header: 'Memory', render: (n) => (usage[n.metadata.name] ? formatBytes(usage[n.metadata.name].memoryBytes) : '-') },
           ]}
         />
       </div>

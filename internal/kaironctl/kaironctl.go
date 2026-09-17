@@ -466,62 +466,23 @@ func cmdTop(ctx context.Context, kc *kube.Client, args []string) {
 		}
 		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
 		fmt.Printf("NODE\tMACHINES\tCPU%%\tMEMORY\n")
-		for _, agg := range aggregateUsageByNode(items) {
-			fmt.Printf("%s\t%d\t%s\t%s\n", agg.node, agg.machines, formatCPUPercent(agg.cpuPercent), formatBytes(agg.memoryBytes))
+		for _, agg := range model.AggregateUsageByNode(items) {
+			fmt.Printf("%s\t%d\t%s\t%s\n", agg.Node, agg.Machines, formatCPUPercent(agg.CPUPercent), formatBytes(agg.MemoryBytes))
 		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
 }
 
-// nodeUsageAggregate is one row of `kaironctl top nodes` -- every matching
-// Machine's own Status.ResourceUsage summed by the node it's scheduled onto
-// (Spec.NodeName). A Machine with no ResourceUsage yet (never reported by
-// its agent, or not yet scheduled) still counts toward "machines" -- an
-// operator asking "how many Machines are on this node" wants that answer
-// regardless of whether usage stats have arrived -- but contributes zero to
-// the cpu/memory sums, exactly as if it were using none (the honest
-// approximation: "not yet reported" and "using nothing" are indistinguishable
-// from a summed total's point of view, and undercounting is the safer
-// direction for a hotspot-spotting tool than fabricating a number).
-type nodeUsageAggregate struct {
-	node        string
-	machines    int
-	cpuPercent  float64
-	memoryBytes uint64
-}
-
-// aggregateUsageByNode groups machines by Spec.NodeName (dash-rendered
-// "-" for a not-yet-scheduled Machine, exactly matching `kaironctl get
-// machines`' own dash(m.Spec.NodeName) rendering, so an unscheduled
-// Machine's usage -- if it somehow has any -- is never silently dropped
-// nor attributed to a real node) and returns one nodeUsageAggregate per
-// distinct node, sorted by node name for deterministic, diffable output
-// (map iteration order is otherwise unspecified).
-func aggregateUsageByNode(machines []model.Machine) []nodeUsageAggregate {
-	byNode := make(map[string]*nodeUsageAggregate)
-	var order []string
-	for _, m := range machines {
-		node := dash(m.Spec.NodeName)
-		agg, ok := byNode[node]
-		if !ok {
-			agg = &nodeUsageAggregate{node: node}
-			byNode[node] = agg
-			order = append(order, node)
-		}
-		agg.machines++
-		if u := m.Status.ResourceUsage; u != nil {
-			agg.cpuPercent += u.CPUPercent
-			agg.memoryBytes += u.MemoryBytes
-		}
-	}
-	sort.Strings(order)
-	out := make([]nodeUsageAggregate, 0, len(order))
-	for _, node := range order {
-		out = append(out, *byNode[node])
-	}
-	return out
-}
+// The node-grouping/summing behind `kaironctl top nodes` itself now lives
+// in model.AggregateUsageByNode (internal/model/usage.go) rather than
+// here: kairon-ui's Nodes dashboard page needs the exact same rollup
+// (GET /api/v1/nodes/usage, internal/uiapi's handleNodeUsage) and a
+// second, independently-maintained copy of this grouping/summing logic
+// in internal/uiapi would be exactly the kind of two-implementations-of-
+// one-rule drift this codebase avoids elsewhere (see e.g.
+// model.LabelsMatch, shared the same way between the scheduler and every
+// selector-filtering CLI verb).
 
 // formatCPUPercent renders ResourceUsage.CPUPercent to two decimal places
 // with a trailing "%" -- kubectl top's own "123m"-style millicore notation
