@@ -65,6 +65,18 @@ kubectl get machinemigration -n NAMESPACE NAME -o yaml
 
 Confirm `status.recovery.appliedAction`/`appliedReason`/`appliedAcknowledgedDiagnosis`/`appliedAt` are populated (a permanent audit record, independent of later `spec.recovery` edits), and that `status.phase` progressed to `Cutover`/.../`Succeeded` or `Failed` as expected.
 
+## Stuck in flight (`KaironMigrationStuckInFlight`) -- cancelling instead of waiting
+
+Unlike `NeedsRecovery`, a migration merely stuck in `Starting`/`Running` for a long time (the alert's 30-minute default) is not ambiguous -- the destination has not committed yet, so it is always safe to abort. Rather than waiting it out or leaving it to eventually fail on its own:
+
+```
+kaironctl cancel-migration NAME [-n NAMESPACE]
+```
+
+This patches `spec.cancel: true`; the source node's agent aborts the in-flight transfer (both the source adapter's transfer and the destination's prepared session) on its next reconcile tick and marks the migration `Cancelled` -- the source runtime is left running, untouched, on its current node throughout. The dashboard's Migration detail panel offers the same action as a "Cancel migration" button whenever a migration is in `Starting`/`Running` with `effectiveStrategy: live`.
+
+Cancel only works in that window. Both `kaironctl cancel-migration` and the dashboard refuse locally once phase has reached `Cutover` or later (the destination has already committed by then -- aborting would recreate the same split-brain risk `NeedsRecovery` exists to avoid) and for cold-strategy migrations (nothing in-flight to abort). If a migration is stuck past `Cutover`/`Adopting` instead, that is a different problem -- investigate the target node's own health rather than trying to cancel.
+
 ## Unencrypted migration data-plane
 
 `KaironMigrationDataPlaneUnencrypted` fires when `status.dataPlaneEncrypted` is `false` for an in-flight live migration -- the QEMU RAM/state stream is crossing the network in cleartext (the control-plane RPCs between kairon-node peers are always mTLS-encrypted regardless; this is specifically about the guest memory transfer itself). This is `info`-severity, not necessarily an incident: `migration.dataplaneTls` defaults to `false` in this chart.

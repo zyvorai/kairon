@@ -210,6 +210,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/migrations/{namespace}/{name}", s.handleGetMigration)
 	api.HandleFunc("POST /api/v1/migrations/evacuate", s.handleEvacuate)
 	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/recover", s.handleRecoverMigration)
+	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/cancel", s.handleCancelMigration)
 
 	api.HandleFunc("GET /api/v1/snapshots", s.handleListSnapshots)
 	api.HandleFunc("POST /api/v1/snapshots", s.handleCreateSnapshot)

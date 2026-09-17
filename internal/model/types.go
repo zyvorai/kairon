@@ -610,6 +610,23 @@ type MachineMigrationSpec struct {
 	// (nil), a NeedsRecovery migration stays parked indefinitely with no
 	// automatic resolution, by design.
 	Recovery *MachineMigrationRecoverySpec `json:"recovery,omitempty"`
+	// Cancel requests that Kairon abort a healthy *live* migration while it
+	// is still safely reversible -- phase Starting or Running, strictly
+	// before the destination has committed. Set by an operator (via
+	// `kaironctl cancel-migration` or the dashboard), never by Kairon
+	// itself. internal/agent's reconcileMigration honors it by reusing the
+	// exact same source/destination Abort primitives an unrequested
+	// transfer failure already calls, then lands the migration in the
+	// Cancelled terminal phase with the source runtime left untouched.
+	// Deliberately a one-way latch: Kairon never clears it back to false,
+	// so a stale or duplicated MachineMigration object can't accidentally
+	// un-cancel. Ignored (a documented no-op, not an error) once phase has
+	// advanced to Cutover or later -- by then the destination has already
+	// committed, and aborting would recreate exactly the split-brain risk
+	// NeedsRecovery exists to avoid -- and for cold-strategy migrations,
+	// which have no in-flight transfer to abort at all; use the Machine's
+	// own spec.powerState/spec.nodeName instead.
+	Cancel bool `json:"cancel,omitempty"`
 }
 
 // MachineMigrationRecoverySpec is the operator's attested recovery

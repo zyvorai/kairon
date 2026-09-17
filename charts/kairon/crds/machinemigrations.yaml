@@ -112,6 +112,15 @@ spec:
                     minLength: 1
                     description: Free-text evidence for what you observed that
                       justifies this action.
+              cancel:
+                type: boolean
+                description: Requests that Kairon abort this migration while it
+                  is still a healthy, in-flight live migration -- phase Starting
+                  or Running, strictly before the destination has committed. Set
+                  by an operator (kaironctl cancel-migration or the dashboard),
+                  never by Kairon itself. A documented no-op once phase has
+                  advanced to Cutover or later, and for cold-strategy migrations,
+                  which have no in-flight transfer to abort.
           status:
             type: object
             properties:

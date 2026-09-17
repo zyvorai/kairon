@@ -165,10 +165,14 @@ func (f *fakeKube) handler() http.Handler {
 			var patch struct {
 				Spec struct {
 					Recovery *model.MachineMigrationRecoverySpec `json:"recovery"`
+					Cancel   *bool                               `json:"cancel"`
 				} `json:"spec"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&patch)
 			m.Spec.Recovery = patch.Spec.Recovery
+			if patch.Spec.Cancel != nil {
+				m.Spec.Cancel = *patch.Spec.Cancel
+			}
 			f.migrations[name] = m
 			w.WriteHeader(http.StatusOK)
 
@@ -814,6 +818,54 @@ func TestRecoverMigrationAppliesPatchWhenValid(t *testing.T) {
 	}
 }
 
+func TestCancelMigrationRequiresStartingOrRunningPhase(t *testing.T) {
+	fk := newFakeKube()
+	fk.migrations["m1"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m1", Namespace: "default"}, Status: model.MachineMigrationStatus{Phase: "Cutover", EffectiveStrategy: "live"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/migrations/default/m1/cancel", "", struct{}{})
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 once phase has moved past Starting/Running, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fk.mu.Lock()
+	cancel := fk.migrations["m1"].Spec.Cancel
+	fk.mu.Unlock()
+	if cancel {
+		t.Fatal("expected spec.cancel to stay false when the request is rejected")
+	}
+}
+
+func TestCancelMigrationRequiresLiveStrategy(t *testing.T) {
+	fk := newFakeKube()
+	fk.migrations["m1"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m1", Namespace: "default"}, Status: model.MachineMigrationStatus{Phase: "Running", EffectiveStrategy: "cold"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/migrations/default/m1/cancel", "", struct{}{})
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for a cold-strategy migration, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCancelMigrationAppliesPatchWhenValid(t *testing.T) {
+	fk := newFakeKube()
+	fk.migrations["m1"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m1", Namespace: "default"}, Status: model.MachineMigrationStatus{Phase: "Running", EffectiveStrategy: "live"}}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPost, "/api/v1/migrations/default/m1/cancel", "", struct{}{})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	fk.mu.Lock()
+	cancel := fk.migrations["m1"].Spec.Cancel
+	fk.mu.Unlock()
+	if !cancel {
+		t.Fatal("expected spec.cancel to be patched true")
+	}
+}
+
 func TestCreateSnapshot(t *testing.T) {
 	s := newTestServer(t, newFakeKube(), "")
 	h := s.Handler()
@@ -1021,6 +1073,9 @@ func TestOverviewAggregatesCounts(t *testing.T) {
 	fk.machines["b"] = model.Machine{Metadata: model.ObjectMeta{Name: "b"}, Status: model.MachineStatus{Phase: "Running"}}
 	fk.migrations["m1"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m1"}, Status: model.MachineMigrationStatus{Phase: "NeedsRecovery"}}
 	fk.migrations["m2"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m2"}, Status: model.MachineMigrationStatus{Phase: "Succeeded"}}
+	// Cancelled is a real terminal phase (isNonTerminalMigrationPhase),
+	// like Succeeded/Failed/Blocked -- it must not inflate Active.
+	fk.migrations["m3"] = model.MachineMigration{Metadata: model.ObjectMeta{Name: "m3"}, Status: model.MachineMigrationStatus{Phase: "Cancelled"}}
 	fk.nodes = []model.Node{{Metadata: model.ObjectMeta{Name: "worker-1"}}}
 	s := newTestServer(t, fk, "")
 	h := s.Handler()
@@ -1036,8 +1091,8 @@ func TestOverviewAggregatesCounts(t *testing.T) {
 	if out.Machines.Total != 2 || out.Machines.ByPhase["Running"] != 2 {
 		t.Fatalf("expected 2 running machines, got %+v", out.Machines)
 	}
-	if out.Migrations.Total != 2 || out.Migrations.NeedsRecovery != 1 || out.Migrations.Active != 1 {
-		t.Fatalf("expected 1 NeedsRecovery / 1 active of 2 total migrations, got %+v", out.Migrations)
+	if out.Migrations.Total != 3 || out.Migrations.NeedsRecovery != 1 || out.Migrations.Active != 1 {
+		t.Fatalf("expected 1 NeedsRecovery / 1 active of 3 total migrations (Cancelled excluded from Active), got %+v", out.Migrations)
 	}
 	if out.Nodes != 1 {
 		t.Fatalf("expected 1 node, got %d", out.Nodes)

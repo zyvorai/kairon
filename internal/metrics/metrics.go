@@ -33,7 +33,7 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
-var terminalPhases = map[string]bool{"Succeeded": true, "Failed": true, "Blocked": true}
+var terminalPhases = map[string]bool{"Succeeded": true, "Failed": true, "Blocked": true, "Cancelled": true}
 
 type phaseKey struct{ namespace, name string }
 

@@ -55,6 +55,7 @@ func TestMigrationStillPending(t *testing.T) {
 		"Succeeded": false,
 		"Failed":    false,
 		"Blocked":   false,
+		"Cancelled": false,
 	} {
 		if got := migrationStillPending(phase); got != want {
 			t.Errorf("migrationStillPending(%q) = %v, want %v", phase, got, want)
@@ -428,6 +429,70 @@ func TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup(t *testing.T) {
 	cmdDelete(ctx, kc, []string{"securitygroup", "frontend"})
 	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
 		t.Fatalf("delete securitygroup: method=%s path=%s", s.method, s.path)
+	}
+}
+
+// cancelMigrationTestServer is a minimal fake standing in for the GET-then-
+// PATCH sequence cmdCancelMigration performs -- recordingServer alone can't
+// cover this command, since its blanket GET response (an empty decoded
+// body) would never satisfy cmdCancelMigration's own Starting/Running,
+// live-strategy guard and would exit the test process via fatal().
+type cancelMigrationTestServer struct {
+	migration model.MachineMigration
+	patchBody map[string]any
+}
+
+func (s *cancelMigrationTestServer) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/move-db":
+			_ = json.NewEncoder(w).Encode(s.migration)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/move-db":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			s.patchBody = body
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+}
+
+func TestCmdCancelMigrationPatchesSpecCancel(t *testing.T) {
+	s := &cancelMigrationTestServer{migration: model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "default"},
+		Status:   model.MachineMigrationStatus{Phase: "Running", EffectiveStrategy: "live"},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	cmdCancelMigration(context.Background(), kc, []string{"move-db"})
+
+	spec, _ := s.patchBody["spec"].(map[string]any)
+	if spec["cancel"] != true {
+		t.Fatalf("expected a spec.cancel=true patch, got body %v", s.patchBody)
+	}
+}
+
+// TestCmdCancelMigrationAlreadyRequestedSkipsPatch proves cmdCancelMigration
+// is idempotent from the operator's point of view: re-running it against a
+// migration that already has spec.cancel set prints a status message
+// instead of sending a redundant PATCH.
+func TestCmdCancelMigrationAlreadyRequestedSkipsPatch(t *testing.T) {
+	s := &cancelMigrationTestServer{migration: model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "default"},
+		Spec:     model.MachineMigrationSpec{Cancel: true},
+		Status:   model.MachineMigrationStatus{Phase: "Running", EffectiveStrategy: "live"},
+	}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	kc := &kube.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	captureStdout(t, func() { cmdCancelMigration(context.Background(), kc, []string{"move-db"}) })
+
+	if s.patchBody != nil {
+		t.Fatalf("expected no PATCH when cancel was already requested, got %v", s.patchBody)
 	}
 }
 

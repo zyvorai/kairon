@@ -71,6 +71,29 @@ func TestAdmitDisruptionIgnoresMachinesAlreadyMidMigration(t *testing.T) {
 	}
 }
 
+func TestAdmitDisruptionTreatsCancelledMigrationAsTerminal(t *testing.T) {
+	machines := []model.Machine{
+		webMachine("web-1", "node-a", "Running"),
+		webMachine("web-2", "node-a", "Running"),
+	}
+	migrations := []model.MachineMigration{
+		{Metadata: model.ObjectMeta{Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "web-1"}, Status: model.MachineMigrationStatus{Phase: "Cancelled"}},
+	}
+	// minAvailable 1 (not 2, unlike TestAdmitDisruptionIgnoresMachinesAlready
+	// MidMigration -- at minAvailable == total there's no daylight between
+	// "counts as healthy" and "doesn't", since 0 disruptions are allowed
+	// either way): if Cancelled still counted as in-flight, healthy would be
+	// 1 and 0 disruptions would be allowed; since it's a real terminal
+	// phase, both machines count healthy and one disruption is allowed.
+	states, err := LoadBudgetStates([]model.MachineDisruptionBudget{webBudget("web-pdb", "1")}, machines, migrations)
+	if err != nil {
+		t.Fatalf("LoadBudgetStates: %v", err)
+	}
+	if reason := AdmitDisruption(states, machines[1]); reason != "" {
+		t.Fatalf("expected a Cancelled migration to no longer count against currentHealthy, got reason %q", reason)
+	}
+}
+
 func TestAdmitDisruptionSpendsAllowanceAcrossEveryMatchingBudget(t *testing.T) {
 	m := model.Machine{
 		Metadata: model.ObjectMeta{Name: "both", Namespace: "prod", Labels: map[string]string{"tier": "web", "team": "payments"}},

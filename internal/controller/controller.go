@@ -324,7 +324,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 }
 
 func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad, policyStates []*MigrationPolicyState) error {
-	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" {
+	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" || migration.Status.Phase == "Cancelled" {
 		return nil
 	}
 	if strings.TrimSpace(migration.Spec.MachineName) == "" {

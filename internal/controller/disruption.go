@@ -51,7 +51,7 @@ func (s *BudgetState) Budget() model.MachineDisruptionBudget {
 
 func isTerminalMigrationPhase(phase string) bool {
 	switch phase {
-	case "Succeeded", "Failed", "Blocked", "":
+	case "Succeeded", "Failed", "Blocked", "Cancelled", "":
 		return true
 	}
 	return false

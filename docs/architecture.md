@@ -48,6 +48,12 @@ Failure rules:
 - Source transfer succeeds but target commit fails: `NeedsRecovery`; no automatic cutover or restart.
 - Target runtime missing after commit: adopt-only guard blocks duplicate creation.
 
+## Cancelling an in-flight live migration
+
+An operator can set `spec.cancel: true` (`kaironctl cancel-migration NAME` or the dashboard's "Cancel migration" button) while a live migration is still `Starting` or `Running` -- strictly before the destination has committed. `internal/agent`'s `reconcileMigration` honors it by calling the exact same source/destination `Abort` primitives an unrequested transfer failure already uses, then lands the migration in a `Cancelled` terminal phase with the source runtime left untouched and its network dataplane un-quiesced, same as every other pre-commit exit path.
+
+`spec.cancel` is a one-way latch (Kairon never clears it back to `false`) and a documented no-op once phase has reached `Cutover` or later: by then the destination has already committed, and aborting would recreate exactly the split-brain risk `NeedsRecovery` exists to avoid. It is likewise a no-op for cold-strategy migrations, which have no in-flight transfer to abort -- use the Machine's own `spec.powerState`/`spec.nodeName` instead. `kaironctl cancel-migration` and the dashboard both refuse locally (before ever patching the object) unless phase is `Starting`/`Running` and `status.effectiveStrategy` is `live`, so an operator gets an immediate answer instead of a `spec.cancel` the agent will silently ignore.
+
 No raw destination URI is accepted from users. A peer endpoint is derived from the selected target node `InternalIP`; TLS validates the configured migration server identity.
 
 ## Session durability

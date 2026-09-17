@@ -52,6 +52,7 @@ export interface MachineMigration {
     maxDowntimeMs?: number;
     multifdChannels?: number;
     migrationNetwork?: string;
+    cancel?: boolean;
   };
   status?: {
     phase?: string;

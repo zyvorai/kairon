@@ -202,6 +202,8 @@ Certificates need `serverAuth` + `clientAuth` and the chart's migration server n
 
 If a commit's outcome is genuinely ambiguous, the migration lands in `NeedsRecovery` instead of a guess. Work through it via [`docs/runbook-migration-failures.md`](docs/runbook-migration-failures.md)'s decision tree, or resolve it straight from [the dashboard](#the-dashboard).
 
+A live migration that's still healthy but taking too long, or was aimed at the wrong node, doesn't have to run to completion: `kaironctl cancel-migration demo` (or the dashboard's "Cancel migration" button) aborts it while it's still safely reversible — `Starting`/`Running`, strictly before the destination commits — landing it `Cancelled` with the source runtime untouched. It's a no-op, refused locally with a clear error rather than silently ignored, once the migration has moved past `Cutover` (the destination has committed by then) or for a cold-strategy migration (nothing in-flight to abort).
+
 Deleting a Machine while a `MachineMigration` still targets it is refused, not raced: `kairon-node` won't delete the source runtime until that migration reaches a terminal phase, so a delete issued mid-transfer waits rather than pulling the runtime out from under a live RAM/state stream.
 
 A live migration also always resumes the source's own network dataplane when the migration stops short of a destination commit — blocked, an unsupported mode, a transfer that never started, or one that fails or is cancelled mid-flight. The source Machine stays the real, running VM on every one of those paths (only `NeedsRecovery`'s genuinely ambiguous case is left untouched, on purpose), so the network quiesce `kairon-node` takes out on it moments before the transfer begins is always undone again once the attempt is over — never left stranded through every future reconcile tick just because the migration didn't reach a commit.
@@ -236,7 +238,7 @@ It reuses the exact decision functions the reconcile loop and `kaironctl evacuat
 |---|---|
 | **Overview** | Fleet tiles by phase, a prominent warning whenever anything is parked in `NeedsRecovery` |
 | **Machines** | Table + create form (mirrors `kaironctl create`) + Start / Stop / Console / Migrate / Snapshot / Delete |
-| **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, and the recovery workflow above |
+| **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, a "Cancel migration" action while `Starting`/`Running`, and the recovery workflow above |
 | **Snapshots** | List + create form |
 | **Account** | Change your own password; an admin account can reset another operator's |
 
@@ -342,6 +344,7 @@ kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
 kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON
+kaironctl cancel-migration MIGRATION  # only while phase is Starting/Running (before the destination commits)
 kaironctl fence MACHINE --reason REASON  # only once NodeUnreachable=True and you've confirmed the node is truly gone
 kaironctl version
 ```

@@ -137,6 +137,8 @@ func Run(args []string, version string) int {
 		cmdEvacuate(ctx, kc, args[1:])
 	case "recover":
 		cmdRecover(ctx, kc, args[1:])
+	case "cancel-migration":
+		cmdCancelMigration(ctx, kc, args[1:])
 	case "fence":
 		cmdFence(ctx, kc, args[1:])
 	case "snapshot":
@@ -1640,8 +1642,8 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 }
 
 // migrationStillPending reports whether a MachineMigration has NOT yet
-// reached one of its three real terminal phases (Succeeded/Failed/
-// Blocked) -- deliberately different from internal/controller/disruption.go's
+// reached one of its real terminal phases (Succeeded/Failed/Blocked/
+// Cancelled) -- deliberately different from internal/controller/disruption.go's
 // own isTerminalMigrationPhase, which treats "" as terminal too, for that
 // function's narrower "does this count toward a budget's currentHealthy"
 // purpose. Here "" means "just created, not yet reconciled by
@@ -1652,7 +1654,7 @@ func cmdMigrate(ctx context.Context, kc *kube.Client, args []string) {
 // created a real duplicate MachineMigration for the same Machine.
 func migrationStillPending(phase string) bool {
 	switch phase {
-	case "Succeeded", "Failed", "Blocked":
+	case "Succeeded", "Failed", "Blocked", "Cancelled":
 		return false
 	}
 	return true
@@ -1828,6 +1830,42 @@ func cmdRecover(ctx context.Context, kc *kube.Client, args []string) {
 	fmt.Printf("machinemigration/%s: recovery %s requested; the source node's agent will validate and apply it on its next reconcile\n", name, *action)
 }
 
+// cmdCancelMigration is a thin convenience layer over spec.cancel, matching
+// cmdRecover's own "print current state, then patch spec, then let the
+// source node's agent actually apply it" shape. Only meaningful while the
+// migration is still Starting or Running (before the destination has
+// committed) -- refuses locally rather than silently patching a migration
+// that's already past the point where cancelling is safe, so an operator
+// gets an immediate, clear answer instead of a spec.cancel that the agent
+// will just ignore as a documented no-op.
+func cmdCancelMigration(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl cancel-migration MIGRATION [-n NAMESPACE]"))
+	}
+	name := args[0]
+	ns, _ := nsFlag(args[1:])
+
+	current, err := kc.GetMachineMigration(ctx, ns, name)
+	if err != nil {
+		fatal(fmt.Errorf("get machinemigration %s/%s: %w", ns, name, err))
+	}
+	if current.Status.Phase != "Starting" && current.Status.Phase != "Running" {
+		fatal(fmt.Errorf("machinemigration %s/%s is in phase %q; cancel only applies to a live migration still in Starting or Running, before the destination has committed", ns, name, current.Status.Phase))
+	}
+	if current.Status.EffectiveStrategy != "live" {
+		fatal(fmt.Errorf("machinemigration %s/%s is a %q-strategy migration; cancel only applies to live migrations", ns, name, current.Status.EffectiveStrategy))
+	}
+	if current.Spec.Cancel {
+		fmt.Printf("machinemigration/%s: cancel already requested; waiting for the source node's agent to apply it\n", name)
+		return
+	}
+	patch := map[string]any{"spec": map[string]any{"cancel": true}}
+	if err := kc.PatchMachineMigration(ctx, ns, name, patch); err != nil {
+		fatal(fmt.Errorf("patch machinemigration %s/%s: %w", ns, name, err))
+	}
+	fmt.Printf("machinemigration/%s: cancel requested; the source node's agent will abort the in-flight transfer and mark it Cancelled on its next reconcile\n", name)
+}
+
 func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
 		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS]"))
@@ -1904,7 +1942,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget] NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

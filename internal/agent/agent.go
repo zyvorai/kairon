@@ -640,6 +640,9 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 	if item.Status.EffectiveStrategy != "live" {
 		return nil
 	}
+	if item.Spec.Cancel {
+		return a.cancelLiveMigration(ctx, item)
+	}
 	machine, err := a.Kube.GetMachine(ctx, item.Namespace(), item.Spec.MachineName)
 	if err != nil {
 		return err
@@ -951,6 +954,54 @@ func (a *Agent) resumeSourceNetworkQuiesce(ctx context.Context, runtimeID string
 	if err := a.Flux.NetworkMigrationResume(ctx, runtimeID); err != nil {
 		a.Log.Warn("resuming source network migration quiesce failed", "runtimeID", runtimeID, "error", err)
 	}
+}
+
+// cancelLiveMigration honors an operator's spec.cancel request against a
+// live migration still in Starting or Running -- the one window where
+// aborting is safe, since the destination has not yet committed. It reuses
+// exactly the same source/destination Abort primitives an unrequested
+// transfer failure already calls in projectTransfer, best-effort (a failed
+// abort call is logged, never turned into a reconcile error that would
+// leave spec.cancel stuck retrying forever): the source runtime is the
+// only guaranteed-live copy of the guest regardless of whether the abort
+// calls themselves succeed, so this always lands Cancelled and always
+// leaves the source untouched. Never called once phase has reached
+// Cutover or later -- reconcileMigration only routes here from the
+// Starting/Running branch, and the top-level terminal-phase check in
+// internal/controller/controller.go's reconcileMigration stops even this
+// function from ever being reached for a migration that already moved on.
+func (a *Agent) cancelLiveMigration(ctx context.Context, item model.MachineMigration) error {
+	status := item.Status
+	sessionID := status.SessionID
+	if sessionID == "" {
+		sessionID = migrationSessionID(item)
+	}
+	session := migration.Session{ID: sessionID}
+
+	if a.SourceMigrator != nil && status.TransferID != "" {
+		if err := a.SourceMigrator.Abort(ctx, session, status.TransferID); err != nil {
+			a.Log.Warn("cancel: source transfer abort failed", "migration", item.Metadata.Name, "namespace", item.Namespace(), "error", err)
+		}
+	}
+	if a.MigrationPeer != nil && status.SessionID != "" {
+		var targetURL string
+		var err error
+		if a.MigrationPeerURL != nil {
+			targetURL, err = a.MigrationPeerURL(ctx, item.Status.TargetNode)
+		} else {
+			targetURL, err = a.targetControlURL(ctx, item.Status.TargetNode)
+		}
+		if err != nil {
+			a.Log.Warn("cancel: resolving target control URL failed; destination session may be left dangling until its own heartbeat/TTL reaper cleans it up", "migration", item.Metadata.Name, "namespace", item.Namespace(), "error", err)
+		} else if err := a.MigrationPeer.Abort(ctx, targetURL, status.SessionID); err != nil {
+			a.Log.Warn("cancel: destination abort failed", "migration", item.Metadata.Name, "namespace", item.Namespace(), "error", err)
+		}
+	}
+	a.resumeSourceNetworkQuiesce(ctx, status.RuntimeID)
+
+	status.Phase = "Cancelled"
+	status.Message = "operator requested cancel (spec.cancel); in-flight live migration aborted before target commit, source runtime was left untouched"
+	return a.Kube.PatchMachineMigrationStatus(ctx, item.Namespace(), item.Metadata.Name, status)
 }
 
 func (a *Agent) blockLiveMigration(ctx context.Context, item model.MachineMigration, message string) error {

@@ -31,7 +31,7 @@ type overviewResponse struct {
 // logic would be the wrong dependency direction.
 func isNonTerminalMigrationPhase(phase string) bool {
 	switch phase {
-	case "Succeeded", "Failed", "Blocked", "":
+	case "Succeeded", "Failed", "Blocked", "Cancelled", "":
 		return false
 	}
 	return true

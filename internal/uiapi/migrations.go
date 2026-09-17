@@ -195,3 +195,34 @@ func (s *Server) handleRecoverMigration(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleCancelMigration mirrors cmdCancelMigration's own local guard --
+// cancel only makes sense for a live migration still in Starting or
+// Running, before the destination has committed -- so this rejects with a
+// clear 409 rather than silently patching spec.cancel onto a migration the
+// source agent will just ignore it on. internal/agent's reconcileMigration
+// is what actually validates and applies it (this handler only ever sets
+// spec.cancel; it never touches status directly), same "thin patch, real
+// node agent owns the effect" shape as handleRecoverMigration.
+func (s *Server) handleCancelMigration(w http.ResponseWriter, r *http.Request) {
+	ns, name := r.PathValue("namespace"), r.PathValue("name")
+	current, err := s.Kube.GetMachineMigration(r.Context(), ns, name)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	if current.Status.Phase != "Starting" && current.Status.Phase != "Running" {
+		writeError(w, http.StatusConflict, "machinemigration is in phase "+current.Status.Phase+"; cancel only applies to a live migration still in Starting or Running, before the destination has committed")
+		return
+	}
+	if current.Status.EffectiveStrategy != "live" {
+		writeError(w, http.StatusConflict, "machinemigration is a "+current.Status.EffectiveStrategy+"-strategy migration; cancel only applies to live migrations")
+		return
+	}
+	patch := map[string]any{"spec": map[string]any{"cancel": true}}
+	if err := s.Kube.PatchMachineMigration(r.Context(), ns, name, patch); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

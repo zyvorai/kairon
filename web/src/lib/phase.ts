@@ -4,7 +4,8 @@
 // normalizePhase (Machine) and the migration state machine documented in
 // docs/architecture.md (MachineMigration): Pending -> {Starting|Stopping}
 // -> ... -> {Cutover->Adopting->Succeeded | Stopping->Restarting->Succeeded}
-// | Blocked | Failed | NeedsRecovery.
+// | Blocked | Failed | NeedsRecovery | Cancelled (operator-requested, via
+// spec.cancel, only reachable from Starting/Running).
 
 export function badgeClass(phase: string): string {
   switch (phase) {
@@ -28,6 +29,7 @@ export function badgeClass(phase: string): string {
       return 'badge badge-error';
     case 'Stopped':
     case 'Halted':
+    case 'Cancelled':
       return 'badge badge-idle';
     default:
       return 'badge badge-idle';

@@ -466,6 +466,8 @@ type fakeSourceMigrator struct {
 	startErr    error
 	starts      int
 	last        migration.SourceRequest
+	aborts      int
+	lastAbortID string
 }
 
 func (f *fakeSourceMigrator) Start(_ context.Context, req migration.SourceRequest) (migration.TransferStatus, error) {
@@ -476,7 +478,11 @@ func (f *fakeSourceMigrator) Start(_ context.Context, req migration.SourceReques
 func (f *fakeSourceMigrator) Status(context.Context, migration.Session, string) (migration.TransferStatus, error) {
 	return f.startStatus, nil
 }
-func (f *fakeSourceMigrator) Abort(context.Context, migration.Session, string) error { return nil }
+func (f *fakeSourceMigrator) Abort(_ context.Context, _ migration.Session, transferID string) error {
+	f.aborts++
+	f.lastAbortID = transferID
+	return nil
+}
 
 type fakePeerDestination struct {
 	result      migration.PrepareResult
@@ -771,6 +777,182 @@ func TestRunningPhaseMigrationSendsHeartbeatToTarget(t *testing.T) {
 	}
 	if after.Phase != "Prepared" {
 		t.Fatalf("an in-progress transfer's heartbeat must not itself change the session phase, got %q", after.Phase)
+	}
+}
+
+// TestCancelRunningLiveMigrationAborts proves reconcileMigration honors an
+// operator's spec.cancel request against a healthy in-flight live
+// migration: it must abort both the source transfer and the destination's
+// prepared session, resume the source's own network quiesce (the source
+// runtime is the one guaranteed-live copy of the guest and must never be
+// left with its network stranded), and land the migration Cancelled --
+// never touching the source runtime itself.
+func TestCancelRunningLiveMigrationAborts(t *testing.T) {
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Cancel: true},
+	}
+	sessionID := migrationSessionID(item)
+	item.Status = model.MachineMigrationStatus{
+		Phase: "Running", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live",
+		RuntimeID: "vm-1", SessionID: sessionID, TransferID: "xfer-1",
+	}
+	store := migration.NewFileStore(t.TempDir())
+	if err := store.Put(migration.Session{ID: sessionID, Namespace: "prod", Machine: "db", SourceNode: "worker-1", TargetNode: "worker-2", Phase: "Prepared"}); err != nil {
+		t.Fatal(err)
+	}
+	destination := &fakePeerDestination{}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: store, Driver: destination}).Handler())
+	defer peerServer.Close()
+
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "xfer-1", Phase: "running", RAMTotal: 4096, RAMTransferred: 1024}}
+	var migrationStatus model.MachineMigrationStatus
+	networkResumed := false
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+			_ = json.NewEncoder(w).Encode(machine)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			migrationStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1":
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/network/migration/resume":
+			networkResumed = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(peerServer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if source.aborts != 1 || source.lastAbortID != "xfer-1" {
+		t.Fatalf("source aborts=%d lastAbortID=%q, want 1 abort of xfer-1", source.aborts, source.lastAbortID)
+	}
+	if destination.aborts != 1 {
+		t.Fatalf("destination aborts=%d, want 1", destination.aborts)
+	}
+	if source.starts != 0 {
+		t.Fatalf("cancel must never start a new transfer, but Start was called %d time(s)", source.starts)
+	}
+	if !networkResumed {
+		t.Fatal("expected cancel to resume the source's own network migration quiesce")
+	}
+	if migrationStatus.Phase != "Cancelled" {
+		t.Fatalf("status.phase = %q, want Cancelled", migrationStatus.Phase)
+	}
+	if !strings.Contains(migrationStatus.Message, "source runtime was left untouched") {
+		t.Fatalf("status.message = %q, expected it to note the source runtime was left untouched", migrationStatus.Message)
+	}
+}
+
+// TestCancelDuringStartingSkipsPrepareEntirely proves that an operator who
+// requests cancel before the very first agent tick on a "Starting" live
+// migration gets the fast, safe path: no destination Prepare, no source
+// Start -- the migration is simply marked Cancelled without ever touching
+// either side, since there was never a session or transfer to abort.
+func TestCancelDuringStartingSkipsPrepareEntirely(t *testing.T) {
+	destination := &fakePeerDestination{result: migration.PrepareResult{TransferSupported: true, Endpoint: "opaque://incoming/session"}}
+	peerServer := httptest.NewServer((&migration.Server{NodeName: "worker-2", Store: migration.NewFileStore(t.TempDir()), Driver: destination}).Handler())
+	defer peerServer.Close()
+	source := &fakeSourceMigrator{startStatus: migration.TransferStatus{TransferID: "must-not-run", Phase: "completed"}}
+
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Finalizers: []string{model.Finalizer}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Image: model.ImageSpec{Path: "/images/db.qcow2"}, Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}, Runtime: model.RuntimeSpec{Backend: "qemu"}, PowerState: "Running"},
+		Status:   model.MachineStatus{RuntimeID: "vm-1", Phase: "Running", NodeName: "worker-1"},
+	}
+	item := model.MachineMigration{
+		Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod", UID: "migration-uid-1"},
+		Spec:     model.MachineMigrationSpec{MachineName: "db", Strategy: "live", Cancel: true},
+		Status:   model.MachineMigrationStatus{Phase: "Starting", SourceNode: "worker-1", TargetNode: "worker-2", EffectiveStrategy: "live"},
+	}
+	var migrationStatus model.MachineMigrationStatus
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{item}})
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+			_ = json.NewEncoder(w).Encode(machine)
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+			var p struct {
+				Status model.MachineMigrationStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			migrationStatus = p.Status
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer ks.Close()
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1" {
+			_ = json.NewEncoder(w).Encode(fluxvm.Record{UUID: "vm-1", Name: machine.RuntimeName(), Status: "Running"})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{
+		NodeName: "worker-1", Kube: kc, Flux: fc, DefaultBackend: "qemu",
+		MigrationPeer: migration.NewClient(peerServer.Client()), SourceMigrator: source,
+		MigrationPeerURL: func(context.Context, string) (string, error) { return peerServer.URL, nil },
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if destination.prepares != 0 {
+		t.Fatalf("cancel before Starting ever ran must skip Prepare entirely, got %d prepare(s)", destination.prepares)
+	}
+	if source.starts != 0 {
+		t.Fatalf("cancel before Starting ever ran must skip Start entirely, got %d start(s)", source.starts)
+	}
+	if migrationStatus.Phase != "Cancelled" {
+		t.Fatalf("status.phase = %q, want Cancelled", migrationStatus.Phase)
 	}
 }
 

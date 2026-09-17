@@ -49,6 +49,12 @@ groups:
           severity: warn
         annotations:
           summary: "MachineMigration {{ $labels.namespace }}/{{ $labels.name }} has been in phase {{ $labels.phase }} for over 30 minutes"
+          description: >-
+            If phase is Starting or Running, this is safely cancellable:
+            `kaironctl cancel-migration {{ $labels.name }} -n {{ $labels.namespace }}`
+            aborts the in-flight transfer before the destination commits and
+            leaves the source runtime untouched. Once past Cutover/Adopting,
+            cancel is a no-op -- investigate the target node instead.
           runbook: "docs/runbook-migration-failures.md"
 
       - alert: KaironMigrationDataPlaneUnencrypted

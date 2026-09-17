@@ -157,6 +157,27 @@ func TestReconcileCordonEvacuationSkipsAlreadyInFlightMachine(t *testing.T) {
 	}
 }
 
+func TestReconcileCordonEvacuationRetriesAfterCancelledMigration(t *testing.T) {
+	ctl, fake := newCordonTestController(t, nil)
+	ctl.CordonEvacuation = CordonEvacuation{Enabled: true}
+
+	cancelled := model.MachineMigration{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "existing"},
+		Spec:     model.MachineMigrationSpec{MachineName: "vm-1"},
+		Status:   model.MachineMigrationStatus{Phase: "Cancelled"},
+	}
+	// Cancelled is a real terminal phase (cordonEvacuateTerminal), same as
+	// Succeeded/Failed/Blocked -- a Machine whose only migration attempt was
+	// operator-cancelled must be retried on the next cordon-evacuation tick,
+	// not left stranded on its cordoned node because a stale migration
+	// object still looks "in flight".
+	ctl.reconcileCordonEvacuation(context.Background(), []model.Machine{machineOn("worker-1")}, []model.Node{cordonedNode("worker-1")}, []model.MachineMigration{cancelled})
+
+	if fake.createdMigration == nil {
+		t.Fatal("expected a new MachineMigration to be created after the prior attempt was Cancelled")
+	}
+}
+
 func TestReconcileCordonEvacuationHonorsCooldown(t *testing.T) {
 	ctl, fake := newCordonTestController(t, nil)
 	ctl.CordonEvacuation = CordonEvacuation{Enabled: true}

@@ -175,6 +175,7 @@ export default function Migrations({ prefillMachine }: { prefillMachine: string 
 function MigrationDetail({ migration, onChanged }: { migration: MachineMigration; onChanged: () => void }) {
   const st = migration.status || {};
   const pct = transferProgress(st.ramTransferred, st.ramTotal);
+  const cancellable = (st.phase === 'Starting' || st.phase === 'Running') && st.effectiveStrategy === 'live' && !migration.spec.cancel;
   return (
     <div className="card span4">
       <span className="eyebrow">{migration.metadata.name}</span>
@@ -209,7 +210,44 @@ function MigrationDetail({ migration, onChanged }: { migration: MachineMigration
         </div>
       </div>
 
+      {cancellable && <CancelButton migration={migration} onChanged={onChanged} />}
+      {migration.spec.cancel && (st.phase === 'Starting' || st.phase === 'Running') && (
+        <p className="msg">Cancel requested -- waiting for the source node's agent to abort the transfer.</p>
+      )}
       {st.phase === 'NeedsRecovery' && <RecoveryPanel migration={migration} onChanged={onChanged} />}
+    </div>
+  );
+}
+
+function CancelButton({ migration, onChanged }: { migration: MachineMigration; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function cancel() {
+    if (
+      !confirm(
+        'Cancel this in-flight live migration?\n\nThe source and destination transfer will be aborted before the destination commits. The source runtime is left untouched and keeps running on its current node. This cannot be undone.',
+      )
+    )
+      return;
+    setBusy(true);
+    setMsg('');
+    try {
+      await apiJSON(`/api/v1/migrations/${migration.metadata.namespace || 'default'}/${encodeURIComponent(migration.metadata.name)}/cancel`, 'POST', {});
+      onChanged();
+    } catch (err) {
+      setMsg(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="formactions" style={{ marginTop: 16 }}>
+      <button className="danger" disabled={busy} onClick={cancel}>
+        {busy ? 'Cancelling...' : 'Cancel migration'}
+      </button>
+      {msg && <span className="msg error">{msg}</span>}
     </div>
   );
 }

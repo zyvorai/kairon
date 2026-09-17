@@ -73,6 +73,18 @@ func TestObserveMigrationsCountsCompletedOnceOnTerminalTransition(t *testing.T) 
 	}
 }
 
+func TestObserveMigrationsCountsCancelledOnceAsTerminal(t *testing.T) {
+	r := NewRecorder()
+	m := migration("prod", "a", "Running")
+	r.ObserveMigrations([]model.MachineMigration{m})
+	m.Status.Phase = "Cancelled"
+	r.ObserveMigrations([]model.MachineMigration{m})
+	r.ObserveMigrations([]model.MachineMigration{m}) // still Cancelled -- must not double-count
+	if got := testutil.ToFloat64(r.completedTotal.WithLabelValues("cancelled")); got != 1 {
+		t.Errorf("completed count = %v, want 1 (Cancelled is a real terminal phase, no double-counting)", got)
+	}
+}
+
 func TestObserveMigrationsPrunesRemovedMigrations(t *testing.T) {
 	r := NewRecorder()
 	r.ObserveMigrations([]model.MachineMigration{migration("prod", "a", "Running")})

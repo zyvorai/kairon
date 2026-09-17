@@ -54,7 +54,7 @@ func (c CordonEvacuation) minRetryInterval() time.Duration {
 // per that function's own doc comment.
 func cordonEvacuateTerminal(phase string) bool {
 	switch phase {
-	case "Succeeded", "Failed", "Blocked":
+	case "Succeeded", "Failed", "Blocked", "Cancelled":
 		return true
 	}
 	return false

@@ -636,7 +636,7 @@ func TestColdMigrationRestartingCompletesToSucceeded(t *testing.T) {
 }
 
 func TestReconcileMigrationSkipsTerminalPhases(t *testing.T) {
-	for _, terminal := range []string{"Succeeded", "Failed", "Blocked", "NeedsRecovery"} {
+	for _, terminal := range []string{"Succeeded", "Failed", "Blocked", "NeedsRecovery", "Cancelled"} {
 		t.Run(terminal, func(t *testing.T) {
 			machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
 			migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: terminal}}
