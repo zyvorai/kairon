@@ -1,5 +1,7 @@
 # Unreleased
 
+# Kairon v0.5.0
+
 A batch of fixes from a code-level production-readiness audit -- each backed by a specific file:line finding, not a guess -- plus real day-2 VM operations (cloud-init, SSH forwards, a graphical VNC console) and a real per-operator login for `kairon-ui`. Since then, a broad KubeVirt-parity push (`MachineSet`, instance types, NUMA/hugepages, Windows guests, `MigrationPolicy`) and a full route-by-route audit of FluxVM's own API surface -- both guest-exec channels, guest file access, live resource limits/usage, pause/resume/halt, VM-state snapshot/restore, Machine logs, sandboxes/templates/an HTTP proxy relay, warm pools, the image catalog, an egress check, and runtime/network diagnostics -- closed most of the gaps this project had against KubeVirt one route at a time, each verified against FluxVM's own Rust source rather than assumed. Most recently: dashboard/CLI parity for the last list-only CRDs, a new `MachineSnapshotSchedule` CRD for periodic automated snapshots, `kaironctl top`, four real resource-leak fixes (culminating in `MachineSet` deletion finally cascading to its owned Machines), and a hardening pass aimed specifically at untrusted multi-tenant traffic (opt-in namespace-scoped `kairon-ui` authorization, opt-in network default-deny, quota-block visibility without the admission webhook, and closing the honesty gap around `spec.tenant`'s non-enforcement). See the "Production gaps" section of README.md for what's still open.
 
 ## Added

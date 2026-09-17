@@ -10,9 +10,9 @@
 
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
-[![Release](https://img.shields.io/badge/version-v0.4.0-blue)](VERSION)
+[![Release](https://img.shields.io/badge/version-v0.5.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
-[![Helm chart](https://img.shields.io/badge/Helm-0.4.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
+[![Helm chart](https://img.shields.io/badge/Helm-0.5.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
 [![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#the-dashboard)
 
 [Why](#why-kairon-exists) · [Architecture](ARCHITECTURE.md) · [Quick start](#quick-start) · [Dashboard](#the-dashboard) · [Guarding the fleet](#guarding-the-fleet) · [Getting started](docs/getting-started.md) · [Security](SECURITY.md) · [Roadmap](ROADMAP.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
@@ -464,7 +464,7 @@ npm --prefix web run build
 
 ## Status
 
-**v0.4.0** is tagged and open source; the sections above also describe real, tested work merged since then (admission webhooks, dashboard password management, console TLS automation, Helm/CI hardening, `MachineSet`/instance types/Windows/NUMA parity, pause/resume/halt, VM-state snapshot/restore, and a full second wave of FluxVM route wrapping -- both guest-exec channels, guest file access, sandboxes/templates/warm pools/image catalog, and runtime/network diagnostics -- see [`RELEASE_NOTES.md`](RELEASE_NOTES.md)'s Unreleased section) ahead of the next tag. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](#operability)).
+**v0.5.0** is tagged and open source, absorbing everything the sections above describe: admission webhooks, dashboard password management, console TLS automation, Helm/CI hardening, `MachineSet`/instance types/Windows/NUMA parity, pause/resume/halt, VM-state snapshot/restore, a full second wave of FluxVM route wrapping (both guest-exec channels, guest file access, sandboxes/templates/warm pools/image catalog, runtime/network diagnostics), the `MachineSnapshotSchedule` CRD, `kaironctl top`, and a hardening pass aimed at untrusted multi-tenant traffic (opt-in namespace-scoped `kairon-ui` authorization, opt-in network default-deny) -- see [`RELEASE_NOTES.md`](RELEASE_NOTES.md) for the full per-release changelog. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](#operability)).
 
 ### Production gaps
 
