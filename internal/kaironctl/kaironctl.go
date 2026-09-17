@@ -372,9 +372,70 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 			}
 			fmt.Printf("%s\t%s\t%d\t%t\t%s\t%s\n", g.Metadata.Name, groupName, g.Spec.Priority, g.Spec.Policy.DefaultAllow, dash(g.Status.Phase), dash(g.Status.AppliedOn))
 		}
+	// node/nodes: the real Kubernetes core Node object internal/scheduler
+	// itself already reads (spec.taints, spec.unschedulable) to decide
+	// where a Machine can land -- see internal/scheduler.go's own
+	// toleratesTaint/eligible -- but which previously had no kaironctl
+	// support at all, the exact same "no CLI access short of raw kubectl"
+	// gap networkpolicy/securitygroup above closed for those two kinds.
+	// That gap became sharper the moment Node taints started actually
+	// gating scheduling (see 2fd0257): an operator asking "why won't my
+	// Machine schedule onto NODE" now has a real reason to look at a
+	// node's taints, and had no kaironctl way to do so. Unlike every other
+	// case above, NODE is cluster-scoped -- ns (from --namespace/-n) is
+	// simply unused here, exactly as it already is for any flag a given
+	// kind's underlying API doesn't have.
+	case "node", "nodes":
+		items, err := kc.ListNodes(ctx)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(n model.Node) map[string]string { return n.Metadata.Labels })
+		fmt.Printf("NAME\tREADY\tUNSCHEDULABLE\tTAINTS\n")
+		for _, n := range items {
+			fmt.Printf("%s\t%s\t%t\t%s\n", n.Metadata.Name, nodeReadyStatus(n), n.Spec.Unschedulable, nodeTaintsSummary(n))
+		}
 	default:
 		fatal(fmt.Errorf("unknown resource %q", resource))
 	}
+}
+
+// nodeReadyStatus renders a Node's core "Ready" NodeCondition for
+// `kaironctl get nodes` -- the same condition kairon-controller's own
+// ConditionNodeUnreachable/fencing logic (see cmdFence) ultimately treats
+// as the node's reachability signal. "Unknown" covers both a genuinely
+// absent Ready condition and one whose Status is neither "True" nor
+// "False", since a real kube-apiserver only ever reports those three
+// values for it anyway.
+func nodeReadyStatus(n model.Node) string {
+	for _, c := range n.Status.Conditions {
+		if c.Type == "Ready" {
+			return c.Status
+		}
+	}
+	return "Unknown"
+}
+
+// nodeTaintsSummary renders a Node's spec.taints as a comma-separated
+// key[=value]:Effect list ("-" when there are none) for `kaironctl get
+// nodes`/`describe node`'s own raw dump -- the same key[=value] shorthand
+// internal/scheduler.go's own unexported taintKV renders for its
+// excluded-node reason strings, reimplemented here (rather than exported
+// from internal/scheduler just for this) since it's a two-line, purely
+// cosmetic formatting helper with no shared behavior that could drift.
+func nodeTaintsSummary(n model.Node) string {
+	if len(n.Spec.Taints) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(n.Spec.Taints))
+	for _, t := range n.Spec.Taints {
+		kv := t.Key
+		if t.Value != "" {
+			kv += "=" + t.Value
+		}
+		parts = append(parts, kv+":"+t.Effect)
+	}
+	return strings.Join(parts, ",")
 }
 
 // defaultStrategy names the MachineSet rollout strategy the reconciler
@@ -479,6 +540,9 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		out, err = kc.GetMachineNetworkPolicy(ctx, ns, name)
 	case "securitygroup", "securitygroups", "networksecuritygroups":
 		out, err = kc.GetNetworkSecurityGroup(ctx, ns, name)
+	case "node", "nodes":
+		// Cluster-scoped, like `kaironctl get node` above -- ns is unused.
+		out, err = kc.GetNode(ctx, name)
 	default:
 		fatal(fmt.Errorf("unknown resource %q", kind))
 		return
@@ -2580,7 +2644,7 @@ func resourceName(s string) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | trigger snapshotschedule NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
+	fmt.Fprintln(os.Stderr, "kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v] | describe [RESOURCE] NAME | create [machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | delete [RESOURCE] NAME | delete RESOURCE --selector k=v [--dry-run] | scale machineset NAME --replicas N | edit [machine|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME | trigger snapshotschedule NAME | start | stop | pause | resume | halt | migrate | evacuate | recover | cancel-migration | fence | snapshot | restore | version")
 }
 func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func dash(s string) string {

@@ -704,6 +704,16 @@ func (c *Client) ListNodes(ctx context.Context) ([]model.Node, error) {
 	return list.Items, err
 }
 
+// GetNode fetches a single real Kubernetes Node by name -- the singular
+// counterpart to ListNodes above, added alongside `kaironctl get/describe
+// node` (see internal/kaironctl). Nodes are cluster-scoped, hence no
+// namespace segment in the path, same as ListNodes' own "/api/v1/nodes".
+func (c *Client) GetNode(ctx context.Context, name string) (model.Node, error) {
+	var n model.Node
+	err := c.request(ctx, http.MethodGet, fmt.Sprintf("/api/v1/nodes/%s", url.PathEscape(name)), nil, &n, "")
+	return n, err
+}
+
 func leasePath(ns, name string) string {
 	return fmt.Sprintf("/apis/coordination.k8s.io/v1/namespaces/%s/leases/%s", url.PathEscape(ns), url.PathEscape(name))
 }

@@ -432,6 +432,80 @@ func TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup(t *testing.T) {
 	}
 }
 
+// TestCmdGetDescribeNode covers the exact same previously-entirely-missing
+// wiring TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup closed for
+// networkpolicy/securitygroup, now for the real Kubernetes core Node
+// object -- `kaironctl get/describe node` didn't exist at all before this
+// change (there is no "delete node" here: unlike every kairon.zyvor.dev
+// CRD above, deleting a real cluster Node is squarely kubectl's job, not
+// kaironctl's). Node is cluster-scoped, so unlike every other kind these
+// two paths carry no /namespaces/default/ segment at all, and no
+// apis/kairon.zyvor.dev/v1alpha1 group prefix either -- they hit the
+// built-in core/v1 "/api/v1/nodes" path real kube-scheduler itself reads.
+func TestCmdGetDescribeNode(t *testing.T) {
+	s := &recordingServer{}
+	kc := testClient(t, s)
+	ctx := context.Background()
+
+	cmdGet(ctx, kc, []string{"nodes"})
+	if s.method != http.MethodGet || s.path != "/api/v1/nodes" {
+		t.Fatalf("get nodes: method=%s path=%s", s.method, s.path)
+	}
+	cmdDescribe(ctx, kc, []string{"node", "worker-1"})
+	if s.method != http.MethodGet || s.path != "/api/v1/nodes/worker-1" {
+		t.Fatalf("describe node: method=%s path=%s", s.method, s.path)
+	}
+}
+
+// TestNodeReadyStatus and TestNodeTaintsSummary exercise `kaironctl get
+// nodes`' two pure display-formatting helpers directly, independent of the
+// HTTP boundary TestCmdGetDescribeNode already covers above.
+func TestNodeReadyStatus(t *testing.T) {
+	cases := []struct {
+		name       string
+		conditions []model.NodeCondition
+		want       string
+	}{
+		{"no conditions at all", nil, "Unknown"},
+		{"Ready True", []model.NodeCondition{{Type: "Ready", Status: "True"}}, "True"},
+		{"Ready False among others", []model.NodeCondition{{Type: "MemoryPressure", Status: "False"}, {Type: "Ready", Status: "False"}}, "False"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := model.Node{}
+			n.Status.Conditions = tc.conditions
+			if got := nodeReadyStatus(n); got != tc.want {
+				t.Errorf("nodeReadyStatus() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNodeTaintsSummary(t *testing.T) {
+	cases := []struct {
+		name   string
+		taints []model.Taint
+		want   string
+	}{
+		{"no taints", nil, "-"},
+		{"bare key, no value", []model.Taint{{Key: "spot", Effect: model.TaintEffectNoSchedule}}, "spot:NoSchedule"},
+		{"key=value", []model.Taint{{Key: "gpu", Value: "true", Effect: model.TaintEffectPreferNoSchedule}}, "gpu=true:PreferNoSchedule"},
+		{"multiple, comma-joined in order", []model.Taint{
+			{Key: "a", Effect: model.TaintEffectNoSchedule},
+			{Key: "b", Value: "1", Effect: model.TaintEffectNoExecute},
+		}, "a:NoSchedule,b=1:NoExecute"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n := model.Node{}
+			n.Spec.Taints = tc.taints
+			if got := nodeTaintsSummary(n); got != tc.want {
+				t.Errorf("nodeTaintsSummary() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // cancelMigrationTestServer is a minimal fake standing in for the GET-then-
 // PATCH sequence cmdCancelMigration performs -- recordingServer alone can't
 // cover this command, since its blanket GET response (an empty decoded

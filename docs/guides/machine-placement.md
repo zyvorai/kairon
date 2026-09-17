@@ -194,6 +194,21 @@ else already there before Kairon looked.
   field existed on an untainted fleet: nothing here changes what happens
   when `spec.taints` is empty on every node.
 
+Before writing a `tolerations` entry you first need to know what's actually
+tainted -- `kaironctl get nodes` lists every real Kubernetes `Node`
+alongside its `Ready` condition, `spec.unschedulable`, and a `key[=value]:
+Effect` summary of `spec.taints` (`-` when a node carries none), and
+`kaironctl describe node NAME` dumps one node's full object, taints
+included, the same raw-JSON way `describe` already works for every other
+kind. Neither existed at all before this change -- an operator debugging
+"why won't my Machine schedule onto NODE" once this section's own filtering
+kicked in had no way to see a node's taints short of `kubectl get node
+NODE -o yaml`, even though `kaironctl` already had full `get`/`describe`
+for every kairon.zyvor.dev kind. `Node` is cluster-scoped, unlike
+everything else `kaironctl get`/`describe` supports, so `-n`/`--namespace`
+is silently ignored for it; there's no `kaironctl delete node`, since
+deleting a cluster Node is squarely `kubectl`'s job, not Kairon's.
+
 **Real limits today**: an untolerated `NoExecute` taint only ever blocks
 *new* scheduling -- unlike real Kubernetes, Kairon has no eviction pass
 that migrates or deletes an *already-running* Machine off a node that
