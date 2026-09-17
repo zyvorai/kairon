@@ -51,7 +51,15 @@ ENTRYPOINT ["/kairon-ui"]
 # DaemonSet) -- both are inherent to actually attaching/mounting network
 # block devices from inside a container, not specific to this image.
 FROM debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS csi-node
+# apt-get upgrade, not just install: the base image is pinned to a fixed
+# digest for reproducibility, but that freezes whatever package versions
+# were current the day that digest was built -- Debian security patches
+# published since then (e.g. libpcre2-8-0's CVE-2026-86145/89157/89161)
+# never apply on their own. Explicitly upgrading pulls the latest patched
+# packages from Debian's own apt repos at build time without re-pinning
+# (or having to track) the base image digest itself.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends open-iscsi util-linux e2fsprogs ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/kairon-csi-node /kairon-csi-node
@@ -70,7 +78,10 @@ ENTRYPOINT ["/entrypoint.sh"]
 # same "we don't reach into host-level setup for you" posture this
 # project already takes for webhook/console TLS material).
 FROM debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS csi-controller
+# apt-get upgrade -- see csi-node's identical comment above for why this
+# is needed alongside a digest-pinned base image.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends targetcli-fb ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/kairon-csi-controller /kairon-csi-controller
