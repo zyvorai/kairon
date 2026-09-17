@@ -404,6 +404,194 @@ func (s *fakeNetworkServiceStore) backends(name string) []fluxvm.ServiceBackend 
 	return append([]fluxvm.ServiceBackend{}, s.services[name].Backends...)
 }
 
+// TestReconcileMachineNetworkPolicyResetsMachineDroppedFromSelector proves
+// the real, guaranteed-to-happen gap this exists to close: before this
+// pruning existed, editing a MachineNetworkPolicy's selector (or a
+// Machine's own labels) so a previously-selected Machine no longer matches
+// left that Machine's FluxVM-side policy exactly as it was -- forever,
+// since nothing but object deletion (which didn't happen here) or
+// ensureStopped/ensureHalted (which also didn't happen -- the Machine
+// stayed Running) ever resets it. Here "web" is in
+// status.appliedMachines from a prior tick but its own labels no longer
+// match spec.selector; this tick must reset it to DefaultAllow and drop it
+// from status.appliedMachines.
+func TestReconcileMachineNetworkPolicyResetsMachineDroppedFromSelector(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "worker"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "default", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}},
+		},
+		Status: model.MachineNetworkPolicyStatus{AppliedMachines: []string{"web"}},
+	}
+
+	var resetSeen bool
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			var body fluxvm.WireVmNetworkPolicy
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if !body.DefaultAllow {
+				t.Errorf("expected the stale Machine's policy to be reset to DefaultAllow, got %+v", body)
+			}
+			resetSeen = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	var appliedMachines []string
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status" {
+			var p struct {
+				Status model.MachineNetworkPolicyStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			appliedMachines = p.Status.AppliedMachines
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), policy, []model.MachineNetworkPolicy{policy}, []model.Machine{machine}); err != nil {
+		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
+	}
+	if !resetSeen {
+		t.Fatal("expected the dropped Machine's policy to be reset")
+	}
+	if len(appliedMachines) != 0 {
+		t.Fatalf("got appliedMachines %v, want empty -- the Machine no longer matches", appliedMachines)
+	}
+}
+
+// TestReconcileMachineNetworkPolicyLeavesMachineStillClaimedByAnotherPolicy
+// proves the guard that keeps the fix above from clobbering a DIFFERENT
+// still-current policy: "web" fell out of policy "a"'s own selector, but
+// policy "b" (still present, not being deleted) claims it too. Policy
+// "a"'s own prune pass must NOT reset it -- only "b" (or nothing, if "web"
+// stops matching every policy) gets to decide its fate.
+func TestReconcileMachineNetworkPolicyLeavesMachineStillClaimedByAnotherPolicy(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "web", "tier": "edge"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policyA := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "a", Namespace: "default", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			// No longer matches "web" (tier=core, not edge) -- but it did on
+			// a prior tick, hence status.appliedMachines below.
+			Selector: map[string]string{"tier": "core"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false},
+		},
+		Status: model.MachineNetworkPolicyStatus{AppliedMachines: []string{"web"}},
+	}
+	policyB := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "b", Namespace: "default", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"tier": "edge"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false, AllowPorts: []string{"tcp/443"}},
+		},
+	}
+
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-9/network/policy" {
+			t.Fatal("policy a must not reset a Machine policy b still claims")
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+
+	var patched bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/a/status" {
+			patched = true
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), policyA, []model.MachineNetworkPolicy{policyA, policyB}, []model.Machine{machine}); err != nil {
+		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
+	}
+	if !patched {
+		t.Fatal("expected policy a's status to still be patched (just without resetting web)")
+	}
+}
+
+// TestReconcileMachineNetworkPolicyPruneFailsClosed proves the stale-machine
+// reset shares the same fail-closed posture as every other FluxVM-side
+// mutation in this file: a genuine reset error must be returned (and the
+// caller's status patch, which would otherwise drop the Machine from
+// status.appliedMachines, must never run) so the same reset is retried
+// next tick instead of the Machine's stale policy being forgotten.
+func TestReconcileMachineNetworkPolicyPruneFailsClosed(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default", Labels: map[string]string{"app": "worker"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-9", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "default", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: false},
+		},
+		Status: model.MachineNetworkPolicyStatus{AppliedMachines: []string{"web"}},
+	}
+
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fluxvm node unreachable", http.StatusInternalServerError)
+	}))
+	defer fs.Close()
+
+	var statusPatched bool
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status" {
+			statusPatched = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ks.Close()
+
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	err := a.reconcileMachineNetworkPolicy(context.Background(), policy, []model.MachineNetworkPolicy{policy}, []model.Machine{machine})
+	if err == nil {
+		t.Fatal("expected an error from a failed FluxVM policy reset")
+	}
+	if statusPatched {
+		t.Fatal("status must not be patched (and appliedMachines must not drop the Machine) when the reset failed")
+	}
+}
+
 // TestReconcileServiceFabricPrunesStaleBackendOnGuestIPChange proves the
 // real, guaranteed-to-happen leak this exists to close: before pruning
 // existed, a guestIP change on an otherwise still-Running Machine (a DHCP
@@ -1069,7 +1257,7 @@ func TestReconcileMachineNetworkPolicyDeletionKeepsFinalizerOnResetError(t *test
 	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	p, m := deletingMachineNetworkPolicyAndMachine()
-	err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m})
+	err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.MachineNetworkPolicy{p}, []model.Machine{m})
 	if err == nil {
 		t.Fatal("expected an error from a failed FluxVM policy reset")
 	}
@@ -1118,7 +1306,7 @@ func TestReconcileMachineNetworkPolicyDeletionRemovesFinalizerOnSuccess(t *testi
 	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	p, m := deletingMachineNetworkPolicyAndMachine()
-	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m}); err != nil {
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.MachineNetworkPolicy{p}, []model.Machine{m}); err != nil {
 		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
 	}
 	if !resetHit {
@@ -1156,7 +1344,7 @@ func TestReconcileMachineNetworkPolicyDeletionToleratesAlreadyGoneVM(t *testing.
 	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	p, m := deletingMachineNetworkPolicyAndMachine()
-	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.Machine{m}); err != nil {
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), p, []model.MachineNetworkPolicy{p}, []model.Machine{m}); err != nil {
 		t.Fatalf("reconcileMachineNetworkPolicy: %v", err)
 	}
 	if !sawFinalizerPatch {

@@ -109,9 +109,26 @@ Posted to `/v1/network/cnp` before the VM policy upsert.
 | `observedMachines` | Running local Machines that received the policy |
 | `effectiveSynced` | At least one Machine was updated *and* a read-back of `GET /v1/vms/{id}/network/policy` against every applied Machine matches what was sent -- a real confirmation, not just "the write call returned success". A FluxVM that silently normalizes or partially rejects part of the request now shows up as `false` here instead of a false `true`. |
 | `lastAppliedTime` | Last successful apply |
+| `appliedMachines` | Ground truth of which Machine names this policy actually pushed `spec.policy` onto as of the most recent successful reconcile -- not just which Machines currently match `spec.selector`/`machineName`. Diffed every tick against what currently matches, so a Machine edited out of scope gets caught even while it keeps running (see below); not meant to be read directly, but present since `status` is one object and this is what drives that pruning. |
 
 On delete, matched Running Machines on this node are reset to
 `defaultAllow: true` (finalizer `kairon.zyvor.dev/network-policy`).
+
+The same reset also fires *without* a delete: editing `spec.selector` (or
+`spec.machineName`), or relabeling a Machine, so a previously-matched
+Machine no longer matches, resets that Machine's FluxVM-side policy to
+`defaultAllow: true` on the very next reconcile tick -- it is not left
+running under its old, now-orphaned restriction until someone eventually
+deletes the whole `MachineNetworkPolicy` (or stops/halts that one Machine)
+to trigger a reset. `status.appliedMachines` above is what makes this
+possible: it is the only record of which Machines this policy actually
+touched, since `spec.selector` alone can no longer answer "does this
+policy still claim this Machine" for one that just fell out of it. If a
+*different*, still-current `MachineNetworkPolicy` also claims the same
+Machine, the reset is skipped -- that other policy's own apply (already
+run, or due later the same tick) is left to decide the Machine's actual
+policy, so overlapping policies during a migration between them can never
+race a reset against a real apply.
 
 ## Admission webhook (`webhook.enabled`)
 

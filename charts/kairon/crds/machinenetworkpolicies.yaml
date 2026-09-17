@@ -107,3 +107,7 @@ spec:
                 format: date-time
               effectiveSynced:
                 type: boolean
+              appliedMachines:
+                type: array
+                items:
+                  type: string

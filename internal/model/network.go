@@ -139,6 +139,20 @@ type MachineNetworkPolicyStatus struct {
 	ObservedMachines int        `json:"observedMachines,omitempty"`
 	LastAppliedTime  *time.Time `json:"lastAppliedTime,omitempty"`
 	EffectiveSynced  bool       `json:"effectiveSynced,omitempty"`
+	// AppliedMachines is the ground truth of which Machine names (in this
+	// policy's own namespace) this policy actually pushed Spec.Policy onto
+	// on the most recent successful reconcile -- not just which Machines
+	// currently match Spec.Selector/MachineName. The prior tick's value is
+	// what reconcileMachineNetworkPolicy diffs against to notice a Machine
+	// that fell out of selection (a selector edit, MachineName change, or a
+	// Machine's own labels changing) while it kept running, the only case
+	// nothing else ever resets: object deletion already resets every
+	// currently-selected Machine before removing FinalizerNetworkPolicy,
+	// and ensureStopped/ensureHalted tear down the VM's whole network
+	// dataplane regardless of policy. See reconcileMachineNetworkPolicy's
+	// own doc comment for why this mirrors
+	// MachineStatus.AppliedServiceFabricMemberships's identical role.
+	AppliedMachines []string `json:"appliedMachines,omitempty"`
 }
 
 func (p MachineNetworkPolicy) Namespace() string {

@@ -46,7 +46,7 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 		return err
 	}
 	for _, p := range policies {
-		if err := a.reconcileMachineNetworkPolicy(ctx, p, machines); err != nil {
+		if err := a.reconcileMachineNetworkPolicy(ctx, p, policies, machines); err != nil {
 			a.Log.Error("machine network policy reconcile failed", "namespace", p.Namespace(), "name", p.Metadata.Name, "error", err)
 			status := p.Status
 			status.Phase = "Error"
@@ -104,7 +104,29 @@ func (a *Agent) reconcileSecurityGroup(ctx context.Context, g model.NetworkSecur
 	return a.Kube.PatchNetworkSecurityGroupStatus(ctx, g.Namespace(), g.Metadata.Name, status)
 }
 
-func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.MachineNetworkPolicy, machines []model.Machine) error {
+// reconcileMachineNetworkPolicy pushes p.Spec.Policy onto every Machine p
+// currently selects, then -- unlike before this pruning existed -- also
+// resets any Machine p.Status.AppliedMachines says it previously applied to
+// but no longer selects (a selector/machineName edit, or the Machine's own
+// labels changing) back to DefaultAllow, the exact same reset object
+// deletion already performs below. Without this, a Machine that falls out
+// of p's selection while it keeps running was never revisited by anything:
+// p's own delete path only resets Machines it *currently* selects, and only
+// runs at all when p itself is deleted, not merely edited. The same
+// "spec-change cleanup gap, not just delete" shape 19aa87e/b31e60b already
+// closed for Service Fabric backends and CSI volumes.
+//
+// allPolicies (this tick's full MachineNetworkPolicy listing, the same
+// slice reconcileNetworkResources already has) guards against clobbering a
+// DIFFERENT still-current policy's just-applied state: a Machine that fell
+// out of p's own selection but is still selected by some other
+// non-deleted policy is left alone here -- that other policy either already
+// applied its own Spec.Policy this tick or will on its own turn in the
+// same loop, and resetting to DefaultAllow in between would only be
+// immediately overwritten (or, worse if that policy's own turn already
+// passed, transiently strip a policy that's supposed to still be in
+// effect).
+func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.MachineNetworkPolicy, allPolicies []model.MachineNetworkPolicy, machines []model.Machine) error {
 	if p.Metadata.DeletionTimestamp != nil {
 		if model.HasFinalizerList(p.Metadata.Finalizers, model.FinalizerNetworkPolicy) {
 			for _, m := range machines {
@@ -149,6 +171,8 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 	}
 	applied := 0
 	allConfirmed := true
+	appliedNames := make([]string, 0, len(p.Status.AppliedMachines))
+	currentlyApplied := map[string]bool{}
 	for _, m := range machines {
 		if m.Spec.NodeName != a.NodeName || m.Namespace() != p.Namespace() {
 			continue
@@ -163,6 +187,8 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 			return fmt.Errorf("set policy on %s/%s: %w", m.Namespace(), m.Metadata.Name, err)
 		}
 		applied++
+		appliedNames = append(appliedNames, m.Metadata.Name)
+		currentlyApplied[m.Metadata.Name] = true
 		// Read the policy back rather than trusting the POST alone --
 		// FluxVM's own policy engine could in principle normalize or
 		// reject part of what was sent without surfacing an HTTP error.
@@ -175,12 +201,48 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 			allConfirmed = false
 		}
 	}
+
+	// Reset any Machine this policy applied to on a PRIOR tick but no
+	// longer selects (see this function's own doc comment for why nothing
+	// else ever notices this). Skips (silently drops from appliedNames
+	// going forward, nothing left here to retry) a name that: no longer
+	// resolves to a Machine at all (deleted -- its whole FluxVM runtime is
+	// already gone with it); isn't ours to reset from this node (moved to
+	// a different spec.nodeName -- out of scope for this node's own Flux
+	// client, and a genuinely rare event since Machines don't change nodes
+	// outside a migration, which recreates the runtime from scratch
+	// anyway); or has no live runtime right now (Stopped/Halted already
+	// tore down its whole network dataplane regardless of policy, per
+	// ensureStopped/ensureHalted).
+	for _, prevName := range p.Status.AppliedMachines {
+		if currentlyApplied[prevName] {
+			continue
+		}
+		target, ok := findMachineByName(machines, p.Namespace(), prevName)
+		if !ok || target.Spec.NodeName != a.NodeName || target.Status.RuntimeID == "" {
+			continue
+		}
+		if anotherPolicyStillSelects(allPolicies, p, target) {
+			// Some other still-current policy claims this Machine too --
+			// leave it for that policy's own apply (already ran, or will
+			// run later this same tick) rather than reset to DefaultAllow
+			// in between and risk that just being overwritten right back,
+			// or worse, transiently stripping a policy that already ran
+			// its own turn this tick.
+			continue
+		}
+		if err := a.Flux.SetVMNetworkPolicy(ctx, target.Status.RuntimeID, model.VmNetworkPolicy{DefaultAllow: true}); err != nil {
+			return fmt.Errorf("reset stale network policy on %s/%s: %w", target.Namespace(), target.Metadata.Name, err)
+		}
+	}
+
 	now := time.Now().UTC()
 	status := p.Status
 	status.Phase = "Applied"
 	status.Message = ""
 	status.ObservedMachines = applied
 	status.LastAppliedTime = &now
+	status.AppliedMachines = appliedNames
 	// EffectiveSynced is now a real confirmation (read the policy back
 	// from every applied Machine and compare), not just "the POST
 	// succeeded on at least one Machine" -- see GetVMNetworkPolicy's own
@@ -194,6 +256,39 @@ func policySelectsMachine(p model.MachineNetworkPolicy, m model.Machine) bool {
 		return p.Spec.MachineName == m.Metadata.Name
 	}
 	return model.LabelsMatch(m.Metadata.Labels, p.Spec.Selector)
+}
+
+// findMachineByName looks up namespace/name in machines -- used to resolve
+// a MachineNetworkPolicyStatus.AppliedMachines entry (a bare name) back to
+// the live Machine object it names, since that Machine may no longer match
+// the policy's own current selector/machineName.
+func findMachineByName(machines []model.Machine, namespace, name string) (model.Machine, bool) {
+	for _, m := range machines {
+		if m.Namespace() == namespace && m.Metadata.Name == name {
+			return m, true
+		}
+	}
+	return model.Machine{}, false
+}
+
+// anotherPolicyStillSelects reports whether some MachineNetworkPolicy other
+// than exclude, in the same namespace and not itself being deleted, still
+// selects m -- see reconcileMachineNetworkPolicy's own doc comment for why
+// its stale-machine pruning must check this before resetting m to
+// DefaultAllow.
+func anotherPolicyStillSelects(allPolicies []model.MachineNetworkPolicy, exclude model.MachineNetworkPolicy, m model.Machine) bool {
+	for _, other := range allPolicies {
+		if other.Namespace() == exclude.Namespace() && other.Metadata.Name == exclude.Metadata.Name {
+			continue
+		}
+		if other.Namespace() != m.Namespace() || other.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if policySelectsMachine(other, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // guestAgentRecheckInterval bounds how often projectNetworkStatus re-queries
