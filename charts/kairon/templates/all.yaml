@@ -48,8 +48,18 @@ rules:
     # cover create; kairon-ui's own separate ClusterRole already grants it
     # create for operator-initiated snapshots, but that's a different
     # ServiceAccount.
+    #
+    # "delete" belongs in this same rule for a related reason:
+    # pruneScheduledSnapshots (also machinesnapshotschedule.go) deletes the
+    # oldest ready MachineSnapshots a schedule created once there are more
+    # than spec.keepLast of them. This grant was missing from the day
+    # keepLast shipped -- scripts/check_rbac_coverage.py (added alongside
+    # this fix) now catches this class of gap by cross-checking every
+    # internal/kube.Client call kairon-controller/kairon-node/kairon-ui
+    # actually make against what their own ClusterRole/Role really grants,
+    # the same way this one was found by hand.
     resources: ["machinesnapshots"]
-    verbs: ["create"]
+    verbs: ["create", "delete"]
 {{ if .Values.controller.cordonEvacuation.enabled }}
   - apiGroups: ["kairon.zyvor.dev"]
     # cordonEvacuation is the only reason kairon-controller itself ever

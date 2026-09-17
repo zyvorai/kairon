@@ -70,6 +70,8 @@ jobs:
           assert any(port.get('name') == 'migration' for port in container['ports'])
           print('helm render YAML: OK (migration disabled + enabled)')
           PY
+      - name: RBAC coverage check
+        run: python3 scripts/check_rbac_coverage.py
       - name: Helm render -- kairon-ui
         run: |
           # No ui.* auth configured: the chart now seeds a default admin
