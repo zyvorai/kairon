@@ -868,15 +868,16 @@ rules:
   # shipped -- the fake httptest.Server every uiapi test runs against
   # doesn't enforce RBAC at all, so nothing caught it. machinesets also
   # needs delete (the dashboard's "Delete" row action,
-  # handleDeleteMachineSet) and machinesnapshotschedules needs patch (the
-  # suspend/resume toggle, handleSuspendMachineSnapshotSchedule) -- both
+  # handleDeleteMachineSet) and patch (the "Scale" row action,
+  # handleScaleMachineSet), and machinesnapshotschedules needs patch (the
+  # suspend/resume toggle, handleSuspendMachineSnapshotSchedule) -- all
   # already-shipped mutations that were equally broken.
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinequotas", "machinedisruptionbudgets", "machineinstancetypes", "migrationpolicies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesets"]
-    verbs: ["get", "list", "watch", "delete"]
+    verbs: ["get", "list", "watch", "delete", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshotschedules"]
     verbs: ["get", "list", "watch", "patch"]

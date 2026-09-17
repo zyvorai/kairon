@@ -236,6 +236,30 @@ func (f *fakeKube) handler() http.Handler {
 			}
 			delete(f.machineSets, name)
 			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+			ms, ok := f.machineSets[name]
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			var patch struct {
+				Spec struct {
+					Replicas int `json:"replicas"`
+				} `json:"spec"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&patch)
+			ms.Spec.Replicas = patch.Spec.Replicas
+			f.machineSets[name] = ms
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+			ms, ok := f.machineSets[name]
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(ms)
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes":
 			items := make([]model.MachineInstanceType, 0, len(f.instanceTypes))
 			for _, it := range f.instanceTypes {
@@ -1075,6 +1099,47 @@ func TestDeleteMachineSet(t *testing.T) {
 	rr = doJSON(t, h, http.MethodDelete, "/api/v1/machinesets/default/nope", "", nil)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("delete missing: expected 404, got %d", rr.Code)
+	}
+}
+
+func TestScaleMachineSet(t *testing.T) {
+	fk := newFakeKube()
+	fk.machineSets["ms1"] = model.MachineSet{
+		Metadata: model.ObjectMeta{Name: "ms1", Namespace: "default"},
+		Spec:     model.MachineSetSpec{Replicas: 3},
+	}
+	s := newTestServer(t, fk, "")
+	h := s.Handler()
+
+	rr := doJSON(t, h, http.MethodPatch, "/api/v1/machinesets/default/ms1/scale", "", map[string]any{"replicas": 5})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scale: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"replicas":5`) {
+		t.Fatalf("scale: expected response body to reflect replicas=5, got %s", rr.Body.String())
+	}
+	if fk.machineSets["ms1"].Spec.Replicas != 5 {
+		t.Fatalf("expected ms1.spec.replicas to be 5 in the fake store, got %d", fk.machineSets["ms1"].Spec.Replicas)
+	}
+
+	// Scaling down to zero is a legitimate way to pause a MachineSet
+	// without deleting it, so 0 must round-trip too.
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/machinesets/default/ms1/scale", "", map[string]any{"replicas": 0})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("scale to zero: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if fk.machineSets["ms1"].Spec.Replicas != 0 {
+		t.Fatalf("expected ms1.spec.replicas to be 0 in the fake store, got %d", fk.machineSets["ms1"].Spec.Replicas)
+	}
+
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/machinesets/default/ms1/scale", "", map[string]any{"replicas": -1})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("negative replicas: expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	rr = doJSON(t, h, http.MethodPatch, "/api/v1/machinesets/default/nope/scale", "", map[string]any{"replicas": 1})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("scale missing: expected 404, got %d", rr.Code)
 	}
 }
 

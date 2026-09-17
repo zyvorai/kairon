@@ -13,6 +13,14 @@ type suspendScheduleRequest struct {
 	Suspend bool `json:"suspend"`
 }
 
+// scaleMachineSetRequest is the body handleScaleMachineSet expects -- a
+// single integer, mirroring `kaironctl scale machineset NAME --replicas
+// N`'s own one-field patch shape rather than accepting an arbitrary spec
+// patch from the dashboard.
+type scaleMachineSetRequest struct {
+	Replicas int `json:"replicas"`
+}
+
 // This file wraps five CRDs that kaironctl already has full get/describe/
 // delete support for (see internal/kaironctl/kaironctl.go), but that
 // kairon-ui's own REST API had no route for at all until now: an operator
@@ -24,20 +32,25 @@ type suspendScheduleRequest struct {
 // cross-checkable resource this project exposes, e.g. runtime
 // diagnostics/network observability) for four of the five.
 //
-// MachineSet is the one exception: it now also has a DELETE route
-// (handleDeleteMachineSet, below), matching handleDeleteMachine's own
-// any-authenticated-operator gate exactly (no separate admin check --
-// deleting a MachineSet is no more privileged than deleting a Machine
-// directly, which any operator can already do). MachineSet was picked
-// over the other four because it's the one an operator manages as a
-// day-to-day fleet-sizing operation (create/scale/edit all landed via
-// kaironctl this same session) rather than a GitOps-managed policy
-// object (MachineQuota/MachineDisruptionBudget/MigrationPolicy) or a
+// MachineSet is the one exception: it now also has DELETE and PATCH
+// .../scale routes (handleDeleteMachineSet and handleScaleMachineSet,
+// below), matching handleDeleteMachine's own any-authenticated-operator
+// gate exactly (no separate admin check -- deleting or scaling a
+// MachineSet is no more privileged than deleting a Machine directly,
+// which any operator can already do). MachineSet was picked over the
+// other four because it's the one an operator manages as a day-to-day
+// fleet-sizing operation (create/scale/edit all landed via kaironctl this
+// same session) rather than a GitOps-managed policy object
+// (MachineQuota/MachineDisruptionBudget/MigrationPolicy) or a
 // mostly-static reference value (MachineInstanceType) -- deleting a
 // MachineSet only ever stops it managing replicas going forward; any
 // Machines it already created are ordinary Machines afterward, not
-// cascade-deleted (MachineSet carries no finalizer). The other four
-// stay list-only, matching this first cut's narrow scope; kaironctl and
+// cascade-deleted (MachineSet carries no finalizer). Scaling is the other
+// routine fleet-sizing action an operator reaches for constantly (unlike
+// a full spec edit, which still needs kaironctl/kubectl) -- see
+// handleScaleMachineSet's own comment for why replicas is the one field
+// worth a dedicated dashboard control. The other four CRDs stay
+// list-only, matching this first cut's narrow scope; kaironctl and
 // kubectl remain the way to mutate them.
 
 func (s *Server) handleListQuotas(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +90,40 @@ func (s *Server) handleDeleteMachineSet(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleScaleMachineSet mirrors handleSuspendMachineSnapshotSchedule's
+// shape exactly: decode a single-field request, patch just that field via
+// a merge-patch (reusing kube.Client.PatchMachineSet, the same method
+// `kaironctl scale machineset` already uses), then re-GET and return the
+// updated object so the dashboard's table refreshes without a second
+// round-trip. Negative replica counts are rejected here rather than left
+// to the apiserver: the MachineSet CRD schema already enforces
+// `minimum: 0` (charts/kairon/crds/*machineset*.yaml), but failing fast
+// with a clear 400 beats forwarding a request the apiserver will reject
+// anyway with a less operator-friendly admission error.
+func (s *Server) handleScaleMachineSet(w http.ResponseWriter, r *http.Request) {
+	var req scaleMachineSetRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Replicas < 0 {
+		writeError(w, http.StatusBadRequest, "replicas must be >= 0")
+		return
+	}
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	patch := map[string]any{"spec": map[string]any{"replicas": req.Replicas}}
+	if err := s.Kube.PatchMachineSet(r.Context(), namespace, name, patch); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	updated, err := s.Kube.GetMachineSet(r.Context(), namespace, name)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) handleListInstanceTypes(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, apiJSON } from '../api';
 import { MachineSet } from '../types';
 import ResourceTable from '../components/ResourceTable';
 import { badgeClass } from '../lib/phase';
@@ -7,6 +7,11 @@ import { badgeClass } from '../lib/phase';
 export default function MachineSets() {
   const [items, setItems] = useState<MachineSet[]>([]);
   const [msg, setMsg] = useState('');
+  // Per-row draft replica count for the scale input, keyed by name -- kept
+  // separate from `items` so typing a new value doesn't get clobbered by
+  // the next 5s poll landing mid-edit, mirroring how Machines.tsx keeps
+  // its own exec-form drafts out of the polled resource list.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const refresh = () => api<MachineSet[]>('/api/v1/machinesets').then(setItems).catch((e) => setMsg(String(e)));
 
@@ -20,6 +25,28 @@ export default function MachineSets() {
     if (!confirm(`Delete MachineSet "${name}"? Its already-created Machines are left running, no longer managed.`)) return;
     try {
       await api(`/api/v1/machinesets/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      refresh();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
+  const draftFor = (s: MachineSet) => drafts[s.metadata.name] ?? String(s.spec.replicas);
+
+  const scale = async (s: MachineSet) => {
+    const raw = draftFor(s);
+    const replicas = Number(raw);
+    if (!Number.isInteger(replicas) || replicas < 0) {
+      setMsg(`Invalid replica count "${raw}": must be a non-negative integer.`);
+      return;
+    }
+    try {
+      await apiJSON(`/api/v1/machinesets/default/${encodeURIComponent(s.metadata.name)}/scale`, 'PATCH', { replicas });
+      setDrafts((d) => {
+        const next = { ...d };
+        delete next[s.metadata.name];
+        return next;
+      });
       refresh();
     } catch (e) {
       setMsg(String(e));
@@ -53,6 +80,26 @@ export default function MachineSets() {
             { header: 'Updated', render: (s) => s.status?.updatedReplicas ?? 0 },
             { header: 'Strategy', render: (s) => s.spec.strategy || 'RollingUpdate' },
             { header: 'Message', render: (s) => s.status?.message || '-' },
+            {
+              header: 'Scale',
+              render: (s) => (
+                <span style={{ display: 'inline-flex', gap: '0.4em', alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={draftFor(s)}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [s.metadata.name]: e.target.value }))
+                    }
+                    style={{ width: '4.5em' }}
+                  />
+                  <button onClick={() => scale(s)} disabled={Number(draftFor(s)) === s.spec.replicas}>
+                    Scale
+                  </button>
+                </span>
+              ),
+            },
             {
               header: '',
               render: (s) => (
