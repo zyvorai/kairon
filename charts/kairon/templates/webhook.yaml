@@ -107,4 +107,28 @@ webhooks:
         resources: ["networksecuritygroups"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
+  - name: machinequotaobject.kairon.zyvor.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-machinequota
+        port: 443
+    rules:
+      # Deliberately a *second*, differently-named webhook entry from
+      # machinequota.kairon.zyvor.dev above -- that one gates "machines"
+      # (a Machine that would violate an existing MachineQuota's limits);
+      # this one gates "machinequotas" itself (a MachineQuota whose own
+      # maxTotalCpu/maxTotalMemory isn't valid quantity syntax at all --
+      # see internal/controller/webhook.go's validateMachineQuotaObject).
+      - apiGroups: ["kairon.zyvor.dev"]
+        apiVersions: ["v1alpha1"]
+        resources: ["machinequotas"]
+        operations: ["CREATE", "UPDATE"]
+        scope: Namespaced
 {{ end }}

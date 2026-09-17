@@ -39,12 +39,33 @@ import (
 // model.ValidateVmNetworkPolicy's doc comment for the failure mode this
 // closes (a malformed policy stuck retrying forever instead of being
 // rejected once, at write time).
+//
+// /validate-machinequota closes the same *kind* of gap for a third,
+// unrelated field family: Machine.spec.resources.{cpu,memory,maxCpu,
+// maxMemory} and MachineQuota.spec.{maxTotalCpu,maxTotalMemory} are all
+// free-form quantity strings parsed by model.ParseVCPUs/ParseMemoryMiB,
+// and until now nothing checked their syntax at write time either -- see
+// validateResourceQuantities and validateMachineQuotaObject below for the
+// two failure modes this prevents *going forward* (a Machine stuck
+// retrying VM creation forever with a malformed spec.resources, silently
+// counted as zero footprint against quota the whole time via
+// MachineFootprint; and a brand-new malformed MachineQuota that would
+// otherwise abort BuildQuotaTrackers -- see quota.go -- for every
+// namespace on every reconcile tick, not just its own). This is
+// admission-time prevention only, same opt-in webhook.enabled gate as
+// every other check in this file: an already-existing malformed
+// MachineQuota (created before this existed, or with the webhook
+// disabled) still aborts cluster-wide quota enforcement exactly as
+// before -- containing that blast radius would mean changing
+// BuildQuotaTrackers' own error contract, a separate, more invasive
+// change left out of scope here.
 func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinenetworkpolicy", admission.Handler(c.Log, c.validateMachineNetworkPolicy, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-networksecuritygroup", admission.Handler(c.Log, c.validateNetworkSecurityGroup, c.observeWebhookDecision))
+	mux.HandleFunc("POST /validate-machinequota", admission.Handler(c.Log, c.validateMachineQuotaObject, c.observeWebhookDecision))
 	// /convert/machinequotas is a scaffold, not live enforcement: no
 	// MachineQuota CRD registers a second version yet, so the API server
 	// never actually calls this route today. It exists, and is tested,
@@ -148,6 +169,58 @@ func validateImageSource(img model.ImageSpec) error {
 	return nil
 }
 
+// validateResourceQuantities checks the free-form CPU/memory quantity
+// strings on a Machine's spec.resources against the exact same grammar
+// model.ParseVCPUs/model.ParseMemoryMiB already enforce everywhere these
+// values are actually consumed (scheduling, kairon-node's hotplug agent,
+// and -- the real failure point -- internal/fluxvm's buildCreateRequest,
+// called only once kairon-controller actually tries to create the VM).
+// Until now nothing checked them at write time: a malformed value (an
+// empty string aside, since that's the pre-existing "awaiting
+// spec.instanceTypeName resolution" state -- see
+// machineNeedsInstanceType in instancetype.go, deliberately left alone
+// here) sailed through kubectl apply, then failed only once VM creation
+// was attempted, leaving the Machine retrying forever with no path to
+// self-heal -- the same failure mode 1c2ae6c already closed for
+// MachineNetworkPolicy/NetworkSecurityGroup CIDRs, just for a different
+// grammar. Worse for CPU/memory specifically: MachineFootprint's own
+// parse calls silently treat the same malformed value as a *zero*
+// footprint (internal/controller/quota.go), so a Machine like this
+// doesn't just fail late -- it evades MachineQuota accounting the entire
+// time it sits stuck.
+//
+// CPU/Memory are only checked when non-empty, deliberately: the CRD's own
+// OpenAPI schema already requires a non-empty string *if* spec.resources
+// is set at all (minLength: 1), but a Machine naming
+// spec.instanceTypeName instead is expected to leave spec.resources
+// entirely unset until kairon-controller's own resolveInstanceTypes
+// (instancetype.go) fills it in from the referenced MachineInstanceType --
+// rejecting that here would break a working, documented pattern, not
+// close a gap. MaxCPU/MaxMemory are always optional.
+func validateResourceQuantities(res model.ResourceSpec) error {
+	if res.CPU != "" {
+		if _, err := model.ParseVCPUs(res.CPU); err != nil {
+			return fmt.Errorf("spec.resources.cpu: %v", err)
+		}
+	}
+	if res.Memory != "" {
+		if _, err := model.ParseMemoryMiB(res.Memory); err != nil {
+			return fmt.Errorf("spec.resources.memory: %v", err)
+		}
+	}
+	if res.MaxCPU != "" {
+		if _, err := model.ParseVCPUs(res.MaxCPU); err != nil {
+			return fmt.Errorf("spec.resources.maxCpu: %v", err)
+		}
+	}
+	if res.MaxMemory != "" {
+		if _, err := model.ParseMemoryMiB(res.MaxMemory); err != nil {
+			return fmt.Errorf("spec.resources.maxMemory: %v", err)
+		}
+	}
+	return nil
+}
+
 func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Request) admission.Decision {
 	var m model.Machine
 	if err := json.Unmarshal(req.Object, &m); err != nil {
@@ -163,6 +236,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	// but that only surfaces as a stuck Machine status, not an
 	// immediate, actionable API error.
 	if err := validateImageSource(m.Spec.Image); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := validateResourceQuantities(m.Spec.Resources); err != nil {
 		return admission.Deny(err.Error())
 	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
@@ -195,6 +271,15 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	}
 	if err := json.Unmarshal(req.Object, &newM); err != nil {
 		return admission.Deny(fmt.Sprintf("decode Machine: %v", err))
+	}
+	// Checked unconditionally, before the MachineCountsTowardQuota
+	// short-circuit below: a malformed resize should be rejected
+	// regardless of whether this Machine happens to count toward a quota
+	// right now, the same way validateMachineCreate's own
+	// validateResourceQuantities call runs before quotas even enter the
+	// picture.
+	if err := validateResourceQuantities(newM.Spec.Resources); err != nil {
+		return admission.Deny(err.Error())
 	}
 	if !MachineCountsTowardQuota(oldM) {
 		return admission.Allow()
@@ -321,6 +406,48 @@ func (c *Controller) validateNetworkSecurityGroup(r *http.Request, req *admissio
 	}
 	if err := model.ValidateVmNetworkPolicy(g.Spec.Policy); err != nil {
 		return admission.Deny(fmt.Sprintf("spec.policy.%v", err))
+	}
+	return admission.Allow()
+}
+
+// validateMachineQuotaObject rejects a MachineQuota whose
+// maxTotalCpu/maxTotalMemory can't be parsed by
+// model.ParseVCPUs/model.ParseMemoryMiB -- named ...Object, not
+// ...MachineQuota, to keep it unambiguously distinct from
+// validateMachine's own MachineQuota-enforcement-against-a-Machine logic
+// above (which validates Machines, not MachineQuota objects themselves,
+// and is registered under the existing "machinequota.kairon.zyvor.dev"
+// ValidatingWebhookConfiguration entry). Until now nothing validated
+// these two fields at write time: BuildQuotaTrackers (quota.go) is the
+// only thing that ever parses them, and it does so for *every*
+// MachineQuota in the cluster on *every* reconcile tick -- so a single
+// malformed value anywhere aborts quota enforcement and Machine
+// scheduling cluster-wide, not just for its own namespace. See
+// validateResourceQuantities's doc comment above for this change's
+// overall scope and honest limits (admission-time prevention only, opt-in,
+// doesn't retroactively fix an already-existing malformed object).
+func (c *Controller) validateMachineQuotaObject(r *http.Request, req *admission.Request) admission.Decision {
+	if req.Resource.Resource != "machinequotas" {
+		return admission.Allow()
+	}
+	switch req.Operation {
+	case admission.OperationCreate, admission.OperationUpdate:
+	default:
+		return admission.Allow()
+	}
+	var q model.MachineQuota
+	if err := json.Unmarshal(req.Object, &q); err != nil {
+		return admission.Deny(fmt.Sprintf("decode MachineQuota: %v", err))
+	}
+	if q.Spec.MaxTotalCPU != "" {
+		if _, err := model.ParseVCPUs(q.Spec.MaxTotalCPU); err != nil {
+			return admission.Deny(fmt.Sprintf("spec.maxTotalCpu: %v", err))
+		}
+	}
+	if q.Spec.MaxTotalMemory != "" {
+		if _, err := model.ParseMemoryMiB(q.Spec.MaxTotalMemory); err != nil {
+			return admission.Deny(fmt.Sprintf("spec.maxTotalMemory: %v", err))
+		}
 	}
 	return admission.Allow()
 }

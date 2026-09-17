@@ -367,7 +367,12 @@ webhook:
   # or port-rule syntax FluxVM's own eBPF dataplane will never accept --
   # see model.ValidateVmNetworkPolicy's doc comment for why that used to
   # be a permanent, silently-retried Error status instead of an immediate
-  # `kubectl apply` rejection. Off by default -- like
+  # `kubectl apply` rejection. Also rejects a Machine/MachineQuota whose
+  # free-form CPU/memory quantity strings (spec.resources.cpu/memory/
+  # maxCpu/maxMemory, spec.maxTotalCpu/maxTotalMemory) aren't valid
+  # quantities at all -- see validateResourceQuantities/
+  # validateMachineQuotaObject in internal/controller/webhook.go. Off by
+  # default -- like
   # migration.tlsSecretName/console.tls.secretName above, this chart does
   # not mint a serving certificate for you; the webhook can't come up
   # without one, so leaving it off is the only safe default.
@@ -384,9 +389,10 @@ webhook:
   caBundle: ""
   port: 8443
   # Fail closes the actual bypass (a webhook outage blocks all Machine/
-  # MachineMigration/MachineNetworkPolicy/NetworkSecurityGroup writes
-  # cluster-wide); Ignore trades that guarantee for availability --
-  # enforcement becomes best-effort, same as before this webhook existed.
+  # MachineMigration/MachineNetworkPolicy/NetworkSecurityGroup/
+  # MachineQuota writes cluster-wide); Ignore trades that guarantee for
+  # availability -- enforcement becomes best-effort, same as before this
+  # webhook existed.
   failurePolicy: Fail
 metrics:
   # Wrap charts/kairon/alerts.yaml as a real PrometheusRule custom resource,

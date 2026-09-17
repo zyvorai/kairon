@@ -120,6 +120,22 @@ Requires an operator-supplied TLS certificate (`webhook.tlsSecretName`,
 `webhook.caBundle`) -- like `migration.tlsSecretName`, this chart doesn't
 mint one for you.
 
+The same webhook also closes a third, syntax-level gap: `Machine`
+`CREATE`/resize `UPDATE` now rejects a `spec.resources.cpu`/`memory`/
+`maxCpu`/`maxMemory` that isn't a valid quantity at all (`"abc"`, `"4x"`) --
+previously that sailed through `kubectl apply` and only ever failed once
+`kairon-controller` tried to actually create the VM, and in the meantime
+counted as a *zero* CPU/memory footprint against every `MachineQuota` in
+its namespace the whole time it sat stuck (see `MachineFootprint`,
+`internal/controller/quota.go`). A `MachineQuota` `CREATE`/`UPDATE` gets
+the same treatment for its own `maxTotalCpu`/`maxTotalMemory` (a new
+`/validate-machinequota` route) -- worth calling out separately, since a
+malformed value here doesn't just break its own namespace: `BuildQuotaTrackers`
+parses every `MachineQuota` in the cluster on every reconcile tick, so one
+bad object anywhere used to abort quota enforcement *and Machine
+scheduling* cluster-wide. See `SECURITY.md`'s "Machine / MachineQuota
+resource-quantity admission" section for the full detail.
+
 ## Real limits today (v1 of this feature)
 
 - Scoped by Kubernetes namespace, not `Machine.spec.tenant` (that field
@@ -135,3 +151,9 @@ mint one for you.
 - CPU/memory quantities use the same fractional-CPU-rounds-up parsing as
   `Machine.spec.resources` (`internal/model.ParseVCPUs`/`ParseMemoryMiB`) --
   a `maxTotalCpu: "4.5"` cap behaves like `5`.
+- The syntax-level checks above are admission-time prevention only, same
+  opt-in gate as everything else on this page: an already-existing
+  malformed `MachineQuota` (created before this existed, or with the
+  webhook disabled) still aborts cluster-wide quota enforcement exactly as
+  before -- containing that blast radius for an object that already
+  slipped through isn't something this v1 does.

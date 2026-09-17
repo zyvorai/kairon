@@ -212,6 +212,90 @@ func TestValidateMachineAllowsCreateWithWellFormedImageSource(t *testing.T) {
 	}
 }
 
+func TestValidateResourceQuantities(t *testing.T) {
+	cases := []struct {
+		name    string
+		res     model.ResourceSpec
+		wantErr bool
+	}{
+		{"empty resources allowed (awaiting instance-type resolution)", model.ResourceSpec{}, false},
+		{"well-formed cpu and memory", model.ResourceSpec{CPU: "2", Memory: "4Gi"}, false},
+		{"well-formed with maxCpu/maxMemory", model.ResourceSpec{CPU: "2", Memory: "4Gi", MaxCPU: "4", MaxMemory: "8Gi"}, false},
+		{"malformed cpu", model.ResourceSpec{CPU: "abc", Memory: "4Gi"}, true},
+		{"malformed memory", model.ResourceSpec{CPU: "2", Memory: "4Xi"}, true},
+		{"malformed maxCpu", model.ResourceSpec{CPU: "2", Memory: "4Gi", MaxCPU: "not-a-number"}, true},
+		{"malformed maxMemory", model.ResourceSpec{CPU: "2", Memory: "4Gi", MaxMemory: "not-a-quantity"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateResourceQuantities(tc.res)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateMachineDeniesCreateWithMalformedCPU(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec:     model.MachineSpec{Resources: model.ResourceSpec{CPU: "abc", Memory: "4Gi"}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected a malformed spec.resources.cpu to be denied")
+	}
+}
+
+func TestValidateMachineDeniesCreateWithMalformedMemory(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec:     model.MachineSpec{Resources: model.ResourceSpec{CPU: "2", Memory: "not-a-quantity"}},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected a malformed spec.resources.memory to be denied")
+	}
+}
+
+// TestValidateMachineAllowsCreateWithEmptyResourcesAwaitingInstanceType
+// confirms validateResourceQuantities' one deliberate exception doesn't
+// regress: a Machine naming spec.instanceTypeName instead of setting
+// spec.resources directly is expected to leave CPU/Memory unset until
+// resolveInstanceTypes (internal/controller/instancetype.go) fills them
+// in from the referenced MachineInstanceType -- this must be allowed
+// through, not treated as "empty means invalid".
+func TestValidateMachineAllowsCreateWithEmptyResourcesAwaitingInstanceType(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	incoming := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"},
+		Spec:     model.MachineSpec{InstanceTypeName: "small"},
+	}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, incoming)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("expected an empty spec.resources awaiting instance-type resolution to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineResizeDeniesMalformedMaxCPU(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	old := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"}}}
+	updated := old
+	updated.Spec.Resources.MaxCPU = "not-a-number"
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, updated, old)
+	d := ctl.validateMachine(r, req)
+	if d.Allowed {
+		t.Fatal("expected a resize introducing a malformed spec.resources.maxCpu to be denied")
+	}
+}
+
 func TestValidateMachineAllowsCreateWithNoQuotasConfigured(t *testing.T) {
 	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
 	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}})
@@ -405,6 +489,59 @@ func TestValidateNetworkSecurityGroupDeniesZeroMaxEgressMbps(t *testing.T) {
 	r, req := admissionReq(t, "networksecuritygroups", "prod", admission.OperationCreate, g)
 	if d := ctl.validateNetworkSecurityGroup(r, req); d.Allowed {
 		t.Fatal("expected an explicit maxEgressMbps: 0 to be denied")
+	}
+}
+
+func TestValidateMachineQuotaObjectIgnoresNonMatchingResourcesAndOperations(t *testing.T) {
+	ctl := &Controller{}
+	r, req := admissionReq(t, "machines", "prod", admission.OperationCreate, model.MachineQuota{})
+	if d := ctl.validateMachineQuotaObject(r, req); !d.Allowed {
+		t.Fatalf("expected non-matching resource to be ignored, got denied: %s", d.Reason)
+	}
+	r, req = admissionReq(t, "machinequotas", "prod", "DELETE", model.MachineQuota{})
+	if d := ctl.validateMachineQuotaObject(r, req); !d.Allowed {
+		t.Fatalf("expected DELETE to be ignored, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineQuotaObjectAllowsWellFormedQuota(t *testing.T) {
+	ctl := &Controller{}
+	q := model.MachineQuota{
+		Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"},
+		Spec:     model.MachineQuotaSpec{MaxMachines: intPtr(10), MaxTotalCPU: "16", MaxTotalMemory: "64Gi"},
+	}
+	for _, op := range []string{admission.OperationCreate, admission.OperationUpdate} {
+		r, req := admissionReq(t, "machinequotas", "prod", op, q)
+		if d := ctl.validateMachineQuotaObject(r, req); !d.Allowed {
+			t.Fatalf("%s: expected a well-formed MachineQuota to be allowed, got denied: %s", op, d.Reason)
+		}
+	}
+}
+
+func TestValidateMachineQuotaObjectAllowsUnsetLimits(t *testing.T) {
+	ctl := &Controller{}
+	q := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxMachines: intPtr(10)}}
+	r, req := admissionReq(t, "machinequotas", "prod", admission.OperationCreate, q)
+	if d := ctl.validateMachineQuotaObject(r, req); !d.Allowed {
+		t.Fatalf("expected unset maxTotalCpu/maxTotalMemory (unlimited) to be allowed, got denied: %s", d.Reason)
+	}
+}
+
+func TestValidateMachineQuotaObjectDeniesMalformedMaxTotalCPU(t *testing.T) {
+	ctl := &Controller{}
+	q := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "not-a-number"}}
+	r, req := admissionReq(t, "machinequotas", "prod", admission.OperationCreate, q)
+	if d := ctl.validateMachineQuotaObject(r, req); d.Allowed {
+		t.Fatal("expected a malformed maxTotalCpu to be denied")
+	}
+}
+
+func TestValidateMachineQuotaObjectDeniesMalformedMaxTotalMemoryOnUpdate(t *testing.T) {
+	ctl := &Controller{}
+	q := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalMemory: "not-a-quantity"}}
+	r, req := admissionReq(t, "machinequotas", "prod", admission.OperationUpdate, q)
+	if d := ctl.validateMachineQuotaObject(r, req); d.Allowed {
+		t.Fatal("expected a malformed maxTotalMemory to be denied on UPDATE too")
 	}
 }
 
@@ -620,5 +757,54 @@ func TestWebhookHandlerNetworkPolicyRoutesEndToEnd(t *testing.T) {
 	}
 	if out := post(t, "/validate-networksecuritygroup", "networksecuritygroups", okGroup); !out.Response.Allowed {
 		t.Fatalf("expected /validate-networksecuritygroup to allow a well-formed group, got denied: %+v", out.Response.Status)
+	}
+}
+
+// TestWebhookHandlerMachineQuotaRouteEndToEnd exercises
+// /validate-machinequota through the real AdmissionReview HTTP envelope --
+// confirms WebhookHandler actually wires this route to
+// validateMachineQuotaObject (already covered in isolation above), and
+// that it's reachable independently of the pre-existing /validate-machine
+// route also named after MachineQuota enforcement.
+func TestWebhookHandlerMachineQuotaRouteEndToEnd(t *testing.T) {
+	ctl := &Controller{}
+	h := ctl.WebhookHandler()
+
+	post := func(t *testing.T, obj any) *admission.Review {
+		t.Helper()
+		raw, _ := json.Marshal(obj)
+		review := admission.Review{
+			APIVersion: admission.APIVersion,
+			Kind:       "AdmissionReview",
+			Request: &admission.Request{
+				UID:       "quota-1",
+				Resource:  admission.GroupVersionResource{Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: "machinequotas"},
+				Namespace: "prod",
+				Operation: admission.OperationCreate,
+				Object:    raw,
+			},
+		}
+		body, _ := json.Marshal(review)
+		httpReq := httptest.NewRequest(http.MethodPost, "/validate-machinequota", bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httpReq)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("POST /validate-machinequota: got %d", rr.Code)
+		}
+		var out admission.Review
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return &out
+	}
+
+	bad := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "not-a-number"}}
+	if out := post(t, bad); out.Response.Allowed {
+		t.Fatal("expected /validate-machinequota to deny a malformed maxTotalCpu")
+	}
+
+	good := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "16"}}
+	if out := post(t, good); !out.Response.Allowed {
+		t.Fatalf("expected /validate-machinequota to allow a well-formed maxTotalCpu, got denied: %+v", out.Response.Status)
 	}
 }
