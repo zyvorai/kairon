@@ -62,6 +62,24 @@ series -- for historical graphs, use `kairon_reconcile_duration_seconds`-
 style Prometheus metrics or your own external monitoring against the
 guest itself, not this field.
 
+`kaironctl top machines`/`kaironctl top nodes` gives the same data a
+`kubectl top`-style terminal view instead of reading it off individual
+Machine objects one at a time: `top machines` prints every Machine's own
+`status.resourceUsage` row (`--selector k=v`, repeatable, narrows which
+ones count, exactly like `kaironctl get`'s own `--selector`); `top nodes`
+rolls those same per-Machine samples up by `spec.nodeName`
+(`model.AggregateUsageByNode`, `internal/model/usage.go`) into a
+per-host CPU%/memory/Machine-count total -- the fleet-wide hotspot view
+`kaironctl get machines` alone can't answer without an operator manually
+grouping and summing rows. Deliberately no new metrics pipeline: both
+verbs just render data every Machine already reports. `top nodes` is
+cluster-wide by construction (`-n`/`--namespace` has no effect, the same
+"unused for a cluster-scoped kind" precedent `kaironctl get nodes`
+already sets); `top machines` defaults to `-n`/`--namespace` like `get
+machines` does. The dashboard's **Nodes** page shows the identical
+per-node rollup in its Machines/CPU/Memory columns, via the same
+`model.AggregateUsageByNode` call behind `GET /api/v1/nodes/usage`.
+
 ## Why this exists
 
 Every Machine here runs as a bare process on the host, not inside a Pod --

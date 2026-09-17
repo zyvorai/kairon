@@ -126,6 +126,7 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 - **Halt** (`spec.powerState: Halted`) — power a Machine's VMM process off while FluxVM keeps its own VM record/disk intact, freeing node capacity like `Stopped` but resuming via FluxVM's own kept config instead of a full Kairon-side recreate — `kaironctl halt`, or the dashboard — [guide](docs/guides/machine-halt.md)
 - **Live host resource limits** (`spec.resources.limits`) — a real, kernel-enforced cgroup v2 cap (CPU quota %, memory ceiling, I/O weight, PID count) on a running Machine's own VMM process, freely raisable/lowerable at any time, backend-agnostic — [guide](docs/guides/machine-resource-limits.md)
 - **Live resource usage** (`status.resourceUsage`) — real, cgroup-derived CPU/memory/disk-I/O usage refreshed every reconcile tick, shown inline in the dashboard next to each Machine — [guide](docs/guides/machine-resource-limits.md)
+- **`kaironctl top machines`/`top nodes`** — a `kubectl top`-style live usage view over that same `status.resourceUsage` data, no new metrics pipeline: `top machines` prints each Machine's own CPU%/memory/disk-I/O, `top nodes` rolls those same per-Machine samples up by `spec.nodeName` (`model.AggregateUsageByNode`) into a per-host hotspot view `kaironctl get machines` alone can't answer without manually grouping rows. The same rollup backs the dashboard's **Nodes** page (`GET /api/v1/nodes/usage`) below — [guide](docs/guides/machine-resource-limits.md)
 - **Guest agent** (`spec.guestAgent`) — real `qemu-guest-agent`-reported `status.guestIP`, including for `user`/SLIRP networking, which has no DHCP lease to parse at all — [guide](docs/guides/machine-guest-agent.md)
 - **Guest exec** (`spec.guestAgent.enabled`, admin-only) — run a one-shot command inside the guest via `kairon-ui`'s dashboard, no SSH/console needed — real `qemu-guest-agent` guest-exec, synchronous, exit code + stdout/stderr — [guide](docs/guides/machine-guest-exec.md)
 - **Text console** (`spec.guestAgent.console`) — an interactive shell in-browser (xterm.js), Kairon's `virtctl console` equivalent, working on every backend — requires FluxVM's own proprietary `fluxvm-guest-agent` baked into the guest image — [guide](docs/guides/machine-text-console.md)
@@ -240,7 +241,7 @@ It reuses the exact decision functions the reconcile loop and `kaironctl evacuat
 | **Machines** | Table + create form (mirrors `kaironctl create`) + Start / Stop / Console / Migrate / Snapshot / Delete |
 | **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, a "Cancel migration" action while `Starting`/`Running`, and the recovery workflow above |
 | **Snapshots** | List + create form |
-| **Nodes** | Real Kubernetes `Node` list -- `Ready` condition, `spec.unschedulable`, taints, addresses; read-only, same scope as `kaironctl get nodes` |
+| **Nodes** | Real Kubernetes `Node` list -- `Ready` condition, `spec.unschedulable`, taints, addresses, plus a per-node Machines/CPU/Memory usage rollup (`GET /api/v1/nodes/usage`, the same `model.AggregateUsageByNode` rollup `kaironctl top nodes` prints); read-only, same scope as `kaironctl get nodes`/`kaironctl top nodes` |
 | **Account** | Change your own password; an admin account can reset another operator's |
 
 ```bash
@@ -358,6 +359,7 @@ kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASO
 kaironctl cancel-migration MIGRATION  # only while phase is Starting/Running (before the destination commits)
 kaironctl fence MACHINE --reason REASON  # only once NodeUnreachable=True and you've confirmed the node is truly gone
 kaironctl trigger snapshotschedule NAME  # requests an immediate run, bypassing spec.suspend/startingDeadlineSeconds
+kaironctl top [machines|nodes] [--selector k=v]  # kubectl-top-style live cgroup-derived usage; "top nodes" rolls Machines up per Spec.NodeName
 kaironctl version
 ```
 
