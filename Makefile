@@ -9,8 +9,8 @@ VERSION ?= $(shell cat VERSION)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 COVERAGE_THRESHOLD ?= 50
 
-.PHONY: all fmt fmt-check vet lint test test-race cover cover-check build clean validate docker-build smoke
-all: fmt-check vet lint test-race cover-check build validate smoke
+.PHONY: all fmt fmt-check vet lint test test-race cover cover-check build clean validate rbac-coverage helm-check docker-build smoke
+all: fmt-check vet lint test-race cover-check build validate rbac-coverage helm-check smoke
 
 fmt:
 	gofmt -w $$(find cmd internal -name '*.go' -type f)
@@ -60,6 +60,12 @@ smoke: build
 
 validate:
 	python3 scripts/validate.py
+
+rbac-coverage:
+	python3 scripts/check_rbac_coverage.py
+
+helm-check:
+	helm lint charts/kairon
 
 docker-build:
 	docker build --target controller -t $(IMAGE)-controller:$(TAG) .
