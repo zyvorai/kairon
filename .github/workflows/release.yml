@@ -57,7 +57,7 @@ jobs:
             ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}
             ghcr.io/zyvorai/kairon-${{ matrix.target }}:latest
       - name: Scan ${{ matrix.target }} image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}
           severity: HIGH,CRITICAL
