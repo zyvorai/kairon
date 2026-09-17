@@ -448,6 +448,114 @@ func TestChooseNamesInsufficientPinnableCPUs(t *testing.T) {
 	}
 }
 
+func TestChooseNoScheduleTaintExcludesUntoleratedMachine(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	tainted := node("tainted", true, true)
+	tainted.Spec.Taints = []model.Taint{{Key: "dedicated", Value: "gpu", Effect: model.TaintEffectNoSchedule}}
+	clean := node("clean", true, true)
+
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
+	got, err := s.Choose(m, []model.Node{tainted, clean}, nil, map[string]int{}, "")
+	if err != nil || got != "clean" {
+		t.Fatalf("expected the untainted node, got %q err=%v", got, err)
+	}
+
+	// Alone, the tainted node is entirely unschedulable for a Machine with no toleration.
+	_, err = s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	if err == nil || !strings.Contains(err.Error(), "untolerated NoSchedule taint dedicated=gpu") {
+		t.Fatalf("expected an error naming the untolerated taint, got %v", err)
+	}
+}
+
+func TestChooseNoExecuteTaintExcludesUntoleratedMachine(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	tainted := node("tainted", true, true)
+	tainted.Spec.Taints = []model.Taint{{Key: "node.kubernetes.io/unreachable", Effect: model.TaintEffectNoExecute}}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
+	if _, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, ""); err == nil {
+		t.Fatal("expected a NoExecute taint to exclude the node same as NoSchedule")
+	}
+}
+
+func TestChooseEqualTolerationAdmitsMatchingTaint(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	tainted := node("tainted", true, true)
+	tainted.Spec.Taints = []model.Taint{{Key: "dedicated", Value: "gpu", Effect: model.TaintEffectNoSchedule}}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "gpu-job"},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{Tolerations: []model.Toleration{
+			{Key: "dedicated", Operator: model.TolerationOpEqual, Value: "gpu", Effect: model.TaintEffectNoSchedule},
+		}}},
+	}
+	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	if err != nil || got != "tainted" {
+		t.Fatalf("expected the toleration to admit the tainted node, got %q err=%v", got, err)
+	}
+
+	// A different value doesn't match Equal.
+	wrongValue := model.Machine{
+		Metadata: model.ObjectMeta{Name: "gpu-job"},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{Tolerations: []model.Toleration{
+			{Key: "dedicated", Operator: model.TolerationOpEqual, Value: "tpu"},
+		}}},
+	}
+	if _, err := s.Choose(wrongValue, []model.Node{tainted}, nil, map[string]int{}, ""); err == nil {
+		t.Fatal("expected a mismatched toleration value to still exclude the node")
+	}
+}
+
+func TestChooseExistsTolerationIgnoresValue(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	tainted := node("tainted", true, true)
+	tainted.Spec.Taints = []model.Taint{{Key: "dedicated", Value: "gpu", Effect: model.TaintEffectNoSchedule}}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "job"},
+		Spec: model.MachineSpec{Placement: model.PlacementSpec{Tolerations: []model.Toleration{
+			{Key: "dedicated", Operator: model.TolerationOpExists},
+		}}},
+	}
+	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	if err != nil || got != "tainted" {
+		t.Fatalf("expected Exists to tolerate regardless of value, got %q err=%v", got, err)
+	}
+}
+
+func TestChooseEmptyKeyExistsTolerationsToleratesEverything(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	tainted := node("tainted", true, true)
+	tainted.Spec.Taints = []model.Taint{
+		{Key: "dedicated", Value: "gpu", Effect: model.TaintEffectNoSchedule},
+		{Key: "node.kubernetes.io/unreachable", Effect: model.TaintEffectNoExecute},
+	}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "job"},
+		Spec:     model.MachineSpec{Placement: model.PlacementSpec{Tolerations: []model.Toleration{{Operator: model.TolerationOpExists}}}},
+	}
+	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	if err != nil || got != "tainted" {
+		t.Fatalf("expected the wildcard toleration to admit every taint, got %q err=%v", got, err)
+	}
+}
+
+func TestChoosePreferNoScheduleOnlyPenalizesScoreNeverExcludes(t *testing.T) {
+	s := Scheduler{RequireCapableLabel: true}
+	preferAvoid := node("preferAvoid", true, true)
+	preferAvoid.Spec.Taints = []model.Taint{{Key: "maintenance", Effect: model.TaintEffectPreferNoSchedule}}
+	clean := node("clean", true, true)
+
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
+	got, err := s.Choose(m, []model.Node{preferAvoid, clean}, nil, map[string]int{}, "")
+	if err != nil || got != "clean" {
+		t.Fatalf("expected PreferNoSchedule to steer toward the clean node, got %q err=%v", got, err)
+	}
+
+	// Alone, a PreferNoSchedule taint never makes the node ineligible.
+	got, err = s.Choose(m, []model.Node{preferAvoid}, nil, map[string]int{}, "")
+	if err != nil || got != "preferAvoid" {
+		t.Fatalf("expected a PreferNoSchedule-only node to still be schedulable, got %q err=%v", got, err)
+	}
+}
+
 func namedMachine(name string, priority int32) model.Machine {
 	return model.Machine{
 		Metadata: model.ObjectMeta{Name: name, Namespace: "default"},

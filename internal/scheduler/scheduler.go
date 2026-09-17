@@ -19,6 +19,16 @@ import (
 // signal, not something an operator tunes per-Machine.
 const draPreferenceWeight = 5
 
+// preferNoScheduleTaintPenalty is the fixed per-untolerated-taint score
+// penalty a node accrues for each PreferNoSchedule taint it carries that
+// none of the Machine's Tolerations cover -- deliberately fixed, not
+// per-taint-configurable, mirroring how real Kubernetes' TaintToleration
+// scoring plugin also applies one uniform weight regardless of which taint
+// it is (there's no per-taint "how much do I dislike this" knob upstream
+// either). Same order of magnitude as draPreferenceWeight so neither
+// signal trivially drowns out the other by default.
+const preferNoScheduleTaintPenalty = 5
+
 type Scheduler struct {
 	RequireCapableLabel bool
 }
@@ -103,6 +113,11 @@ func (s Scheduler) score(m model.Machine, n model.Node, nodes []model.Node, mach
 	}
 	for _, c := range m.Spec.Placement.TopologySpreadConstraints {
 		sc -= topologySpreadPenalty(m, n, nodes, machines, c)
+	}
+	for _, taint := range n.Spec.Taints {
+		if taint.Effect == model.TaintEffectPreferNoSchedule && !toleratesTaint(m.Spec.Placement.Tolerations, taint) {
+			sc -= preferNoScheduleTaintPenalty
+		}
 	}
 	if draPreferredNode != "" && n.Metadata.Name == draPreferredNode {
 		sc += draPreferenceWeight
@@ -284,6 +299,14 @@ func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, m
 			return false, "a required anti-affinity term is violated"
 		}
 	}
+	for _, taint := range n.Spec.Taints {
+		if taint.Effect != model.TaintEffectNoSchedule && taint.Effect != model.TaintEffectNoExecute {
+			continue // PreferNoSchedule is soft -- see score's own penalty, not a hard filter
+		}
+		if !toleratesTaint(m.Spec.Placement.Tolerations, taint) {
+			return false, fmt.Sprintf("untolerated %s taint %s", taint.Effect, taintKV(taint))
+		}
+	}
 	if m.Spec.Resources.CPUPinning {
 		requested, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 		if err != nil {
@@ -396,6 +419,56 @@ func termSatisfied(m model.Machine, n model.Node, nodes []model.Node, machines [
 		}
 	}
 	return false
+}
+
+// toleratesTaint reports whether at least one of tolerations covers taint,
+// mirroring Kubernetes' own core/v1.Toleration.ToleratesTaint matching:
+// Key must match (or be empty, which matches any key -- the "tolerate
+// everything with this operator/effect" wildcard form), and Effect must
+// match if the toleration sets one (empty tolerates every effect).
+// Operator "Exists" then ignores Value entirely, while "Equal" (the
+// default when Operator is empty) additionally requires Value to match.
+// An empty Key paired with "Equal" is real Kubernetes' own invalid
+// combination (upstream's admission validation requires Operator
+// "Exists" whenever Key is empty) -- with no equivalent field validation
+// here, it's simplest and safest to treat that combination as matching
+// nothing rather than guessing whether the author meant "Exists" or typed
+// an empty key by mistake, the same fail-closed posture an unrecognized
+// Operator value gets below.
+func toleratesTaint(tolerations []model.Toleration, taint model.Taint) bool {
+	for _, t := range tolerations {
+		if t.Key != "" && t.Key != taint.Key {
+			continue
+		}
+		if t.Effect != "" && t.Effect != taint.Effect {
+			continue
+		}
+		switch t.Operator {
+		case "", model.TolerationOpEqual:
+			if t.Key == "" {
+				continue // empty key requires Operator Exists upstream too; "Equal" with no key never matches
+			}
+			if t.Value != taint.Value {
+				continue
+			}
+		case model.TolerationOpExists:
+			// Value ignored -- Key/Effect match (already checked) is enough.
+		default:
+			continue // unrecognized operator: fail closed, tolerates nothing
+		}
+		return true
+	}
+	return false
+}
+
+// taintKV renders a Taint as key=value (or bare key when Value is empty)
+// for eligible's own excluded-node reason strings -- same "name exactly
+// what blocked it" purpose eligible's other reasons already serve.
+func taintKV(t model.Taint) string {
+	if t.Value == "" {
+		return t.Key
+	}
+	return t.Key + "=" + t.Value
 }
 
 func nodeLabelValue(nodes []model.Node, nodeName, key string) (string, bool) {

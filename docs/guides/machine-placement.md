@@ -14,6 +14,7 @@ real limits are.
 | `preferredAffinity` | Weighted preference to co-locate with a matching Machine | Soft |
 | `preferredAntiAffinity` | Weighted preference to separate from a matching Machine | Soft |
 | `topologySpreadConstraints` | Weighted preference to spread matching Machines evenly across a topology label's domains; hard-caps skew too if `whenUnsatisfiable: DoNotSchedule` | Soft, or hard per-constraint |
+| `tolerations` | Lets this Machine schedule onto a node carrying a matching `Taint` it would otherwise be excluded from (`NoSchedule`/`NoExecute`), or avoid the score penalty for one it would otherwise (`PreferNoSchedule`) | Hard for `NoSchedule`/`NoExecute`, soft for `PreferNoSchedule` |
 
 The first four fields are always-hard filters evaluated at scheduling time
 by `internal/scheduler`'s `eligible` check: a node failing one is never a
@@ -21,9 +22,13 @@ candidate at all. `preferredAffinity`/`preferredAntiAffinity` never reject
 a node -- they only influence which *eligible* node wins, via a real
 weighted scoring pass (`internal/scheduler.score`).
 `topologySpreadConstraints` is scored the same way regardless, but each
-constraint can *also* hard-filter (see below) if you ask it to. None of
-these fields influence an already-scheduled Machine (`spec.nodeName` is
-set once, at scheduling time, same as `spec.image`/`spec.resources`).
+constraint can *also* hard-filter (see below) if you ask it to.
+`tolerations` doesn't filter or score anything by itself -- it only ever
+cancels out a *node's own* taint (see below), the opposite direction from
+every other field in this table, which all filter/score based on the
+Machine's own placement preferences. None of these fields influence an
+already-scheduled Machine (`spec.nodeName` is set once, at scheduling
+time, same as `spec.image`/`spec.resources`).
 
 When every node is filtered out, the resulting error names which
 constraint(s) actually did it -- aggregated per distinct reason across
@@ -140,6 +145,69 @@ general fail-closed posture elsewhere. A real Kubernetes cluster's API
 server would reject `maxSkew: 0` outright as invalid; Kairon has no
 equivalent admission-time field validation to hook a rejection into, so
 if you meant to write a positive number, write one.
+
+## Taints and tolerations
+
+```yaml
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: gpu-job
+spec:
+  placement:
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: gpu
+        effect: NoSchedule
+```
+
+A `Node` here is the real Kubernetes `Node` object `kairon-controller`
+already lists every reconcile tick -- `internal/scheduler` now also reads
+its `spec.taints` (previously decoded by nothing in this project at all)
+the same way a real `kube-scheduler` does. Kairon itself never sets a
+taint; this is entirely about respecting whatever's already on the node --
+a manual `kubectl taint`, a cloud provider's spot-instance taint, a
+`node.kubernetes.io/unreachable` taint from a lost kubelet, or anything
+else already there before Kairon looked.
+
+- **`NoSchedule`/`NoExecute`** taints are a hard filter, same enforcement
+  point as `architecture`/`nodeSelector`/`affinity`: a node carrying one
+  is never a candidate for a Machine that doesn't tolerate it. When every
+  node is filtered out, the aggregated error names it exactly like any
+  other blocking reason, e.g. `1 node(s): untolerated NoSchedule taint
+  dedicated=gpu`.
+- **`PreferNoSchedule`** taints are soft, same enforcement point as
+  `preferredAffinity`: an untolerated one only subtracts a fixed penalty
+  from the node's score (`internal/scheduler`'s
+  `preferNoScheduleTaintPenalty`, comparable in size to the DRA-preference
+  bonus) -- it never removes the node from candidacy.
+- A `Toleration` matches a `Taint` the same way Kubernetes' own
+  `Toleration.ToleratesTaint` does: `key` must match (or be empty, which
+  matches any key), `effect` must match if set (empty tolerates every
+  effect for that key), and `operator: Equal` (the default when omitted)
+  additionally requires `value` to match while `operator: Exists` ignores
+  `value` entirely. An empty `key` with `operator: Exists` is Kubernetes'
+  own "tolerate everything" wildcard toleration -- schedules onto any
+  node regardless of what's tainted there.
+- A Machine with no `tolerations` set schedules identically to before this
+  field existed on an untainted fleet: nothing here changes what happens
+  when `spec.taints` is empty on every node.
+
+**Real limits today**: an untolerated `NoExecute` taint only ever blocks
+*new* scheduling -- unlike real Kubernetes, Kairon has no eviction pass
+that migrates or deletes an *already-running* Machine off a node that
+becomes `NoExecute`-tainted after that Machine landed there (no
+`tolerationSeconds` countdown either, since there's nothing to time out).
+If you need a currently-running Machine off a freshly-tainted node,
+`kaironctl evacuate NODE` (or cordoning the node, if `CordonEvacuation` is
+enabled -- see `docs/guides/machine-disruption-budgets.md`) still works;
+a taint alone doesn't trigger it automatically the way a cordon can.
+Kairon also has no admission-time validation of `operator`/`effect`
+values (same real limit `maxSkew`'s own section above already documents
+for this project's placement fields generally) -- an unrecognized
+`operator` fails closed, matching nothing, rather than being silently
+treated as `Equal` or `Exists`.
 
 ## Scheduling priority
 

@@ -339,6 +339,21 @@ spec:
                         whenUnsatisfiable:
                           type: string
                           enum: ["DoNotSchedule", "ScheduleAnyway"]
+                  tolerations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                        operator:
+                          type: string
+                          enum: ["Equal", "Exists"]
+                        value:
+                          type: string
+                        effect:
+                          type: string
+                          enum: ["NoSchedule", "PreferNoSchedule", "NoExecute"]
               security:
                 type: object
                 description: secureBoot/tpm are refused at creation time

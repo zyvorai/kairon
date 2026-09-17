@@ -454,6 +454,14 @@ type PlacementSpec struct {
 	// spec scheduling identically to before this field existed: scoring
 	// only, never a hard rejection.
 	TopologySpreadConstraints []TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+	// Tolerations lets this Machine schedule onto a node despite a
+	// matching Node.spec.taint -- see internal/scheduler.eligible/score
+	// and Taint's own doc comment. A Machine with no Tolerations set
+	// schedules identically to before this field existed: every tainted
+	// node is either already excluded (NoSchedule/NoExecute) or already
+	// penalized (PreferNoSchedule) regardless, so an empty Tolerations
+	// list changes nothing about a fleet running on untainted nodes.
+	Tolerations []Toleration `json:"tolerations,omitempty"`
 }
 
 // MachineAffinityTerm is satisfied when at least one (Affinity) / no
@@ -496,6 +504,33 @@ type TopologySpreadConstraint struct {
 	// ever influences scoring.
 	WhenUnsatisfiable string `json:"whenUnsatisfiable,omitempty"`
 }
+
+// Toleration mirrors the real Kubernetes core/v1.Toleration shape closely
+// enough to be immediately familiar, same reasoning MachineAffinityTerm's
+// own doc comment gives for its Pod-affinity-term shape. See
+// internal/scheduler.toleratesTaint for exact matching semantics
+// (mirroring Kubernetes' own Toleration.ToleratesTaint):
+//
+//   - Operator "Equal" (the default when empty, same as Kubernetes) requires
+//     Key and Value to both match the taint exactly.
+//   - Operator "Exists" matches any taint with the given Key (Value is
+//     ignored) -- an empty Key with Operator "Exists" tolerates every taint,
+//     regardless of key, value, or effect (Kubernetes' own "tolerate
+//     everything" wildcard toleration shape).
+//   - Effect, if set, additionally restricts which taint effect this
+//     toleration applies to; empty Effect tolerates a matching Key/Value
+//     under any effect.
+type Toleration struct {
+	Key      string `json:"key,omitempty"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
+}
+
+const (
+	TolerationOpEqual  = "Equal"
+	TolerationOpExists = "Exists"
+)
 
 const (
 	WhenUnsatisfiableDoNotSchedule  = "DoNotSchedule"
@@ -876,12 +911,37 @@ type Node struct {
 	Metadata ObjectMeta `json:"metadata"`
 	Spec     struct {
 		Unschedulable bool `json:"unschedulable,omitempty"`
+		// Taints is the real Kubernetes Node.spec.taints -- decoded here
+		// (previously ignored entirely by this hand-rolled struct) so
+		// internal/scheduler can honor them the same way a real
+		// kube-scheduler does: a NoSchedule/NoExecute taint the Machine
+		// doesn't tolerate makes the node ineligible; PreferNoSchedule only
+		// penalizes its score. See PlacementSpec.Tolerations.
+		Taints []Taint `json:"taints,omitempty"`
 	} `json:"spec"`
 	Status struct {
 		Conditions []NodeCondition `json:"conditions,omitempty"`
 		Addresses  []NodeAddress   `json:"addresses,omitempty"`
 	} `json:"status"`
 }
+
+// Taint mirrors the real Kubernetes core/v1.Taint wire shape exactly (Key,
+// Value, Effect) -- Kairon doesn't set these itself (nothing here calls
+// `kaironctl taint` or similar; a real Kubernetes Node object may already
+// carry taints an operator or another controller/cloud-provider set, e.g.
+// `node.kubernetes.io/unschedulable`, a spot-instance taint, or a manual
+// `kubectl taint`), it only reads and respects whatever's already there.
+type Taint struct {
+	Key    string `json:"key"`
+	Value  string `json:"value,omitempty"`
+	Effect string `json:"effect"`
+}
+
+const (
+	TaintEffectNoSchedule       = "NoSchedule"
+	TaintEffectPreferNoSchedule = "PreferNoSchedule"
+	TaintEffectNoExecute        = "NoExecute"
+)
 
 type NodeAddress struct {
 	Type    string `json:"type"`
