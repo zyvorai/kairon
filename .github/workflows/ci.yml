@@ -153,6 +153,8 @@ jobs:
               assert 'cilium.io' not in rule.get('apiGroups', []), rule
           print('helm render YAML: OK (cilium flags default off)')
           PY
+
+  web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
