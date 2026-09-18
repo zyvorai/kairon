@@ -1,74 +1,87 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Kairon — Kubernetes-native VMs without KubeVirt">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="Kairon — Real VMs on Kubernetes without KubeVirt">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#0b0b0d"/>
-      <stop offset="1" stop-color="#151517"/>
+      <stop offset="0" stop-color="#070708"/>
+      <stop offset="0.55" stop-color="#0e0e10"/>
+      <stop offset="1" stop-color="#16141a"/>
     </linearGradient>
     <linearGradient id="mark" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff6a2a"/>
+      <stop offset="1" stop-color="#ff5a15"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="200" cy="200" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff5a15" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ff5a15" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hair" x1="96" y1="0" x2="560" y2="0" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#ff5a15"/>
-      <stop offset="1" stop-color="#cc420a"/>
+      <stop offset="1" stop-color="#ff5a15" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
   <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
 
-  <!-- brand mark (unchanged: the actual product logo, reused identically as the favicon) -->
-  <rect x="96" y="88" width="112" height="112" rx="26" fill="url(#mark)"/>
-  <path d="M128 112 182 112 128 178 182 178" fill="none" stroke="#ffffff"
-        stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- faint grid -->
+  <g stroke="#ffffff" stroke-opacity="0.035" stroke-width="1">
+    <path d="M0 160 H1280 M0 320 H1280 M0 480 H1280"/>
+    <path d="M320 0 V640 M640 0 V640 M960 0 V640"/>
+  </g>
+
+  <!-- brand mark -->
+  <rect x="96" y="112" width="104" height="104" rx="24" fill="url(#mark)"/>
+  <path d="M126 136 176 136 126 196 176 196" fill="none" stroke="#ffffff"
+        stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- wordmark -->
-  <text x="94" y="306" font-family="'SF Pro Display','Helvetica Neue',Arial,sans-serif"
-        font-size="92" font-weight="700" fill="#f5f5f5">Kairon</text>
+  <text x="96" y="318" font-family="'SF Pro Display','Helvetica Neue',Arial,sans-serif"
+        font-size="108" font-weight="700" fill="#f7f7f8" letter-spacing="-2">Kairon</text>
+
+  <rect x="96" y="342" width="220" height="3" fill="url(#hair)"/>
 
   <!-- tagline -->
-  <text x="96" y="358" font-family="'SF Pro Text','Helvetica Neue',Arial,sans-serif"
-        font-size="27" font-weight="400" fill="#b8b8bc">Kubernetes-native VMs — without KubeVirt,</text>
   <text x="96" y="392" font-family="'SF Pro Text','Helvetica Neue',Arial,sans-serif"
-        font-size="27" font-weight="400" fill="#b8b8bc">without libvirt, without a virt-launcher Pod.</text>
+        font-size="28" font-weight="400" fill="#c4c4c8">Real VMs on Kubernetes — without KubeVirt</text>
 
-  <!-- chips: two rows, refreshed to what's actually shipped -->
-  <g font-family="'SF Mono','Menlo',monospace" font-size="21" font-weight="600" fill="#e8e8ea">
-    <rect x="96" y="440" width="336" height="50" rx="25" fill="#1f1f22" stroke="#33333a"/>
-    <text x="126" y="472">No virt-launcher Pod</text>
+  <!-- chips: one row -->
+  <g font-family="'SF Mono','Menlo',monospace" font-size="18" font-weight="600" fill="#ececee">
+    <rect x="96" y="448" width="228" height="44" rx="22" fill="#1a1a1e" stroke="#2e2e34"/>
+    <text x="120" y="476">No virt-launcher</text>
 
-    <rect x="448" y="440" width="216" height="50" rx="25" fill="#1f1f22" stroke="#33333a"/>
-    <text x="478" y="472">Go stdlib only</text>
+    <rect x="340" y="448" width="168" height="44" rx="22" fill="#1a1a1e" stroke="#2e2e34"/>
+    <text x="364" y="476">Go stdlib</text>
 
-    <rect x="96" y="506" width="196" height="50" rx="25" fill="#1f1f22" stroke="#33333a"/>
-    <text x="126" y="538">Live migrate</text>
+    <rect x="524" y="448" width="168" height="44" rx="22" fill="#1a1a1e" stroke="#2e2e34"/>
+    <text x="548" y="476">Live migrate</text>
 
-    <rect x="308" y="506" width="288" height="50" rx="25" fill="#1f1f22" stroke="#33333a"/>
-    <text x="338" y="538">Admission webhooks</text>
+    <rect x="708" y="448" width="196" height="44" rx="22" fill="#1a1a1e" stroke="#2e2e34"/>
+    <text x="732" y="476">NeedsRecovery</text>
   </g>
 
-  <!-- license / package footnote, small, under the chips -->
-  <text x="96" y="596" font-family="'SF Mono','Menlo',monospace" font-size="17" fill="#6c6c72">Apache-2.0 · Helm chart</text>
+  <text x="96" y="560" font-family="'SF Mono','Menlo',monospace" font-size="16" fill="#6a6a70">Apache-2.0 · FluxVM · KVM</text>
 
-  <!-- architecture motif: Kubernetes API branching to kairon-controller / kairon-node,
-       a small abstracted echo of the real diagram in ARCHITECTURE.md -->
-  <g stroke="#5c3520" stroke-width="2" fill="none">
-    <path d="M965 196 965 234"/>
-    <path d="M865 234 1065 234"/>
-    <path d="M865 234 865 264"/>
-    <path d="M1065 234 1065 264"/>
-  </g>
+  <!-- architecture motif -->
   <g>
-    <rect x="825" y="126" width="280" height="70" rx="12" fill="#1a1a1d" stroke="#33333a"/>
-    <text x="965" y="156" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="15" font-weight="600" fill="#d8d8dc">Kubernetes API</text>
-    <text x="965" y="178" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="12" fill="#7a7a80">Machine · MachineMigration</text>
+    <rect x="860" y="120" width="300" height="72" rx="14" fill="#141416" stroke="#33333a"/>
+    <text x="1010" y="152" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="15" font-weight="600" fill="#e0e0e4">Kubernetes API</text>
+    <text x="1010" y="174" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="12" fill="#7a7a80">Machine · Migration · Snapshot</text>
 
-    <rect x="780" y="264" width="170" height="58" rx="10" fill="#1a1a1d" stroke="#33333a"/>
-    <text x="865" y="299" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="14" font-weight="600" fill="#c8c8cc">kairon-controller</text>
+    <path d="M1010 192 V226" stroke="#5c3520" stroke-width="2" fill="none"/>
+    <path d="M910 226 H1110" stroke="#5c3520" stroke-width="2" fill="none"/>
+    <path d="M910 226 V252 M1110 226 V252" stroke="#5c3520" stroke-width="2" fill="none"/>
 
-    <rect x="980" y="264" width="170" height="58" rx="10" fill="#1a1a1d" stroke="#33333a"/>
-    <text x="1065" y="299" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="14" font-weight="600" fill="#c8c8cc">kairon-node</text>
+    <rect x="820" y="252" width="180" height="56" rx="12" fill="#141416" stroke="#33333a"/>
+    <text x="910" y="286" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="14" font-weight="600" fill="#d0d0d4">kairon-controller</text>
+
+    <rect x="1020" y="252" width="180" height="56" rx="12" fill="#141416" stroke="#33333a"/>
+    <text x="1110" y="286" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="14" font-weight="600" fill="#d0d0d4">kairon-node</text>
+
+    <path d="M1110 308 V340" stroke="#5c3520" stroke-width="2" fill="none"/>
+    <rect x="1000" y="340" width="220" height="48" rx="12" fill="#1a120e" stroke="#ff5a15" stroke-opacity="0.45"/>
+    <text x="1110" y="370" text-anchor="middle" font-family="'SF Mono','Menlo',monospace" font-size="14" font-weight="600" fill="#ff5a15">FluxVM · KVM</text>
   </g>
-  <text x="1184" y="372" text-anchor="end" font-family="'SF Mono','Menlo',monospace" font-size="13" fill="#5a5a60">FluxVM · KVM</text>
 
-  <!-- footer -->
-  <text x="1184" y="596" text-anchor="end" font-family="'SF Pro Text','Helvetica Neue',Arial,sans-serif"
-        font-size="24" font-weight="600" fill="#ff5a15">zyvor.dev</text>
-  <text x="1184" y="566" text-anchor="end" font-family="'SF Mono','Menlo',monospace"
-        font-size="17" fill="#6c6c72">github.com/zyvorai/kairon</text>
+  <text x="1184" y="560" text-anchor="end" font-family="'SF Mono','Menlo',monospace" font-size="15" fill="#6a6a70">github.com/zyvorai/kairon</text>
+  <text x="1184" y="592" text-anchor="end" font-family="'SF Pro Text','Helvetica Neue',Arial,sans-serif"
+        font-size="22" font-weight="600" fill="#ff5a15">zyvor.dev</text>
 </svg>

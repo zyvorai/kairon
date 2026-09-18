@@ -213,3 +213,13 @@ Prometheus `rule_files` config directly.
   can tell you "machine reconciliation is failing repeatedly," not *which*
   Machine -- check the accompanying "... reconcile failed" log line
   (which does carry namespace/name) for that.
+
+## Migration concurrency caps
+
+`migration.maxConcurrentPerNode`/`migration.maxConcurrentCluster` (both `0` = unlimited) bound how many non-terminal migrations may touch one node or the cluster at once — a lightweight admission control, mainly useful to cap the blast radius of a bulk `kaironctl evacuate`.
+
+## Workload hardening defaults
+
+All three workloads set CPU/memory `resources:` by default, `kairon-controller`/`kairon-ui` each get a `PodDisruptionBudget` (on by default — voluntary-eviction protection only, not HA), and an opt-in `NetworkPolicy` (`*.networkPolicy.enabled`) restricts their ingress once you tell it which other namespace needs to reach in (`*.networkPolicy.allowIngressFrom` — get this wrong and Prometheus scraping or your ingress controller breaks silently, so it's opt-in rather than default-on). Image supply-chain (digest pins, Trivy, cosign, SBOM) is documented in [SECURITY.md](../../SECURITY.md)'s "Images" section.
+
+Real two-host live-migration testing and a live `NeedsRecovery` drill are documented as runbooks with helper scripts, since they need hardware this repository's own CI doesn't have: [`runbook-multi-host-migration-test.md`](../runbook-multi-host-migration-test.md), [`runbook-recovery-drill.md`](../runbook-recovery-drill.md).

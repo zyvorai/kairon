@@ -236,3 +236,9 @@ and [guides/network-policy.md](guides/network-policy.md)'s
 A migration concurrency quota (`migration.maxConcurrentPerNode`/`maxConcurrentCluster`, both `0` = unlimited) is enforced in the same admission path as target-eligibility checks, rejecting into the existing `Blocked` phase -- not a new state, not a new mechanism.
 
 Every reconcile-loop failure is logged (`internal/controller`, `internal/agent`), including the *secondary* case of the follow-up status-patch itself failing after a primary reconcile error -- both are surfaced, not just the first. All three workloads set CPU/memory `resources:` requests and limits by default, and their ClusterRoles grant exactly the verbs their code paths use (no unused `update` alongside `patch`, confirmed against `internal/kube.Client`'s actual HTTP methods).
+
+## Delete during migration / network quiesce resume
+
+Deleting a Machine while a `MachineMigration` still targets it is refused, not raced: `kairon-node` won't delete the source runtime until that migration reaches a terminal phase, so a delete issued mid-transfer waits rather than pulling the runtime out from under a live RAM/state stream.
+
+A live migration also always resumes the source's own network dataplane when the migration stops short of a destination commit — blocked, an unsupported mode, a transfer that never started, or one that fails or is cancelled mid-flight. The source Machine stays the real, running VM on every one of those paths (only `NeedsRecovery`'s genuinely ambiguous case is left untouched, on purpose), so the network quiesce `kairon-node` takes out on it moments before the transfer begins is always undone again once the attempt is over — never left stranded through every future reconcile tick just because the migration didn't reach a commit.

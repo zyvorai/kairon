@@ -75,6 +75,15 @@ kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaul
 
 Open `http://127.0.0.1:8082` and sign in as `admin` with that password.
 
+| Page | What it shows |
+|---|---|
+| **Overview** | Fleet tiles by phase, a prominent warning whenever anything is parked in `NeedsRecovery` |
+| **Machines** | Table + create form (mirrors `kaironctl create`) + Start / Stop / Console / Migrate / Snapshot / Delete |
+| **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, a "Cancel migration" action while `Starting`/`Running`, and the recovery workflow |
+| **Snapshots** | List + create form |
+| **Nodes** | Real Kubernetes `Node` list — `Ready`, `spec.unschedulable`, taints, addresses, plus per-node Machines/CPU/Memory usage rollup; read-only |
+| **Account** | Change your own password; an admin account can reset another operator's |
+
 For real, named per-operator accounts instead of the single generated admin,
 set `ui.auth.users` -- generate each password's hash first:
 
