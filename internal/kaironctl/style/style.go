@@ -49,11 +49,11 @@ const (
 )
 
 var (
-	mu     sync.Mutex
-	mode   = ColorAuto
-	outW   io.Writer = os.Stdout
-	errW   io.Writer = os.Stderr
-	quiet  bool // mute emoji progress (e.g. --dry-run)
+	mu    sync.Mutex
+	mode            = ColorAuto
+	outW  io.Writer = os.Stdout
+	errW  io.Writer = os.Stderr
+	quiet bool      // mute emoji progress (e.g. --dry-run)
 )
 
 // SetColorMode configures color emission for the process.
@@ -173,9 +173,9 @@ func Log(emoji, format string, args ...any) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	if emoji != "" {
-		fmt.Fprintf(w, "%s %s\n", emoji, msg)
+		_, _ = fmt.Fprintf(w, "%s %s\n", emoji, msg)
 	} else {
-		fmt.Fprintln(w, msg)
+		_, _ = fmt.Fprintln(w, msg)
 	}
 }
 
@@ -184,7 +184,7 @@ func Failf(format string, args ...any) {
 	mu.Lock()
 	w := errW
 	mu.Unlock()
-	fmt.Fprintf(w, "%s %s\n", EmojiFail, fmt.Sprintf(format, args...))
+	_, _ = fmt.Fprintf(w, "%s %s\n", EmojiFail, fmt.Sprintf(format, args...))
 }
 
 // Warnf writes a warning line to stderr.
@@ -192,7 +192,7 @@ func Warnf(format string, args ...any) {
 	mu.Lock()
 	w := errW
 	mu.Unlock()
-	fmt.Fprintf(w, "%s %s\n", EmojiWarn, fmt.Sprintf(format, args...))
+	_, _ = fmt.Fprintf(w, "%s %s\n", EmojiWarn, fmt.Sprintf(format, args...))
 }
 
 func dash(s string) string {
@@ -214,6 +214,6 @@ func BrandMark() string {
 // ClearLines moves the cursor up n lines and clears them (interactive status).
 func ClearLines(w io.Writer, n int) {
 	for i := 0; i < n; i++ {
-		fmt.Fprint(w, "\033[A\033[2K")
+		_, _ = fmt.Fprint(w, "\033[A\033[2K")
 	}
 }

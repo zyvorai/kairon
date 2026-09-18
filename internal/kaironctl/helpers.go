@@ -10,6 +10,7 @@
 // Deliberate dependency exceptions (see docs/DEPENDENCIES.md):
 //   - github.com/spf13/cobra — hierarchical help / completion
 //   - helm.sh/helm/v3 — install/upgrade/uninstall of the embedded chart
+//
 // kairon-controller and kairon-node remain Go-stdlib-only.
 package kaironctl
 
@@ -78,7 +79,6 @@ func parseForwards(specs []string) ([]model.PortForward, error) {
 	}
 	return out, nil
 }
-
 
 func nsFlag(args []string) (string, []string) {
 	ns := "default"

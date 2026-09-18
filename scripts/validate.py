@@ -89,10 +89,31 @@ readme = (root / "README.md").read_text()
 for needle in [
     "without KubeVirt", "without libvirt", "FluxVM", "Apache-2.0", "Production gaps",
     "MachineMigration", "MachineSnapshot", "adopt-only", "ResourceClaim", "vfio_devices",
-    "MachineNetworkPolicy", "Network Fabric",
+    "MachineNetworkPolicy", "Network Fabric", "kaironctl install", "Cilium",
 ]:
     if needle not in readme:
         fail(f"README missing {needle!r}")
+
+machine_crd = next(d for d in crds if d["metadata"]["name"] == "machines.kairon.zyvor.dev")
+net_props = machine_crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["network"]["properties"]
+for field in ("dataplaneMode", "ciliumAttach"):
+    if field not in net_props:
+        fail(f"Machine.spec.network missing {field}")
+mnp = next(d for d in crds if d["metadata"]["name"] == "machinenetworkpolicies.kairon.zyvor.dev")
+mnp_spec = mnp["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]
+if "cilium" not in mnp_spec:
+    fail("MachineNetworkPolicy.spec missing cilium")
+
+for path, needles in {
+    "docs/CLI.md": ["kaironctl network status", "embedded Helm"],
+    "docs/network-fabric.md": ["CiliumExternalWorkload", "cilium.sync"],
+    "docs/DEPENDENCIES.md": ["raw REST", "helm.sh/helm/v3"],
+    "docs/getting-started.md": ["network.ciliumAttach.enabled"],
+}.items():
+    text = (root / path).read_text()
+    for needle in needles:
+        if needle not in text:
+            fail(f"{path} missing {needle!r}")
 
 for f in [
     "docs/network-fabric.md",

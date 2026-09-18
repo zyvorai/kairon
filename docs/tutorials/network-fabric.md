@@ -89,7 +89,37 @@ spec:
         weight: 1
 ```
 
-## 7. Cleanup
+## 7. Optional: Cilium cluster network
+
+Skip this on a cluster that is not running Cilium. When it is, enable the
+controller flags and attach the Machine:
+
+```bash
+# Helm: --set network.ciliumAttach.enabled=true --set network.ciliumPolicySync.enabled=true
+kubectl patch machine web --type merge -p '
+spec:
+  network:
+    mode: tap
+    netns: true
+    dataplaneMode: cilium
+    dataplaneRequired: true
+    ciliumAttach: true
+'
+kubectl patch machinenetworkpolicy web-edge --type merge -p '
+spec:
+  cilium:
+    sync: true
+'
+kaironctl network status web
+kubectl get ciliumexternalworkload
+kubectl get ciliumnetworkpolicy -n default
+```
+
+FluxVM still owns TAP/TC/eBPF. Kairon only reconciles the
+`CiliumExternalWorkload` and, when sync is on, the `CiliumNetworkPolicy`.
+Node-wide default: `sandbox.dataplane.mode = "cilium"` in `/etc/fluxvm.toml`.
+
+## 8. Cleanup
 
 ```bash
 kubectl delete -f examples/network-fabric-machine.yaml

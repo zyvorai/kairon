@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	KindMachineNetworkPolicy = "MachineNetworkPolicy"
-	KindNetworkSecurityGroup = "NetworkSecurityGroup"
-	FinalizerNetworkPolicy   = "kairon.zyvor.dev/network-policy"
-	FinalizerNetworkGroup    = "kairon.zyvor.dev/network-group"
+	KindMachineNetworkPolicy  = "MachineNetworkPolicy"
+	KindNetworkSecurityGroup  = "NetworkSecurityGroup"
+	FinalizerNetworkPolicy    = "kairon.zyvor.dev/network-policy"
+	FinalizerNetworkGroup     = "kairon.zyvor.dev/network-group"
 	FinalizerCiliumAttach     = "kairon.zyvor.dev/cilium-attach"
 	FinalizerCiliumPolicySync = "kairon.zyvor.dev/cilium-policy-sync"
 	LabelMachineNamespace     = "kairon.zyvor.dev/machine-namespace"
@@ -64,17 +64,17 @@ type PortForward struct {
 
 // NetworkSpec is Machine.create parity with Fabric / FluxVM NetworkSpec.
 type NetworkSpec struct {
-	Mode              string            `json:"mode,omitempty"` // user|tap|macvtap
-	NetNS             bool              `json:"netns,omitempty"`
-	Bridge            string            `json:"bridge,omitempty"`
-	Parent            string            `json:"parent,omitempty"`
-	MAC               string            `json:"mac,omitempty"`
-	TapName           string            `json:"tapName,omitempty"`
-	MacvtapMode       string            `json:"macvtapMode,omitempty"` // bridge|vepa|private|passthru
-	Forwards          []PortForward     `json:"forwards,omitempty"`
-	StaticNetwork     bool              `json:"staticNetwork,omitempty"`
-	PodUID            string            `json:"podUID,omitempty"`
-	DataplaneRequired bool              `json:"dataplaneRequired,omitempty"`
+	Mode              string        `json:"mode,omitempty"` // user|tap|macvtap
+	NetNS             bool          `json:"netns,omitempty"`
+	Bridge            string        `json:"bridge,omitempty"`
+	Parent            string        `json:"parent,omitempty"`
+	MAC               string        `json:"mac,omitempty"`
+	TapName           string        `json:"tapName,omitempty"`
+	MacvtapMode       string        `json:"macvtapMode,omitempty"` // bridge|vepa|private|passthru
+	Forwards          []PortForward `json:"forwards,omitempty"`
+	StaticNetwork     bool          `json:"staticNetwork,omitempty"`
+	PodUID            string        `json:"podUID,omitempty"`
+	DataplaneRequired bool          `json:"dataplaneRequired,omitempty"`
 	// DataplaneMode requests FluxVM sandbox dataplane: legacy|ebpf|cilium.
 	// Empty leaves FluxVM's own default (typically from fluxvm.toml).
 	DataplaneMode string `json:"dataplaneMode,omitempty"`

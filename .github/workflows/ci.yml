@@ -122,7 +122,37 @@ jobs:
           print('helm render YAML: OK (kairon-ui legacy token)')
           PY
 
-  web:
+      - name: Helm render -- Cilium flags
+        run: |
+          helm template kairon charts/kairon --namespace kairon-system \
+            --set network.ciliumAttach.enabled=true \
+            --set network.ciliumPolicySync.enabled=true > /tmp/kairon-cilium.yaml
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open('/tmp/kairon-cilium.yaml')) if d]
+          role = next(d for d in docs if d.get('kind') == 'ClusterRole' and d['metadata']['name'] == 'kairon-controller')
+          resources = set()
+          for rule in role.get('rules', []):
+              if 'cilium.io' in rule.get('apiGroups', []):
+                  resources.update(rule.get('resources', []))
+          assert 'ciliumexternalworkloads' in resources, resources
+          assert 'ciliumnetworkpolicies' in resources, resources
+          deploy = next(d for d in docs if d.get('kind') == 'Deployment' and d['metadata']['name'] == 'kairon-controller')
+          args = deploy['spec']['template']['spec']['containers'][0]['args']
+          assert '--cilium-attach=true' in args, args
+          assert '--cilium-policy-sync=true' in args, args
+          print('helm render YAML: OK (cilium attach + policy sync)')
+          PY
+          # Flags off (chart default): no cilium.io rules.
+          helm template kairon charts/kairon --namespace kairon-system > /tmp/kairon-nocilium.yaml
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open('/tmp/kairon-nocilium.yaml')) if d]
+          role = next(d for d in docs if d.get('kind') == 'ClusterRole' and d['metadata']['name'] == 'kairon-controller')
+          for rule in role.get('rules', []):
+              assert 'cilium.io' not in rule.get('apiGroups', []), rule
+          print('helm render YAML: OK (cilium flags default off)')
+          PY
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

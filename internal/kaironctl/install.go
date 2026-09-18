@@ -199,7 +199,6 @@ func runHelmInstall(ctx context.Context, h *helmInstallOpts, upgradeOnly bool) e
 	style.SetQuiet(h.DryRun)
 	chartLabel := h.Chart
 	if chartLabel == "" || chartLabel == embeddedChartSentinel {
-		chartLabel = "embedded"
 		style.Log(style.EmojiDetect, "Using embedded Helm chart")
 	} else if abs, err := filepath.Abs(chartLabel); err == nil && fileExists(chartLabel) {
 		style.Log(style.EmojiDetect, "Using chart path %s", abs)

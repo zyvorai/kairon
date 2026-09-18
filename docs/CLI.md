@@ -77,7 +77,6 @@ and any matching `MachineNetworkPolicy` with `spec.cilium.sync`. `--flows` /
 `--drop-reasons` call the existing uiapi pass-through when `KAIRON_UI_URL`
 (and optionally `KAIRON_UI_TOKEN`) is set.
 
-```
 ## Migrate / recover / fence / snapshot
 
 ```text

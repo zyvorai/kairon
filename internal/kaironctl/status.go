@@ -92,7 +92,7 @@ func runStatus(ctx context.Context, kc *kube.Client, s *statusOpts) error {
 		if s.Wait && s.Interactive && lastLines > 0 && style.Enabled(os.Stdout) {
 			style.ClearLines(os.Stdout, lastLines)
 		}
-		fmt.Fprint(os.Stdout, out)
+		_, _ = fmt.Fprint(os.Stdout, out)
 		lastLines = strings.Count(out, "\n")
 		if !s.Wait {
 			return nil
@@ -129,10 +129,10 @@ func statusReady(st clusterStatus) bool {
 }
 
 func writeStatus(w io.Writer, st clusterStatus) {
-	fmt.Fprintln(w, style.Wrap(w, style.Cyan+style.Bold, style.BrandMark()))
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, style.Wrap(w, style.Cyan+style.Bold, style.BrandMark()))
+	_, _ = fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(tw, "%s\t%s\n", "Component", "Status")
+	_, _ = fmt.Fprintf(tw, "%s\t%s\n", "Component", "Status")
 	writeWorkload(tw, w, "Controller", st.Controller)
 	writeWorkload(tw, w, "Node agent", st.Node)
 	crd := style.Wrap(w, style.Green, "OK")
@@ -142,25 +142,25 @@ func writeStatus(w io.Writer, st clusterStatus) {
 			crd += " (" + st.CRDErr + ")"
 		}
 	}
-	fmt.Fprintf(tw, "CRDs\t%s\n", crd)
-	fmt.Fprintf(tw, "Machines\t%d\n", st.MachineN)
+	_, _ = fmt.Fprintf(tw, "CRDs\t%s\n", crd)
+	_, _ = fmt.Fprintf(tw, "Machines\t%d\n", st.MachineN)
 	if len(st.Phases) > 0 {
-		var parts []string
+		parts := make([]string, 0, len(st.Phases))
 		for phase, n := range st.Phases {
 			parts = append(parts, fmt.Sprintf("%s=%d", style.Phase(w, phase), n))
 		}
-		fmt.Fprintf(tw, "Phases\t%s\n", strings.Join(parts, ", "))
+		_, _ = fmt.Fprintf(tw, "Phases\t%s\n", strings.Join(parts, ", "))
 	}
 	_ = tw.Flush()
 }
 
 func writeWorkload(tw *tabwriter.Writer, colorW io.Writer, label string, ws workloadStatus) {
 	if ws.Err != "" {
-		fmt.Fprintf(tw, "%s\t%s\n", label, style.Wrap(colorW, style.Red, ws.Err))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", label, style.Wrap(colorW, style.Red, ws.Err))
 		return
 	}
 	cell := fmt.Sprintf("%s/%s  Desired: %d  Ready: %s", ws.Kind, ws.Name, ws.Desired, readyCell(colorW, ws.Ready, ws.Desired))
-	fmt.Fprintf(tw, "%s\t%s\n", label, cell)
+	_, _ = fmt.Fprintf(tw, "%s\t%s\n", label, cell)
 }
 
 func readyCell(w io.Writer, ready, desired int) string {
@@ -215,10 +215,10 @@ func checkMachineCRD(ctx context.Context, kc *kube.Client) (bool, string) {
 
 type appsDeployment struct {
 	Status struct {
-		Replicas            int32 `json:"replicas"`
-		ReadyReplicas       int32 `json:"readyReplicas"`
-		AvailableReplicas   int32 `json:"availableReplicas"`
-		UpdatedReplicas     int32 `json:"updatedReplicas"`
+		Replicas          int32 `json:"replicas"`
+		ReadyReplicas     int32 `json:"readyReplicas"`
+		AvailableReplicas int32 `json:"availableReplicas"`
+		UpdatedReplicas   int32 `json:"updatedReplicas"`
 	} `json:"status"`
 }
 

@@ -16,10 +16,10 @@ import (
 // Kept as raw JSON maps in the controller; this typed view is only for
 // status projection (no Cilium Go SDK).
 type CiliumExternalWorkload struct {
-	APIVersion string            `json:"apiVersion"`
-	Kind       string            `json:"kind"`
-	Metadata   ObjectMetaLite    `json:"metadata"`
-	Spec       map[string]any    `json:"spec,omitempty"`
+	APIVersion string                       `json:"apiVersion"`
+	Kind       string                       `json:"kind"`
+	Metadata   ObjectMetaLite               `json:"metadata"`
+	Spec       map[string]any               `json:"spec,omitempty"`
 	Status     CiliumExternalWorkloadStatus `json:"status,omitempty"`
 }
 
@@ -32,8 +32,8 @@ type ObjectMetaLite struct {
 }
 
 type CiliumExternalWorkloadStatus struct {
-	ID  uint32 `json:"id,omitempty"`
-	IP  string `json:"ip,omitempty"`
+	ID  uint32   `json:"id,omitempty"`
+	IP  string   `json:"ip,omitempty"`
 	IPs []string `json:"ips,omitempty"`
 }
 

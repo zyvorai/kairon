@@ -81,9 +81,9 @@ func (c *Controller) reconcileMachineCiliumAttach(ctx context.Context, m model.M
 	}
 
 	labels := map[string]string{
-		model.LabelManagedBy:       model.ManagedByKairon,
+		model.LabelManagedBy:        model.ManagedByKairon,
 		model.LabelMachineNamespace: m.Namespace(),
-		model.LabelMachineName:     m.Metadata.Name,
+		model.LabelMachineName:      m.Metadata.Name,
 	}
 	for k, v := range m.Metadata.Labels {
 		if k == "" {
@@ -99,7 +99,8 @@ func (c *Controller) reconcileMachineCiliumAttach(ctx context.Context, m model.M
 	}
 
 	cew, err := c.Kube.GetCiliumExternalWorkload(ctx, cewName)
-	if kube.IsNotFound(err) {
+	switch {
+	case kube.IsNotFound(err):
 		cew, err = c.Kube.CreateCiliumExternalWorkload(ctx, kube.CiliumExternalWorkload{
 			APIVersion: "cilium.io/v2",
 			Kind:       "CiliumExternalWorkload",
@@ -112,9 +113,9 @@ func (c *Controller) reconcileMachineCiliumAttach(ctx context.Context, m model.M
 		if err != nil {
 			return fmt.Errorf("create CiliumExternalWorkload %s: %w", cewName, err)
 		}
-	} else if err != nil {
+	case err != nil:
 		return err
-	} else if labelsChanged(cew.Metadata.Labels, labels) {
+	case labelsChanged(cew.Metadata.Labels, labels):
 		if err := c.Kube.PatchCiliumExternalWorkload(ctx, cewName, map[string]any{
 			"metadata": map[string]any{"labels": labels},
 		}); err != nil {
@@ -243,7 +244,8 @@ func (c *Controller) reconcileMachineNetworkPolicyCilium(ctx context.Context, p 
 		model.LabelManagedBy: model.ManagedByKairon,
 	}
 	existing, err := c.Kube.GetCiliumNetworkPolicy(ctx, p.Namespace(), cnpName)
-	if kube.IsNotFound(err) {
+	switch {
+	case kube.IsNotFound(err):
 		_, err = c.Kube.CreateCiliumNetworkPolicy(ctx, p.Namespace(), kube.CiliumNetworkPolicy{
 			APIVersion: "cilium.io/v2",
 			Kind:       "CiliumNetworkPolicy",
@@ -257,9 +259,9 @@ func (c *Controller) reconcileMachineNetworkPolicyCilium(ctx context.Context, p 
 		if err != nil {
 			return fmt.Errorf("create CiliumNetworkPolicy: %w", err)
 		}
-	} else if err != nil {
+	case err != nil:
 		return err
-	} else {
+	default:
 		_ = existing
 		if err := c.Kube.PatchCiliumNetworkPolicy(ctx, p.Namespace(), cnpName, map[string]any{
 			"metadata": map[string]any{"labels": labels},

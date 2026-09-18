@@ -57,6 +57,8 @@ smoke: build
 	test "$$($(CURDIR)/bin/kairon-ui --version)" = "$(VERSION)"
 	test "$$($(CURDIR)/bin/kairon-csi-node --version)" = "$(VERSION)"
 	test "$$($(CURDIR)/bin/kairon-csi-controller --version)" = "$(VERSION)"
+	$(CURDIR)/bin/kaironctl network --help >/dev/null
+	$(CURDIR)/bin/kaironctl network status --help >/dev/null
 
 validate:
 	python3 scripts/validate.py

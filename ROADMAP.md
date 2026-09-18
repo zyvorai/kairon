@@ -21,6 +21,9 @@ See [`docs/network-fabric.md`](docs/network-fabric.md).
 - [x] **N2** `MachineNetworkPolicy` + `NetworkSecurityGroup` → FluxVM policy/groups/CNP -- `charts/kairon/crds/machinenetworkpolicies.yaml`/`networksecuritygroups.yaml`, upserted per-node by `internal/agent/network.go` against `POST /v1/vms/{id}/network/policy`/`POST /v1/network/groups`.
 - [x] **N3** Live-migration network quiesce / export / restore / resume -- `internal/fluxvm/network.go`'s `NetworkMigrationQuiesce`/`Export`/`Restore`/`Resume` against FluxVM's `…/network/migration/{quiesce,export,restore,resume}`, driven by `internal/migration`'s source/destination adapter around the existing prepare/commit protocol.
 - [x] **N4** Service Fabric VIP membership + `dataplaneRequired` fail-closed readiness -- `internal/agent/network.go`'s `reconcileServiceFabric` registers the resolved guest IP as a named-service backend once known; `spec.network.dataplaneRequired` fails Machine readiness closed rather than silently reporting healthy when the dataplane attach itself is unhealthy.
+- [x] **N5** FluxVM `dataplaneMode` (`legacy|ebpf|cilium`) on `Machine.spec.network`, mapped into the create payload and fail-closed when `dataplaneRequired` and attach is unhealthy.
+- [x] **N6** Opt-in Cilium cluster-network attach via `CiliumExternalWorkload` (`network.ciliumAttach.enabled`, `spec.network.ciliumAttach`) — raw REST, no Cilium Go SDK. Multus stays non-primary.
+- [x] **N7** Opt-in `MachineNetworkPolicy.spec.cilium.sync` → namespaced `CiliumNetworkPolicy`, plus `kaironctl network status`.
 
 ## v0.4 — FluxVM live-migration backend
 

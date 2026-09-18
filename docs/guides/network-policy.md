@@ -13,6 +13,38 @@ in Kairon.
 | `spec.cnp` on policy (optional) | `POST /v1/network/cnp` | CNP-shaped document compiled by FluxVM |
 
 This does **not** replace Fabric’s host nftables SDN (`/api/network-policies`).
+It also does **not** own BPF. On a Cilium cluster, an opt-in path can copy
+the same intent onto a real `CiliumNetworkPolicy` (below).
+
+## Sync onto Cilium (`spec.cilium.sync`)
+
+Off unless both of these are set:
+
+- Helm `network.ciliumPolicySync.enabled=true` (controller flag `--cilium-policy-sync`)
+- `spec.cilium.sync: true` on this policy
+
+```yaml
+spec:
+  selector:
+    app: web
+  policy:
+    defaultAllow: false
+    allowCidrs: ["10.0.0.0/8"]
+    allowPorts: ["tcp/443"]
+  cilium:
+    sync: true
+    policyName: web-edge   # optional; defaults to metadata.name
+```
+
+The controller upserts a namespaced `CiliumNetworkPolicy` targeting the
+policy selector (or `kairon.zyvor.dev/machine-name` when `machineName` is
+set). If `spec.cnp` is set, that document is preferred as the CNP body.
+FluxVM edge enforcement is unchanged. Status lands in
+`status.ciliumNetworkPolicyRef` and `status.ciliumSyncMessage`. Turning
+sync off, or deleting the policy, deletes the CNP.
+
+`kaironctl network status MACHINE` shows whether a matching policy synced.
+See [network-fabric.md](../network-fabric.md).
 
 ## NetworkSecurityGroup
 

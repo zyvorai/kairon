@@ -31,7 +31,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`tutorials/machine-lifecycle.md`](tutorials/machine-lifecycle.md) | Narrated walkthrough: one Machine through create → relocate → snapshot → restore |
 | [`architecture.md`](architecture.md) | Deep reference: the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
 | [`migration-adapter.md`](migration-adapter.md) | The migration adapter HTTP contract, trust boundary, the real `kairon-migration-adapter-fluxvm` implementation |
-| [`network-fabric.md`](network-fabric.md) | `MachineNetworkPolicy`/`NetworkSecurityGroup` reference and the FluxVM eBPF edge |
+| [`network-fabric.md`](network-fabric.md) | `MachineNetworkPolicy`/`NetworkSecurityGroup`, FluxVM eBPF edge, opt-in Cilium ExternalWorkload attach and CNP sync |
 | [`tutorials/network-fabric.md`](tutorials/network-fabric.md) · [`guides/machine-network.md`](guides/machine-network.md) · [`guides/network-policy.md`](guides/network-policy.md) | Network Fabric walkthrough and field-level guides |
 | [`guides/machine-quotas.md`](guides/machine-quotas.md) · [`guides/machine-disruption-budgets.md`](guides/machine-disruption-budgets.md) | `MachineQuota`/`MachineDisruptionBudget` reference, including the admission webhook |
 | [`runbook-migration-failures.md`](runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |

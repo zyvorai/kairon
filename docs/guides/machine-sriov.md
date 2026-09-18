@@ -10,7 +10,11 @@ KubeVirt (and most of the Kubernetes SR-IOV ecosystem) gets multi-NIC/SR-IOV
 support via Multus, a CNI meta-plugin that wires extra network interfaces
 into a **Pod's** network namespace. Kairon Machines have no backing Pod at
 all, so there's no attachment point for Multus to use -- that whole
-integration path simply doesn't apply here.
+integration path simply doesn't apply here. Multus stays non-primary.
+The supported way onto the **cluster Cilium network** (identity and IPAM,
+not a VF) is `spec.network.ciliumAttach` plus a `CiliumExternalWorkload`,
+documented in [network-fabric.md](../network-fabric.md). That is a
+different path from the PCI passthrough below.
 
 What Kairon already has instead: real GPU/VFIO PCI passthrough via
 Kubernetes DRA (`spec.deviceClaims[]` -> a `ResourceClaim` -> a PCI BDF ->

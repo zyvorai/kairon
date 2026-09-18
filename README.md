@@ -106,11 +106,11 @@ Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement,
 
 ## Capabilities
 
-- **Lifecycle & placement** — `Machine`, `MachineSet`, instance types, NUMA/pinning, Windows guests, PVC/CSI boot, image import/catalog, DRA→VFIO, hotplug, pause/halt, sandboxes
-- **Migration** — cold migrate & evacuate, secure live mTLS handshake, `NeedsRecovery`, real FluxVM migration adapter, fencing
+- **Lifecycle & placement** — `Machine`, `MachineSet`, instance types, NUMA/pinning, Windows guests, PVC/CSI boot, image import/catalog, DRA `ResourceClaim` → `vfio_devices`, hotplug, pause/halt, sandboxes
+- **Migration** — cold migrate & evacuate, secure live mTLS handshake, `NeedsRecovery`, adopt-only cutover, real FluxVM migration adapter, fencing
 - **Fleet guards** — `MachineDisruptionBudget`, `MachineQuota`, opt-in admission webhook, cordon-triggered evacuation
 - **Operate** — `kaironctl` / `kubectl kairon`, optional `kairon-ui` (SSO, VNC, recovery workflow), Prometheus metrics, HA leases
-- **Snapshots & network** — CSI snapshots + schedules, guest quiesce, Network Fabric / eBPF policies
+- **Snapshots & network** — `MachineSnapshot`, CSI snapshot schedules, guest quiesce, `MachineNetworkPolicy` Network Fabric / eBPF policies, opt-in Cilium ExternalWorkload attach and `CiliumNetworkPolicy` sync
 
 Full inventory with every guide link → **[docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md)**
 
@@ -167,7 +167,7 @@ Social preview asset: [`docs/assets/social-preview.png`](docs/assets/social-prev
 
 **v0.5.0** is tagged and open source. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI.
 
-Honest production gaps (fencing signals, PVC first-cut limits, HA eventual consistency, API-only features, and more) → **[docs/STATUS.md](docs/STATUS.md)**
+Honest production gaps (fencing signals, PVC first-cut limits, HA eventual consistency, API-only features, and more) → **[docs/STATUS.md](docs/STATUS.md)** — the heading there is **Production gaps**.
 
 Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
 

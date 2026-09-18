@@ -62,7 +62,7 @@ func TestBuildHelmUninstallArgs(t *testing.T) {
 	h := &helmInstallOpts{ReleaseName: "kairon", Namespace: "kairon-system", Wait: true, Timeout: time.Minute, DryRun: true}
 	args := buildHelmUninstallArgs(h)
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "uninstall kairon") && !(args[0] == "uninstall" && args[1] == "kairon") {
+	if !strings.Contains(joined, "uninstall kairon") && (args[0] != "uninstall" || args[1] != "kairon") {
 		t.Fatalf("args = %v", args)
 	}
 	if !strings.Contains(joined, "--dry-run") || !strings.Contains(joined, "--wait") {

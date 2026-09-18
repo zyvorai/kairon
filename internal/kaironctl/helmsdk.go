@@ -68,9 +68,9 @@ func restConfigFromEnv() (*rest.Config, error) {
 			QPS:         50,
 		}
 		if os.Getenv("KAIRON_KUBE_INSECURE") == "true" {
-			cfg.TLSClientConfig.Insecure = true
+			cfg.Insecure = true
 		} else if ca := os.Getenv("KAIRON_KUBE_CA"); ca != "" {
-			cfg.TLSClientConfig.CAFile = ca
+			cfg.CAFile = ca
 		}
 		return cfg, nil
 	}

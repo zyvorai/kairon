@@ -15,13 +15,22 @@ title: Getting started
 
 ## Install
 
+Preferred: `kaironctl` embeds the Helm chart, so no separate `helm` binary or chart checkout is required.
+
+```bash
+kaironctl install
+kubectl label node worker-1 kairon.zyvor.dev/capable=true
+kubectl label node worker-2 kairon.zyvor.dev/capable=true
+kaironctl status
+```
+
+Raw manifests still work:
+
 ```bash
 kubectl apply -f deploy/crd.yaml
 kubectl apply -f deploy/rbac.yaml
 kubectl apply -f deploy/controller.yaml
 kubectl apply -f deploy/node.yaml
-kubectl label node worker-1 kairon.zyvor.dev/capable=true
-kubectl label node worker-2 kairon.zyvor.dev/capable=true
 ```
 
 ## Create a Machine
@@ -153,7 +162,16 @@ Apply the example Machine + policy + security group, then follow the tutorial:
 
 ```bash
 kubectl apply -f examples/network-fabric-machine.yaml
+kaironctl network status web
 ```
+
+On a cluster that already runs Cilium as the CNI, three opt-in paths exist (all off by default):
+
+| Path | What you set |
+|---|---|
+| FluxVM cilium dataplane | `/etc/fluxvm.toml` `sandbox.dataplane.mode = "cilium"` and/or `spec.network.dataplaneMode: cilium` |
+| Cluster network attach | Helm `network.ciliumAttach.enabled=true` plus `spec.network.ciliumAttach: true` (`mode: tap`, `netns: true`) |
+| Policy visible to Hubble | Helm `network.ciliumPolicySync.enabled=true` plus `spec.cilium.sync: true` on a `MachineNetworkPolicy` |
 
 - Tutorial: [tutorials/network-fabric.md](tutorials/network-fabric.md)
 - User guides: [guides/machine-network.md](guides/machine-network.md), [guides/network-policy.md](guides/network-policy.md)

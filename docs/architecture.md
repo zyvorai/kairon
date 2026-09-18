@@ -234,6 +234,11 @@ allow." See [guides/machine-diagnostics.md](guides/machine-diagnostics.md)
 and [guides/network-policy.md](guides/network-policy.md)'s
 "Troubleshooting" section.
 
+Cilium is a separate, opt-in layer on top of that edge. `kairon-controller`
+reconciles `CiliumExternalWorkload` and `CiliumNetworkPolicy` with raw REST
+when `network.ciliumAttach` / `network.ciliumPolicySync` are enabled — it
+does not load BPF. See [network-fabric.md](network-fabric.md).
+
 ## Operational visibility
 
 `kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane; each links to [`runbook-migration-failures.md`](runbook-migration-failures.md).
