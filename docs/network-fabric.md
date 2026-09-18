@@ -8,7 +8,9 @@ title: Network Fabric
 Kairon declares Kubernetes desired state for VM-edge networking. **FluxVM** owns
 TAP/netns, TC/eBPF attach, maps, CNP compile, and Service Fabric VIPs.
 **Fabric** owns UX/SDN labels and proxies FluxVM dataplane APIs. Kairon does
-**not** own BPF programs, Multus NADs (primary path), or PacketWolf.
+**not** own BPF programs or PacketWolf. Multus NAD remains non-primary; the
+supported path onto the cluster Cilium network is **Cilium ExternalWorkload**
+(`spec.network.ciliumAttach`), not Multus as the primary attach.
 
 ```mermaid
 flowchart TB
@@ -26,6 +28,10 @@ flowchart TB
     FluxVM[FluxVM_REST]
     TC[TC_eBPF_maps]
   end
+  subgraph cilium [Cluster_Cilium]
+    CEW[CiliumExternalWorkload]
+    CNP[CiliumNetworkPolicy]
+  end
   Fabric --> Machine
   Fabric --> NetPolicy
   Kubectl --> Machine
@@ -35,25 +41,43 @@ flowchart TB
   Agent -->|"POST .../network/policy"| FluxVM
   Agent -->|"migration quiesce/export/restore"| FluxVM
   FluxVM --> TC
+  Machine -.->|ciliumAttach| CEW
+  NetPolicy -.->|cilium.sync| CNP
 ```
 
 ## Field → FluxVM → Fabric mapping
 
 | Kairon | FluxVM | Fabric proxy |
 |---|---|---|
-| `Machine.spec.network.{mode,netns,bridge,parent,mac,tapName,macvtapMode,forwards,staticNetwork,podUID}` | `POST /v1/vms` `network` + `cloud_init.static_network` + `pod_uid` | VM create / edit |
+| `Machine.spec.network.{mode,netns,bridge,parent,mac,tapName,macvtapMode,forwards,staticNetwork,podUID,dataplaneMode}` | `POST /v1/vms` `network` (+ `dataplane_mode`) + `cloud_init.static_network` + `pod_uid` | VM create / edit |
 | `Machine.spec.network.dataplaneRequired` | fail-closed on `GET …/network/status` when attach unhealthy | Dataplane health |
+| `Machine.spec.network.ciliumAttach` | controller reconciles `CiliumExternalWorkload`; `podUID` from CEW UID | Cilium identity/IPAM |
 | `Machine.spec.serviceFabric.services[]` | merge backend into `POST /v1/network/services` | Service Fabric membership |
-| `Machine.status.network.{guestIP,tapName,dataplane.*}` | `guest_ip` / `GET …/network/status` | Dataplane tab |
+| `Machine.status.network.{guestIP,tapName,dataplane.*,cilium.*}` | `guest_ip` / `GET …/network/status` / CEW status | Dataplane tab |
 | `MachineNetworkPolicy` | `POST /v1/vms/{id}/network/policy` (+ optional `POST /v1/network/cnp`) | label→policy |
+| `MachineNetworkPolicy.spec.cilium.sync` | controller upserts namespaced `CiliumNetworkPolicy` | Hubble/CNP visibility |
 | `NetworkSecurityGroup` | `POST /v1/network/groups` | security groups |
 | live migrate network | `…/network/migration/{quiesce,export,restore,resume}` | cross-node CT/policy continuity |
 | observability (pass-through) | `…/network/{stats,flows,drop-reasons}` | `/api/dataplane/hubble/flows` |
 
+## Cilium enablement
+
+All cluster-side Cilium features are **off by default** (bare-metal / non-Cilium clusters unchanged):
+
+| Helm value | Effect |
+|---|---|
+| `network.ciliumDataplane` | Documentation-only flag; set FluxVM `/etc/fluxvm.toml` `sandbox.dataplane.mode = "cilium"` on each node |
+| `network.ciliumAttach.enabled` | Controller flag `--cilium-attach`; RBAC for `ciliumexternalworkloads` |
+| `network.ciliumPolicySync.enabled` | Controller flag `--cilium-policy-sync`; RBAC for `ciliumnetworkpolicies` |
+
+Per-Machine: `spec.network.dataplaneMode: cilium` (with `dataplaneRequired: true` to fail closed), and optionally `ciliumAttach: true` (requires `mode: tap` + `netns: true`). Per-policy: `spec.cilium.sync: true`.
+
+CLI: `kaironctl network status MACHINE` (emoji dataplane / CEW / CNP lines); `--flows` / `--drop-reasons` use the existing uiapi pass-through when `KAIRON_UI_URL` is set.
+
 ## Agent behavior
 
-1. **Create** — map rich `spec.network` into FluxVM create payload (Fabric create parity).
-2. **Status** — project guest IP + dataplane attach fields Fabric already expects.
+1. **Create** — map rich `spec.network` into FluxVM create payload (Fabric create parity), including `dataplane_mode` when set. With `ciliumAttach`, waits for controller-projected `podUID` before create.
+2. **Status** — project guest IP + dataplane attach fields Fabric already expects; preserve `status.network.cilium` written by the controller.
 3. **Policy** — when Machine is Running on this node and selected by `machineName` or labels, upsert FluxVM policy; on CR delete, reset every currently-selected Machine to `default_allow: true`. This reset also fails closed: the finalizer only clears once every reset `POST` actually succeeds (idempotently tolerating a selected Machine's VM already being gone), so a real reset failure leaves the `MachineNetworkPolicy` (and its finalizer) in place for a retry on the next tick, rather than the object silently vanishing while a selected VM keeps running under its now-stale restriction.
 4. **Groups** — upsert node-local FluxVM security groups from `NetworkSecurityGroup`. Deletion fails closed: the finalizer only clears once `DELETE /v1/network/groups/{name}` actually succeeds (idempotently tolerating "already gone"), so a real delete failure -- FluxVM unreachable, a transient error -- leaves the object (and the finalizer) in place for a retry on the next tick, rather than the Kubernetes object silently vanishing while its FluxVM-side security group state leaks behind, untracked.
 5. **Migration** — source quiesce+export before transfer; target restore after prepare; resume after commit (mTLS peer carries opaque snapshot, not CRD status).
@@ -73,5 +97,6 @@ See [`examples/network-fabric-machine.yaml`](../examples/network-fabric-machine.
 
 - Replacing Fabric host nftables SDN (`/api/network-policies`)
 - Owning BPF programs inside Kairon
-- Multus NAD as the primary attach path
+- Multus NAD as the primary attach path (Cilium ExternalWorkload is the supported cluster-network attach)
+- Full Hubble UI embed (keep uiapi / `kaironctl network status --flows` pass-through only)
 - PacketWolf control plane in Kairon

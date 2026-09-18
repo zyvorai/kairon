@@ -132,6 +132,24 @@ node:
   # not just cross-namespace traffic. Disruptive on an existing cluster
   # with no policies written first -- see docs/guides/network-policy.md.
   networkDefaultDeny: false
+
+# Cilium cluster-network integration (all off by default). Requires a
+# cluster CNI that exposes cilium.io ExternalWorkload / CiliumNetworkPolicy.
+# FluxVM dataplane mode (path 1) is configured on the node in
+# /etc/fluxvm.toml (`sandbox.dataplane.mode = "cilium"`), not here —
+# network.ciliumDataplane is documentation-only for operators.
+network:
+  ciliumDataplane: false
+  ciliumAttach:
+    # Reconcile CiliumExternalWorkload for Machines with
+    # spec.network.ciliumAttach (mode=tap, netns=true). Grants controller
+    # RBAC on cilium.io/v2 ciliumexternalworkloads when enabled.
+    enabled: false
+  ciliumPolicySync:
+    # Sync MachineNetworkPolicy with spec.cilium.sync=true onto a real
+    # namespaced CiliumNetworkPolicy. Grants controller RBAC on
+    # ciliumnetworkpolicies when enabled.
+    enabled: false
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

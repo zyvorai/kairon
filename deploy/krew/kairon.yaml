@@ -1,0 +1,54 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+#
+# Krew plugin manifest for kubectl-kairon.
+# Install locally (after `make krew-package`):
+#   kubectl krew install --manifest=deploy/krew/kairon.yaml --archive=dist/krew/kairon_*.tar.gz
+#
+# For a public release, replace uri/sha256 with GitHub Release asset URLs and
+# submit this file to https://github.com/kubernetes-sigs/krew-index
+
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: kairon
+spec:
+  version: "v0.5.0"
+  homepage: https://github.com/zyvorai/kairon
+  shortDescription: Operate Kairon Machines on Kubernetes
+  description: |
+    kubectl kairon is the kubectl plugin twin of kaironctl: create and operate
+    Machines, migrations, snapshots, and install/uninstall the Kairon control
+    plane (embedded Helm chart + Helm SDK).
+  caveats: |
+    Point at a cluster with KAIRON_KUBE_URL (e.g. after kubectl proxy), or use
+    a standard kubeconfig when talking to the API through the Helm SDK path.
+  platforms:
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: arm64
+    uri: https://github.com/zyvorai/kairon/releases/download/v0.5.0/kairon_Darwin_arm64.tar.gz
+    sha256: "PLACEHOLDER_SHA256_DARWIN_ARM64"
+    bin: kubectl-kairon
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: amd64
+    uri: https://github.com/zyvorai/kairon/releases/download/v0.5.0/kairon_Darwin_amd64.tar.gz
+    sha256: "PLACEHOLDER_SHA256_DARWIN_AMD64"
+    bin: kubectl-kairon
+  - selector:
+      matchLabels:
+        os: linux
+        arch: amd64
+    uri: https://github.com/zyvorai/kairon/releases/download/v0.5.0/kairon_Linux_amd64.tar.gz
+    sha256: "PLACEHOLDER_SHA256_LINUX_AMD64"
+    bin: kubectl-kairon
+  - selector:
+      matchLabels:
+        os: linux
+        arch: arm64
+    uri: https://github.com/zyvorai/kairon/releases/download/v0.5.0/kairon_Linux_arm64.tar.gz
+    sha256: "PLACEHOLDER_SHA256_LINUX_ARM64"
+    bin: kubectl-kairon

@@ -425,6 +425,9 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 		if m.Spec.Network.DataplaneRequired {
 			return fmt.Errorf("dataplane required but network status failed: %w", err)
 		}
+		if m.Status.Network != nil && m.Status.Network.Cilium != nil {
+			netStatus.Cilium = m.Status.Network.Cilium
+		}
 		status.Network = netStatus
 		return nil
 	}
@@ -438,6 +441,12 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 		Interface:         dp.Interface,
 	}
 	status.Network = netStatus
+	if m.Status.Network != nil && m.Status.Network.Cilium != nil {
+		// Preserve controller-projected Cilium ExternalWorkload status —
+		// this agent tick would otherwise wipe it via the full status patch.
+		netStatus.Cilium = m.Status.Network.Cilium
+		status.Network = netStatus
+	}
 	if m.Spec.Network.DataplaneRequired {
 		mode := strings.ToLower(dp.Mode)
 		if (mode == "ebpf" || mode == "cilium" || dp.Required) && !dp.Attached {

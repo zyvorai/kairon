@@ -24,5 +24,5 @@ import (
 var version = "dev"
 
 func main() {
-	os.Exit(kaironctl.Run(os.Args[1:], version))
+	os.Exit(kaironctl.RunAs("kubectl kairon", os.Args[1:], version))
 }

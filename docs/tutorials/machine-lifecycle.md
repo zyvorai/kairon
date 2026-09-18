@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - A Kubernetes cluster with at least two nodes labeled `kairon.zyvor.dev/capable=true`, each running a reachable FluxVM (default `127.0.0.1:7788`).
-- `kairon-controller`/`kairon-node` installed (`helm upgrade --install kairon ./charts/kairon -n kairon-system --create-namespace`, or the raw manifests — see the top-level README's Quick start).
+- `kairon-controller`/`kairon-node` installed (`kaironctl install`, or `helm upgrade --install kairon ./charts/kairon -n kairon-system --create-namespace`, or the raw manifests — see the top-level README's Quick start).
 - A qcow2 image already present on the node's filesystem, e.g. `/var/lib/fluxvm/images/ubuntu-24.04.qcow2` (see `docs/getting-started.md`'s Prerequisites for how FluxVM expects this laid out).
 - A CSI driver with a real `VolumeSnapshot` implementation behind your default `StorageClass` — Rancher's `local-path-provisioner`, a common default, does **not** have one ("snapshotting non-CSI volumes is not supported"); check `kubectl get volumesnapshotclass` first. Everything up through step 4 works without this; steps 5-6 need it.
 

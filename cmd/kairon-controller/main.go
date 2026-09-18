@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +46,8 @@ func run() int {
 	cordonEvacuate := flag.Bool("cordon-evacuate", false, "automatically create a MachineMigration for every Machine on a Node whose spec.unschedulable transitions to true (see internal/controller/cordon.go) -- off by default, since unlike -leader-elect this is never a no-op: enabling it means a cordoned node's Machines start migrating on their own")
 	cordonEvacuateStrategy := flag.String("cordon-evacuate-strategy", "cold", "migration strategy used by -cordon-evacuate: cold|auto (never live -- see CordonEvacuation's own doc comment)")
 	cordonEvacuateMinRetryInterval := flag.Duration("cordon-evacuate-min-retry-interval", controller.DefaultCordonEvacuateMinRetryInterval, "minimum time between -cordon-evacuate retry attempts for a Machine currently blocked by a MachineDisruptionBudget")
+	ciliumAttach := flag.Bool("cilium-attach", envBool("KAIRON_CILIUM_ATTACH", false), "reconcile CiliumExternalWorkload for Machines with spec.network.ciliumAttach (requires Cilium CNI; off by default)")
+	ciliumPolicySync := flag.Bool("cilium-policy-sync", envBool("KAIRON_CILIUM_POLICY_SYNC", false), "sync MachineNetworkPolicy with spec.cilium.sync onto CiliumNetworkPolicy CRs (off by default)")
 	webhookAddr := flag.String("webhook-addr", ":8443", "validating admission webhook listen address (see -webhook-tls-cert/-key)")
 	webhookTLSCert := flag.String("webhook-tls-cert", "", "TLS certificate PEM for the admission webhook; must be set together with -webhook-tls-key. Empty (the default) disables the webhook -- MachineQuota/MachineDisruptionBudget enforcement stays reconcile-loop/kaironctl-only, same as before this flag existed")
 	webhookTLSKey := flag.String("webhook-tls-key", "", "TLS private key PEM for the admission webhook; must be set together with -webhook-tls-cert")
@@ -103,6 +106,8 @@ func run() int {
 			Strategy:         *cordonEvacuateStrategy,
 			MinRetryInterval: *cordonEvacuateMinRetryInterval,
 		},
+		CiliumAttach:     *ciliumAttach,
+		CiliumPolicySync: *ciliumPolicySync,
 	}
 	if webhookTLSConfig != nil {
 		go func() {
@@ -135,4 +140,18 @@ func run() int {
 	}
 	elector.Run(ctx, runReconcile)
 	return 0
+}
+
+func envBool(k string, d bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(k)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	case "":
+		return d
+	default:
+		return d
+	}
 }

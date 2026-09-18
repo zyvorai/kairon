@@ -295,6 +295,12 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := validateNetworkMAC(m.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := model.ValidateDataplaneMode(m.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := model.ValidateCiliumAttach(m.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
@@ -341,6 +347,12 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 		return admission.Deny(err.Error())
 	}
 	if err := validateNetworkMAC(newM.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := model.ValidateDataplaneMode(newM.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := model.ValidateCiliumAttach(newM.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if !MachineCountsTowardQuota(oldM) {

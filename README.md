@@ -11,7 +11,7 @@
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
 [![Release](https://img.shields.io/badge/version-v0.5.0-blue)](VERSION)
-[![Go](https://img.shields.io/badge/Go-stdlib%20only-00ADD8?logo=go)](go.mod)
+[![Go](https://img.shields.io/badge/Go-stdlib%20control%20plane-00ADD8?logo=go)](docs/DEPENDENCIES.md)
 [![Helm chart](https://img.shields.io/badge/Helm-0.5.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
 [![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#operate)
 
@@ -32,7 +32,7 @@ Kairon starts from a different premise: a VM is not a Pod, so stop pretending it
 | Execution | `virt-launcher` Pod + libvirt | Node agent → FluxVM REST, directly |
 | Scheduling | Pod scheduler + virt extras | Kairon's own least-loaded placement |
 | Live migrate | Built into the VMM stack | mTLS peer handshake + optional adapter |
-| Runtime dependencies | Large Go/operator surface | **Go standard library only** |
+| Runtime dependencies | Large Go/operator surface | **Stdlib-only controller & node** ([policy](docs/DEPENDENCIES.md)) |
 
 Three things follow from that premise:
 
@@ -60,12 +60,16 @@ Three things follow from that premise:
 # 1. Label the nodes FluxVM actually runs on
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
 
-# 2. Install
-helm upgrade --install kairon ./charts/kairon --namespace kairon-system --create-namespace
+# 2. Install (chart + Helm SDK are embedded in kaironctl — no helm binary required)
+kaironctl install
+
+# Or via kubectl plugin (after: kubectl krew install kairon)
+# kubectl kairon install
 
 # 3. Run something
 kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi --backend qemu
 kaironctl get machines
+kaironctl status
 ```
 
 FluxVM needs to already be listening on each capable node (default `127.0.0.1:7788`) with the image path visible to the host. Prefer raw manifests? `kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/controller.yaml -f deploy/node.yaml`. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
@@ -134,9 +138,9 @@ kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaul
 
 → [Getting started — dashboard](docs/getting-started.md#deploy-the-web-dashboard) · [OIDC](docs/guides/kairon-ui-oidc.md) · [UI HA](docs/guides/kairon-ui-ha.md)
 
-**CLI** — `kaironctl` and `kubectl kairon` share the same command dispatch.
+**CLI** — `kaironctl` and `kubectl kairon` share the same command tree (Cobra + embedded Helm). Dependency exceptions: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
-→ Full reference: **[docs/CLI.md](docs/CLI.md)**
+→ Full reference: **[docs/CLI.md](docs/CLI.md)** · Krew: `make krew-package`
 
 ---
 

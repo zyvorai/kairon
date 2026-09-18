@@ -9,7 +9,7 @@ VERSION ?= $(shell cat VERSION)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 COVERAGE_THRESHOLD ?= 50
 
-.PHONY: all fmt fmt-check vet lint test test-race cover cover-check build clean validate rbac-coverage helm-check docker-build smoke
+.PHONY: all fmt fmt-check vet lint test test-race cover cover-check build clean validate rbac-coverage helm-check docker-build smoke krew-package
 all: fmt-check vet lint test-race cover-check build validate rbac-coverage helm-check smoke
 
 fmt:
@@ -66,6 +66,10 @@ rbac-coverage:
 
 helm-check:
 	helm lint charts/kairon
+
+# Multi-arch kubectl-kairon tarballs + filled deploy/krew/kairon.yaml checksums.
+krew-package:
+	./scripts/krew-package.sh
 
 docker-build:
 	docker build --target controller -t $(IMAGE)-controller:$(TAG) .

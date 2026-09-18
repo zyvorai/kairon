@@ -1,0 +1,258 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package kaironctl
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/zyvorai/kairon/internal/kaironctl/style"
+	"github.com/zyvorai/kairon/internal/kube"
+)
+
+// Options carries process-wide CLI settings shared by root and subcommands.
+type Options struct {
+	Name      string // "kaironctl" or "kubectl kairon"
+	Version   string
+	Namespace string
+	Color     string
+}
+
+// Run dispatches one kaironctl invocation and returns the process exit
+// code -- args is the command line without the program name itself
+// (os.Args[1:]), the same convention kubectl hands a plugin binary.
+// Prefer RunAs when the binary display name differs (kubectl-kairon).
+func Run(args []string, version string) int {
+	return RunAs("kaironctl", args, version)
+}
+
+// RunAs is Run with an explicit root command name for help banners.
+func RunAs(name string, args []string, version string) int {
+	opts := &Options{Name: name, Version: version, Namespace: "default", Color: "auto"}
+	root := NewRootCmd(opts)
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+	return 0
+}
+
+// NewRootCmd builds the Cobra command tree.
+func NewRootCmd(opts *Options) *cobra.Command {
+	if opts == nil {
+		opts = &Options{Name: "kaironctl", Version: "dev", Namespace: "default", Color: "auto"}
+	}
+	root := &cobra.Command{
+		Use:   opts.Name,
+		Short: "Operate Kairon Machines on Kubernetes",
+		Long: `Kaironctl is the CLI for Kairon — real VMs on Kubernetes without KubeVirt.
+
+Install the control plane with Helm, then create and operate Machines,
+migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
+		Example: `  # Install into kairon-system
+  $ kaironctl install
+
+  # Create and list a Machine
+  $ kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi
+  $ kaironctl get machines
+
+  # Cluster status
+  $ kaironctl status`,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			mode, err := style.ParseColorMode(opts.Color)
+			if err != nil {
+				return err
+			}
+			style.SetColorMode(mode)
+			return nil
+		},
+	}
+	root.PersistentFlags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace for namespaced resources (install defaults to kairon-system)")
+	root.PersistentFlags().StringVar(&opts.Color, "color", "auto", "colorize output: auto|always|never (also respects NO_COLOR)")
+
+	root.AddCommand(
+		newVersionCmd(opts),
+		newCompletionCmd(root),
+		newInstallCmd(opts),
+		newUninstallCmd(opts),
+		newUpgradeCmd(opts),
+		newStatusCmd(opts),
+		newNetworkCmd(opts),
+		legacyCmd(opts, "get", "List Kairon resources", getExamples, cmdGet),
+		legacyCmd(opts, "describe", "Show details of a Kairon resource", describeExamples, cmdDescribe),
+		legacyCmd(opts, "create", "Create a Machine or other Kairon resource", createExamples, cmdCreate),
+		legacyCmd(opts, "delete", "Delete a Kairon resource", deleteExamples, cmdDelete),
+		legacyCmd(opts, "edit", "Edit a Kairon resource (only flags you pass are patched)", editExamples, cmdEdit),
+		legacyCmd(opts, "scale", "Scale a MachineSet", scaleExamples, cmdScale),
+		legacyCmd(opts, "top", "Show live Machine or node resource usage", topExamples, cmdTop),
+		legacyCmd(opts, "trigger", "Trigger a SnapshotSchedule run now", triggerExamples, cmdTrigger),
+		powerCmd(opts, "start", "Running"),
+		powerCmd(opts, "stop", "Stopped"),
+		powerCmd(opts, "pause", "Paused"),
+		powerCmd(opts, "resume", "Running"),
+		powerCmd(opts, "halt", "Halted"),
+		legacyCmd(opts, "migrate", "Create a MachineMigration", migrateExamples, cmdMigrate),
+		legacyCmd(opts, "evacuate", "Migrate all Machines off a node", evacuateExamples, cmdEvacuate),
+		legacyCmd(opts, "recover", "Attest recovery for a NeedsRecovery migration", recoverExamples, cmdRecover),
+		legacyCmd(opts, "cancel-migration", "Cancel an in-flight live migration", cancelExamples, cmdCancelMigration),
+		legacyCmd(opts, "fence", "Fence a Machine on a dead node for reschedule", fenceExamples, cmdFence),
+		legacyCmd(opts, "snapshot", "Create a MachineSnapshot", snapshotExamples, cmdSnapshot),
+		legacyCmd(opts, "restore", "Restore a MachineSnapshot to a PVC", restoreExamples, cmdRestore),
+	)
+	return root
+}
+
+func newVersionCmd(opts *Options) *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print kaironctl version",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(opts.Version)
+		},
+	}
+}
+
+func newCompletionCmd(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion script",
+		Long: `Generate completion script for bash, zsh, fish, or powershell.
+
+To load completions:
+
+  # bash
+  $ source <(kaironctl completion bash)
+
+  # zsh
+  $ source <(kaironctl completion zsh)
+`,
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return root.GenBashCompletion(os.Stdout)
+			case "zsh":
+				return root.GenZshCompletion(os.Stdout)
+			case "fish":
+				return root.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return root.GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell %q", args[0])
+			}
+		},
+	}
+}
+
+// legacyCmd wraps an existing flag.FlagSet-based handler. DisableFlagParsing
+// keeps the historical flag surface working unchanged for tests and operators.
+func legacyCmd(opts *Options, use, short, example string, fn func(context.Context, *kube.Client, []string)) *cobra.Command {
+	return &cobra.Command{
+		Use:                use,
+		Short:              short,
+		Example:            example,
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			kc, err := kube.FromEnvironment()
+			if err != nil {
+				return err
+			}
+			// Prefer root -n when the user put it before the verb; handlers
+			// still honor -n/--namespace inside args via nsFlag.
+			fn(ctx, kc, withDefaultNamespace(opts.Namespace, args))
+			return nil
+		},
+	}
+}
+
+func powerCmd(opts *Options, use, state string) *cobra.Command {
+	return &cobra.Command{
+		Use:                use + " MACHINE",
+		Short:              "Set Machine powerState to " + state,
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			kc, err := kube.FromEnvironment()
+			if err != nil {
+				return err
+			}
+			cmdPower(ctx, kc, withDefaultNamespace(opts.Namespace, args), state)
+			return nil
+		},
+	}
+}
+
+// withDefaultNamespace prepends --namespace NS when the root persistent
+// flag is set to a non-default value and args do not already set
+// namespace. Handlers that use flag.FlagSet only define -namespace (no
+// short -n), so we must inject the long form — never -n.
+func withDefaultNamespace(ns string, args []string) []string {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-n" || a == "--namespace" || a == "-namespace" {
+			return args
+		}
+		if strings.HasPrefix(a, "--namespace=") || strings.HasPrefix(a, "-namespace=") {
+			return args
+		}
+	}
+	if ns == "" || ns == "default" {
+		return args
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, "--namespace", ns)
+	out = append(out, args...)
+	return out
+}
+
+const getExamples = `  $ kaironctl get machines
+  $ kaironctl get migrations --selector tier=web
+  $ kaironctl get nodes`
+
+const describeExamples = `  $ kaironctl describe machine demo
+  $ kaironctl describe quota team-payments`
+
+const createExamples = `  $ kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi
+  $ kaironctl create machineset web --image /img.qcow2 --replicas 3 --label tier=web`
+
+const deleteExamples = `  $ kaironctl delete machine demo
+  $ kaironctl delete machines --selector tier=web --dry-run`
+
+const editExamples = `  $ kaironctl edit machine demo --priority 10
+  $ kaironctl edit machineset web --replicas 5`
+
+const scaleExamples = `  $ kaironctl scale machineset web --replicas 5
+  $ kaironctl scale machineset --selector tier=web --replicas 2`
+
+const topExamples = `  $ kaironctl top machines
+  $ kaironctl top nodes`
+
+const triggerExamples = `  $ kaironctl trigger snapshotschedule nightly`
+
+const migrateExamples = `  $ kaironctl migrate demo --strategy cold --target-node worker-2`
+
+const evacuateExamples = `  $ kaironctl evacuate worker-1 --strategy cold --wait`
+
+const recoverExamples = `  $ kaironctl recover demo-mig --action confirm-committed --diagnosis "..." --reason "..."`
+
+const cancelExamples = `  $ kaironctl cancel-migration demo-mig`
+
+const fenceExamples = `  $ kaironctl fence demo --reason "node worker-1 confirmed dead"`
+
+const snapshotExamples = `  $ kaironctl snapshot demo --name before-upgrade --class csi-snapclass`
+
+const restoreExamples = `  $ kaironctl restore before-upgrade --target-claim demo-restored`

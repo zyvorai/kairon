@@ -93,6 +93,16 @@ spec:
               cnp:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              cilium:
+                type: object
+                description: Opt-in sync onto a real cluster CiliumNetworkPolicy CR.
+                properties:
+                  sync:
+                    type: boolean
+                    default: false
+                  policyName:
+                    type: string
+                    description: Name of the CiliumNetworkPolicy to create; defaults to this object's metadata.name.
           status:
             type: object
             properties:
@@ -111,3 +121,7 @@ spec:
                 type: array
                 items:
                   type: string
+              ciliumNetworkPolicyRef:
+                type: string
+              ciliumSyncMessage:
+                type: string

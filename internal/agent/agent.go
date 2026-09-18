@@ -258,6 +258,19 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		}
 		a.Log.Info("created sandbox runtime", "machine", m.Metadata.Name, "runtimeID", rec.ID())
 	case freshlyCreated:
+		if err := model.ValidateCiliumAttach(m.Spec.Network); err != nil {
+			return err
+		}
+		if m.Spec.Network.CiliumAttach {
+			podUID := m.Spec.Network.PodUID
+			if podUID == "" && m.Status.Network != nil && m.Status.Network.Cilium != nil {
+				podUID = m.Status.Network.Cilium.ExternalWorkloadUID
+			}
+			if podUID == "" {
+				return fmt.Errorf("ciliumAttach: awaiting CiliumExternalWorkload UID (controller has not projected podUID yet)")
+			}
+			m.Spec.Network.PodUID = podUID
+		}
 		vfioDevices, err := a.resolveVFIODevices(ctx, m)
 		if err != nil {
 			return err

@@ -107,6 +107,20 @@ rules:
     # device itself.
     resources: ["resourceclaims", "resourceslices"]
     verbs: ["get", "list", "watch"]
+{{ if .Values.network.ciliumAttach.enabled }}
+  - apiGroups: ["cilium.io"]
+    # Opt-in: reconcile CiliumExternalWorkload for Machines with
+    # spec.network.ciliumAttach (raw REST; no Cilium Go SDK).
+    resources: ["ciliumexternalworkloads"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{ end }}
+{{ if .Values.network.ciliumPolicySync.enabled }}
+  - apiGroups: ["cilium.io"]
+    # Opt-in: sync MachineNetworkPolicy.spec.cilium.sync onto
+    # CiliumNetworkPolicy (raw REST; no Cilium Go SDK).
+    resources: ["ciliumnetworkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -227,6 +241,8 @@ spec:
             - "--cordon-evacuate={{ .Values.controller.cordonEvacuation.enabled }}"
             - "--cordon-evacuate-strategy={{ .Values.controller.cordonEvacuation.strategy }}"
             - "--cordon-evacuate-min-retry-interval={{ .Values.controller.cordonEvacuation.minRetryInterval }}"
+            - "--cilium-attach={{ .Values.network.ciliumAttach.enabled }}"
+            - "--cilium-policy-sync={{ .Values.network.ciliumPolicySync.enabled }}"
           env:
             - name: KAIRON_CONTROLLER_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}

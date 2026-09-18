@@ -508,5 +508,8 @@ func BuildNetworkMap(n model.NetworkSpec) map[string]any {
 			network["tap_name"] = n.TapName
 		}
 	}
+	if n.DataplaneMode != "" {
+		network["dataplane_mode"] = strings.ToLower(n.DataplaneMode)
+	}
 	return network
 }

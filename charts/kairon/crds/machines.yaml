@@ -207,6 +207,25 @@ spec:
                   dataplaneRequired:
                     type: boolean
                     default: false
+                  dataplaneMode:
+                    type: string
+                    description: FluxVM sandbox dataplane mode (legacy|ebpf|cilium). Empty uses FluxVM's own default.
+                    enum:
+                    - legacy
+                    - ebpf
+                    - cilium
+                  ciliumAttach:
+                    type: boolean
+                    description: When true, kairon-controller reconciles a CiliumExternalWorkload so this Machine can join the cluster Cilium network. Requires mode=tap and netns=true.
+                    default: false
+                  ciliumNamespace:
+                    type: string
+                    description: Reserved for future namespaced attach hints (ExternalWorkload is cluster-scoped).
+                  ciliumLabels:
+                    type: object
+                    additionalProperties:
+                      type: string
+                    description: Extra labels applied to the CiliumExternalWorkload.
               cloudInit:
                 type: object
                 description: Operator-supplied guest customization forwarded to
@@ -569,4 +588,17 @@ spec:
                       policySynced:
                         type: boolean
                       interface:
+                        type: string
+                  cilium:
+                    type: object
+                    properties:
+                      externalWorkload:
+                        type: string
+                      externalWorkloadUID:
+                        type: string
+                      identity:
+                        type: integer
+                      ipv4:
+                        type: string
+                      message:
                         type: string

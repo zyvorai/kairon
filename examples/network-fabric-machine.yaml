@@ -23,6 +23,10 @@ spec:
     netns: true
     staticNetwork: true
     dataplaneRequired: true
+    dataplaneMode: cilium
+    # Opt-in: join the cluster Cilium network via CiliumExternalWorkload
+    # (requires Helm network.ciliumAttach.enabled=true on the controller).
+    # ciliumAttach: true
   serviceFabric:
     services:
       - name: web-vip
@@ -70,3 +74,7 @@ spec:
       - frontend
     maxEgressMbps: 250
     auditMode: false
+  # Opt-in: also sync this intent onto a real CiliumNetworkPolicy
+  # (requires Helm network.ciliumPolicySync.enabled=true).
+  # cilium:
+  #   sync: true

@@ -1574,3 +1574,66 @@ func TestReconcileNetworkResourcesAppliesDefaultDenyWhenEnabled(t *testing.T) {
 		t.Fatal("expected NetworkDefaultDeny: true to reach enforceNetworkDefaultDeny through reconcileNetworkResources")
 	}
 }
+
+func TestProjectNetworkStatusCiliumModeAttached(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/network/status" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"mode": "cilium", "required": true, "attached": true, "identity": 42,
+				"schema_compatible": true, "policy_synced": true,
+			})
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{Network: model.NetworkSpec{DataplaneRequired: true, DataplaneMode: "cilium"}},
+		Status: model.MachineStatus{Network: &model.MachineNetworkStatus{
+			Cilium: &model.MachineCiliumStatus{ExternalWorkload: "kairon-default-web", Identity: 7},
+		}},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1", GuestIP: "10.0.2.15"}
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err != nil {
+		t.Fatalf("projectNetworkStatus: %v", err)
+	}
+	if status.Network == nil || status.Network.Dataplane == nil || !status.Network.Dataplane.Attached {
+		t.Fatalf("dataplane=%v", status.Network)
+	}
+	if status.Network.Dataplane.Mode != "cilium" {
+		t.Fatalf("mode=%q", status.Network.Dataplane.Mode)
+	}
+	if status.Network.Cilium == nil || status.Network.Cilium.ExternalWorkload != "kairon-default-web" {
+		t.Fatalf("cilium status wiped: %+v", status.Network.Cilium)
+	}
+}
+
+func TestProjectNetworkStatusCiliumModeUnattachedFailsClosed(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/network/status" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"mode": "cilium", "required": true, "attached": false,
+				"schema_compatible": true, "policy_synced": false,
+			})
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m := model.Machine{
+		Spec: model.MachineSpec{Network: model.NetworkSpec{DataplaneRequired: true}},
+	}
+	rec := &fluxvm.Record{UUID: "vm-1"}
+	var status model.MachineStatus
+	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err == nil {
+		t.Fatal("expected fail-closed when cilium dataplane unattached")
+	}
+}

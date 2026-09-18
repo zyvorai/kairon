@@ -48,19 +48,38 @@ spec:
     tapName: tap-web      # optional; FluxVM may allocate
     mac: "52:54:00:12:34:56"
     dataplaneRequired: true
+    dataplaneMode: cilium   # optional: legacy|ebpf|cilium (empty = FluxVM default)
 ```
 
 - `netns: true` — per-VM network namespace (isolation + known guest address).
 - `staticNetwork: true` — sets FluxVM `cloud_init.static_network` so the guest
   does not depend on DHCP.
-- `dataplaneRequired: true` — node agent fail-closes if eBPF attach is unhealthy.
+- `dataplaneRequired: true` — node agent fail-closes if eBPF/cilium attach is unhealthy.
+- `dataplaneMode` — requests FluxVM `network.dataplane_mode` on create. For a
+  cluster-wide Cilium dataplane default, also set `/etc/fluxvm.toml`
+  `sandbox.dataplane.mode = "cilium"` on each node (Helm `network.ciliumDataplane`
+  documents this; it does not rewrite the TOML itself).
 - `mac` — must be a standard 6-octet Ethernet address (colon- or
   hyphen-separated hex, like the example above). With
   `webhook.enabled` set, a malformed `mac` is rejected immediately on
   `kubectl apply`/edit instead of only failing once `kairon-node` asks
   FluxVM to attach the NIC -- see [SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md#machine-network-mac-address-admission).
 
-### Macvtap
+### Cilium cluster network (ExternalWorkload)
+
+```yaml
+spec:
+  network:
+    mode: tap
+    netns: true
+    ciliumAttach: true
+    dataplaneMode: cilium
+    dataplaneRequired: true
+```
+
+Requires Helm `network.ciliumAttach.enabled=true`. The controller creates a
+cluster-scoped `CiliumExternalWorkload` named `kairon-<ns>-<name>`, projects
+`status.network.cilium`, and sets `spec.network.podUID` from the CEW UID.
 
 ```yaml
 spec:

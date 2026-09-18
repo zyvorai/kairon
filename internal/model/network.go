@@ -16,7 +16,44 @@ const (
 	KindNetworkSecurityGroup = "NetworkSecurityGroup"
 	FinalizerNetworkPolicy   = "kairon.zyvor.dev/network-policy"
 	FinalizerNetworkGroup    = "kairon.zyvor.dev/network-group"
+	FinalizerCiliumAttach     = "kairon.zyvor.dev/cilium-attach"
+	FinalizerCiliumPolicySync = "kairon.zyvor.dev/cilium-policy-sync"
+	LabelMachineNamespace     = "kairon.zyvor.dev/machine-namespace"
+	LabelMachineName          = "kairon.zyvor.dev/machine-name"
+	LabelManagedBy            = "app.kubernetes.io/managed-by"
+	ManagedByKairon           = "kairon"
 )
+
+// ValidateCiliumAttach checks prerequisites for joining the Cilium cluster
+// network via ExternalWorkload: mode=tap and netns=true.
+func ValidateCiliumAttach(n NetworkSpec) error {
+	if !n.CiliumAttach {
+		return nil
+	}
+	mode := strings.ToLower(n.Mode)
+	if mode != "tap" {
+		return fmt.Errorf("spec.network.ciliumAttach requires mode=tap (got %q)", n.Mode)
+	}
+	if !n.NetNS {
+		return fmt.Errorf("spec.network.ciliumAttach requires netns=true")
+	}
+	switch strings.ToLower(n.DataplaneMode) {
+	case "", "legacy", "ebpf", "cilium":
+	default:
+		return fmt.Errorf("spec.network.dataplaneMode %q is invalid; use legacy, ebpf, or cilium", n.DataplaneMode)
+	}
+	return nil
+}
+
+// ValidateDataplaneMode rejects unknown dataplaneMode values when set.
+func ValidateDataplaneMode(n NetworkSpec) error {
+	switch strings.ToLower(n.DataplaneMode) {
+	case "", "legacy", "ebpf", "cilium":
+		return nil
+	default:
+		return fmt.Errorf("spec.network.dataplaneMode %q is invalid; use legacy, ebpf, or cilium", n.DataplaneMode)
+	}
+}
 
 // PortForward maps FluxVM user-mode NAT forwards (host↔guest).
 type PortForward struct {
@@ -27,17 +64,28 @@ type PortForward struct {
 
 // NetworkSpec is Machine.create parity with Fabric / FluxVM NetworkSpec.
 type NetworkSpec struct {
-	Mode              string        `json:"mode,omitempty"` // user|tap|macvtap
-	NetNS             bool          `json:"netns,omitempty"`
-	Bridge            string        `json:"bridge,omitempty"`
-	Parent            string        `json:"parent,omitempty"`
-	MAC               string        `json:"mac,omitempty"`
-	TapName           string        `json:"tapName,omitempty"`
-	MacvtapMode       string        `json:"macvtapMode,omitempty"` // bridge|vepa|private|passthru
-	Forwards          []PortForward `json:"forwards,omitempty"`
-	StaticNetwork     bool          `json:"staticNetwork,omitempty"`
-	PodUID            string        `json:"podUID,omitempty"`
-	DataplaneRequired bool          `json:"dataplaneRequired,omitempty"`
+	Mode              string            `json:"mode,omitempty"` // user|tap|macvtap
+	NetNS             bool              `json:"netns,omitempty"`
+	Bridge            string            `json:"bridge,omitempty"`
+	Parent            string            `json:"parent,omitempty"`
+	MAC               string            `json:"mac,omitempty"`
+	TapName           string            `json:"tapName,omitempty"`
+	MacvtapMode       string            `json:"macvtapMode,omitempty"` // bridge|vepa|private|passthru
+	Forwards          []PortForward     `json:"forwards,omitempty"`
+	StaticNetwork     bool              `json:"staticNetwork,omitempty"`
+	PodUID            string            `json:"podUID,omitempty"`
+	DataplaneRequired bool              `json:"dataplaneRequired,omitempty"`
+	// DataplaneMode requests FluxVM sandbox dataplane: legacy|ebpf|cilium.
+	// Empty leaves FluxVM's own default (typically from fluxvm.toml).
+	DataplaneMode string `json:"dataplaneMode,omitempty"`
+	// CiliumAttach, when true, asks kairon-controller to reconcile a
+	// CiliumExternalWorkload so the Machine can join the cluster Cilium
+	// network (identity/IPAM). Requires mode=tap and netns=true.
+	CiliumAttach bool `json:"ciliumAttach,omitempty"`
+	// CiliumNamespace is reserved for future namespaced attach hints;
+	// ExternalWorkload is cluster-scoped — labels carry Machine identity.
+	CiliumNamespace string            `json:"ciliumNamespace,omitempty"`
+	CiliumLabels    map[string]string `json:"ciliumLabels,omitempty"`
 }
 
 // ServiceFabricSpec declares FluxVM Service Fabric VIP membership for a Machine.
@@ -77,6 +125,16 @@ type MachineNetworkStatus struct {
 	GuestIPs  []string                `json:"guestIPs,omitempty"`
 	TapName   string                  `json:"tapName,omitempty"`
 	Dataplane *MachineDataplaneStatus `json:"dataplane,omitempty"`
+	Cilium    *MachineCiliumStatus    `json:"cilium,omitempty"`
+}
+
+// MachineCiliumStatus is projected when ciliumAttach (or CNP sync) is in use.
+type MachineCiliumStatus struct {
+	ExternalWorkload    string `json:"externalWorkload,omitempty"`
+	ExternalWorkloadUID string `json:"externalWorkloadUID,omitempty"`
+	Identity            uint32 `json:"identity,omitempty"`
+	IPv4                string `json:"ipv4,omitempty"`
+	Message             string `json:"message,omitempty"`
 }
 
 // MachineDataplaneStatus mirrors FluxVM GET …/network/status fields Fabric expects.
@@ -128,6 +186,14 @@ type MachineNetworkPolicySpec struct {
 	Policy   VmNetworkPolicy   `json:"policy"`
 	// CNP is an optional FluxVM CiliumNetworkPolicy-shaped document posted to /v1/network/cnp.
 	CNP map[string]any `json:"cnp,omitempty"`
+	// Cilium controls optional sync to a real cluster CiliumNetworkPolicy CR.
+	Cilium *MachineNetworkPolicyCilium `json:"cilium,omitempty"`
+}
+
+// MachineNetworkPolicyCilium is opt-in sync onto cilium.io/v2 CiliumNetworkPolicy.
+type MachineNetworkPolicyCilium struct {
+	Sync       bool   `json:"sync,omitempty"`
+	PolicyName string `json:"policyName,omitempty"`
 }
 
 type MachineNetworkPolicyStatus struct {
@@ -153,6 +219,9 @@ type MachineNetworkPolicyStatus struct {
 	// own doc comment for why this mirrors
 	// MachineStatus.AppliedServiceFabricMemberships's identical role.
 	AppliedMachines []string `json:"appliedMachines,omitempty"`
+	// CiliumNetworkPolicyRef is the namespaced name of the synced CNP, when any.
+	CiliumNetworkPolicyRef string `json:"ciliumNetworkPolicyRef,omitempty"`
+	CiliumSyncMessage      string `json:"ciliumSyncMessage,omitempty"`
 }
 
 func (p MachineNetworkPolicy) Namespace() string {

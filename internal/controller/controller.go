@@ -39,6 +39,12 @@ type Controller struct {
 	// today's unchanged behavior: cordoning a node does nothing to
 	// already-running Machines.
 	CordonEvacuation CordonEvacuation
+	// CiliumAttach enables reconcile of CiliumExternalWorkload for Machines
+	// with spec.network.ciliumAttach. Off by default (Helm network.ciliumAttach).
+	CiliumAttach bool
+	// CiliumPolicySync enables MachineNetworkPolicy → CiliumNetworkPolicy
+	// sync when spec.cilium.sync is true. Off by default.
+	CiliumPolicySync bool
 }
 
 // isActiveMigrationPhase reports whether a migration in this phase is
@@ -96,6 +102,8 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	machines = c.resolveInstanceTypes(ctx, machines)
+	c.reconcileCiliumAttach(ctx, machines)
+	c.reconcileCiliumPolicySync(ctx)
 	nodes, err := c.Kube.ListNodes(ctx)
 	if err != nil {
 		return err

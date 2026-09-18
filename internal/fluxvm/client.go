@@ -186,6 +186,15 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 
 func (c *Client) Ready(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodGet, "/readyz", nil)
+	if err == nil {
+		return nil
+	}
+	// FluxVM 0.2.x exposed /healthz only; /readyz arrived later. Treat a
+	// 404 on /readyz as "use the older probe" so kairon-node stays ready
+	// against both generations without requiring a FluxVM upgrade first.
+	if strings.Contains(err.Error(), "HTTP 404") {
+		_, err = c.do(ctx, http.MethodGet, "/healthz", nil)
+	}
 	return err
 }
 

@@ -394,3 +394,24 @@ func TestSetVMNetworkPolicyPropagatesRealErrors(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestBuildNetworkMapDataplaneModeCilium(t *testing.T) {
+	got := BuildNetworkMap(model.NetworkSpec{
+		Mode:          "tap",
+		NetNS:         true,
+		DataplaneMode: "Cilium",
+	})
+	if got["mode"] != "tap" || got["netns"] != true {
+		t.Fatalf("got=%v", got)
+	}
+	if got["dataplane_mode"] != "cilium" {
+		t.Fatalf("dataplane_mode=%v, want cilium", got["dataplane_mode"])
+	}
+}
+
+func TestBuildNetworkMapOmitsEmptyDataplaneMode(t *testing.T) {
+	got := BuildNetworkMap(model.NetworkSpec{Mode: "user"})
+	if _, ok := got["dataplane_mode"]; ok {
+		t.Fatalf("unexpected dataplane_mode in %v", got)
+	}
+}

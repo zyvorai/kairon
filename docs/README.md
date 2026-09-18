@@ -16,6 +16,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | Deep architecture reference | [architecture.md](architecture.md) |
 | Full feature inventory | [WHAT_SHIPS.md](WHAT_SHIPS.md) |
 | CLI reference | [CLI.md](CLI.md) |
+| Dependency policy | [DEPENDENCIES.md](DEPENDENCIES.md) |
 | Release status & production gaps | [STATUS.md](STATUS.md) |
 | Migration failures / NeedsRecovery | [runbook-migration-failures.md](runbook-migration-failures.md) |
 | Security / threat model | [../SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md) |
@@ -85,5 +86,6 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/relocating-a-machine.md`](guides/relocating-a-machine.md) | Cold/live migrate, evacuate, enable mTLS, cancel/delete/quiesce behavior |
 | [`guides/admission-webhook.md`](guides/admission-webhook.md) | Enabling the ValidatingWebhook for quotas/budgets (README “Guarding the fleet”) |
 | [`WHAT_SHIPS.md`](WHAT_SHIPS.md) | Full feature inventory (was README “What ships today”) |
-| [`CLI.md`](CLI.md) | Full `kaironctl` / `kubectl kairon` command reference |
+| [`CLI.md`](CLI.md) | Full `kaironctl` / `kubectl kairon` command reference (Cobra, embedded Helm, Krew) |
+| [`DEPENDENCIES.md`](DEPENDENCIES.md) | Stdlib-only controller/node vs named exceptions (CLI Helm, OIDC, CSI) |
 | [`STATUS.md`](STATUS.md) | v0.5.0 status + production gaps |
