@@ -9,7 +9,7 @@ different platform.
 
 Kairon has no Pod/Job/Service creation of its own anywhere -- `kairon-node`
 talks to FluxVM directly and never runs a Machine inside a Pod (see
-[`ARCHITECTURE.md`](../ARCHITECTURE.md)), the same reason there's no
+[`ARCHITECTURE.md`](https://github.com/zyvorai/kairon/blob/main/ARCHITECTURE.md)), the same reason there's no
 "export server" this project could invent without taking on a real, new
 category of Kubernetes API surface (Pod scheduling, Service exposure, its
 own RBAC) purely to duplicate what a one-off Pod already does perfectly

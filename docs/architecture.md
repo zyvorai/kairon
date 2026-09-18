@@ -1,3 +1,8 @@
+---
+sidebar_position: 6
+title: Architecture
+---
+
 # Architecture
 
 Kairon separates Kubernetes orchestration from VM execution. Kubernetes is the source of truth; FluxVM owns normal VMM lifecycle. Live-transfer mechanics are behind a backend-neutral migration adapter rather than assumed FluxVM/QMP endpoints.

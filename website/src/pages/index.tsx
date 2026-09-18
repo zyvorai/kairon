@@ -19,18 +19,17 @@ function HomepageHeader() {
             Kairon orchestrates.
           </Heading>
           <p className="hero__subtitle">
-            Kairon is Zyvor's Apache-2.0 control plane for running virtual
-            machines on Kubernetes through FluxVM. A <code>Machine</code>{' '}
-            is desired state in the API. A small cluster controller places
-            it. A node-local agent turns that into FluxVM — QEMU, Cloud
-            Hypervisor, Firecracker, or the FluxVM hypervisor — on real
-            KVM. No per-VM wrapper Pod, no libvirt, no guessed hypervisor
-            migration endpoints bolted onto the Kubernetes API.
+            Real VMs on Kubernetes — without KubeVirt. A{' '}
+            <code>Machine</code> is desired state in the API.{' '}
+            <code>kairon-controller</code> places it. <code>kairon-node</code>{' '}
+            turns that into FluxVM — QEMU, Cloud Hypervisor, Firecracker, or
+            the FluxVM hypervisor — on real KVM. No per-VM wrapper Pod, no
+            libvirt, no guessed hypervisor migration endpoints.
           </p>
           <div className={styles.buttons}>
             <Link
               className="button button--secondary button--lg"
-              to="https://github.com/zyvorai/kairon#quick-start">
+              to="/docs/getting-started">
               Get Started
             </Link>
             <Link
@@ -90,18 +89,15 @@ function TrustBand() {
               Open, and honest about its limits
             </Heading>
             <p>
-              Apache-2.0. v0.4.0's own Status section lists real, currently
-              open gaps rather than a marketing gloss: cold relocation,
-              snapshots, DRA bridging, the secure live control plane, and
-              a real FluxVM migration adapter are tested — but real
-              two-host live migration hasn't yet been exercised against
-              real hardware in this repo's own CI. HA fencing, PVC attach
-              maturity, and full admission/quotas are tracked on the
-              roadmap, not claimed as done.
+              Apache-2.0. <strong>v0.5.0</strong> ships admission webhooks,
+              dashboard SSO, MachineSet, pause/halt, snapshot schedules, and
+              more — cold relocation, snapshots, DRA bridging, the secure
+              live control plane, and a real FluxVM migration adapter are
+              tested. Real two-host live migration has not yet been
+              exercised against real hardware in this repo&apos;s own CI.
+              Production gaps stay listed, not glossed over.
             </p>
-            <Link to="https://github.com/zyvorai/kairon#status">
-              Read the full status section →
-            </Link>
+            <Link to="/docs/STATUS">Read status &amp; production gaps →</Link>
           </div>
           <div className={styles.trustBadges}>
             <img
@@ -111,6 +107,10 @@ function TrustBand() {
             <img
               src="https://img.shields.io/github/license/zyvorai/kairon"
               alt="Apache 2.0 license"
+            />
+            <img
+              src="https://img.shields.io/badge/version-v0.5.0-blue"
+              alt="v0.5.0"
             />
           </div>
         </Reveal>
@@ -128,7 +128,7 @@ function EnterpriseCTA() {
             Need production support or SLAs?
           </Heading>
           <p className={styles.enterpriseCopy}>
-            Kairon's core is Apache-2.0 and free to run in personal, lab,
+            Kairon&apos;s core is Apache-2.0 and free to run in personal, lab,
             and commercial production use at no charge. Zyvor Enterprise
             adds production support, SLAs, and additional products for
             teams that need them.
@@ -147,7 +147,7 @@ function EnterpriseCTA() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Kairon — Kubernetes-native VMs without KubeVirt"
+      title="Real VMs on Kubernetes — without KubeVirt"
       description="Kairon is Zyvor's Apache-2.0 control plane for running virtual machines on Kubernetes through FluxVM — no virt-launcher Pod, no libvirt.">
       <HomepageHeader />
       <main>

@@ -142,7 +142,7 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 ```
 
-See the top-level README's [dashboard section](../../README.md#the-dashboard) for login setup.
+See the top-level README's [dashboard section](https://zyvorai.github.io/kairon/docs/getting-started#deploy-the-web-dashboard) for login setup.
 
 ## Cleanup
 
@@ -161,4 +161,4 @@ Deleting `database-data-pv` does not delete `/var/lib/fluxvm/volumes/database/di
 - [`docs/guides/machine-placement.md`](../guides/machine-placement.md) — affinity/anti-affinity, for relocating a Machine onto (or away from) specific other Machines
 - `docs/getting-started.md`'s live-migration section, then [`docs/runbook-multi-host-migration-test.md`](../runbook-multi-host-migration-test.md) — the secure live handshake this tutorial deliberately skipped
 - [`docs/runbook-migration-failures.md`](../runbook-migration-failures.md) — what to do if a migration lands in `NeedsRecovery` instead of completing
-- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — how the pieces exercised above actually fit together
+- [`ARCHITECTURE.md`](https://github.com/zyvorai/kairon/blob/main/ARCHITECTURE.md) — how the pieces exercised above actually fit together

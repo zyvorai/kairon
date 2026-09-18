@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'Kairon',
-  tagline: 'Kubernetes-native VMs — without KubeVirt, without libvirt, without a virt-launcher Pod.',
+  tagline: 'Real VMs on Kubernetes — without KubeVirt',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -40,6 +40,7 @@ const config: Config = {
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/zyvorai/kairon/tree/main/docs/',
+          exclude: ['**/assets/**'],
         },
         blog: false,
         theme: {
@@ -50,6 +51,7 @@ const config: Config = {
   ],
 
   themeConfig: {
+    image: 'img/social-preview.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -81,6 +83,9 @@ const config: Config = {
           title: 'Docs',
           items: [
             {label: 'Getting started', to: '/docs/getting-started'},
+            {label: 'What ships', to: '/docs/WHAT_SHIPS'},
+            {label: 'Status', to: '/docs/STATUS'},
+            {label: 'CLI', to: '/docs/CLI'},
             {label: 'Architecture', to: '/docs/architecture'},
             {label: 'Network Fabric', to: '/docs/network-fabric'},
           ],

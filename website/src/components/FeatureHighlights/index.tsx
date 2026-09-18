@@ -13,20 +13,20 @@ const FeatureList: FeatureItem[] = [
   {
     title: 'Machine CRD, full lifecycle',
     description:
-      'CPU, memory, image, network, power, and volumes as one CRD; PVC-backed boot disks resolve through a Bound PersistentVolumeClaim instead of a hand-placed image file.',
-    to: '/docs/architecture',
+      'MachineSet, instance types, PVC/CSI boot, image import, DRA→VFIO, hotplug, pause/halt, sandboxes — one CRD family, not a virt-launcher Pod.',
+    to: '/docs/WHAT_SHIPS',
   },
   {
     title: 'Real placement, not a stub',
     description:
-      'Ready, capable-labeled nodes; least-loaded with deterministic tie-break; required hard affinity/anti-affinity co-location and separation constraints against other Machines.',
-    to: '/docs/architecture',
+      'Ready, capable-labeled nodes; least-loaded with deterministic tie-break; hard affinity and topologySpreadConstraints.',
+    to: '/docs/guides/machine-placement',
   },
   {
     title: 'Secure live migration handshake',
     description:
-      'TLS 1.3 mTLS prepare → transfer → commit, no user-supplied tcp: URIs, rollback on transfer failure, and NeedsRecovery when a commit is genuinely ambiguous instead of risking split-brain.',
-    to: '/docs/migration-adapter',
+      'TLS 1.3 mTLS prepare → transfer → commit, no user-supplied tcp: URIs, and NeedsRecovery when a commit is genuinely ambiguous.',
+    to: '/docs/guides/relocating-a-machine',
   },
   {
     title: 'Network Fabric',
@@ -35,16 +35,16 @@ const FeatureList: FeatureItem[] = [
     to: '/docs/network-fabric',
   },
   {
-    title: 'CPU/memory hotplug',
+    title: 'kaironctl & dashboard',
     description:
-      "Grow a running Machine's resources without a reboot, via FluxVM's real QMP device_add/object-add — not just cgroup throttling.",
-    to: '/docs/getting-started',
+      'Full CLI (and kubectl kairon plugin) plus optional kairon-ui with SSO, VNC, and the NeedsRecovery recovery workflow.',
+    to: '/docs/CLI',
   },
   {
     title: 'Go standard library only',
     description:
-      'No client-go, no generated deep call stacks, no vendored operator framework — kairon-controller and kairon-node are each small enough to read in an afternoon.',
-    to: 'https://github.com/zyvorai/kairon/blob/main/go.mod',
+      'No client-go, no generated deep call stacks — kairon-controller and kairon-node stay small enough to audit. Opt-in OIDC/CSI are the only exceptions.',
+    to: 'https://github.com/zyvorai/kairon/blob/main/SECURITY.md',
   },
 ];
 

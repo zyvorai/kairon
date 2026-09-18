@@ -1,26 +1,31 @@
+---
+sidebar_position: 1
+title: Overview
+---
+
 # Kairon documentation
 
-The root [README](../README.md) is the product landing page. **This `docs/` tree is authoritative** for install, runbooks, guides, and status detail.
+The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the product landing page. **This `docs/` tree is authoritative** for install, runbooks, guides, and status detail.
 
 ## Start here
 
 | I want to… | Read this |
 |---|---|
 | Install and run a first Machine | [getting-started.md](getting-started.md) |
-| Ten-minute architecture tour | [../ARCHITECTURE.md](../ARCHITECTURE.md) |
+| Ten-minute architecture tour | [../ARCHITECTURE.md](https://github.com/zyvorai/kairon/blob/main/ARCHITECTURE.md) |
 | Deep architecture reference | [architecture.md](architecture.md) |
 | Full feature inventory | [WHAT_SHIPS.md](WHAT_SHIPS.md) |
 | CLI reference | [CLI.md](CLI.md) |
 | Release status & production gaps | [STATUS.md](STATUS.md) |
 | Migration failures / NeedsRecovery | [runbook-migration-failures.md](runbook-migration-failures.md) |
-| Security / threat model | [../SECURITY.md](../SECURITY.md) |
-| Contributing | [../CONTRIBUTING.md](../CONTRIBUTING.md) |
+| Security / threat model | [../SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md) |
+| Contributing | [../CONTRIBUTING.md](https://github.com/zyvorai/kairon/blob/main/CONTRIBUTING.md) |
 
 ## Documentation map
 
 | Doc | Covers |
 |---|---|
-| [`../ARCHITECTURE.md`](../ARCHITECTURE.md) | The ten-minute tour: components, request flow, trust boundaries/deployment topology, design rationale |
+| [`ARCHITECTURE.md`](https://github.com/zyvorai/kairon/blob/main/ARCHITECTURE.md) | The ten-minute tour: components, request flow, trust boundaries/deployment topology, design rationale |
 | [`getting-started.md`](getting-started.md) | Install, first Machine, cold migrate, live migration, the dashboard, Network Fabric |
 | [`tutorials/machine-lifecycle.md`](tutorials/machine-lifecycle.md) | Narrated walkthrough: one Machine through create → relocate → snapshot → restore |
 | [`architecture.md`](architecture.md) | Deep reference: the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
@@ -67,9 +72,9 @@ The root [README](../README.md) is the product landing page. **This `docs/` tree
 | [`runbook-velero-backup.md`](runbook-velero-backup.md) | Using generic Velero (no Kairon-specific plugin) instead — what works out of the box, and the one real gap (no disk-content snapshot without a real CSI storage backend) |
 | [`runbook-vm-export.md`](runbook-vm-export.md) | Getting a Machine's disk content out of the cluster entirely, with standard Kubernetes primitives (no new Kairon-specific export tooling) |
 | [`design-cluster-api-provider.md`](design-cluster-api-provider.md) | Scoped, not built: what a real Cluster API infrastructure provider would take, and the real `ownerReferences` gap that blocks it today |
-| [`../ROADMAP.md`](../ROADMAP.md) · [`../RELEASE_NOTES.md`](../RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
-| [`../SECURITY.md`](../SECURITY.md) | Threat model, vulnerability reporting |
-| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | PR checklist, coverage floor, frontend checks |
+| [`ROADMAP.md`](https://github.com/zyvorai/kairon/blob/main/ROADMAP.md) · [`RELEASE_NOTES.md`](https://github.com/zyvorai/kairon/blob/main/RELEASE_NOTES.md) | What shipped per version, what's next; per-release changelog |
+| [`SECURITY.md`](https://github.com/zyvorai/kairon/blob/main/SECURITY.md) | Threat model, vulnerability reporting |
+| [`CONTRIBUTING.md`](https://github.com/zyvorai/kairon/blob/main/CONTRIBUTING.md) | PR checklist, coverage floor, frontend checks |
 
 ---
 

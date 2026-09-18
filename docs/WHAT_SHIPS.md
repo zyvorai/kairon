@@ -1,3 +1,8 @@
+---
+sidebar_position: 3
+title: What ships today
+---
+
 # What ships today
 
 Full feature inventory formerly maintained in the root README. Guides linked below remain authoritative for how-to detail.
@@ -47,7 +52,7 @@ Full feature inventory formerly maintained in the root README. Guides linked bel
 - **`MachineDisruptionBudget`** — `kaironctl evacuate` throttles itself against `minAvailable`/`maxUnavailable` instead of taking a whole node's Machines at once; `kairon-controller` now reconciles real `status` every tick too (`kaironctl get budgets`/`kubectl get mdb`), purely observational. `kaironctl create budget NAME --selector k=v (--min-available X | --max-unavailable X)`/`edit budget NAME [--selector k=v] [--min-available X] [--max-unavailable X]` create and mutate one directly — no more dropping to `kubectl apply`/YAML just to stand one up — [guide](guides/machine-disruption-budgets.md)
 - **Cordon-triggered automatic evacuation** (`controller.cordonEvacuation.enabled`, opt-in) — `kairon-controller` itself migrates every Machine off a Node the moment it's cordoned, budget-throttled exactly like `kaironctl evacuate`, mirroring KubeVirt's `LiveMigrateIfPossible` — [guide](guides/machine-disruption-budgets.md#automatic-cordon-triggered-evacuation)
 - **`MachineQuota`** — a namespace-scoped `maxMachines`/`maxTotalCpu`/`maxTotalMemory` cap. `kaironctl create quota NAME [--max-machines N] [--max-total-cpu N] [--max-total-memory SIZE]`/`edit quota NAME [flags]` create and mutate one directly — [guide](guides/machine-quotas.md)
-- **Admission webhook** (`webhook.enabled`, opt-in) — both of the above can now be enforced *at admission*, not just in the reconcile loop or `kaironctl`: a `Machine` create that would blow a quota, or a `MachineMigration` create that would violate a budget, gets rejected outright instead of just parked `Pending` or silently allowed. See [Guarding the fleet](#guarding-the-fleet) below.
+- **Admission webhook** (`webhook.enabled`, opt-in) — both of the above can now be enforced *at admission*, not just in the reconcile loop or `kaironctl`: a `Machine` create that would blow a quota, or a `MachineMigration` create that would violate a budget, gets rejected outright instead of just parked `Pending` or silently allowed. See [Guarding the fleet](guides/admission-webhook.md) below.
 - **Network Fabric** — `spec.network`, `MachineNetworkPolicy`, `NetworkSecurityGroup`, Service Fabric VIP membership → FluxVM eBPF edge — [reference](network-fabric.md)
 
 **Snapshots**
@@ -57,7 +62,7 @@ Full feature inventory formerly maintained in the root README. Guides linked bel
 
 **Operate it**
 - **`kaironctl`** — create, start/stop, migrate, evacuate, snapshot, recover
-- **`kairon-ui`** — an optional web dashboard, real per-operator login with in-place password change/reset (not "regenerate a hash and redeploy"), optional OIDC/SSO, a `NeedsRecovery` recovery workflow, an optional VNC console, and more than one replica once you need it — see [The dashboard](#the-dashboard)
+- **`kairon-ui`** — an optional web dashboard, real per-operator login with in-place password change/reset (not "regenerate a hash and redeploy"), optional OIDC/SSO, a `NeedsRecovery` recovery workflow, an optional VNC console, and more than one replica once you need it — see [The dashboard](getting-started.md#deploy-the-web-dashboard)
 - **`kairon-controller` HA** — `controller.replicaCount` can go above 1: a `coordination.k8s.io/v1` Lease (`internal/leaderelection`, on by default) coordinates replicas so only the elected leader reconciles, while the admission webhook and health/metrics endpoints keep serving from every replica regardless — see [guide](guides/kairon-controller-ha.md)
 - **Prometheus metrics + alert rules**, a per-node/cluster migration concurrency quota, `status.dataPlaneEncrypted` visibility into whether a live transfer is actually encrypted
 - **`PodDisruptionBudget`** on by default, opt-in `NetworkPolicy`, digest-pinned + Trivy-scanned + cosign-signed + SBOM'd container images, Helm + raw manifests + CI
@@ -85,6 +90,6 @@ spec:
     - name: gpu-claim   # administrator allowlist on the node -- empty allowlist denies all
 ```
 
-More worked examples: [`examples/`](examples/).
+More worked examples: [`examples/`](https://github.com/zyvorai/kairon/blob/main/tree/main/examples).
 
 ---

@@ -60,7 +60,7 @@ this project to an actual API version bump nobody's asked for yet.
   `POST /convert/machinequotas`** (`internal/controller/webhook.go`,
   `WebhookHandler`), on the exact same TLS listener, certificate, and
   `Service` as the existing validating admission webhook
-  (`webhook.enabled`, see [SECURITY.md](../../SECURITY.md)'s "MachineQuota
+  (`webhook.enabled`, see [SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md)'s "MachineQuota
   / MachineDisruptionBudget admission" section). No new listener, no new
   certificate to provision, no new trust boundary to reason about --
   cutting a real version reuses infrastructure this project already

@@ -1,3 +1,8 @@
+---
+sidebar_position: 5
+title: CLI
+---
+
 # CLI (`kaironctl` / `kubectl kairon`)
 
 Command reference formerly maintained in the root README.

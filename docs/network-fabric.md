@@ -1,3 +1,8 @@
+---
+sidebar_position: 7
+title: Network Fabric
+---
+
 # Network Fabric (Kairon ↔ FluxVM ↔ Fabric)
 
 Kairon declares Kubernetes desired state for VM-edge networking. **FluxVM** owns
