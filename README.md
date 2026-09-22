@@ -27,12 +27,22 @@ KubeVirt makes a VM look like a Pod: `virt-launcher` wrapping libvirt wrapping Q
 
 Kairon starts from a different premise: **a VM is not a Pod.** A `Machine` is desired state in the Kubernetes API. The controller places it. The node agent turns that into a real FluxVM instance (QEMU, Cloud Hypervisor, Firecracker, or the FluxVM hypervisor) on real KVM — no guessed hypervisor migration endpoint smuggled through an annotation.
 
-|  | KubeVirt-style stacks | **Kairon** |
+<div align="center">
+<img src="docs/assets/kairon-vs-kubevirt.jpg" alt="KubeVirt vs Kairon comparison" width="720">
+</div>
+
+| Dimension | KubeVirt | **Kairon** |
 |---|---|---|
-| Execution | `virt-launcher` + libvirt | Node agent → FluxVM REST |
-| Scheduling | Pod scheduler + virt extras | Capacity-aware least-loaded placement |
-| Live migrate | Built into the VMM stack | mTLS peer handshake + optional adapter |
-| Runtime deps | Large operator surface | **Stdlib-only** controller & node ([policy](docs/DEPENDENCIES.md)) |
+| Model | VM ≈ Pod (`virt-launcher`) | VM ≠ Pod (`Machine` CRD) |
+| Execution | virt-launcher → libvirt → QEMU | kairon-node → FluxVM REST → KVM |
+| Scheduling | Pod scheduler + virt extras | Capacity-aware Kairon placement |
+| Control plane | Large operator / client-go surface | **Stdlib-only** controller & node ([policy](docs/DEPENDENCIES.md)) |
+| Hypervisors | Primarily QEMU via libvirt | QEMU, Cloud HV, Firecracker, FluxVM |
+| Live migration | In VMM / KubeVirt stack | mTLS peers + optional adapter |
+| Ambiguous commit | Stack-dependent recovery | `NeedsRecovery` — no silent split-brain |
+| Source of truth | K8s + virt abstractions | Kubernetes API only |
+| Install | Operator + CDI (often) | Helm OCI / `kaironctl`, prod profile |
+| Maturity | Battle-tested ecosystem | v0.6 foundations; live matrix in progress |
 
 Small enough to read in an afternoon. Kubernetes stays the only source of truth. Ambiguous live-migration commits land in `NeedsRecovery` — never silent split-brain.
 
