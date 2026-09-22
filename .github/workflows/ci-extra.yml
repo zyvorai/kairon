@@ -22,15 +22,15 @@ jobs:
   hygiene:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
         with:
           go-version: '1.27.x'
-      - uses: azure/setup-helm@v5.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
       - name: Install shellcheck + kubeconform + actionlint
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck python3-yaml
           ver=v0.6.7
           curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${ver}/kubeconform-linux-amd64.tar.gz" \
             | tar -xz -C /tmp kubeconform
@@ -66,7 +66,6 @@ jobs:
       - name: kubeconform + YAML parse
         run: |
           set -euo pipefail
-          python3 -m pip install -q pyyaml
           kubeconform -summary -strict -ignore-missing-schemas \
             deploy/controller.yaml deploy/node.yaml deploy/ui.yaml deploy/rbac.yaml
           kubeconform -summary -ignore-missing-schemas deploy/crd.yaml
@@ -85,7 +84,6 @@ jobs:
       - name: Helm render matrix
         run: |
           set -euo pipefail
-          python3 -m pip install -q pyyaml
           render() {
             local name="$1"; shift
             echo "==> helm template ($name)"
@@ -138,11 +136,11 @@ jobs:
   build-artifacts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
         with:
           go-version: '1.27.x'
-      - uses: azure/setup-helm@v5.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
       - name: Krew package
         run: |
           set -euo pipefail
@@ -195,7 +193,7 @@ jobs:
             echo "==> go test -race $p"
             go test -race -count=1 -timeout 10m "$p"
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ci-extra-artifacts
           path: |

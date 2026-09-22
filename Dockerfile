@@ -12,9 +12,9 @@
 #   docker buildx imagetools inspect <image>:<tag> | grep Digest
 FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS web
 WORKDIR /src
-COPY web/package.json web/tsconfig.json web/vite.config.ts web/index.html ./web/
+COPY web/package.json web/package-lock.json web/tsconfig.json web/vite.config.ts web/index.html ./web/
 COPY web/src ./web/src
-RUN cd web && npm install && npm run build
+RUN cd web && npm ci && npm run build
 
 FROM golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS build
 WORKDIR /src

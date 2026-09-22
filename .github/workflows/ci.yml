@@ -15,11 +15,11 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
         with:
           go-version: '1.27.x'
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
         with:
           version: v2.13
       - name: Vulnerability scan
@@ -33,8 +33,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
         with:
           go-version: '1.27.x'
       - name: Format check
@@ -45,7 +45,7 @@ jobs:
         run: make test-race
       - name: Coverage
         run: make cover-check
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         if: always()
         with:
           name: coverage
@@ -54,9 +54,10 @@ jobs:
         run: make build smoke
       - name: Validate manifests and repository
         run: |
-          python3 -m pip install pyyaml
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-yaml
           python3 scripts/validate.py
-      - uses: azure/setup-helm@v5.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
       - name: Helm lint and render
         run: |
           helm lint charts/kairon
@@ -215,11 +216,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, lint]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
         with:
           go-version: '1.27.x'
-      - uses: azure/setup-helm@v5.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310  # v5.0.1
       - name: Build CLI binaries and checksums
         run: |
           set -euo pipefail
@@ -253,7 +254,7 @@ jobs:
           # Production overlay must still lint against the packaged chart.
           helm lint "dist/kairon-${version}.tgz" -f charts/kairon/values-production.yaml
           mv /tmp/Chart.yaml.bak charts/kairon/Chart.yaml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: release-assets-ci
           path: |
@@ -265,8 +266,8 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
         with: {node-version: '22', cache: npm, cache-dependency-path: web/package.json}
       - run: npm --prefix web install
       - run: npm --prefix web run typecheck
@@ -276,8 +277,8 @@ jobs:
   website:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
         with: {node-version: '22', cache: npm, cache-dependency-path: website/package-lock.json}
       - run: npm --prefix website ci
       - run: npm --prefix website run build
@@ -294,10 +295,10 @@ jobs:
       matrix:
         target: [controller, node, ui, csi-node, csi-controller]
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4
       - name: Build ${{ matrix.target }} image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7
         with:
           context: .
           target: ${{ matrix.target }}
@@ -305,7 +306,7 @@ jobs:
           load: true
           tags: kairon-${{ matrix.target }}:ci
       - name: Scan ${{ matrix.target }} image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: kairon-${{ matrix.target }}:ci
           severity: HIGH,CRITICAL

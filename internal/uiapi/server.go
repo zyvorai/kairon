@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -474,11 +475,15 @@ func (s *Server) withMetrics(top, api *http.ServeMux, next http.Handler) http.Ha
 }
 
 // serveWeb serves the built web/dist SPA from WebDir, mirroring netra's
-// own internal/api.Server.serveWeb: path-traversal-safe (Clean + prefix
-// containment check), falls back to index.html for any path that isn't a
-// real file (SPA client-side routing, and also the plain "no WebDir
-// configured" case), and sets Content-Type from the file extension since
+// own internal/api.Server.serveWeb: path-traversal-safe, falls back to
+// index.html when the requested path isn't a real file (SPA client-side
+// routing), and sets Content-Type from the file extension since
 // http.ServeFile alone doesn't guess it for every asset type Vite emits.
+//
+// Safety: URL paths are cleaned with path.Clean (slash semantics), then
+// admitted only via filepath.IsLocal before any filesystem join. That
+// keeps ".." / absolute / UNC names out of the join — the check CodeQL's
+// go/path-injection query recognizes as a sanitizer.
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if s.WebDir == "" {
 		if r.URL.Path == "/" {
@@ -488,17 +493,18 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-	if clean == "." {
-		clean = "index.html"
+	root := filepath.Clean(s.WebDir)
+	rel := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+	if rel == "" || rel == "." {
+		rel = "index.html"
 	}
-	p := filepath.Join(s.WebDir, clean)
-	if !strings.HasPrefix(p, filepath.Clean(s.WebDir)+string(os.PathSeparator)) && p != filepath.Join(s.WebDir, "index.html") {
+	if !filepath.IsLocal(rel) {
 		http.NotFound(w, r)
 		return
 	}
+	p := filepath.Join(root, filepath.FromSlash(rel))
 	if st, err := os.Stat(p); err != nil || st.IsDir() {
-		p = filepath.Join(s.WebDir, "index.html")
+		p = filepath.Join(root, "index.html")
 	}
 	if ext := filepath.Ext(p); ext != "" {
 		if ct := mime.TypeByExtension(ext); ct != "" {

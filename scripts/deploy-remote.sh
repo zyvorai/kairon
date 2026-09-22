@@ -629,8 +629,8 @@ run_deploy() {
 
   if [[ "$WITH_UI" == "1" ]]; then
     command -v npm >/dev/null 2>&1 || die "--with-ui requires 'npm' on PATH to build web/dist locally (the only place this script needs Node.js, and only with --with-ui)"
-    info "building kairon-ui web assets (npm install && npm run build)..."
-    ( cd "$REPO_ROOT/web" && npm install && npm run build )
+    info "building kairon-ui web assets (npm ci && npm run build)..."
+    ( cd "$REPO_ROOT/web" && npm ci && npm run build )
     [[ -d "$REPO_ROOT/web/dist" ]] || die "npm run build did not produce web/dist -- check the build output above"
     ok "web/dist built"
   fi
