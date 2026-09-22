@@ -1,5 +1,29 @@
 # Unreleased
 
+# Kairon v0.6.0
+
+Production Foundations: the control plane stops hammering etcd and listing the whole cluster every few seconds, schedules against real node capacity, ships a hardened Helm profile, and publishes signed release artifacts with expanded GitHub CI.
+
+## Added
+
+- **Status write suppression**: shared Condition helpers preserve `LastTransitionTime` unless Status/Reason/Message change; `observedGeneration` on meaningful writes; volatile `ResourceUsage` alone does not force an etcd patch (live samples go to Prometheus `kairon_machine_resource_usage`).
+- **Node-scoped reconcile**: `kairon.zyvor.dev/assigned-node` / `migration-source-node` labels, labelSelector list/watch in `internal/kube`, and a periodic safety resync (default `5m`) instead of a global list every few seconds.
+- **Capacity-aware scheduling**: hard filters on node `status.allocatable` CPU/memory (and hugepages when requested), remaining-capacity scoring, in-tick reservations, and `Scheduled=False` Conditions with structured reasons when nothing fits.
+- **Production Helm profile**: `charts/kairon/values-production.yaml` enables webhook, namespace-scoped UI auth, network default-deny, and migration dataplane TLS; image tags default to `.Chart.AppVersion`.
+- **Release artifacts**: tag-triggered workflow publishes CLI binaries + `SHA256SUMS`, OCI Helm chart, cosign-signed images, and SBOM attestations; dry-run covered in CI.
+- **Hardware migration matrix scaffolding**: `scripts/hardware-migration-matrix.sh`, `.github/workflows/hardware-migration.yml`, and `docs/COMPATIBILITY.md` (lab evidence still required before claiming production live migration).
+- **Expanded GitHub CI**: `ci-extra` (boundary/license/shellcheck/kubeconform/Helm matrix/krew), `kind-smoke`, CodeQL, dependency-review, Scorecard, and stdlib-forbidden-deps gate for controller/node.
+
+## Changed
+
+- Default `kairon-node` safety resync interval is `5m` (was a few seconds when every tick listed the whole cluster).
+- RBAC coverage checker understands thin `List*WithSelector` wrappers and `Watch*` methods.
+
+## Docs
+
+- Evaluation vs production install path in `docs/getting-started.md`.
+- Compatibility matrix template in `docs/COMPATIBILITY.md`.
+
 # Kairon v0.5.0
 
 A batch of fixes from a code-level production-readiness audit -- each backed by a specific file:line finding, not a guess -- plus real day-2 VM operations (cloud-init, SSH forwards, a graphical VNC console) and a real per-operator login for `kairon-ui`. Since then, a broad KubeVirt-parity push (`MachineSet`, instance types, NUMA/hugepages, Windows guests, `MigrationPolicy`) and a full route-by-route audit of FluxVM's own API surface -- both guest-exec channels, guest file access, live resource limits/usage, pause/resume/halt, VM-state snapshot/restore, Machine logs, sandboxes/templates/an HTTP proxy relay, warm pools, the image catalog, an egress check, and runtime/network diagnostics -- closed most of the gaps this project had against KubeVirt one route at a time, each verified against FluxVM's own Rust source rather than assumed. Most recently: dashboard/CLI parity for the last list-only CRDs, a new `MachineSnapshotSchedule` CRD for periodic automated snapshots, `kaironctl top`, four real resource-leak fixes (culminating in `MachineSet` deletion finally cascading to its owned Machines), and a hardening pass aimed specifically at untrusted multi-tenant traffic (opt-in namespace-scoped `kairon-ui` authorization, opt-in network default-deny, quota-block visibility without the admission webhook, and closing the honesty gap around `spec.tenant`'s non-enforcement). See the "Production gaps" section of README.md for what's still open.
