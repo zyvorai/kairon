@@ -297,9 +297,10 @@ create or edit either CRD.
 
 ## Troubleshooting: why is traffic being allowed/blocked?
 
-Four read-only, any-authenticated-operator API endpoints (API-only, no
-dashboard yet) answer "what is actually happening," as opposed to "what
-was configured":
+Four read-only, any-authenticated-operator API endpoints (also on the
+dashboard **Network** panel and `kaironctl network
+flows|drop-reasons|stats|effective`) answer "what is actually happening,"
+as opposed to "what was configured":
 
 - **`GET /api/v1/machines/{ns}/{name}/network-effective`** -- the
   Machine's fully-resolved effective policy, *after*
@@ -313,6 +314,13 @@ was configured":
   eBPF-observed network flows (allowed and denied).
 - **`GET .../network-stats`** -- real, eBPF-dataplane-derived byte/packet
   counters for the Machine.
+
+These need the console/diagnostics relay (`KAIRON_NODE_CONSOLE_TOKEN` on
+both `kairon-ui` and `kairon-node`). Flows / drops / stats also need
+FluxVM's eBPF dataplane on the Machine (`mode: tap`, `netns: true`,
+`dataplaneMode: ebpf`); a `network.mode: user` Machine can still return
+`network-effective`, but the other three typically 502 from the node
+relay.
 
 All four are raw JSON passthroughs of FluxVM's own response (no fixed
 Kairon-side schema) -- FluxVM's own handlers return dynamic, evolving

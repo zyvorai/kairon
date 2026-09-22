@@ -15,7 +15,7 @@ Already on `main` (see [`ROADMAP.md`](../ROADMAP.md)): eBPF operator surface (`k
 
 **Still required before cutting v0.7.0:**
 
-1. **Green Zyvor lab matrix** — cold + live + live-eBPF (and the failure/NeedsRecovery/failover cases) recorded in [`COMPATIBILITY.md`](COMPATIBILITY.md). Workflow: `.github/workflows/hardware-migration.yml`. Blockers today: self-hosted `kairon-lab` runner must be online, and repo secrets/vars (`KAIRON_HW_LAB`, `KAIRON_KUBE_*`, optional `KAIRON_HW_EBPF_MACHINE`) must be set.
+1. **Green Zyvor lab matrix** — cold + live + live-eBPF (and the failure/NeedsRecovery/failover cases) recorded in [`COMPATIBILITY.md`](COMPATIBILITY.md). Workflow: `.github/workflows/hardware-migration.yml`. Blockers today: self-hosted `kairon-lab` runner must be online, and repo secrets/vars (`KAIRON_HW_LAB`, `KAIRON_KUBE_*`, optional `KAIRON_HW_EBPF_MACHINE`) must be set. **Single-host** systemd deploy smoke on `80.79.5.173` is already green (create/stop/start, UI, `network-effective`) — see that file's "Single-host deploy smoke" table; it does not unlock the multi-host live claim.
 2. **Cut v0.7.0** — bump `VERSION` / Chart `appVersion`, `RELEASE_NOTES.md`, README maturity / comparison Status once live rows are green.
 
 Out of band (not a code gate): CII Best Practices badge still needs human OAuth (Scorecard / issue tracker).

@@ -167,6 +167,12 @@ scripts/deploy-remote.sh sus@80.79.5.173 --with-controller --with-ui --with-cons
 
 Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-controller`; a dashboard token is auto-generated and printed once at the end of the run. Requires `npm` locally to build `web/dist` -- the only place this script needs Node.js. `--with-console` (optionally `--console-port=N`, otherwise auto-picked if the default collides) generates the shared console token and wires it into both services' systemd env files. Add `--console-tls` to also enable TLS on that hop -- with no `--console-tls-cert`/`-key`/`-ca`, a private CA and server certificate are generated locally and installed on the remote host automatically (SAN list is a best-effort guess at the host's own addresses; if kairon-ui's console button fails with a TLS error afterward, regenerate with explicit `--console-tls-cert`/`-key`/`-ca` covering the right one), or pass those three yourself to bring your own.
 
+**Redeploy caveats (confirmed on `80.79.5.173`):**
+
+- Existing `/etc/kairon/kairon-node.env` and `kairon-ui.env` are **left untouched**. `--with-console` / `--ui-token` / `--kube-*` do not rewrite them — add matching `KAIRON_NODE_CONSOLE_TOKEN` (and `KAIRON_NODE_CONSOLE_PORT=8090` on the UI side) by hand, then `systemctl restart kairon-node kairon-ui`. Without that shared token, dashboard **Network** / diagnostics / VNC return `501 diagnostics are not enabled`.
+- Default controller health port `:8080` may already be taken (on this host, by `krytond`). The script then picks a random free port, or you can pin `--controller-port=N` / edit the unit's `--health-addr`. Node health defaults to `:8081`, UI to `:8082`.
+- Network **flows / stats / drop-reasons** need FluxVM's eBPF dataplane (`mode: tap`, `netns: true`, `dataplaneMode: ebpf`). A Machine on `network.mode: user` can still return `network-effective`, but flow/drop/stats relays typically 502.
+
 ## Network Fabric (eBPF edge)
 
 Recommended production dataplane (FluxVM TC/eBPF — Kairon declares policy, FluxVM owns BPF):
