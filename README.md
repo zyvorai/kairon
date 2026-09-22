@@ -148,6 +148,7 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 | Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs/architecture.md) |
 | Status & gaps | [docs/STATUS.md](docs/STATUS.md) |
 | Hardware matrix | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
+| OpenSSF / Scorecard | [docs/OPENSSF_BEST_PRACTICES.md](docs/OPENSSF_BEST_PRACTICES.md) |
 | Security | [SECURITY.md](SECURITY.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 

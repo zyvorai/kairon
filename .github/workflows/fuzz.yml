@@ -1,0 +1,39 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+# Keeps native Go fuzz targets warm in CI so regressions surface without
+# waiting on an OSS-Fuzz enrollment. Scorecard's Fuzzing check also detects
+# the Fuzz* functions under internal/model/.
+name: fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '40 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
+        with:
+          go-version: '1.27.x'
+      - name: Fuzz model parsers
+        run: |
+          set -euo pipefail
+          # Bounded wall clock so PRs stay cheap; nightly schedule still helps.
+          fuzz_secs=20
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            fuzz_secs=60
+          fi
+          for target in FuzzParseVCPUs FuzzParseMemoryMiB FuzzParseCPUList FuzzParseIntOrPercent FuzzValidateVmNetworkPolicy; do
+            echo "==> go test -fuzz=${target} -fuzztime=${fuzz_secs}s"
+            go test ./internal/model/ -fuzz="${target}" -fuzztime="${fuzz_secs}s"
+          done

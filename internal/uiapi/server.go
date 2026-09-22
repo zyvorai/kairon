@@ -17,13 +17,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -474,16 +473,10 @@ func (s *Server) withMetrics(top, api *http.ServeMux, next http.Handler) http.Ha
 	})
 }
 
-// serveWeb serves the built web/dist SPA from WebDir, mirroring netra's
-// own internal/api.Server.serveWeb: path-traversal-safe, falls back to
-// index.html when the requested path isn't a real file (SPA client-side
-// routing), and sets Content-Type from the file extension since
-// http.ServeFile alone doesn't guess it for every asset type Vite emits.
-//
-// Safety: URL paths are cleaned with path.Clean (slash semantics), then
-// admitted only via filepath.IsLocal before any filesystem join. That
-// keeps ".." / absolute / UNC names out of the join — the check CodeQL's
-// go/path-injection query recognizes as a sanitizer.
+// serveWeb serves the built web/dist SPA from WebDir. Path safety comes
+// from http.Dir.Open (Clean + reject ".."), which CodeQL treats as a
+// sanitizer for go/path-injection. Missing paths fall back to
+// index.html for SPA client-side routing.
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if s.WebDir == "" {
 		if r.URL.Path == "/" {
@@ -493,25 +486,45 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	root := filepath.Clean(s.WebDir)
-	rel := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
-	if rel == "" || rel == "." {
-		rel = "index.html"
+	fsys := http.Dir(s.WebDir)
+	name := path.Clean("/" + r.URL.Path)
+	if name == "/" {
+		name = "/index.html"
 	}
-	if !filepath.IsLocal(rel) {
+	f, err := fsys.Open(name)
+	needIndex := err != nil
+	if err == nil {
+		st, stErr := f.Stat()
+		if stErr != nil || st.IsDir() {
+			_ = f.Close()
+			needIndex = true
+		}
+	}
+	if needIndex {
+		f, err = fsys.Open("/index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		name = "/index.html"
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	p := filepath.Join(root, filepath.FromSlash(rel))
-	if st, err := os.Stat(p); err != nil || st.IsDir() {
-		p = filepath.Join(root, "index.html")
+	rs, ok := f.(io.ReadSeeker)
+	if !ok {
+		http.Error(w, "static file not seekable", http.StatusInternalServerError)
+		return
 	}
-	if ext := filepath.Ext(p); ext != "" {
+	if ext := path.Ext(name); ext != "" {
 		if ct := mime.TypeByExtension(ext); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		}
 	}
-	http.ServeFile(w, r, p)
+	http.ServeContent(w, r, st.Name(), st.ModTime(), rs)
 }
 
 // withAudit logs every mutating request (anything but GET) that reaches
