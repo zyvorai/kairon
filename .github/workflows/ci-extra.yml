@@ -1,0 +1,278 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+# Extra correctness / hygiene gates kept out of the main ci.yml critical
+# path so PRs still get a fast signal from lint/test/web, while these run
+# in parallel and must also pass before merge.
+name: ci-extra
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stdlib-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: Forbidden deps out of controller/node
+        run: python3 scripts/check_stdlib_boundary.py
+
+  license-headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: License headers
+        run: python3 scripts/check_license_headers.py
+
+  go-mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: go mod tidy / verify
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+          go mod download
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: bash -n all scripts
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find scripts -type f -name '*.sh' | sort)
+          for s in "${scripts[@]}"; do
+            bash -n "$s"
+            echo "syntax OK: $s"
+          done
+      - name: shellcheck scripts
+        run: |
+          set -euo pipefail
+          # SC2155/SC2086 noise in older ops scripts; still fail on real bugs.
+          shellcheck -S warning -e SC2155,SC2086,SC1091,SC2154 scripts/*.sh
+      - name: Cert generators dry-run
+        run: |
+          set -euo pipefail
+          chmod +x scripts/gen-webhook-tls-certs.sh scripts/gen-migration-mtls-certs.sh
+          tmp=$(mktemp -d)
+          scripts/gen-webhook-tls-certs.sh "$tmp/webhook"
+          test -f "$tmp/webhook/ca.pem"
+          test -f "$tmp/webhook/cert.pem"
+          test -f "$tmp/webhook/key.pem"
+          test -f "$tmp/webhook/ca-bundle.b64"
+          scripts/gen-migration-mtls-certs.sh "$tmp/mig" worker-1=10.0.0.11
+          test -f "$tmp/mig/ca/ca.pem"
+          test -f "$tmp/mig/control-plane/cert.pem"
+          echo "cert generators: OK"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          ver=1.7.7
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ver}/actionlint_${ver}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/actionlint
+          actionlint -version
+      - name: Lint workflows
+        run: actionlint -color
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          ver=v0.6.7
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${ver}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /tmp kubeconform
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+      - name: kubeconform deploy manifests
+        run: |
+          set -euo pipefail
+          # CRDs need -ignore-missing-schemas for custom resources; still
+          # validates structure of native kinds in controller/node/ui/rbac.
+          kubeconform -summary -strict -ignore-missing-schemas \
+            deploy/controller.yaml deploy/node.yaml deploy/ui.yaml deploy/rbac.yaml
+          # Parse CRD YAML only (schema-less) — deploy/crd.yaml is many CRDs.
+          kubeconform -summary -ignore-missing-schemas deploy/crd.yaml
+          echo "kubeconform: OK"
+      - name: YAML parse examples + chart CRDs
+        run: |
+          python3 -m pip install -q pyyaml
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          root = Path('.')
+          paths = list((root / 'examples').glob('*.yaml')) if (root / 'examples').exists() else []
+          paths += list((root / 'charts/kairon/crds').glob('*.yaml'))
+          paths += [root / 'charts/kairon/values.yaml', root / 'charts/kairon/values-production.yaml']
+          for p in paths:
+              docs = list(yaml.safe_load_all(p.read_text()))
+              assert docs, p
+          print(f'yaml parse: OK ({len(paths)} files)')
+          PY
+
+  krew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: Build krew package
+        run: make krew-package
+      - name: Verify krew artifacts
+        run: |
+          set -euo pipefail
+          test -f dist/krew/kairon.yaml
+          ls dist/krew/kairon_*.tar.gz | wc -l | grep -qx 4
+          # Manifest must reference real checksums (no CHANGE_ME placeholders).
+          ! grep -E 'CHANGE_ME|0000000000' dist/krew/kairon.yaml
+          echo "krew: OK"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: krew-ci
+          path: dist/krew/
+
+  helm-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4.3.0
+      - name: Helm render matrix
+        run: |
+          set -euo pipefail
+          python3 -m pip install -q pyyaml
+          render() {
+            local name="$1"; shift
+            echo "==> helm template ($name)"
+            helm template kairon charts/kairon --namespace kairon-system "$@" > "/tmp/helm-${name}.yaml"
+            python3 -c "import yaml,sys; d=[x for x in yaml.safe_load_all(open(sys.argv[1])) if x]; assert d, sys.argv[1]" "/tmp/helm-${name}.yaml"
+          }
+          render default
+          render migration --set migration.enabled=true
+          render ui --set ui.enabled=true
+          render csi --set csiNode.enabled=true --set csiController.enabled=true
+          render cordon --set controller.cordonEvacuation.enabled=true
+          render lease --set node.livenessLease.enabled=true
+          render netpol --set controller.networkPolicy.enabled=true --set node.networkPolicy.enabled=true
+          render production \
+            -f charts/kairon/values-production.yaml \
+            --set webhook.tlsSecretName=ci-webhook-tls \
+            --set webhook.caBundle=Y2ktY2EtYnVuZGxl \
+            --set migration.dataplaneTlsSecretName=ci-mig \
+            --set ui.enabled=true
+          render everything \
+            --set ui.enabled=true \
+            --set migration.enabled=true \
+            --set csiNode.enabled=true \
+            --set csiController.enabled=true \
+            --set controller.cordonEvacuation.enabled=true \
+            --set node.livenessLease.enabled=true \
+            --set network.ciliumAttach.enabled=true \
+            --set network.ciliumPolicySync.enabled=true \
+            --set webhook.enabled=true \
+            --set webhook.tlsSecretName=ci-webhook-tls \
+            --set webhook.caBundle=Y2ktY2EtYnVuZGxl
+          echo "helm matrix: OK"
+
+  cli-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: Cross-compile CLIs (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for cmd in kaironctl kubectl-kairon; do
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+              go build -trimpath -ldflags '-s -w' \
+              -o "dist/${cmd}-${{ matrix.goos }}-${{ matrix.goarch }}" "./cmd/${cmd}"
+          done
+          ls -la dist/
+
+  package-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - ./internal/admission/
+          - ./internal/agent/
+          - ./internal/consoleproxy/
+          - ./internal/controller/
+          - ./internal/conversion/
+          - ./internal/csinode/
+          - ./internal/fluxvm/
+          - ./internal/health/
+          - ./internal/kaironctl/
+          - ./internal/kube/
+          - ./internal/leaderelection/
+          - ./internal/metrics/
+          - ./internal/migration/
+          - ./internal/model/
+          - ./internal/nodeliveness/
+          - ./internal/ratelimit/
+          - ./internal/scheduler/
+          - ./internal/tlsreload/
+          - ./internal/uiapi/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: Test ${{ matrix.package }}
+        run: go test -race -count=1 -timeout 10m ${{ matrix.package }}
+
+  docs-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Required docs present
+        run: |
+          set -euo pipefail
+          for f in \
+            docs/COMPATIBILITY.md \
+            docs/DEPENDENCIES.md \
+            docs/STATUS.md \
+            docs/getting-started.md \
+            charts/kairon/values-production.yaml \
+            .github/workflows/hardware-migration.yml \
+            .github/workflows/release.yml \
+            scripts/hardware-migration-matrix.sh
+          do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+          # Production overlay must be referenced from getting-started.
+          grep -q 'values-production.yaml' docs/getting-started.md
+          grep -q 'COMPATIBILITY.md' docs/STATUS.md
+          echo "docs-guard: OK"

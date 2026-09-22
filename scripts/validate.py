@@ -15,7 +15,7 @@ def fail(msg):
 required = [
     "go.mod", "LICENSE", "README.md", "VERSION", "RELEASE_NOTES.md",
     "deploy/crd.yaml", "deploy/rbac.yaml", "deploy/controller.yaml", "deploy/node.yaml", "deploy/ui.yaml",
-    "charts/kairon/Chart.yaml", "charts/kairon/values.yaml", ".github/workflows/ci.yml",
+    "charts/kairon/Chart.yaml", "charts/kairon/values.yaml", "charts/kairon/values-production.yaml", ".github/workflows/ci.yml", ".github/workflows/ci-extra.yml",
 ]
 for f in required:
     if not (root / f).exists():
