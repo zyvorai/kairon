@@ -1,21 +1,21 @@
 <div align="center">
 
-# Kairon
-
-### Real VMs, on Kubernetes, without the weight of KubeVirt
-
-**Kubernetes declares. Kairon orchestrates. FluxVM executes.**
-
 <img src="docs/assets/social-preview.png" alt="Kairon — Real VMs on Kubernetes without KubeVirt" width="720">
 
-[![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
-[![Release](https://img.shields.io/badge/version-v0.6.0-blue)](VERSION)
-[![Go](https://img.shields.io/badge/Go-stdlib%20control%20plane-00ADD8?logo=go)](docs/DEPENDENCIES.md)
-[![Helm chart](https://img.shields.io/badge/Helm-0.6.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
-[![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#operate)
+# Kairon
 
-[Why](#why-kairon-exists) · [Architecture](ARCHITECTURE.md) · [Quick start](#quick-start) · [Docs](docs/README.md) · [What ships](docs/WHAT_SHIPS.md) · [Status](docs/STATUS.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
+**Kubernetes declares. Kairon orchestrates.**
+
+Real VMs on Kubernetes — without KubeVirt, without `virt-launcher`, without libvirt.
+A `Machine` is desired state. `kairon-controller` places it. `kairon-node` runs it on [FluxVM](https://github.com/zyvorai/fluxvm) / KVM.
+
+[![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zyvorai/kairon?display_name=tag)](https://github.com/zyvorai/kairon/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon)](https://goreportcard.com/report/github.com/zyvorai/kairon)
+[![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)
+
+[Why](#why-kairon-exists) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Status](#status) · [Security](SECURITY.md)
 
 </div>
 
@@ -23,60 +23,63 @@
 
 ## Why Kairon exists
 
-KubeVirt makes a VM look like a Pod: a `virt-launcher` Pod wrapping libvirt wrapping QEMU, scheduled by the Kubernetes Pod scheduler, migrated by machinery bolted onto that same abstraction. It works, but every layer you add is a layer you have to trust, patch, and debug at 2am.
+KubeVirt makes a VM look like a Pod: `virt-launcher` wrapping libvirt wrapping QEMU, scheduled by the Pod scheduler. It works — and every layer is another thing you patch and debug at 2am.
 
-Kairon starts from a different premise: a VM is not a Pod, so stop pretending it is. A `Machine` is desired state in the Kubernetes API. `kairon-controller` places it. `kairon-node` turns that placement into a real [FluxVM](https://github.com/zyvorai/fluxvm) instance — QEMU, Cloud Hypervisor, Firecracker, or the FluxVM hypervisor — on real KVM: Kubernetes-native VMs without KubeVirt, without libvirt, without a `virt-launcher` Pod standing in for the VM, and without a guessed hypervisor migration endpoint smuggled through an annotation.
+Kairon starts from a different premise: **a VM is not a Pod.** A `Machine` is desired state in the Kubernetes API. The controller places it. The node agent turns that into a real FluxVM instance (QEMU, Cloud Hypervisor, Firecracker, or the FluxVM hypervisor) on real KVM — no guessed hypervisor migration endpoint smuggled through an annotation.
 
 |  | KubeVirt-style stacks | **Kairon** |
 |---|---|---|
-| Execution | `virt-launcher` Pod + libvirt | Node agent → FluxVM REST, directly |
-| Scheduling | Pod scheduler + virt extras | Kairon's own least-loaded placement |
+| Execution | `virt-launcher` + libvirt | Node agent → FluxVM REST |
+| Scheduling | Pod scheduler + virt extras | Capacity-aware least-loaded placement |
 | Live migrate | Built into the VMM stack | mTLS peer handshake + optional adapter |
-| Runtime dependencies | Large Go/operator surface | **Stdlib-only controller & node** ([policy](docs/DEPENDENCIES.md)) |
+| Runtime deps | Large operator surface | **Stdlib-only** controller & node ([policy](docs/DEPENDENCIES.md)) |
 
-Three things follow from that premise:
-
-- **Small enough to read in an afternoon.** `go.mod` has no `client-go`, no generated deep call stacks, no vendored operator framework — `kairon-controller` and `kairon-node` are each a handful of files. Two deliberate exceptions: opt-in OIDC in `kairon-ui` and opt-in CSI (`kairon-csi-node`). See [SECURITY.md](SECURITY.md).
-- **Kubernetes stays the only source of truth.** A `Machine` object is where desired state lives. The dashboard (`kairon-ui`) is a thin HTTP client with the same standing as `kaironctl` or `kubectl`.
-- **An uncertain outcome gets a name, not a guess.** Ambiguous live-migration commits park in `NeedsRecovery` for an attested operator decision — never silent split-brain. See [Relocating](docs/guides/relocating-a-machine.md).
+Small enough to read in an afternoon. Kubernetes stays the only source of truth. Ambiguous live-migration commits land in `NeedsRecovery` — never silent split-brain.
 
 ---
 
-## Who reaches for this
+## Install
 
-| You are... | You need... | Kairon gives you... |
-|---|---|---|
-| **A platform engineer replacing KubeVirt** | Real VMs on Kubernetes without `virt-launcher` / libvirt | A `Machine` CRD, stdlib-only controller/agent, FluxVM on KVM |
-| **An operator who needs real SSO** | Dashboard login tied to your IdP | `ui.oidc.enabled` — Authorization Code + PKCE ([guide](docs/guides/kairon-ui-oidc.md)) |
-| **An SRE running a Machine fleet** | Drain without blowing capacity; namespace caps | `MachineDisruptionBudget` + `MachineQuota`, enforceable at admission ([guide](docs/guides/admission-webhook.md)) |
-| **Whoever's on call for live migration** | No silent split-brain on ambiguous commit | `NeedsRecovery` + attested recovery ([runbook](docs/runbook-migration-failures.md)) |
-| **An economic buyer sizing build-vs-adopt** | Honesty about what's real today | Apache-2.0 + [Status](docs/STATUS.md) as a punch list, not marketing |
-
----
-
-## Quick start
+**v0.6.0** ships signed images, an OCI Helm chart, CLI binaries, checksums, and SBOM. Production profile pins image tags to `Chart.AppVersion` and turns on webhook, namespace isolation, network default-deny, and migration dataplane TLS.
 
 ```bash
-# 1. Label the nodes FluxVM actually runs on
+# Label nodes where FluxVM listens (default 127.0.0.1:7788)
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
 
-# 2. Install (chart + Helm SDK are embedded in kaironctl — no helm binary required)
-kaironctl install
+# Production install from OCI
+helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
+  --version 0.6.0 -n kairon-system --create-namespace \
+  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.6.0/charts/kairon/values-production.yaml
 
-# Or via kubectl plugin (after: kubectl krew install kairon)
-# kubectl kairon install
+# CLI (linux amd64; also: kaironctl-linux-arm64 — or: kubectl krew install kairon)
+curl -fsSL -o kaironctl \
+  https://github.com/zyvorai/kairon/releases/download/v0.6.0/kaironctl-linux-amd64
+chmod +x kaironctl && sudo mv kaironctl /usr/local/bin/
 
-# 3. Run something
-kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi --backend qemu
+kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 \
+  --cpu 2 --memory 2Gi --backend qemu
 kaironctl get machines
-kaironctl status
 ```
 
-FluxVM needs to already be listening on each capable node (default `127.0.0.1:7788`) with the image path visible to the host. Prefer raw manifests? `kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/controller.yaml -f deploy/node.yaml`. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
+Images: `ghcr.io/zyvorai/kairon-{controller,node,ui}` · Chart: `oci://ghcr.io/zyvorai/charts/kairon` · Release: [v0.6.0](https://github.com/zyvorai/kairon/releases/tag/v0.6.0)
+
+<details>
+<summary><strong>From source / kind</strong></summary>
+
+```bash
+git clone https://github.com/zyvorai/kairon.git && cd kairon
+make docker-build
+helm upgrade --install kairon ./charts/kairon -n kairon-system --create-namespace
+# or: kaironctl install   (embedded Helm SDK — no helm binary required)
+```
+
+Prefer raw manifests? `kubectl apply -f deploy/crd.yaml -f deploy/rbac.yaml -f deploy/controller.yaml -f deploy/node.yaml`. Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
+
+</details>
 
 ---
 
-## How it fits together
+## Architecture
 
 ```text
                   kubectl / GitOps / kaironctl / kairon-ui
@@ -100,85 +103,68 @@ FluxVM needs to already be listening on each capable node (default `127.0.0.1:77
                                      FluxVM local API · migration adapter · KVM/VMM
 ```
 
-Kubernetes is the source of truth. FluxVM owns execution. Kairon owns placement, relocation policy, and Kubernetes lifecycle semantics. Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`docs/architecture.md`](docs/architecture.md).
+v0.6 foundations: AssignedNode-scoped watches, capacity-aware scheduling, and status skip-patch (no etcd write every reconcile tick). Full write-up: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
-## Capabilities
+## What ships
 
-- **Lifecycle & placement** — `Machine`, `MachineSet`, instance types, NUMA/pinning, Windows guests, PVC/CSI boot, image import/catalog, DRA `ResourceClaim` → `vfio_devices`, hotplug, pause/halt, sandboxes
-- **Migration** — cold migrate & evacuate, secure live mTLS handshake, `NeedsRecovery`, adopt-only cutover, real FluxVM migration adapter, fencing
-- **Fleet guards** — `MachineDisruptionBudget`, `MachineQuota`, opt-in admission webhook, cordon-triggered evacuation
-- **Operate** — `kaironctl` / `kubectl kairon`, optional `kairon-ui` (SSO, VNC, recovery workflow), Prometheus metrics, HA leases
-- **Snapshots & network** — `MachineSnapshot`, CSI snapshot schedules, guest quiesce, `MachineNetworkPolicy` Network Fabric / eBPF policies, opt-in Cilium ExternalWorkload attach and `CiliumNetworkPolicy` sync
+| Area | Highlights |
+|------|------------|
+| **Lifecycle** | `Machine` / `MachineSet`, instance types, NUMA/pinning, Windows, PVC/CSI boot, hotplug, pause/halt, sandboxes |
+| **Migration** | Cold + evacuate, secure live mTLS, `NeedsRecovery`, FluxVM migration adapter, fencing |
+| **Fleet guards** | `MachineDisruptionBudget`, `MachineQuota`, opt-in admission webhook |
+| **Operate** | `kaironctl` / `kubectl kairon`, optional `kairon-ui` (SSO, VNC), Prometheus, HA leases |
+| **Snapshots & net** | `MachineSnapshot`, CSI schedules, `MachineNetworkPolicy`, opt-in Cilium ExternalWorkload |
 
-Full inventory with every guide link → **[docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md)**
+Inventory with every guide → **[docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md)**
 
 ---
 
 ## Operate
 
-**Relocate**
-
 ```bash
+# Relocate
 kaironctl migrate demo --strategy cold --target-node worker-2
 kaironctl migrate demo --strategy live --target-node worker-2 --mode pre-copy
 kaironctl evacuate worker-1 --wait
-```
 
-→ [Relocating a Machine](docs/guides/relocating-a-machine.md) · [migration adapter](docs/migration-adapter.md) · [NeedsRecovery runbook](docs/runbook-migration-failures.md)
-
-**Dashboard**
-
-```bash
-helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=true
+# Dashboard
+helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
+  --version 0.6.0 -n kairon-system --set ui.enabled=true
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
-kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
 ```
 
-→ [Getting started — dashboard](docs/getting-started.md#deploy-the-web-dashboard) · [OIDC](docs/guides/kairon-ui-oidc.md) · [UI HA](docs/guides/kairon-ui-ha.md)
-
-**CLI** — `kaironctl` and `kubectl kairon` share the same command tree (Cobra + embedded Helm). Dependency exceptions: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
-
-→ Full reference: **[docs/CLI.md](docs/CLI.md)** · Krew: `make krew-package`
+→ [Relocating](docs/guides/relocating-a-machine.md) · [NeedsRecovery](docs/runbook-migration-failures.md) · [OIDC](docs/guides/kairon-ui-oidc.md) · [CLI](docs/CLI.md)
 
 ---
 
-## Explore the docs
+## Docs
 
 | Goal | Document |
 |------|----------|
-| Docs index | [docs/README.md](docs/README.md) |
 | Getting started | [docs/getting-started.md](docs/getting-started.md) |
-| What ships today | [docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md) |
-| Architecture (tour) | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| Architecture (deep) | [docs/architecture.md](docs/architecture.md) |
-| CLI | [docs/CLI.md](docs/CLI.md) |
-| Status & production gaps | [docs/STATUS.md](docs/STATUS.md) |
+| What ships | [docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md) |
+| Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs/architecture.md) |
+| Status & gaps | [docs/STATUS.md](docs/STATUS.md) |
+| Hardware matrix | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
 | Security | [SECURITY.md](SECURITY.md) |
-| Roadmap / release notes | [ROADMAP.md](ROADMAP.md) · [RELEASE_NOTES.md](RELEASE_NOTES.md) |
-| Contributing / develop | [CONTRIBUTING.md](CONTRIBUTING.md) |
-
-Social preview asset: [`docs/assets/social-preview.png`](docs/assets/social-preview.png) (source: [`social-preview.svg`](docs/assets/social-preview.svg)).
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ---
 
 ## Status
 
-**v0.6.0** is tagged and open source. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI.
+**v0.6.0** — production foundations: status skip-patch, node-scoped watches, capacity scheduling, production Helm profile, release artifacts, expanded CI.
 
-Honest production gaps (fencing signals, PVC first-cut limits, HA eventual consistency, API-only features, and more) → **[docs/STATUS.md](docs/STATUS.md)** — the heading there is **Production gaps**.
+Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are tested. **Multi-host live migration is not yet green on the lab matrix** — see [COMPATIBILITY.md](docs/COMPATIBILITY.md). Honest gaps → **[docs/STATUS.md](docs/STATUS.md)**.
 
-Report vulnerabilities privately to **security@zyvor.dev** — see [`SECURITY.md`](SECURITY.md).
+Report vulnerabilities to **security@zyvor.dev** — [`SECURITY.md`](SECURITY.md).
 
 ---
 
 ## License
 
-### Open source (Apache-2.0)
+**Apache-2.0** — use, modify, and run in production at no charge ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 
-This repository is licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify, and run it for personal, lab, and commercial production use at no charge, subject to Apache-2.0 (preserve notices / NOTICE where required). See [NOTICE](NOTICE).
-
-### Enterprise
-
-Production support, SLAs, and Zyvor Enterprise products are licensed separately. Contact [sales@zyvor.dev](mailto:sales@zyvor.dev) or see [zyvor.dev](https://zyvor.dev).
+Enterprise support and Zyvor products are licensed separately → [sales@zyvor.dev](mailto:sales@zyvor.dev) · [zyvor.dev](https://zyvor.dev).
