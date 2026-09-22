@@ -7,8 +7,16 @@ on:
   push:
     branches: [main]
   pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'web/**'
+      - 'website/**'
+      - '.github/workflows/codeql.yml'
   schedule:
     - cron: '17 4 * * 1'
+
 
 permissions:
   contents: read
