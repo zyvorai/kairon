@@ -88,4 +88,4 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`WHAT_SHIPS.md`](WHAT_SHIPS.md) | Full feature inventory (was README “What ships today”) |
 | [`CLI.md`](CLI.md) | Full `kaironctl` / `kubectl kairon` command reference (Cobra, embedded Helm, Krew) |
 | [`DEPENDENCIES.md`](DEPENDENCIES.md) | Stdlib-only controller/node vs named exceptions (CLI Helm, OIDC, CSI) |
-| [`STATUS.md`](STATUS.md) | v0.5.0 status + production gaps |
+| [`STATUS.md`](STATUS.md) | v0.6.0 status + production gaps |

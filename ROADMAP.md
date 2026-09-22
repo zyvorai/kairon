@@ -1,5 +1,15 @@
 # Roadmap
 
+## v0.6 — Production Foundations
+
+- [x] Status write suppression + shared Conditions / ObservedGeneration
+- [x] Node-scoped Machine/migration list+watch (`assigned-node` labels)
+- [x] Capacity-aware scheduling (allocatable filters, remaining-capacity score, in-tick reserve)
+- [x] `values-production.yaml` + AppVersion-pinned image tags
+- [x] Release assets (CLI checksums, OCI Helm, SBOM/cosign) + expanded CI
+- [x] Hardware migration matrix workflow + `docs/COMPATIBILITY.md` (lab evidence still open)
+
+
 ## v0.3 — secure migration control plane
 
 All shipped -- predates the `[x]` convention adopted later in this file, not an open milestone.

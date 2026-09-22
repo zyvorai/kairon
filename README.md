@@ -10,9 +10,9 @@
 
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
-[![Release](https://img.shields.io/badge/version-v0.5.0-blue)](VERSION)
+[![Release](https://img.shields.io/badge/version-v0.6.0-blue)](VERSION)
 [![Go](https://img.shields.io/badge/Go-stdlib%20control%20plane-00ADD8?logo=go)](docs/DEPENDENCIES.md)
-[![Helm chart](https://img.shields.io/badge/Helm-0.5.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
+[![Helm chart](https://img.shields.io/badge/Helm-0.6.0-0F1689?logo=helm)](charts/kairon/Chart.yaml)
 [![Dashboard](https://img.shields.io/badge/dashboard-kairon--ui-ff5a15)](#operate)
 
 [Why](#why-kairon-exists) · [Architecture](ARCHITECTURE.md) · [Quick start](#quick-start) · [Docs](docs/README.md) · [What ships](docs/WHAT_SHIPS.md) · [Status](docs/STATUS.md) · [Security](SECURITY.md) · [zyvor.dev](https://zyvor.dev?utm_source=github&utm_medium=kairon)
@@ -165,7 +165,7 @@ Social preview asset: [`docs/assets/social-preview.png`](docs/assets/social-prev
 
 ## Status
 
-**v0.5.0** is tagged and open source. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI.
+**v0.6.0** is tagged and open source. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI.
 
 Honest production gaps (fencing signals, PVC first-cut limits, HA eventual consistency, API-only features, and more) → **[docs/STATUS.md](docs/STATUS.md)** — the heading there is **Production gaps**.
 
