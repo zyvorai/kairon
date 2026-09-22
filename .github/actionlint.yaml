@@ -3,3 +3,8 @@
 self-hosted-runner:
   labels:
     - kairon-lab
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # bcrypt hash in helm --set must stay single-quoted
+      - 'shellcheck reported issue in this script: SC2016:.+'
