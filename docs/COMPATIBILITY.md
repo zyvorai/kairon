@@ -23,6 +23,14 @@ Automation entry points:
 - Matrix driver: [`scripts/hardware-migration-matrix.sh`](../scripts/hardware-migration-matrix.sh)
 - Workflow: [`.github/workflows/hardware-migration.yml`](../.github/workflows/hardware-migration.yml) (`workflow_dispatch` + nightly)
 
+**Lab enablement (current blocker):** the `matrix` job runs only on
+`runs-on: [self-hosted, kairon-lab]`. Bring that runner online and set
+repository secrets/vars `KAIRON_HW_LAB=1`, `KAIRON_KUBE_URL`,
+`KAIRON_KUBE_TOKEN`, `KAIRON_KUBE_CA` (plus optional
+`KAIRON_HW_EBPF_MACHINE` for the live-eBPF case). Until then, push-triggered
+runs succeed on the `validate` job only and leave every row below as
+`not run`.
+
 ## Migration matrix
 
 | Case | Last result | Date | Notes |

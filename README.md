@@ -43,7 +43,7 @@ Kairon starts from a different premise: **a VM is not a Pod.** A `Machine` is de
 | Ambiguous commit | Stack-dependent recovery | `NeedsRecovery` — no silent split-brain |
 | Source of truth | K8s + virt abstractions | Kubernetes API only |
 | Install | Operator + CDI (often) | Helm OCI / `kaironctl`, prod profile |
-| Maturity | Battle-tested ecosystem | v0.6 foundations; live matrix in progress |
+| Maturity | Battle-tested ecosystem | v0.6 tagged; v0.7 on main pending lab matrix |
 
 Small enough to read in an afternoon. Kubernetes stays the only source of truth. Ambiguous live-migration commits land in `NeedsRecovery` — never silent split-brain.
 
@@ -169,7 +169,9 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 
 **v0.6.0** — production foundations: status skip-patch, node-scoped watches, capacity scheduling, production Helm profile, release artifacts, expanded CI.
 
-Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are tested. **Multi-host live migration is not yet green on the lab matrix** — see [COMPATIBILITY.md](docs/COMPATIBILITY.md). Honest gaps → **[docs/STATUS.md](docs/STATUS.md)**.
+**Toward v0.7** (on `main`, untagged): eBPF CLI + Network panel, multi-volume virtiofs, lease-aware fencing, CSI node CHAP, opt-in OTel. **Still open:** green Zyvor lab matrix → [`COMPATIBILITY.md`](docs/COMPATIBILITY.md), then cut v0.7.0. Details → **[docs/STATUS.md](docs/STATUS.md)**.
+
+Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are tested. **Multi-host live migration is not yet green on the lab matrix.**
 
 Report vulnerabilities to **security@zyvor.dev** — [`SECURITY.md`](SECURITY.md).
 

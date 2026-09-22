@@ -9,6 +9,17 @@ Release status and production gaps formerly maintained in the root README.
 
 **v0.6.0** is tagged and open source (production foundations: status skip-patch, node-scoped watches, capacity scheduling, production Helm profile, release artifacts, expanded CI). Prior **v0.5.0** absorbed, absorbing everything the sections above describe: admission webhooks, dashboard password management, console TLS automation, Helm/CI hardening, `MachineSet`/instance types/Windows/NUMA parity, pause/resume/halt, VM-state snapshot/restore, a full second wave of FluxVM route wrapping (both guest-exec channels, guest file access, sandboxes/templates/warm pools/image catalog, runtime/network diagnostics), the `MachineSnapshotSchedule` CRD, `kaironctl top`, and a hardening pass aimed at untrusted multi-tenant traffic (opt-in namespace-scoped `kairon-ui` authorization, opt-in network default-deny) -- see [`RELEASE_NOTES.md`](https://github.com/zyvorai/kairon/blob/main/RELEASE_NOTES.md) for the full per-release changelog. Cold relocation, snapshots, DRA bridging, the secure live control plane, and a real FluxVM migration adapter are all real and tested — real two-host live migration has not yet been exercised against real hardware in this repository's own CI (see [Operability](guides/observability.md)).
 
+### Toward v0.7 (on `main`, not tagged yet)
+
+Already on `main` (see [`ROADMAP.md`](../ROADMAP.md)): eBPF operator surface (`kaironctl network flows|drop-reasons|stats|effective`, production `dataplaneMode: ebpf`), dashboard **Network** panel, multi-volume Machines (`volumes[1+]` → virtiofs), lease-aware `NodeUnreachable` (`AgentLivenessStale`), opt-in CSI node CHAP (`node.csi.chap.enabled`), opt-in OTel reconcile spans (`otel.enabled`).
+
+**Still required before cutting v0.7.0:**
+
+1. **Green Zyvor lab matrix** — cold + live + live-eBPF (and the failure/NeedsRecovery/failover cases) recorded in [`COMPATIBILITY.md`](COMPATIBILITY.md). Workflow: `.github/workflows/hardware-migration.yml`. Blockers today: self-hosted `kairon-lab` runner must be online, and repo secrets/vars (`KAIRON_HW_LAB`, `KAIRON_KUBE_*`, optional `KAIRON_HW_EBPF_MACHINE`) must be set.
+2. **Cut v0.7.0** — bump `VERSION` / Chart `appVersion`, `RELEASE_NOTES.md`, README maturity / comparison Status once live rows are green.
+
+Out of band (not a code gate): CII Best Practices badge still needs human OAuth (Scorecard / issue tracker).
+
 ### Production gaps
 
 **Closed in the v0.6 foundations track (agent status path):** `kairon-node` no longer patches Machine status every reconcile tick. Conditions use shared helpers that preserve `LastTransitionTime` unless Status/Reason/Message actually change; `observedGeneration` is set on meaningful writes; volatile `ResourceUsage` alone does not force an etcd write (live samples go to `kairon_machine_resource_usage` Prometheus gauges). `kaironctl top` / UI node-usage therefore reflect the last meaningful status write.
