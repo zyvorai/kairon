@@ -225,36 +225,39 @@ jobs:
 
   package-tests:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - ./internal/admission/
-          - ./internal/agent/
-          - ./internal/consoleproxy/
-          - ./internal/controller/
-          - ./internal/conversion/
-          - ./internal/csinode/
-          - ./internal/fluxvm/
-          - ./internal/health/
-          - ./internal/kaironctl/
-          - ./internal/kube/
-          - ./internal/leaderelection/
-          - ./internal/metrics/
-          - ./internal/migration/
-          - ./internal/model/
-          - ./internal/nodeliveness/
-          - ./internal/ratelimit/
-          - ./internal/scheduler/
-          - ./internal/tlsreload/
-          - ./internal/uiapi/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.x'
-      - name: Test ${{ matrix.package }}
-        run: go test -race -count=1 -timeout 10m ${{ matrix.package }}
+      - name: Per-package race tests
+        run: |
+          set -euo pipefail
+          packages=(
+            ./internal/admission/
+            ./internal/agent/
+            ./internal/consoleproxy/
+            ./internal/controller/
+            ./internal/conversion/
+            ./internal/csinode/
+            ./internal/fluxvm/
+            ./internal/health/
+            ./internal/kaironctl/
+            ./internal/kube/
+            ./internal/leaderelection/
+            ./internal/metrics/
+            ./internal/migration/
+            ./internal/model/
+            ./internal/nodeliveness/
+            ./internal/ratelimit/
+            ./internal/scheduler/
+            ./internal/tlsreload/
+            ./internal/uiapi/
+          )
+          for p in "${packages[@]}"; do
+            echo "==> go test -race $p"
+            go test -race -count=1 -timeout 10m "$p"
+          done
 
   docs-guard:
     runs-on: ubuntu-latest
