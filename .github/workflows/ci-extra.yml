@@ -22,11 +22,11 @@ jobs:
   hygiene:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.x'
-      - uses: azure/setup-helm@v4.3.0
+      - uses: azure/setup-helm@v5.0.1
       - name: Install shellcheck + kubeconform + actionlint
         run: |
           set -euo pipefail
@@ -138,11 +138,11 @@ jobs:
   build-artifacts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.x'
-      - uses: azure/setup-helm@v4.3.0
+      - uses: azure/setup-helm@v5.0.1
       - name: Krew package
         run: |
           set -euo pipefail

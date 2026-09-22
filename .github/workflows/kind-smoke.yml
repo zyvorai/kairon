@@ -22,12 +22,12 @@ jobs:
   kind:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: helm/kind-action@v1.12.0
+      - uses: actions/checkout@v7
+      - uses: helm/kind-action@v1.15.0
         with:
           cluster_name: kairon-ci
           wait: 120s
-      - uses: azure/setup-helm@v4.3.0
+      - uses: azure/setup-helm@v5.0.1
       - name: Apply CRDs
         run: |
           set -euo pipefail
