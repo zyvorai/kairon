@@ -125,6 +125,17 @@ type CreateRequest struct {
 	// something Kairon manages or has a Machine-spec field for yet.
 	SecureBoot bool `json:"secure_boot,omitempty"`
 	TPM        bool `json:"tpm,omitempty"`
+	// SharedFolders maps Machine spec.volumes[1+] (PVC host dirs) into
+	// FluxVM virtiofs shares — QEMU-only; FluxVM has no multi-block-disk
+	// create API yet. See docs/guides/machine-storage.md.
+	SharedFolders []SharedFolder `json:"shared_folders,omitempty"`
+}
+
+// SharedFolder mirrors FluxVM's CreateVmRequest.shared_folders entry.
+type SharedFolder struct {
+	HostPath  string `json:"host_path"`
+	GuestPath string `json:"guest_path"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
 }
 
 // QgaSpec mirrors FluxVM's own qemu-guest-agent (virtio-serial) opt-in --
@@ -250,7 +261,7 @@ func (c *Client) Get(ctx context.Context, id string) (*Record, error) {
 // CreateWithVFIO (POST /v1/vms) and CreateSandboxForMachine
 // (POST /v1/sandboxes' embedded spec field), so the two creation paths
 // can never drift apart on what a given Machine field maps to.
-func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []string) (CreateRequest, error) {
+func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []string, sharedFolders []SharedFolder) (CreateRequest, error) {
 	cpu, err := model.ParseVCPUs(m.Spec.Resources.CPU)
 	if err != nil {
 		return CreateRequest{}, err
@@ -284,6 +295,9 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 	}
 	if r := m.Spec.Resources; (r.NUMANode != nil || r.CPUSet != "" || r.Hugepages) && backend != "qemu" {
 		return CreateRequest{}, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
+	}
+	if len(sharedFolders) > 0 && backend != "qemu" {
+		return CreateRequest{}, fmt.Errorf("spec.volumes beyond [0] (virtiofs data volumes) require the qemu backend; Machine resolves to backend %q", backend)
 	}
 	// secureBoot/tpm backend restrictions mirror FluxVM's own scheduler-side
 	// enforcement exactly (fluxvm-scheduler's secure_boot_or_tpm_backend_error,
@@ -329,8 +343,9 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 		NUMANode:     m.Spec.Resources.NUMANode,
 		CPUSet:       m.Spec.Resources.CPUSet,
 		Hugepages:    m.Spec.Resources.Hugepages,
-		SecureBoot:   m.Spec.Security.SecureBoot,
-		TPM:          m.Spec.Security.TPM,
+		SecureBoot:    m.Spec.Security.SecureBoot,
+		TPM:           m.Spec.Security.TPM,
+		SharedFolders: sharedFolders,
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}
@@ -358,11 +373,11 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 }
 
 func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
-	return c.CreateWithVFIO(ctx, m, defaultBackend, nil)
+	return c.CreateWithVFIO(ctx, m, defaultBackend, nil, nil)
 }
 
-func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string) (*Record, error) {
-	payload, err := buildCreateRequest(m, defaultBackend, vfioDevices)
+func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string, sharedFolders []SharedFolder) (*Record, error) {
+	payload, err := buildCreateRequest(m, defaultBackend, vfioDevices, sharedFolders)
 	if err != nil {
 		return nil, err
 	}

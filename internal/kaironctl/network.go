@@ -24,15 +24,23 @@ import (
 func newNetworkCmd(opts *Options) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network",
-		Short: "Inspect Machine network / Cilium dataplane status",
-		Long: `Emoji-rich network diagnostics for Machines and policies.
+		Short: "Inspect Machine network / eBPF dataplane status",
+		Long: `Network diagnostics for Machines and policies (FluxVM TC/eBPF edge).
 
-  kaironctl network status MACHINE   dataplane, Cilium attach, CNP sync
-  kaironctl network policies         list MachineNetworkPolicies (PHASE colored)
+  kaironctl network status MACHINE       dataplane, Cilium attach, CNP sync
+  kaironctl network flows MACHINE        recent eBPF flows
+  kaironctl network drop-reasons MACHINE recent drop reasons
+  kaironctl network stats MACHINE        dataplane stats
+  kaironctl network effective MACHINE    merged effective policy
+  kaironctl network policies             list MachineNetworkPolicies
 `,
 	}
 	cmd.AddCommand(newNetworkStatusCmd(opts))
 	cmd.AddCommand(newNetworkPoliciesCmd(opts))
+	cmd.AddCommand(newNetworkObservabilityCmd(opts, "flows", "network-flows", "Show recent eBPF flows for a Machine"))
+	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drop-reasons", "network-drop-reasons", "Show recent eBPF drop reasons for a Machine"))
+	cmd.AddCommand(newNetworkObservabilityCmd(opts, "stats", "network-stats", "Show eBPF dataplane stats for a Machine"))
+	cmd.AddCommand(newNetworkObservabilityCmd(opts, "effective", "network-effective", "Show merged effective network policy for a Machine"))
 	return cmd
 }
 
@@ -109,6 +117,32 @@ func newNetworkStatusCmd(opts *Options) *cobra.Command {
 	cmd.Flags().BoolVar(&flows, "flows", false, "also print recent eBPF flows (via UI or node console proxy)")
 	cmd.Flags().BoolVar(&dropReasons, "drop-reasons", false, "also print recent drop reasons")
 	cmd.Flags().IntVar(&limit, "limit", 10, "limit for --flows / --drop-reasons")
+	return cmd
+}
+
+func newNetworkObservabilityCmd(opts *Options, use, kind, short string) *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   use + " MACHINE",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			kc, err := kube.FromEnvironment()
+			if err != nil {
+				return err
+			}
+			m, err := kc.GetMachine(ctx, opts.Namespace, args[0])
+			if err != nil {
+				return err
+			}
+			return printObservability(ctx, m, kind, limit)
+		},
+	}
+	if use == "flows" || use == "drop-reasons" {
+		cmd.Flags().IntVar(&limit, "limit", 10, "max entries to request")
+	}
 	return cmd
 }
 

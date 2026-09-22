@@ -50,7 +50,7 @@ func (c *Client) CreateSandboxForMachine(ctx context.Context, m model.Machine) (
 	if m.Spec.Sandbox.TemplateName != "" {
 		req.Template = m.Spec.Sandbox.TemplateName
 	} else {
-		payload, err := buildCreateRequest(m, "flux-vm", nil)
+		payload, err := buildCreateRequest(m, "flux-vm", nil, nil)
 		if err != nil {
 			return nil, err
 		}

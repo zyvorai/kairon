@@ -38,7 +38,7 @@ for arg in "$@"; do
 done
 
 MIG_NAME="mhtest-$MACHINE-$(date -u +%Y%m%d-%H%M%S)"
-migrate_args=("$MACHINE" --namespace="$NAMESPACE" --name="$MIG_NAME" --strategy=live --target-node="$TARGET_NODE")
+migrate_args=("$MACHINE" --namespace="$NAMESPACE" --name="$MIG_NAME" --strategy="${KAIRON_MIGRATE_STRATEGY:-live}" --target-node="$TARGET_NODE")
 [[ -n "$MIGRATION_NETWORK" ]] && migrate_args+=(--migration-network="$MIGRATION_NETWORK")
 
 echo "[*] before: $MACHINE's current phase/node"

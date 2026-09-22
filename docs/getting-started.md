@@ -169,14 +169,25 @@ Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-contro
 
 ## Network Fabric (eBPF edge)
 
-Apply the example Machine + policy + security group, then follow the tutorial:
+Recommended production dataplane (FluxVM TC/eBPF — Kairon declares policy, FluxVM owns BPF):
+
+```yaml
+spec:
+  network:
+    mode: tap
+    netns: true
+    dataplaneMode: ebpf
+    dataplaneRequired: true
+```
 
 ```bash
 kubectl apply -f examples/network-fabric-machine.yaml
 kaironctl network status web
+kaironctl network flows web --limit 20
+kaironctl network drop-reasons web
 ```
 
-On a cluster that already runs Cilium as the CNI, three opt-in paths exist (all off by default):
+On a cluster that already runs Cilium as the CNI, three **additional** opt-in paths exist (all off by default):
 
 | Path | What you set |
 |---|---|

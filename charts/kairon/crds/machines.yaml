@@ -408,6 +408,12 @@ spec:
                     claimName:
                       type: string
                       minLength: 1
+                    guestPath:
+                      type: string
+                      description: Guest mount path for volumes[1+] virtiofs shares (default /mnt/<name>). Ignored for volumes[0] boot disk.
+                    readOnly:
+                      type: boolean
+                      description: Mount volumes[1+] virtiofs share read-only.
               deviceClaims:
                 type: array
                 items:

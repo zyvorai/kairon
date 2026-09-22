@@ -22,10 +22,12 @@ spec:
     mode: tap
     netns: true
     staticNetwork: true
+    # Recommended production dataplane: FluxVM TC/eBPF edge (not Cilium).
     dataplaneRequired: true
-    dataplaneMode: cilium
-    # Opt-in: join the cluster Cilium network via CiliumExternalWorkload
-    # (requires Helm network.ciliumAttach.enabled=true on the controller).
+    dataplaneMode: ebpf
+    # Opt-in Cilium cluster network instead:
+    # dataplaneMode: cilium
+    # ciliumAttach: true   # requires Helm network.ciliumAttach.enabled=true
     # ciliumAttach: true
   serviceFabric:
     services:

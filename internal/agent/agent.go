@@ -243,6 +243,15 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		volStatus = vs
 	}
 
+	var sharedFolders []fluxvm.SharedFolder
+	if !usingSandboxTemplate {
+		var err error
+		sharedFolders, err = a.resolveDataVolumes(ctx, m)
+		if err != nil {
+			return err
+		}
+	}
+
 	rec, err := a.current(ctx, m)
 	if err != nil {
 		return err
@@ -283,7 +292,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
-		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices)
+		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices, sharedFolders)
 		if err != nil {
 			return err
 		}

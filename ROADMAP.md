@@ -1,5 +1,16 @@
 # Roadmap
 
+## v0.7 — Prove maturity, eBPF UX, STATUS gaps
+
+- [ ] Green multi-host migration matrix (cold + live + live-eBPF) on Zyvor lab → [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
+- [x] Matrix script: `live-ebpf` case + cold respects `KAIRON_MIGRATE_STRATEGY`
+- [x] First-class eBPF operator surface: `kaironctl network flows|drop-reasons|stats|effective`; production/docs recommend `dataplaneMode: ebpf`
+- [ ] Dashboard Network panel (flows / drops / effective)
+- [x] Multi-volume first cut: `spec.volumes[1+]` → FluxVM virtiofs shared folders (QEMU)
+- [ ] Fencing: liveness lease into `NodeUnreachable` detection
+- [ ] CSI node-side CHAP; opt-in OTel reconcile spans
+- [ ] Cut v0.7.0 + README maturity refresh after live matrix green
+
 ## v0.6 — Production Foundations
 
 - [x] Status write suppression + shared Conditions / ObservedGeneration

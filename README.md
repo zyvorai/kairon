@@ -38,6 +38,7 @@ Kairon starts from a different premise: **a VM is not a Pod.** A `Machine` is de
 | Scheduling | Pod scheduler + virt extras | Capacity-aware Kairon placement |
 | Control plane | Large operator / client-go surface | **Stdlib-only** controller & node ([policy](docs/DEPENDENCIES.md)) |
 | Hypervisors | Primarily QEMU via libvirt | QEMU, Cloud HV, Firecracker, FluxVM |
+| Network dataplane | Pod CNI / NetworkPolicy | FluxVM TC/**eBPF** edge + `MachineNetworkPolicy` (opt. Cilium EW) |
 | Live migration | In VMM / KubeVirt stack | mTLS peers + optional adapter |
 | Ambiguous commit | Stack-dependent recovery | `NeedsRecovery` — no silent split-brain |
 | Source of truth | K8s + virt abstractions | Kubernetes API only |

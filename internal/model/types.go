@@ -569,6 +569,12 @@ type SecuritySpec struct {
 type MachineVolume struct {
 	Name      string `json:"name"`
 	ClaimName string `json:"claimName"`
+	// GuestPath is where volumes[1+] are mounted inside the guest via
+	// FluxVM virtiofs (shared_folders). Empty defaults to /mnt/<name>.
+	// volumes[0] remains the boot disk (disk.img) and ignores GuestPath.
+	GuestPath string `json:"guestPath,omitempty"`
+	// ReadOnly marks a data volume (volumes[1+]) as a read-only virtiofs share.
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 type DeviceClaimReference struct {

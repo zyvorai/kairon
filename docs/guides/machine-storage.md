@@ -35,13 +35,17 @@ directory, and boots from `<directory>/disk.img`. If you're hand-provisioning
 storage for a test, that means placing (or copying) your qcow2/raw image at
 exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
 
-## Real limits today (v1 of this feature)
+## Real limits today
 
-- **One boot volume per Machine.** Only `spec.volumes[0]` is used; additional
-  entries are accepted by the CRD but currently ignored by the reconciler.
+- **Boot volume:** `spec.volumes[0]` is the boot disk (`disk.img` inside the
+  PVC directory), same as before.
+- **Additional volumes (`spec.volumes[1+]`):** mapped as FluxVM **virtiofs**
+  shared folders (QEMU only). Default guest mount is `/mnt/<name>` (override
+  with `guestPath`). FluxVM has no multi-block-disk create API yet; this is
+  the supported first cut — not a raw virtio-blk data disk.
 - **`Filesystem`-mode `PersistentVolume`s only.** A `Block`-mode PV is
   rejected with a clear error (`volumeMode "Block" is not supported...`) —
-  Kairon opens a file inside the volume's directory, it doesn't hand FluxVM
+  Kairon opens a file / directory inside the volume, it doesn't hand FluxVM
   a raw block device.
 - **`hostPath`, `local`, or Kairon's own CSI-backed volume sources.**
   `hostPath`/`local` already name a real, present-today directory on a
@@ -53,7 +57,8 @@ exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
   `kairon-node`'s own `--csi-socket` flag pointed at it, neither of which
   is on by default. A PV naming any *other* CSI driver is still refused —
   Kairon only ever attaches/mounts network storage through its own driver,
-  never an arbitrary third-party one.
+  never an arbitrary third-party one (unless listed in
+  `node.thirdPartyCSIDrivers`).
 - **The PVC must already be `Bound`.** A `Pending` claim fails reconcile
   with a clear "not Bound yet" error rather than retrying silently forever —
   check `kubectl get pvc` if a Machine referencing one gets stuck.
@@ -62,6 +67,23 @@ exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
   already gone through a stronger gate (the claim had to exist and be bound
   by the cluster's own storage machinery), so the same node-local directory
   restriction doesn't apply to it.
+
+```yaml
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: db
+spec:
+  volumes:
+    - name: root
+      claimName: db-root-pvc
+    - name: data
+      claimName: db-data-pvc
+      guestPath: /var/lib/postgresql/data   # virtiofs inside guest
+  resources: {cpu: "2", memory: "4Gi"}
+  runtime: {backend: qemu}
+  powerState: Running
+```
 
 ## What this unlocks vs. what's still missing
 

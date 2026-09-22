@@ -61,6 +61,7 @@ jobs:
           KAIRON_HW_MACHINE: ${{ vars.KAIRON_HW_MACHINE }}
           KAIRON_HW_TARGET_NODE: ${{ vars.KAIRON_HW_TARGET_NODE }}
           KAIRON_HW_NAMESPACE: ${{ vars.KAIRON_HW_NAMESPACE }}
+          KAIRON_HW_EBPF_MACHINE: ${{ vars.KAIRON_HW_EBPF_MACHINE }}
         run: |
           if [[ "${KAIRON_HW_LAB:-}" != "1" ]]; then
             echo "KAIRON_HW_LAB not set — skipping (configure lab vars/secrets to enable)."

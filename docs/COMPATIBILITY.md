@@ -30,12 +30,16 @@ Automation entry points:
 | Create / restart / delete smoke (≤100 VMs scaled down in CI) | not run | — | Requires `KAIRON_HW_LAB=1` |
 | Cold migration | not run | — | |
 | Live pre-copy under load | not run | — | |
+| Live + eBPF dataplane | not run | — | Machine with `spec.network.dataplaneMode=ebpf`; set `KAIRON_HW_EBPF_MACHINE` |
 | Source failure during transfer | not run | — | |
 | Ambiguous commit → `NeedsRecovery` | not run | — | |
 | Controller failover mid-migration | not run | — | |
 
 Update this table when a matrix run completes (script prints a markdown
-row summary to stdout for copy/paste).
+row summary to stdout for copy/paste). For the eBPF live case, the lab
+Machine must set `dataplaneMode: ebpf` and `dataplaneRequired: true` so
+migration network quiesce/export/restore exercises FluxVM's TC/eBPF path
+(see [`network-fabric.md`](network-fabric.md)).
 
 ## Component versions (fill per run)
 
