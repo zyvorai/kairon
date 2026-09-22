@@ -33,11 +33,13 @@ jobs:
         run: |
           set -euo pipefail
           helm lint charts/kairon
-          # Chart owns RBAC/ServiceAccounts — do not pre-apply deploy/rbac.yaml
-          # or Helm refuses ownership of those objects.
+          # CRDs already applied from deploy/crd.yaml — skip chart CRDs to
+          # avoid server-side apply ownership conflicts on .spec.versions.
           helm install kairon charts/kairon -n kairon-system --create-namespace \
+            --skip-crds \
             --dry-run=client
           helm install kairon charts/kairon -n kairon-system --create-namespace \
+            --skip-crds \
             --set controller.image.pullPolicy=IfNotPresent \
             --set node.image.pullPolicy=IfNotPresent \
             --set controller.replicaCount=1
@@ -49,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           helm upgrade --install kairon-prod charts/kairon -n kairon-prod --create-namespace \
+            --skip-crds \
             -f charts/kairon/values-production.yaml \
             --set webhook.tlsSecretName=ci-webhook-tls \
             --set webhook.caBundle=Y2ktY2EtYnVuZGxl \
