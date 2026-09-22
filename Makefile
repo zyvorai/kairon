@@ -68,6 +68,13 @@ rbac-coverage:
 
 helm-check:
 	helm lint charts/kairon
+	helm lint charts/kairon -f charts/kairon/values-production.yaml
+	helm template kairon charts/kairon --namespace kairon-system \
+		-f charts/kairon/values-production.yaml \
+		--set webhook.tlsSecretName=ci-webhook-tls \
+		--set webhook.caBundle=Y2ktY2EtYnVuZGxl \
+		--set migration.dataplaneTlsSecretName=ci-migration-dataplane \
+		>/dev/null
 
 # Multi-arch kubectl-kairon tarballs + filled deploy/krew/kairon.yaml checksums.
 krew-package:

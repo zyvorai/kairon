@@ -159,6 +159,108 @@ jobs:
           print('helm render YAML: OK (cilium flags default off)')
           PY
 
+      - name: Helm render -- production profile
+        run: |
+          # values-production.yaml is the hardened install overlay (PR5).
+          # Webhook ValidatingWebhookConfiguration only renders when both
+          # tlsSecretName and caBundle are set — inject CI placeholders so
+          # the full production surface is exercised.
+          helm lint charts/kairon -f charts/kairon/values-production.yaml
+          helm template kairon charts/kairon --namespace kairon-system \
+            -f charts/kairon/values-production.yaml \
+            --set webhook.tlsSecretName=ci-webhook-tls \
+            --set webhook.caBundle=Y2ktY2EtYnVuZGxl \
+            --set migration.dataplaneTlsSecretName=ci-migration-dataplane \
+            > /tmp/kairon-production.yaml
+          python3 - <<'PY'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open('/tmp/kairon-production.yaml')) if d]
+          chart = yaml.safe_load(open('charts/kairon/Chart.yaml'))
+          app = str(chart['appVersion']).strip('"')
+          ctrl = next(d for d in docs if d.get('kind') == 'Deployment' and d['metadata']['name'] == 'kairon-controller')
+          node_ds = next(d for d in docs if d.get('kind') == 'DaemonSet' and d['metadata']['name'] == 'kairon-node')
+          ctrl_img = ctrl['spec']['template']['spec']['containers'][0]['image']
+          node_img = node_ds['spec']['template']['spec']['containers'][0]['image']
+          assert ctrl_img.endswith(':' + app), (ctrl_img, app)
+          assert node_img.endswith(':' + app), (node_img, app)
+          ctrl_args = ctrl['spec']['template']['spec']['containers'][0]['args']
+          assert any(str(a).startswith('--webhook-addr=') for a in ctrl_args), ctrl_args
+          node_args = node_ds['spec']['template']['spec']['containers'][0]['args']
+          assert '--network-default-deny=true' in node_args, node_args
+          assert any(str(a).startswith('--interval=5m') for a in node_args), node_args
+          vwh = [d for d in docs if d.get('kind') == 'ValidatingWebhookConfiguration']
+          assert vwh, 'expected ValidatingWebhookConfiguration with production webhook certs'
+          # dataplaneTlsSecretName set: migration secret volume present
+          vols = node_ds['spec']['template']['spec'].get('volumes') or []
+          assert any(v.get('secret', {}).get('secretName') == 'ci-migration-dataplane' for v in vols), vols
+          print('helm render YAML: OK (values-production.yaml)')
+          PY
+
+      - name: v0.6 foundations package tests
+        run: |
+          # Explicit coverage for PR1–PR3 packages (also covered by make
+          # test-race above; kept here so a targeted regression is obvious
+          # in the job log).
+          go test -race -count=1 \
+            ./internal/model/ \
+            ./internal/agent/ \
+            ./internal/kube/ \
+            ./internal/scheduler/ \
+            ./internal/controller/
+
+  # Dry-run of release.yml release-assets: CLI binaries + checksums +
+  # Helm package. Does not push OCI or create a GitHub Release.
+  release-assets:
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - uses: azure/setup-helm@v4.3.0
+      - name: Build CLI binaries and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="ci-${GITHUB_SHA::12}"
+          for os_arch in linux/amd64 linux/arm64; do
+            os="${os_arch%/*}"
+            arch="${os_arch#*/}"
+            for cmd in kaironctl kubectl-kairon; do
+              out="dist/${cmd}-${os}-${arch}"
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+                -ldflags "-s -w -X main.version=${version}" \
+                -o "$out" "./cmd/${cmd}"
+            done
+          done
+          (
+            cd dist
+            sha256sum kaironctl-* kubectl-kairon-* > SHA256SUMS
+            test -s SHA256SUMS
+            test "$(wc -l < SHA256SUMS | tr -d ' ')" = "4"
+          )
+      - name: Package Helm chart
+        run: |
+          set -euo pipefail
+          version="0.0.0-ci.${GITHUB_SHA::12}"
+          cp charts/kairon/Chart.yaml /tmp/Chart.yaml.bak
+          sed -i "s/^version:.*/version: ${version}/" charts/kairon/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${version}\"/" charts/kairon/Chart.yaml
+          helm package charts/kairon -d dist
+          test -f "dist/kairon-${version}.tgz"
+          # Production overlay must still lint against the packaged chart.
+          helm lint "dist/kairon-${version}.tgz" -f charts/kairon/values-production.yaml
+          mv /tmp/Chart.yaml.bak charts/kairon/Chart.yaml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets-ci
+          path: |
+            dist/kaironctl-*
+            dist/kubectl-kairon-*
+            dist/SHA256SUMS
+            dist/kairon-*.tgz
+
   web:
     runs-on: ubuntu-latest
     steps:

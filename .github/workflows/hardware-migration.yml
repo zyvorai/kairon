@@ -4,18 +4,46 @@
 # Real multi-host migration matrix. Requires a self-hosted runner with
 # access to the Zyvor KVM lab and repository secrets (see docs/COMPATIBILITY.md).
 # Skips cleanly when KAIRON_HW_LAB is not configured on the runner.
+#
+# validate: always runs on GitHub-hosted runners (PR/push) — script syntax,
+# safety gate, and docs/COMPATIBILITY.md presence. Does not touch a cluster.
 name: hardware-migration
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * *' # nightly 03:00 UTC
+  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Script syntax and safety gate
+        run: |
+          set -euo pipefail
+          test -f docs/COMPATIBILITY.md
+          test -x scripts/hardware-migration-matrix.sh || chmod +x scripts/hardware-migration-matrix.sh
+          bash -n scripts/hardware-migration-matrix.sh
+          if [[ -f scripts/multi-host-migration-test-run.sh ]]; then
+            bash -n scripts/multi-host-migration-test-run.sh
+          fi
+          # Safety gate must refuse without KAIRON_HW_LAB=1.
+          if scripts/hardware-migration-matrix.sh 2>/tmp/hw-refuse.txt; then
+            echo "expected refuse without KAIRON_HW_LAB=1" >&2
+            exit 1
+          fi
+          grep -qi 'KAIRON_HW_LAB' /tmp/hw-refuse.txt
+          echo "hardware-migration validate: OK"
+
   matrix:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: [self-hosted, kairon-lab]
     steps:
       - uses: actions/checkout@v4
