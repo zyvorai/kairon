@@ -101,8 +101,9 @@ jobs:
 
           # ui.auth.users configured: real accounts wired in, default admin
           # seeding stops entirely.
+          # shellcheck disable=SC2016  # bcrypt hash must stay single-quoted
           helm template kairon charts/kairon --namespace kairon-system --set ui.enabled=true \
-            --set ui.auth.users[0].username=alice --set ui.auth.users[0].passwordHash='$2a$10$abcdefghijklmnopqrstuv' > /tmp/kairon-ui-users.yaml
+            --set ui.auth.users[0].username=alice --set-string ui.auth.users[0].passwordHash='$2a$10$abcdefghijklmnopqrstuv' > /tmp/kairon-ui-users.yaml
           python3 - <<'PY'
           import yaml
           docs = [d for d in yaml.safe_load_all(open('/tmp/kairon-ui-users.yaml')) if d]

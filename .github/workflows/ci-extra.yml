@@ -94,7 +94,7 @@ jobs:
           sudo mv /tmp/actionlint /usr/local/bin/actionlint
           actionlint -version
       - name: Lint workflows
-        run: actionlint -color
+        run: actionlint -color -config-file .github/actionlint.yaml
 
   manifests:
     runs-on: ubuntu-latest
@@ -147,9 +147,12 @@ jobs:
         run: |
           set -euo pipefail
           test -f dist/krew/kairon.yaml
-          ls dist/krew/kairon_*.tar.gz | wc -l | grep -qx 4
-          # Manifest must reference real checksums (no CHANGE_ME placeholders).
-          ! grep -E 'CHANGE_ME|0000000000' dist/krew/kairon.yaml
+          count=$(find dist/krew -maxdepth 1 -name 'kairon_*.tar.gz' | wc -l | tr -d ' ')
+          test "$count" = "4"
+          if grep -E 'CHANGE_ME|0000000000' dist/krew/kairon.yaml; then
+            echo "krew manifest still has placeholders" >&2
+            exit 1
+          fi
           echo "krew: OK"
       - uses: actions/upload-artifact@v7
         with:

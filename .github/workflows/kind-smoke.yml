@@ -1,7 +1,7 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
-# Optional kind-based smoke: install CRDs + raw manifests into a throwaway
+# Optional kind-based smoke: install CRDs + Helm chart into a throwaway
 # cluster. Does not require FluxVM; only checks objects apply cleanly.
 name: kind-smoke
 
@@ -24,26 +24,24 @@ jobs:
           cluster_name: kairon-ci
           wait: 120s
       - uses: azure/setup-helm@v4.3.0
-      - name: Apply CRDs and RBAC
+      - name: Apply CRDs
         run: |
           set -euo pipefail
           kubectl apply --server-side -f deploy/crd.yaml
-          kubectl apply -f deploy/rbac.yaml
           kubectl get crd | grep kairon.zyvor.dev
-      - name: Helm install (dry-run + template apply subset)
+      - name: Helm install
         run: |
           set -euo pipefail
           helm lint charts/kairon
+          # Chart owns RBAC/ServiceAccounts — do not pre-apply deploy/rbac.yaml
+          # or Helm refuses ownership of those objects.
           helm install kairon charts/kairon -n kairon-system --create-namespace \
-            --dry-run=server
-          # Real install with images that will never pull successfully is
-          # fine — we only assert the control-plane objects land and the
-          # Deployments/DaemonSets exist. Use never pull + low probe noise.
+            --dry-run=client
           helm install kairon charts/kairon -n kairon-system --create-namespace \
             --set controller.image.pullPolicy=IfNotPresent \
             --set node.image.pullPolicy=IfNotPresent \
             --set controller.replicaCount=1
-          kubectl -n kairon-system get deploy,ds,sa,clusterrole | tee /tmp/kairon-kind.txt
+          kubectl -n kairon-system get deploy,ds,sa | tee /tmp/kairon-kind.txt
           grep -q kairon-controller /tmp/kairon-kind.txt
           grep -q kairon-node /tmp/kairon-kind.txt
           echo "kind-smoke: OK"
@@ -55,5 +53,5 @@ jobs:
             --set webhook.tlsSecretName=ci-webhook-tls \
             --set webhook.caBundle=Y2ktY2EtYnVuZGxl \
             --set migration.dataplaneTlsSecretName=ci-mig \
-            --dry-run=server
+            --dry-run=client
           echo "kind production dry-run: OK"
