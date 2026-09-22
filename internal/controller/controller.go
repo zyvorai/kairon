@@ -101,6 +101,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.syncAssignedNodeLabels(ctx, machines)
 	machines = c.resolveInstanceTypes(ctx, machines)
 	c.reconcileCiliumAttach(ctx, machines)
 	c.reconcileCiliumPolicySync(ctx)
@@ -108,20 +109,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	assigned := countAssigned(machines)
+	nodeLoad := scheduler.BuildNodeLoad(machines)
 	machineIndex := indexMachines(machines)
 
 	migrations, err := c.Kube.ListMachineMigrations(ctx)
 	if err != nil && !kube.IsNotFound(err) {
 		return err
 	}
+	c.syncMigrationSourceLabels(ctx, migrations)
 	if c.Metrics != nil {
 		c.Metrics.ObserveMigrations(migrations)
 	}
-	load := newMigrationLoad(migrations)
+	migLoad := newMigrationLoad(migrations)
 	policyStates := c.loadMigrationPolicyStates(ctx, machines, migrations)
 	for _, migration := range migrations {
-		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, assigned, load, policyStates); err != nil {
+		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, nodeLoad, migLoad, policyStates); err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
@@ -216,11 +218,14 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	scheduler.SortByPriorityDesc(pending)
 
 	for _, m := range pending {
-		node, err := c.Scheduler.Choose(m, nodes, machines, assigned, draHints[m.Namespace()+"/"+m.Metadata.Name])
+		node, err := c.Scheduler.Choose(m, nodes, machines, nodeLoad, draHints[m.Namespace()+"/"+m.Metadata.Name])
 		if err != nil {
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = err.Error()
+			status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+				Type: "Scheduled", Status: "False", Reason: "Unschedulable", Message: err.Error(),
+			})
 			if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 			}
@@ -234,6 +239,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = blocker
+			status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+				Type: "Scheduled", Status: "False", Reason: "QuotaBlocked", Message: blocker,
+			})
 			if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 			}
@@ -269,6 +277,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				status := m.Status
 				status.Phase = "Pending"
 				status.Message = err.Error()
+				status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+					Type: "Scheduled", Status: "False", Reason: "CPUPinningFailed", Message: err.Error(),
+				})
 				if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
 					c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 				}
@@ -276,10 +287,13 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			}
 			specPatch["resources"] = map[string]any{"allocatedCpuSet": cpuset}
 		}
-		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"spec": specPatch}); err != nil {
+		if err := c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{
+			"spec":     specPatch,
+			"metadata": map[string]any{"labels": map[string]any{model.AssignedNodeLabel: node}},
+		}); err != nil {
 			return err
 		}
-		assigned[node]++
+		scheduler.Reserve(nodeLoad, node, m)
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
 	}
 
@@ -341,7 +355,7 @@ func indexMachines(machines []model.Machine) map[string]model.Machine {
 	return out
 }
 
-func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, assigned map[string]int, load *migrationLoad, policyStates []*MigrationPolicyState) error {
+func (c *Controller) reconcileMigration(ctx context.Context, migration model.MachineMigration, machines map[string]model.Machine, machineList []model.Machine, nodes []model.Node, nodeLoad map[string]scheduler.NodeLoad, load *migrationLoad, policyStates []*MigrationPolicyState) error {
 	if migration.Status.Phase == "Succeeded" || migration.Status.Phase == "Failed" || migration.Status.Phase == "Blocked" || migration.Status.Phase == "NeedsRecovery" || migration.Status.Phase == "Cancelled" {
 		return nil
 	}
@@ -375,7 +389,7 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if err != nil {
 			return c.blockMigration(ctx, migration, err.Error())
 		}
-		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, strategy, nodes, machineList, assigned)
+		target, err := c.migrationTarget(machine, migration.Spec.TargetNode, strategy, nodes, machineList, nodeLoad)
 		if err != nil {
 			return c.blockMigration(ctx, migration, err.Error())
 		}
@@ -397,14 +411,26 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if strategy == "live" {
 			status.Phase = "Starting"
 			status.Message = "source node agent will securely prepare the target before touching the source runtime"
-			return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+			if err := c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); err != nil {
+				return err
+			}
+			if err := c.ensureMigrationSourceLabel(ctx, migration, status.SourceNode); err != nil {
+				c.Log.Error("migration source-node label stamp failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+			}
+			return nil
 		}
 		status.Phase = "Stopping"
 		status.Message = "stopping source runtime for controlled cold evacuation"
 		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, map[string]any{"spec": map[string]any{"powerState": "Stopped"}}); err != nil {
 			return err
 		}
-		return c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status)
+		if err := c.Kube.PatchMachineMigrationStatus(ctx, migration.Namespace(), migration.Metadata.Name, status); err != nil {
+			return err
+		}
+		if err := c.ensureMigrationSourceLabel(ctx, migration, status.SourceNode); err != nil {
+			c.Log.Error("migration source-node label stamp failed", "namespace", migration.Namespace(), "migration", migration.Metadata.Name, "error", err)
+		}
+		return nil
 	}
 
 	switch phase {
@@ -417,10 +443,13 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		}
 		patch := map[string]any{
 			"spec": map[string]any{"nodeName": status.TargetNode},
-			"metadata": map[string]any{"annotations": map[string]any{
-				model.AnnotationAdoptOnly:    "true",
-				model.AnnotationMigrationRef: migration.Metadata.Name,
-			}},
+			"metadata": map[string]any{
+				"annotations": map[string]any{
+					model.AnnotationAdoptOnly:    "true",
+					model.AnnotationMigrationRef: migration.Metadata.Name,
+				},
+				"labels": map[string]any{model.AssignedNodeLabel: status.TargetNode},
+			},
 		}
 		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, patch); err != nil {
 			return err
@@ -446,7 +475,10 @@ func (c *Controller) reconcileMigration(ctx context.Context, migration model.Mac
 		if machine.Status.Phase != "Stopped" {
 			return nil
 		}
-		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, map[string]any{"spec": map[string]any{"nodeName": status.TargetNode, "powerState": "Running"}}); err != nil {
+		if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, map[string]any{
+			"spec":     map[string]any{"nodeName": status.TargetNode, "powerState": "Running"},
+			"metadata": map[string]any{"labels": map[string]any{model.AssignedNodeLabel: status.TargetNode}},
+		}); err != nil {
 			return err
 		}
 		status.Phase = "Restarting"
@@ -498,7 +530,7 @@ func liveBackendEligible(backend string) bool {
 	return backend == "" || backend == "auto" || backend == "qemu"
 }
 
-func (c *Controller) migrationTarget(machine model.Machine, requested, strategy string, nodes []model.Node, machineList []model.Machine, assigned map[string]int) (string, error) {
+func (c *Controller) migrationTarget(machine model.Machine, requested, strategy string, nodes []model.Node, machineList []model.Machine, nodeLoad map[string]scheduler.NodeLoad) (string, error) {
 	var candidates []model.Node
 	for _, n := range nodes {
 		if n.Metadata.Name == machine.Spec.NodeName {
@@ -517,7 +549,7 @@ func (c *Controller) migrationTarget(machine model.Machine, requested, strategy 
 	// source node anyway (device claims aren't re-resolved by a
 	// migration), so a DRA topology hint has nothing meaningful to nudge
 	// toward for target selection specifically.
-	target, err := c.Scheduler.Choose(machine, candidates, machineList, assigned, "")
+	target, err := c.Scheduler.Choose(machine, candidates, machineList, nodeLoad, "")
 	if err != nil {
 		if requested != "" {
 			return "", fmt.Errorf("target node %q is not eligible: %w", requested, err)

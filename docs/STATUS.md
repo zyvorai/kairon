@@ -11,6 +11,14 @@ Release status and production gaps formerly maintained in the root README.
 
 ### Production gaps
 
+**Closed in the v0.6 foundations track (agent status path):** `kairon-node` no longer patches Machine status every reconcile tick. Conditions use shared helpers that preserve `LastTransitionTime` unless Status/Reason/Message actually change; `observedGeneration` is set on meaningful writes; volatile `ResourceUsage` alone does not force an etcd write (live samples go to `kairon_machine_resource_usage` Prometheus gauges). `kaironctl top` / UI node-usage therefore reflect the last meaningful status write.
+
+**Closed in the v0.6 foundations track (node-scoped lists):** each `kairon-node` lists Machines with `kairon.zyvor.dev/assigned-node=<thisNode>` and migrations with `kairon.zyvor.dev/migration-source-node=<thisNode>`, driven by watches with a periodic safety resync (default `5m`), instead of listing every Machine/migration in the cluster every few seconds. The controller stamps and repairs those labels whenever `spec.nodeName` / `status.sourceNode` change.
+
+**Closed in the v0.6 foundations track (capacity-aware scheduling):** the scheduler hard-filters on node `status.allocatable` CPU/memory (and hugepages when requested), scores by remaining capacity percentage instead of equal VM counts, and the controller reserves capacity within a reconcile tick so simultaneous placements cannot overcommit one node. Unschedulable outcomes set a `Scheduled=False` Condition with a structured reason.
+
+**Closed in the v0.6 foundations track (packaging):** Helm image tags default to `.Chart.AppVersion` (not `latest`); [`charts/kairon/values-production.yaml`](../charts/kairon/values-production.yaml) enables webhook, namespace isolation, network default-deny, and migration dataplane TLS. Release workflow publishes CLI binaries, checksums, OCI Helm chart, and a GitHub Release. Hardware migration evidence is tracked in [`docs/COMPATIBILITY.md`](COMPATIBILITY.md) and driven by `.github/workflows/hardware-migration.yml`.
+
 Still genuinely open, and why:
 
 - **Cilium cluster-network attach is opt-in and not a Pod CNI.** `network.ciliumAttach` / `network.ciliumPolicySync` default to off so bare-metal clusters without Cilium are unchanged. ExternalWorkload identity and IPv4 stay empty until Cilium's own agent registers the workload — Kairon projects status, it does not program BPF. Multus NAD is still not a primary attach path. There is no embedded Hubble UI; `kaironctl network status --flows` is a pass-through to the existing uiapi when `KAIRON_UI_URL` is set. See [`docs/network-fabric.md`](network-fabric.md).

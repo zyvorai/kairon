@@ -24,6 +24,17 @@ kubectl label node worker-2 kairon.zyvor.dev/capable=true
 kaironctl status
 ```
 
+### Evaluation vs production
+
+Default chart values are an **evaluation** profile (webhook and namespace isolation off; image tags default to `.Chart.AppVersion`). For a hardened install, use the production overlay:
+
+```bash
+helm install kairon charts/kairon -n kairon-system --create-namespace \
+  -f charts/kairon/values-production.yaml
+```
+
+That enables admission webhooks, namespace-scoped UI authorization, network default-deny, and migration dataplane TLS requirements. See [`charts/kairon/values-production.yaml`](../charts/kairon/values-production.yaml) and [`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
+
 Raw manifests still work:
 
 ```bash

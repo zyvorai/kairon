@@ -22,7 +22,7 @@ func TestChooseRejectsNodeWithNoPinnableCPUsLabel(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	n := node("a", true, true) // no PinnableCPUsLabel set at all
 	m := pinningMachine("vm", "2")
-	_, err := s.Choose(m, []model.Node{n}, nil, map[string]int{"a": 0}, "")
+	_, err := s.Choose(m, []model.Node{n}, nil, LoadFromCounts(map[string]int{"a": 0}), "")
 	if err == nil {
 		t.Fatal("expected no eligible node when PinnableCPUsLabel is unset -- fail closed")
 	}
@@ -33,7 +33,7 @@ func TestChooseRejectsNodeWithoutEnoughFreePinnableCPUs(t *testing.T) {
 	n := node("a", true, true)
 	n.Metadata.Labels[model.PinnableCPUsLabel] = "2-3" // only 2 CPUs total
 	m := pinningMachine("vm", "4")                     // requests more than the node has
-	_, err := s.Choose(m, []model.Node{n}, nil, map[string]int{"a": 0}, "")
+	_, err := s.Choose(m, []model.Node{n}, nil, LoadFromCounts(map[string]int{"a": 0}), "")
 	if err == nil {
 		t.Fatal("expected no eligible node when the node has fewer pinnable CPUs than requested")
 	}
@@ -44,7 +44,7 @@ func TestChooseAcceptsNodeWithEnoughFreePinnableCPUs(t *testing.T) {
 	n := node("a", true, true)
 	n.Metadata.Labels[model.PinnableCPUsLabel] = "2-9" // 8 CPUs
 	m := pinningMachine("vm", "4")
-	got, err := s.Choose(m, []model.Node{n}, nil, map[string]int{"a": 0}, "")
+	got, err := s.Choose(m, []model.Node{n}, nil, LoadFromCounts(map[string]int{"a": 0}), "")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v, want a", got, err)
 	}
@@ -63,7 +63,7 @@ func TestChooseAccountsForAlreadyAllocatedCPUsOnOtherMachines(t *testing.T) {
 		Spec:     model.MachineSpec{NodeName: "a", Resources: model.ResourceSpec{AllocatedCPUSet: []uint32{2, 3}}},
 	}
 	m := pinningMachine("vm", "3") // only 2 free (4, 5) remain -- not enough
-	_, err := s.Choose(m, []model.Node{n}, []model.Machine{existing}, map[string]int{"a": 1}, "")
+	_, err := s.Choose(m, []model.Node{n}, []model.Machine{existing}, LoadFromCounts(map[string]int{"a": 1}), "")
 	if err == nil {
 		t.Fatal("expected no eligible node once sibling allocations are accounted for")
 	}
@@ -80,7 +80,7 @@ func TestChooseIgnoresAllocatedCPUsOnMachinesAssignedToOtherNodes(t *testing.T) 
 		Spec:     model.MachineSpec{NodeName: "b", Resources: model.ResourceSpec{AllocatedCPUSet: []uint32{2, 3, 4, 5}}},
 	}
 	m := pinningMachine("vm", "4")
-	got, err := s.Choose(m, []model.Node{a}, []model.Machine{elsewhere}, map[string]int{"a": 0}, "")
+	got, err := s.Choose(m, []model.Node{a}, []model.Machine{elsewhere}, LoadFromCounts(map[string]int{"a": 0}), "")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v, want a (node b's allocations shouldn't affect node a)", got, err)
 	}
@@ -93,7 +93,7 @@ func TestChooseNonPinningMachineIgnoresPinnableCPUsEntirely(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	n := node("a", true, true) // no PinnableCPUsLabel at all
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "plain", Namespace: "default"}}
-	got, err := s.Choose(m, []model.Node{n}, nil, map[string]int{"a": 0}, "")
+	got, err := s.Choose(m, []model.Node{n}, nil, LoadFromCounts(map[string]int{"a": 0}), "")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v, want a", got, err)
 	}

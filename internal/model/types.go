@@ -19,6 +19,15 @@ const (
 	// that point yet, deletes exactly as before this existed.
 	FinalizerSnapshotQuiesce = "kairon.zyvor.dev/snapshot-quiesce"
 	CapableLabel             = "kairon.zyvor.dev/capable"
+	// AssignedNodeLabel is stamped onto a Machine whenever the controller
+	// (or a migration cutover) sets spec.nodeName. kairon-node lists with
+	// this labelSelector so each agent only receives its own Machines
+	// instead of listing the whole cluster every tick.
+	AssignedNodeLabel = "kairon.zyvor.dev/assigned-node"
+	// MigrationSourceNodeLabel is stamped when a MachineMigration's
+	// status.sourceNode is known so the source node agent can list only
+	// migrations it must drive.
+	MigrationSourceNodeLabel = "kairon.zyvor.dev/migration-source-node"
 	DefaultNamespace         = "default"
 	AnnotationAdoptOnly      = "kairon.zyvor.dev/adopt-only"
 	AnnotationVFIOBDF        = "kairon.zyvor.dev/vfio-bdf"
@@ -119,6 +128,12 @@ type ObjectMeta struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 	UID       string `json:"uid,omitempty"`
+	// Generation is the apiserver's monotonically increasing desired-state
+	// counter. Mirrored into status.observedGeneration on meaningful
+	// Machine status writes so operators can tell whether status reflects
+	// the current spec. Zero on locally constructed fixtures that never
+	// round-tripped through the API.
+	Generation int64 `json:"generation,omitempty"`
 	// CreationTimestamp is always set by the apiserver on a real object;
 	// only ever zero-value on an object this process constructed itself
 	// (a request body, a test fixture) and hasn't round-tripped through
@@ -602,11 +617,13 @@ type MachineStatus struct {
 	// purely so internal/agent/resourcelimits.go can skip a redundant FluxVM
 	// call when nothing has actually changed since the last reconcile tick.
 	AppliedResourceLimits *ResourceLimits `json:"appliedResourceLimits,omitempty"`
-	// ResourceUsage is this Machine's live, cgroup-derived resource usage
-	// as of the last reconcile tick (FluxVM's own GET /v1/vms/{id}/stats,
-	// backend-agnostic) -- a point-in-time snapshot refreshed every tick,
-	// not a time series; nil until the first successful reconcile after
-	// the runtime exists. See docs/guides/machine-resource-limits.md.
+	// ResourceUsage is this Machine's cgroup-derived resource usage as of
+	// the last *meaningful* status write (FluxVM's GET /v1/vms/{id}/stats).
+	// High-frequency samples go to Prometheus (kairon_machine_resource_usage)
+	// instead of continuous etcd patches; kaironctl top / UI node-usage
+	// therefore reflect the last phase/condition/etc. change, not every
+	// agent tick. Nil until the first successful status write after the
+	// runtime exists. See docs/guides/machine-resource-limits.md.
 	ResourceUsage *ResourceUsage `json:"resourceUsage,omitempty"`
 	// VolumeStagingPath/VolumePublishPath record that kairon-node has
 	// already called NodeStageVolume/NodePublishVolume (see
@@ -938,10 +955,17 @@ type Node struct {
 		// penalizes its score. See PlacementSpec.Tolerations.
 		Taints []Taint `json:"taints,omitempty"`
 	} `json:"spec"`
-	Status struct {
-		Conditions []NodeCondition `json:"conditions,omitempty"`
-		Addresses  []NodeAddress   `json:"addresses,omitempty"`
-	} `json:"status"`
+	Status NodeStatus `json:"status"`
+}
+
+// NodeStatus mirrors the slice of core/v1.NodeStatus Kairon reads.
+type NodeStatus struct {
+	Conditions []NodeCondition `json:"conditions,omitempty"`
+	Addresses  []NodeAddress   `json:"addresses,omitempty"`
+	// Allocatable mirrors Node.status.allocatable (cpu, memory,
+	// hugepages-2Mi, …). Used by the capacity-aware scheduler; when
+	// absent, capacity hard-filters are skipped for that node.
+	Allocatable map[string]string `json:"allocatable,omitempty"`
 }
 
 // Taint mirrors the real Kubernetes core/v1.Taint wire shape exactly (Key,

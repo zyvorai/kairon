@@ -24,10 +24,7 @@ func TestHandleRuntimeCapabilitiesFullRelay(t *testing.T) {
 	fk := newFakeKube()
 	fk.nodes = []model.Node{{
 		Metadata: model.ObjectMeta{Name: "worker-1"},
-		Status: struct {
-			Conditions []model.NodeCondition `json:"conditions,omitempty"`
-			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
-		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+		Status:   model.NodeStatus{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
 	}}
 	kubeSrv := httptest.NewServer(fk.handler())
 	defer kubeSrv.Close()
@@ -66,10 +63,7 @@ func TestHandlePressureFullRelay(t *testing.T) {
 	}
 	fk.nodes = []model.Node{{
 		Metadata: model.ObjectMeta{Name: "worker-1"},
-		Status: struct {
-			Conditions []model.NodeCondition `json:"conditions,omitempty"`
-			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
-		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+		Status:   model.NodeStatus{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
 	}}
 	kubeSrv := httptest.NewServer(fk.handler())
 	defer kubeSrv.Close()
@@ -130,10 +124,7 @@ func TestHandleFreezeThawFullRelay(t *testing.T) {
 	}
 	fk.nodes = []model.Node{{
 		Metadata: model.ObjectMeta{Name: "worker-1"},
-		Status: struct {
-			Conditions []model.NodeCondition `json:"conditions,omitempty"`
-			Addresses  []model.NodeAddress   `json:"addresses,omitempty"`
-		}{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
+		Status:   model.NodeStatus{Addresses: []model.NodeAddress{{Type: "InternalIP", Address: nodeHost}}},
 	}}
 	kubeSrv := httptest.NewServer(fk.handler())
 	defer kubeSrv.Close()

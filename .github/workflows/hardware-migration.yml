@@ -1,0 +1,48 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+# Real multi-host migration matrix. Requires a self-hosted runner with
+# access to the Zyvor KVM lab and repository secrets (see docs/COMPATIBILITY.md).
+# Skips cleanly when KAIRON_HW_LAB is not configured on the runner.
+name: hardware-migration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *' # nightly 03:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    runs-on: [self-hosted, kairon-lab]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - name: Build CLI
+        run: make build
+      - name: Run hardware migration matrix
+        env:
+          KAIRON_HW_LAB: ${{ vars.KAIRON_HW_LAB }}
+          KAIRON_KUBE_URL: ${{ secrets.KAIRON_KUBE_URL }}
+          KAIRON_KUBE_TOKEN: ${{ secrets.KAIRON_KUBE_TOKEN }}
+          KAIRON_KUBE_CA: ${{ secrets.KAIRON_KUBE_CA }}
+          KAIRON_HW_MACHINE: ${{ vars.KAIRON_HW_MACHINE }}
+          KAIRON_HW_TARGET_NODE: ${{ vars.KAIRON_HW_TARGET_NODE }}
+          KAIRON_HW_NAMESPACE: ${{ vars.KAIRON_HW_NAMESPACE }}
+        run: |
+          if [[ "${KAIRON_HW_LAB:-}" != "1" ]]; then
+            echo "KAIRON_HW_LAB not set — skipping (configure lab vars/secrets to enable)."
+            exit 0
+          fi
+          chmod +x scripts/hardware-migration-matrix.sh
+          scripts/hardware-migration-matrix.sh | tee matrix-out.txt
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: hardware-migration-matrix
+          path: matrix-out.txt
+          if-no-files-found: ignore

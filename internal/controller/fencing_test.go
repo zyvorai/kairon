@@ -44,7 +44,7 @@ func TestDetectUnreachableNodesSetsConditionWhenNodeMissing(t *testing.T) {
 	if !patched {
 		t.Fatal("expected a status patch when the machine's node no longer exists")
 	}
-	cond, found := findCondition(patchedStatus.Conditions, model.ConditionNodeUnreachable)
+	cond, found := model.FindCondition(patchedStatus.Conditions, model.ConditionNodeUnreachable)
 	if !found || cond.Status != "True" {
 		t.Fatalf("got conditions %+v, want %s=True", patchedStatus.Conditions, model.ConditionNodeUnreachable)
 	}
@@ -84,7 +84,7 @@ func TestDetectUnreachableNodesClearsConditionOnceNodeIsReadyAgain(t *testing.T)
 	if !patched {
 		t.Fatal("expected a status patch clearing the condition once the node is Ready again")
 	}
-	cond, found := findCondition(patchedStatus.Conditions, model.ConditionNodeUnreachable)
+	cond, found := model.FindCondition(patchedStatus.Conditions, model.ConditionNodeUnreachable)
 	if !found || cond.Status != "False" {
 		t.Fatalf("got conditions %+v, want %s=False", patchedStatus.Conditions, model.ConditionNodeUnreachable)
 	}

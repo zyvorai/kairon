@@ -116,11 +116,14 @@ type Agent struct {
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {
-	machines, err := a.Kube.ListMachines(ctx)
+	selector := model.AssignedNodeLabelSelector(a.NodeName)
+	machines, err := a.Kube.ListMachinesWithSelector(ctx, selector)
 	if err != nil {
 		return err
 	}
 	for _, m := range machines {
+		// Defense in depth: never act on a Machine whose spec disagrees
+		// with the assignment label (stale label / partial patch).
 		if m.Spec.NodeName != a.NodeName {
 			continue
 		}
@@ -133,8 +136,10 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 			status.Phase = "Error"
 			status.NodeName = a.NodeName
 			status.Message = err.Error()
-			status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "ReconcileFailed", Message: err.Error(), LastTransitionTime: time.Now().UTC()}}
-			if statusErr := a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
+			status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+				Type: "Ready", Status: "False", Reason: "ReconcileFailed", Message: err.Error(),
+			})
+			if statusErr := a.patchMachineStatusIfChanged(ctx, m, status); statusErr != nil {
 				a.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 			}
 		}
@@ -142,7 +147,8 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	if err := a.reconcileNetworkResources(ctx); err != nil {
 		return err
 	}
-	migrations, err := a.Kube.ListMachineMigrations(ctx)
+	migSelector := model.MigrationSourceNodeLabelSelector(a.NodeName)
+	migrations, err := a.Kube.ListMachineMigrationsWithSelector(ctx, migSelector)
 	if err != nil {
 		// This lets a v0.2 node binary coexist during a rolling CRD upgrade.
 		if kube.IsNotFound(err) {
@@ -246,8 +252,10 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		status.Phase = "Blocked"
 		status.NodeName = a.NodeName
 		status.Message = "adopt-only cutover guard: incoming FluxVM runtime was not found; refusing to create a duplicate VM"
-		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "IncomingRuntimeMissing", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
-		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+		status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+			Type: "Ready", Status: "False", Reason: "IncomingRuntimeMissing", Message: status.Message,
+		})
+		return a.patchMachineStatusIfChanged(ctx, m, status)
 	}
 	freshlyCreated := rec == nil
 	switch {
@@ -347,7 +355,10 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	}
 	// Best-effort, purely observational -- a stats read failing (e.g. a
 	// FluxVM predating this endpoint) never blocks the rest of
-	// reconcile; status.resourceUsage just stays at its last known value.
+	// reconcile; live usage is published to Prometheus when available.
+	// ResourceUsage is volatile: it does not by itself trigger a status
+	// patch (see patchMachineStatusIfChanged), so kaironctl top reflects
+	// the last meaningful status write rather than every 3s tick.
 	if usage, err := a.Flux.GetStats(ctx, rec.ID()); err == nil {
 		status.ResourceUsage = &model.ResourceUsage{
 			CPUPercent: usage.CPUUsagePercent, MemoryBytes: usage.MemoryUsageBytes,
@@ -363,8 +374,10 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		return err
 	}
 	status.AppliedServiceFabricMemberships = appliedServiceFabric
-	status.Conditions = []model.Condition{{Type: "Ready", Status: readyStatus(status.Phase), Reason: "FluxVMReconciled", LastTransitionTime: time.Now().UTC()}}
-	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+		Type: "Ready", Status: readyStatus(status.Phase), Reason: "FluxVMReconciled",
+	})
+	return a.patchMachineStatusIfChanged(ctx, m, status)
 }
 
 func (a *Agent) validateImagePath(m model.Machine) error {
@@ -423,8 +436,10 @@ func (a *Agent) ensureStopped(ctx context.Context, m model.Machine) error {
 	status.Network = nil
 	status.Message = ""
 	status.AppliedServiceFabricMemberships = nil
-	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "PoweredOff", LastTransitionTime: time.Now().UTC()}}
-	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+		Type: "Ready", Status: "False", Reason: "PoweredOff",
+	})
+	return a.patchMachineStatusIfChanged(ctx, m, status)
 }
 
 // ensurePaused suspends an already-running Machine's guest CPUs via
@@ -445,8 +460,10 @@ func (a *Agent) ensurePaused(ctx context.Context, m model.Machine) error {
 		status.Phase = "Pending"
 		status.NodeName = a.NodeName
 		status.Message = "cannot pause: no existing runtime -- set powerState to Running first, then Paused"
-		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
-		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+		status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+			Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message,
+		})
+		return a.patchMachineStatusIfChanged(ctx, m, status)
 	}
 	if !strings.EqualFold(rec.Status, "Paused") {
 		rec, err = a.Flux.Pause(ctx, rec.ID())
@@ -459,8 +476,10 @@ func (a *Agent) ensurePaused(ctx context.Context, m model.Machine) error {
 	status.RuntimeID = rec.ID()
 	status.GuestIP = rec.GuestIP
 	status.Message = ""
-	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Paused", LastTransitionTime: time.Now().UTC()}}
-	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+		Type: "Ready", Status: "False", Reason: "Paused",
+	})
+	return a.patchMachineStatusIfChanged(ctx, m, status)
 }
 
 // ensureHalted powers a Machine off via FluxVM's real Stop (the VMM
@@ -488,8 +507,10 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 		status.Phase = "Pending"
 		status.NodeName = a.NodeName
 		status.Message = "cannot halt: no existing runtime -- set powerState to Running first, then Halted"
-		status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message, LastTransitionTime: time.Now().UTC()}}
-		return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+		status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+			Type: "Ready", Status: "False", Reason: "NoRuntime", Message: status.Message,
+		})
+		return a.patchMachineStatusIfChanged(ctx, m, status)
 	}
 	if normalizePhase(rec.Status) != "Stopped" {
 		rec, err = a.Flux.Stop(ctx, rec.ID())
@@ -518,8 +539,10 @@ func (a *Agent) ensureHalted(ctx context.Context, m model.Machine) error {
 	status.Network = nil
 	status.Message = ""
 	status.AppliedServiceFabricMemberships = nil
-	status.Conditions = []model.Condition{{Type: "Ready", Status: "False", Reason: "Halted", LastTransitionTime: time.Now().UTC()}}
-	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
+		Type: "Ready", Status: "False", Reason: "Halted",
+	})
+	return a.patchMachineStatusIfChanged(ctx, m, status)
 }
 
 // isNonTerminalMigrationPhase deliberately duplicates (rather than
@@ -1149,7 +1172,36 @@ func readyStatus(phase string) string {
 	return "False"
 }
 
+// patchMachineStatusIfChanged sets observedGeneration, publishes live
+// ResourceUsage to Prometheus when present, and skips the Kubernetes
+// status PATCH when the meaningful status is unchanged (ResourceUsage is
+// treated as volatile and does not alone force a write). When a patch is
+// needed, the fresh ResourceUsage is included so the last meaningful
+// write still carries a recent sample for kaironctl top.
+func (a *Agent) patchMachineStatusIfChanged(ctx context.Context, m model.Machine, status model.MachineStatus) error {
+	status.ObservedGeneration = m.Metadata.Generation
+	if a.Metrics != nil {
+		a.Metrics.ObserveMachineResourceUsage(m.Namespace(), m.Metadata.Name, status.ResourceUsage)
+	}
+	if model.MachineStatusEqualIgnoringVolatile(m.Status, status) {
+		return nil
+	}
+	return a.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status)
+}
+
 func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
+	// Watch wakes reconcile promptly; interval is the safety resync only.
+	wake := make(chan struct{}, 1)
+	kick := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	kick() // initial sync
+
+	go a.watchAssigned(ctx, kick)
+
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -1162,10 +1214,6 @@ func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 			a.Log.Error("reconcile failed", "error", err)
 		}
 		if a.LivenessLeaseNamespace != "" {
-			// Best-effort, deliberately after Reconcile and never fatal --
-			// see nodeliveness.Renew's own doc comment for why a transient
-			// apiserver error here must never block the actual VM
-			// reconciliation this Lease is only ever secondary to.
 			if err := nodeliveness.Renew(ctx, a.Kube, a.LivenessLeaseNamespace, a.NodeName, a.LivenessLeaseDuration); err != nil {
 				a.Log.Warn("liveness lease renewal failed", "error", err)
 			}
@@ -1173,7 +1221,47 @@ func (a *Agent) Run(ctx context.Context, interval time.Duration) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-wake:
 		case <-t.C:
+		}
+	}
+}
+
+// watchAssigned runs label-scoped watches for Machines and migrations
+// assigned to this node. Failures are logged and retried; the resync
+// ticker remains the safety net.
+func (a *Agent) watchAssigned(ctx context.Context, kick func()) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		watchCtx, cancel := context.WithCancel(ctx)
+		events := make(chan kube.WatchEvent, 32)
+		errCh := make(chan error, 2)
+		go func() {
+			errCh <- a.Kube.WatchMachines(watchCtx, model.AssignedNodeLabelSelector(a.NodeName), "", events)
+		}()
+		go func() {
+			errCh <- a.Kube.WatchMachineMigrations(watchCtx, model.MigrationSourceNodeLabelSelector(a.NodeName), "", events)
+		}()
+		func() {
+			defer cancel()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-errCh:
+					return
+				case <-events:
+					kick()
+				}
+			}
+		}()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+			// brief backoff before re-opening watches
 		}
 	}
 }

@@ -4,7 +4,7 @@
 controller:
   image:
     repository: ghcr.io/zyvorai/kairon-controller
-    tag: latest
+    tag: ""  # defaults to .Chart.AppVersion in templates
     pullPolicy: IfNotPresent
   interval: 5s
   # /healthz /readyz port. Change if it collides with something else
@@ -62,9 +62,12 @@ controller:
 node:
   image:
     repository: ghcr.io/zyvorai/kairon-node
-    tag: latest
+    tag: ""  # defaults to .Chart.AppVersion in templates
     pullPolicy: IfNotPresent
-  interval: 3s
+  # Safety resync interval. Hot-path reconcile is watch-driven (label-
+  # scoped Machines / migrations for this node); this ticker is only the
+  # periodic full resync. Was 3s when every tick listed the whole cluster.
+  interval: 5m
   # /healthz /readyz port -- runs with hostNetwork: true (see below), so
   # this shares the node's real port space, not just this container's.
   # Confirmed against a real host: the default console.port (8090)
@@ -165,7 +168,7 @@ csiNode:
   enabled: false
   image:
     repository: ghcr.io/zyvorai/kairon-csi-node
-    tag: latest
+    tag: ""  # defaults to .Chart.AppVersion in templates
     pullPolicy: IfNotPresent
   # The upstream, Kubernetes-maintained sidecar that registers this
   # plugin with kubelet -- not something Kairon implements itself; every
@@ -201,7 +204,7 @@ csiController:
   enabled: false
   image:
     repository: ghcr.io/zyvorai/kairon-csi-controller
-    tag: latest
+    tag: ""  # defaults to .Chart.AppVersion in templates
     pullPolicy: IfNotPresent
   # host:port initiators dial to reach volumes this Controller
   # provisions -- the storage node's own real, cluster-reachable IP (or a
@@ -449,7 +452,7 @@ ui:
   replicaCount: 1
   image:
     repository: ghcr.io/zyvorai/kairon-ui
-    tag: latest
+    tag: ""  # defaults to .Chart.AppVersion in templates
     pullPolicy: IfNotPresent
   # Static bearer token every /api/v1/... request must present. Required
   # unless allowUnauthenticated is set -- kairon-ui can create/delete

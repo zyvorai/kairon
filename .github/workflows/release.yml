@@ -106,3 +106,88 @@ jobs:
         with:
           name: sbom-${{ matrix.target }}-${{ github.ref_name }}
           path: sbom-${{ matrix.target }}.spdx.json
+
+  # CLI binaries, checksums, Helm OCI chart, and GitHub Release assets.
+  release-assets:
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@v4.3.0
+      - uses: sigstore/cosign-installer@v4.1.2
+      - name: Build CLI binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          version="${GITHUB_REF_NAME}"
+          for os_arch in linux/amd64 linux/arm64; do
+            os="${os_arch%/*}"
+            arch="${os_arch#*/}"
+            for cmd in kaironctl kubectl-kairon; do
+              out="dist/${cmd}-${os}-${arch}"
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+                -ldflags "-s -w -X main.version=${version}" \
+                -o "$out" "./cmd/${cmd}"
+            done
+          done
+          (
+            cd dist
+            sha256sum kaironctl-* kubectl-kairon-* > SHA256SUMS
+          )
+      - name: Package and push Helm chart to OCI
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          # Keep chart version aligned with the git tag.
+          sed -i "s/^version:.*/version: ${version}/" charts/kairon/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${version}\"/" charts/kairon/Chart.yaml
+          helm package charts/kairon -d dist
+          helm push "dist/kairon-${version}.tgz" oci://ghcr.io/zyvorai/charts
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          chart_version="${version#v}"
+          notes="$(cat <<EOF_NOTES
+          ## ${version}
+
+          ### Artifacts
+          - \`kaironctl\` / \`kubectl-kairon\` (linux amd64/arm64) + \`SHA256SUMS\`
+          - Container images: \`ghcr.io/zyvorai/kairon-{controller,node,ui,csi-node,csi-controller}:${version}\` (cosign-signed, SBOM attested)
+          - Helm chart (OCI): \`oci://ghcr.io/zyvorai/charts/kairon:${chart_version}\`
+
+          ### Upgrade / rollback
+          \`\`\`bash
+          helm upgrade kairon oci://ghcr.io/zyvorai/charts/kairon --version ${chart_version} -n kairon-system
+          helm rollback kairon -n kairon-system
+          \`\`\`
+
+          Compatibility evidence: see \`docs/COMPATIBILITY.md\` in this tag.
+          Production installs: \`-f values-production.yaml\`.
+          EOF_NOTES
+          )"
+          # Strip leading indentation from heredoc for GitHub.
+          notes="$(printf '%s\n' "$notes" | sed 's/^          //')"
+          gh release create "$version" \
+            dist/kaironctl-linux-amd64 \
+            dist/kaironctl-linux-arm64 \
+            dist/kubectl-kairon-linux-amd64 \
+            dist/kubectl-kairon-linux-arm64 \
+            dist/SHA256SUMS \
+            "dist/kairon-${chart_version}.tgz" \
+            --title "$version" \
+            --notes "$notes"

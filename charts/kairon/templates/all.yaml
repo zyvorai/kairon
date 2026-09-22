@@ -221,7 +221,7 @@ spec:
       serviceAccountName: kairon-controller
       containers:
         - name: controller
-          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
+          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
           args:
             - "--interval={{ .Values.controller.interval }}"
@@ -359,7 +359,7 @@ spec:
 {{ end }}
       containers:
         - name: node
-          image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag }}"
+          image: "{{ .Values.node.image.repository }}:{{ .Values.node.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.node.image.pullPolicy }}
           args:
             - "--interval={{ .Values.node.interval }}"
@@ -560,7 +560,7 @@ spec:
             - {name: registration-dir, mountPath: /registration}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
         - name: csi-node
-          image: "{{ .Values.csiNode.image.repository }}:{{ .Values.csiNode.image.tag }}"
+          image: "{{ .Values.csiNode.image.repository }}:{{ .Values.csiNode.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.csiNode.image.pullPolicy }}
           args:
             - "--endpoint=unix:///csi/csi.sock"
@@ -757,7 +757,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
 {{ end }}
         - name: csi-controller
-          image: "{{ .Values.csiController.image.repository }}:{{ .Values.csiController.image.tag }}"
+          image: "{{ .Values.csiController.image.repository }}:{{ .Values.csiController.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.csiController.image.pullPolicy }}
           args:
             - "--endpoint=unix:///csi/csi.sock"
@@ -1032,7 +1032,7 @@ spec:
       serviceAccountName: kairon-ui
       containers:
         - name: ui
-          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
           args:
             - "-listen=:{{ .Values.ui.service.port }}"
