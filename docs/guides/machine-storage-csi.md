@@ -227,14 +227,16 @@ parameters (the default) preserves demo mode exactly as before.
   is an independent full clone, so N snapshots of the same volume cost
   (at minimum, before any CoW savings) N times the space if the
   filesystem can't reflink.
-- **No CHAP support on Kairon's own consumption path.** `kairon-node`
-  acts as its own CSI client and never resolves a `nodeStageSecretRef` --
-  doing so would mean granting it `get` RBAC on Secrets named by whatever
-  a Machine's PV happens to reference, a real privilege-escalation risk
-  (any Machine author could point a PV's secret ref at an unrelated,
-  sensitive Secret). Real Kubernetes Pods using this driver via kubelet
-  aren't affected -- kubelet resolves secrets with its own, already-scoped
-  RBAC, the normal CSI path.
+- **No CHAP support on Kairon's own consumption path unless opted in.** `kairon-node`
+  acts as its own CSI client. By default it never resolves a
+  `nodeStageSecretRef` — doing so cluster-wide would mean granting it `get`
+  RBAC on Secrets named by whatever a Machine's PV happens to reference.
+  Opt-in `node.csi.chap.enabled` grants `get` on Secrets **only in the
+  release namespace** and passes `--csi-chap-secret-namespace`; a PV's
+  `spec.csi.nodeStageSecretRef` must name a Secret in that namespace (or omit
+  namespace to default there). Real Kubernetes Pods using this driver via
+  kubelet aren't affected — kubelet resolves secrets with its own,
+  already-scoped RBAC.
 - **Concurrent consume of a stale volume_id across replicas isn't
   guarded** the way `kairon-ui`'s console tickets are -- this driver
   assumes one Machine per volume, and Kairon never runs two `kairon-node`

@@ -21,6 +21,7 @@ import (
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/leaderelection"
 	"github.com/zyvorai/kairon/internal/metrics"
+	"github.com/zyvorai/kairon/internal/oteltrace"
 	"github.com/zyvorai/kairon/internal/scheduler"
 	"github.com/zyvorai/kairon/internal/tlsreload"
 )
@@ -48,6 +49,7 @@ func run() int {
 	cordonEvacuateMinRetryInterval := flag.Duration("cordon-evacuate-min-retry-interval", controller.DefaultCordonEvacuateMinRetryInterval, "minimum time between -cordon-evacuate retry attempts for a Machine currently blocked by a MachineDisruptionBudget")
 	ciliumAttach := flag.Bool("cilium-attach", envBool("KAIRON_CILIUM_ATTACH", false), "reconcile CiliumExternalWorkload for Machines with spec.network.ciliumAttach (requires Cilium CNI; off by default)")
 	ciliumPolicySync := flag.Bool("cilium-policy-sync", envBool("KAIRON_CILIUM_POLICY_SYNC", false), "sync MachineNetworkPolicy with spec.cilium.sync onto CiliumNetworkPolicy CRs (off by default)")
+	nodeLivenessLeaseNamespace := flag.String("node-liveness-lease-namespace", os.Getenv("KAIRON_NODE_LIVENESS_LEASE_NAMESPACE"), "when set, feed kairon-node liveness Leases in this namespace into NodeUnreachable detection (Ready + stale lease → unreachable); empty keeps Node-Ready-only detection. Pair with node.livenessLease.enabled on kairon-node")
 	webhookAddr := flag.String("webhook-addr", ":8443", "validating admission webhook listen address (see -webhook-tls-cert/-key)")
 	webhookTLSCert := flag.String("webhook-tls-cert", "", "TLS certificate PEM for the admission webhook; must be set together with -webhook-tls-key. Empty (the default) disables the webhook -- MachineQuota/MachineDisruptionBudget enforcement stays reconcile-loop/kaironctl-only, same as before this flag existed")
 	webhookTLSKey := flag.String("webhook-tls-key", "", "TLS private key PEM for the admission webhook; must be set together with -webhook-tls-cert")
@@ -106,8 +108,10 @@ func run() int {
 			Strategy:         *cordonEvacuateStrategy,
 			MinRetryInterval: *cordonEvacuateMinRetryInterval,
 		},
-		CiliumAttach:     *ciliumAttach,
-		CiliumPolicySync: *ciliumPolicySync,
+		CiliumAttach:               *ciliumAttach,
+		CiliumPolicySync:           *ciliumPolicySync,
+		NodeLivenessLeaseNamespace: *nodeLivenessLeaseNamespace,
+		Tracer:                     oteltrace.FromEnv(),
 	}
 	if webhookTLSConfig != nil {
 		go func() {

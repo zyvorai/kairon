@@ -6,6 +6,7 @@ import Console from './Console';
 import Exec from './Exec';
 import AgentFiles from './AgentFiles';
 import Logs from './Logs';
+import NetworkPanel from './NetworkPanel';
 // Lazy-loaded: @xterm/xterm alone adds ~300kB to the bundle, not worth
 // shipping to every visitor when only a Machine with
 // spec.guestAgent.console even shows this button.
@@ -82,6 +83,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   const [execFor, setExecFor] = useState<string | null>(null);
   const [agentFilesFor, setAgentFilesFor] = useState<string | null>(null);
   const [logsFor, setLogsFor] = useState<string | null>(null);
+  const [networkFor, setNetworkFor] = useState<string | null>(null);
   // priorityEdits holds an in-progress, not-yet-saved priority value per
   // Machine name -- keyed separately from `items` so a value the operator
   // is mid-typing never gets clobbered by the 5s poll in `refresh` (see
@@ -310,6 +312,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
                     {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
                     {consoleEnabled && isAdmin() && textConsoleEligible(m) && <button onClick={() => setAgentFilesFor(m.metadata.name)}>Files</button>}
                     {consoleEnabled && logsEligible(m) && <button onClick={() => setLogsFor(m.metadata.name)}>Logs</button>}
+                    {consoleEnabled && logsEligible(m) && <button onClick={() => setNetworkFor(m.metadata.name)}>Network</button>}
                     <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
                     <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
                     <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
@@ -336,6 +339,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
       {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
       {agentFilesFor && <AgentFiles namespace="default" name={agentFilesFor} onClose={() => setAgentFilesFor(null)} />}
       {logsFor && <Logs namespace="default" name={logsFor} onClose={() => setLogsFor(null)} />}
+      {networkFor && <NetworkPanel namespace="default" name={networkFor} onClose={() => setNetworkFor(null)} />}
     </div>
   );
 }

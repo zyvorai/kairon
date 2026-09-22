@@ -8,26 +8,21 @@ import (
 	"fmt"
 
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/nodeliveness"
 )
 
 // detectUnreachableNodes keeps model.ConditionNodeUnreachable in sync with
-// reality every reconcile tick: True when a Machine's spec.nodeName no
-// longer names a Ready, present Kubernetes Node; False once it's Ready
-// again. This is detection only -- see ConditionNodeUnreachable's own doc
-// comment in internal/model/types.go for why nothing here automatically
-// reschedules the Machine (doing so without confirming the node is
-// actually dead, not just unreachable, risks running the same VM twice --
-// exactly what NeedsRecovery exists to prevent for migrations). An
-// operator who has confirmed out-of-band that the node is truly gone uses
-// `kaironctl fence` to clear spec.nodeName and let normal scheduling pick
-// it up on a different node -- see cmd/kaironctl/main.go's cmdFence.
+// reality every reconcile tick.
 //
-// Only patches a Machine when its condition actually needs to change (a
-// transition either way), not every tick -- avoids a status write storm
-// for the overwhelmingly common "everything is fine" case. A patch
-// failure is logged and skipped, same as every other best-effort status
-// update in this file: a fencing signal one tick stale is far less
-// harmful than letting one failed Machine stop the whole reconcile pass.
+// Primary signal: Kubernetes Node Ready (as before).
+//
+// Optional second signal (when NodeLivenessLeaseNamespace is set): a Ready
+// node whose kairon-node liveness Lease is missing or stale is also treated
+// as unreachable — catches a wedged agent on an otherwise-Ready node, the
+// gap STATUS.md named. Fail-open on lease lookup errors (leave prior
+// condition) so a transient apiserver blip does not mass-mark the fleet.
+//
+// Detection only — never auto-reschedule; operators use `kaironctl fence`.
 func (c *Controller) detectUnreachableNodes(ctx context.Context, machines []model.Machine, nodes []model.Node) {
 	readyNodes := map[string]bool{}
 	for _, n := range nodes {
@@ -35,32 +30,52 @@ func (c *Controller) detectUnreachableNodes(ctx context.Context, machines []mode
 			readyNodes[n.Metadata.Name] = true
 		}
 	}
+	leaseFresh := map[string]bool{} // only populated when lease ns configured
+	if c.NodeLivenessLeaseNamespace != "" {
+		for _, n := range nodes {
+			lease, err := c.Kube.GetLease(ctx, c.NodeLivenessLeaseNamespace, nodeliveness.LeaseName(n.Metadata.Name))
+			if err != nil {
+				// Fail open: do not invent AgentLivenessStale on lookup error.
+				continue
+			}
+			leaseFresh[n.Metadata.Name] = nodeliveness.IsFresh(lease, 0)
+		}
+	}
 	for _, m := range machines {
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName == "" {
 			continue
 		}
-		unreachable := !readyNodes[m.Spec.NodeName]
+		nodeName := m.Spec.NodeName
+		unreachable := !readyNodes[nodeName]
+		reason := "NodeNotReadyOrMissing"
+		message := fmt.Sprintf("node %q is not Ready or no longer exists in the cluster; this Machine will NOT be automatically rescheduled -- see \"kaironctl fence\" only once you've confirmed out-of-band that the node is truly gone, not just unreachable", nodeName)
+		if !unreachable && c.NodeLivenessLeaseNamespace != "" {
+			fresh, seen := leaseFresh[nodeName]
+			if seen && !fresh {
+				unreachable = true
+				reason = "AgentLivenessStale"
+				message = fmt.Sprintf("node %q is Ready but kairon-node's liveness Lease is stale — agent may be wedged; this Machine will NOT be automatically rescheduled — use \"kaironctl fence\" only after confirming the agent/node is truly gone", nodeName)
+			}
+		}
 		current, found := model.FindCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
 		currentlyTrue := found && current.Status == "True"
 		if unreachable == currentlyTrue {
 			continue
 		}
-		status, reason, message := "False", "NodeReady", fmt.Sprintf("node %q is Ready", m.Spec.NodeName)
+		status, okReason, okMessage := "False", "NodeReady", fmt.Sprintf("node %q is Ready", nodeName)
 		if unreachable {
-			status = "True"
-			reason = "NodeNotReadyOrMissing"
-			message = fmt.Sprintf("node %q is not Ready or no longer exists in the cluster; this Machine will NOT be automatically rescheduled -- see \"kaironctl fence\" only once you've confirmed out-of-band that the node is truly gone, not just unreachable", m.Spec.NodeName)
+			status, okReason, okMessage = "True", reason, message
 		}
 		newStatus := m.Status
 		newStatus.Conditions = model.SetCondition(m.Status.Conditions, model.Condition{
-			Type: model.ConditionNodeUnreachable, Status: status, Reason: reason, Message: message,
+			Type: model.ConditionNodeUnreachable, Status: status, Reason: okReason, Message: okMessage,
 		})
 		if err := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, newStatus); err != nil {
 			c.Log.Error("machine status patch failed (node reachability)", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
 			continue
 		}
 		if unreachable {
-			c.Log.Warn("machine's node is unreachable", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", m.Spec.NodeName)
+			c.Log.Warn("machine's node is unreachable", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", nodeName, "reason", okReason)
 		}
 	}
 }

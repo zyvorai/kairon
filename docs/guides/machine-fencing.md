@@ -88,15 +88,20 @@ alive for one Machine. Fencing is only safe once you've genuinely confirmed
 the node is gone -- a reboot, a network partition that clears itself, or a
 misdiagnosed outage are not valid reasons to fence.
 
-### Optional cross-check: kairon-node's own liveness Lease
+### Optional second signal: kairon-node's own liveness Lease
 
-`NodeUnreachable` above is purely kubelet-derived -- it can't tell a truly
-dead node apart from one whose kubelet briefly flapped NotReady while
-`kairon-node`'s own reconcile loop kept running fine. When
+`NodeUnreachable` used to be purely kubelet-derived -- it couldn't tell a
+truly dead node apart from one whose kubelet briefly flapped NotReady while
+`kairon-node`'s own reconcile loop kept running fine, and a wedged agent on
+an otherwise-`Ready` node stayed invisible. When
 `node.livenessLease.enabled` is set (Helm value, off by default), each
 `kairon-node` renews its own `coordination.k8s.io/v1` Lease
 (`kairon-node-<nodeName>`, in the release namespace) once per reconcile
 tick -- a real, independent "I'm alive and reconciling" signal.
+`kairon-controller` also reads those Leases every tick: a Ready node whose
+Lease is stale is marked `NodeUnreachable=True` with reason
+`AgentLivenessStale` (lookup errors fail open so a transient apiserver
+blip does not mass-mark the fleet).
 
 ```bash
 kaironctl fence MACHINE --reason "confirmed powered off via iDRAC at 14:02" \

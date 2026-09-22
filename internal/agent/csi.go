@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
@@ -95,17 +96,17 @@ func (a *Agent) resolveCSIVolume(ctx context.Context, m model.Machine, pv model.
 		AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
 	}
 
+	chapSecrets, err := a.resolveCSIChapSecrets(ctx, src)
+	if err != nil {
+		return "", csiVolumeStatus{}, err
+	}
+
 	if _, err := client.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
 		VolumeId:          src.VolumeHandle,
 		StagingTargetPath: staging,
 		VolumeCapability:  volumeCapability,
 		VolumeContext:     src.VolumeAttributes,
-		// No Secrets: kairon-node's own direct-CSI-client path doesn't
-		// resolve a nodeStageSecretRef the way kubelet normally would --
-		// see docs/guides/machine-storage-csi.md for why (avoiding a
-		// cluster-wide "read any Secret" RBAC grant for this path). CHAP
-		// auth is only available when this driver is used via a real
-		// Kubernetes Pod instead.
+		Secrets:           chapSecrets,
 	}); err != nil {
 		return "", csiVolumeStatus{}, fmt.Errorf("NodeStageVolume for PersistentVolume %s: %w", pv.Metadata.Name, err)
 	}
@@ -208,4 +209,45 @@ func (a *Agent) pruneStaleCSIVolume(ctx context.Context, m model.Machine, next c
 		return fmt.Errorf("tear down stale CSI volume (handle %q, driver %q): %w", prev.VolumeHandle, prev.VolumeDriver, err)
 	}
 	return nil
+}
+
+// resolveCSIChapSecrets returns the Secrets map NodeStageVolume expects
+// for CHAP, or nil when the PV has no nodeStageSecretRef. Fail-closed:
+// a secret ref without CSIChapSecretNamespace configured, or naming a
+// namespace other than that allowlist, is refused rather than granting
+// cluster-wide Secret get (see SECURITY.md).
+func (a *Agent) resolveCSIChapSecrets(ctx context.Context, src *model.CSIPersistentVolumeSource) (map[string]string, error) {
+	if src == nil || src.NodeStageSecretRef == nil {
+		return nil, nil
+	}
+	ref := src.NodeStageSecretRef
+	if strings.TrimSpace(ref.Name) == "" {
+		return nil, fmt.Errorf("nodeStageSecretRef.name is required when nodeStageSecretRef is set")
+	}
+	if a.CSIChapSecretNamespace == "" {
+		return nil, fmt.Errorf("PersistentVolume names nodeStageSecretRef %q but this node has no CSI CHAP secret namespace configured (--csi-chap-secret-namespace / node.csi.chap.enabled) -- refusing rather than granting unrestricted Secret get; see docs/guides/machine-storage-csi.md", ref.Name)
+	}
+	ns := ref.Namespace
+	if ns == "" {
+		ns = a.CSIChapSecretNamespace
+	}
+	if ns != a.CSIChapSecretNamespace {
+		return nil, fmt.Errorf("nodeStageSecretRef namespace %q is outside this node's CSI CHAP allowlist %q -- only Secrets in that namespace may be used for Machine CHAP", ns, a.CSIChapSecretNamespace)
+	}
+	if a.Kube == nil {
+		return nil, fmt.Errorf("no kubernetes client configured -- cannot resolve nodeStageSecretRef %s/%s", ns, ref.Name)
+	}
+	secret, err := a.Kube.GetSecret(ctx, ns, ref.Name)
+	if err != nil {
+		return nil, fmt.Errorf("get CHAP Secret %s/%s: %w", ns, ref.Name, err)
+	}
+	user := string(secret.Data[csinode.SecretKeyUsername])
+	pass := string(secret.Data[csinode.SecretKeyPassword])
+	if user == "" && pass == "" {
+		return nil, fmt.Errorf("CHAP Secret %s/%s must set both %q and %q keys", ns, ref.Name, csinode.SecretKeyUsername, csinode.SecretKeyPassword)
+	}
+	if user == "" || pass == "" {
+		return nil, fmt.Errorf("CHAP Secret %s/%s must set both %q and %q, or neither", ns, ref.Name, csinode.SecretKeyUsername, csinode.SecretKeyPassword)
+	}
+	return map[string]string{csinode.SecretKeyUsername: user, csinode.SecretKeyPassword: pass}, nil
 }

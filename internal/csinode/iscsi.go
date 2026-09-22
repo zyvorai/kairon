@@ -22,11 +22,15 @@ const (
 	volumeAttrIQN    = "iqn"    // target IQN
 	volumeAttrLUN    = "lun"    // optional, defaults to "0"
 
-	// secretKeyUsername/secretKeyPassword name the two keys an optional
+	// SecretKeyUsername/SecretKeyPassword name the two keys an optional
 	// nodeStageSecretRef Secret may carry for CHAP authentication --
-	// unset means no CHAP, a plain unauthenticated iSCSI login.
-	secretKeyUsername = "username"
-	secretKeyPassword = "password"
+	// unset means no CHAP, a plain unauthenticated iSCSI login. Exported
+	// so kairon-node's own CSI client path can resolve the same keys.
+	SecretKeyUsername = "username"
+	SecretKeyPassword = "password"
+
+	secretKeyUsername = SecretKeyUsername
+	secretKeyPassword = SecretKeyPassword
 
 	defaultLUN    = "0"
 	defaultFSType = "ext4"

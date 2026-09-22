@@ -121,3 +121,98 @@ func TestDetectUnreachableNodesSkipsMachinesBeingDeletedOrUnscheduled(t *testing
 
 	c.detectUnreachableNodes(context.Background(), []model.Machine{deleting, unscheduled}, nil)
 }
+
+func TestDetectUnreachableNodesStaleLivenessLeaseMarksReadyNodeUnreachable(t *testing.T) {
+	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1"}}
+	node := readyCapableNode("worker-1")
+	stale := model.NewMicroTime(time.Now().Add(-10 * time.Minute))
+	dur := int32(60)
+	var patchedStatus model.MachineStatus
+	patched := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/coordination.k8s.io/v1/namespaces/kairon-system/leases/kairon-node-worker-1":
+			_ = json.NewEncoder(w).Encode(model.Lease{
+				Metadata: model.ObjectMeta{Name: "kairon-node-worker-1", Namespace: "kairon-system"},
+				Spec:     model.LeaseSpec{RenewTime: &stale, LeaseDurationSeconds: &dur},
+			})
+		case r.Method == http.MethodPatch:
+			var p struct {
+				Status model.MachineStatus `json:"status"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			patchedStatus = p.Status
+			patched = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	c := &Controller{
+		Kube:                       kc,
+		Log:                        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		NodeLivenessLeaseNamespace: "kairon-system",
+	}
+
+	c.detectUnreachableNodes(context.Background(), []model.Machine{machine}, []model.Node{node})
+
+	if !patched {
+		t.Fatal("expected a status patch when Ready node has a stale kairon-node liveness Lease")
+	}
+	cond, found := model.FindCondition(patchedStatus.Conditions, model.ConditionNodeUnreachable)
+	if !found || cond.Status != "True" || cond.Reason != "AgentLivenessStale" {
+		t.Fatalf("got conditions %+v, want %s=True reason=AgentLivenessStale", patchedStatus.Conditions, model.ConditionNodeUnreachable)
+	}
+}
+
+func TestDetectUnreachableNodesFreshLivenessLeaseLeavesReadyNodeAlone(t *testing.T) {
+	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1"}}
+	node := readyCapableNode("worker-1")
+	fresh := model.NewMicroTime(time.Now().Add(-1 * time.Second))
+	dur := int32(60)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/coordination.k8s.io/v1/namespaces/kairon-system/leases/kairon-node-worker-1" {
+			_ = json.NewEncoder(w).Encode(model.Lease{
+				Metadata: model.ObjectMeta{Name: "kairon-node-worker-1", Namespace: "kairon-system"},
+				Spec:     model.LeaseSpec{RenewTime: &fresh, LeaseDurationSeconds: &dur},
+			})
+			return
+		}
+		t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	c := &Controller{
+		Kube:                       kc,
+		Log:                        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		NodeLivenessLeaseNamespace: "kairon-system",
+	}
+
+	c.detectUnreachableNodes(context.Background(), []model.Machine{machine}, []model.Node{node})
+}
+
+func TestDetectUnreachableNodesLeaseLookupErrorFailsOpen(t *testing.T) {
+	machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1"}}
+	node := readyCapableNode("worker-1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+	c := &Controller{
+		Kube:                       kc,
+		Log:                        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		NodeLivenessLeaseNamespace: "kairon-system",
+	}
+
+	c.detectUnreachableNodes(context.Background(), []model.Machine{machine}, []model.Node{node})
+}

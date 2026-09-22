@@ -179,6 +179,25 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kairon-n
 subjects:
   - {kind: ServiceAccount, name: kairon-node, namespace: {{ .Release.Namespace }}}
 ---
+{{ if .Values.node.csi.chap.enabled }}
+# Allowlisted CHAP Secrets only -- get in the release namespace, never
+# cluster-wide. Pairs with --csi-chap-secret-namespace on kairon-node.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kairon-node-csi-chap, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kairon-node-csi-chap, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kairon-node-csi-chap}
+subjects:
+  - {kind: ServiceAccount, name: kairon-node, namespace: {{ .Release.Namespace }}}
+---
+{{ end }}
 {{ if .Values.node.livenessLease.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -207,6 +226,15 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get"]
+---
+# Controller reads the same Leases for NodeUnreachable detection
+# (Ready + stale agent lease → unreachable).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kairon-controller-liveness-lease-reader, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kairon-node-liveness-lease-reader}
+subjects:
+  - {kind: ServiceAccount, name: kairon-controller, namespace: {{ .Release.Namespace }}}
 ---
 {{ end }}
 apiVersion: apps/v1
@@ -243,9 +271,18 @@ spec:
             - "--cordon-evacuate-min-retry-interval={{ .Values.controller.cordonEvacuation.minRetryInterval }}"
             - "--cilium-attach={{ .Values.network.ciliumAttach.enabled }}"
             - "--cilium-policy-sync={{ .Values.network.ciliumPolicySync.enabled }}"
+{{ if .Values.node.livenessLease.enabled }}
+            - "--node-liveness-lease-namespace={{ .Release.Namespace }}"
+{{ end }}
           env:
             - name: KAIRON_CONTROLLER_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+{{ if .Values.otel.enabled }}
+            - name: KAIRON_OTEL_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: KAIRON_OTEL_SERVICE_NAME
+              value: kairon-controller
+{{ end }}
           ports:
             - {name: health, containerPort: {{ .Values.controller.healthPort }}}
 {{ if .Values.webhook.enabled }}
@@ -399,6 +436,9 @@ spec:
 {{ if .Values.node.livenessLease.enabled }}
             - "--liveness-lease-duration={{ .Values.node.livenessLease.duration }}"
 {{ end }}
+{{ if .Values.node.csi.chap.enabled }}
+            - "--csi-chap-secret-namespace={{ .Release.Namespace }}"
+{{ end }}
             - "--network-default-deny={{ .Values.node.networkDefaultDeny }}"
           env:
             - name: NODE_NAME
@@ -406,6 +446,12 @@ spec:
 {{ if .Values.node.livenessLease.enabled }}
             - name: KAIRON_NODE_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+{{ end }}
+{{ if .Values.otel.enabled }}
+            - name: KAIRON_OTEL_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: KAIRON_OTEL_SERVICE_NAME
+              value: kairon-node
 {{ end }}
 {{ if .Values.console.enabled }}
             - name: KAIRON_NODE_CONSOLE_TOKEN

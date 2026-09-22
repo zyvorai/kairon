@@ -96,6 +96,7 @@ jobs:
           render csi --set csiNode.enabled=true --set csiController.enabled=true
           render cordon --set controller.cordonEvacuation.enabled=true
           render lease --set node.livenessLease.enabled=true
+          render chap --set node.csi.chap.enabled=true
           render netpol --set controller.networkPolicy.enabled=true --set node.networkPolicy.enabled=true
           render production \
             -f charts/kairon/values-production.yaml \

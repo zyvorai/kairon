@@ -99,6 +99,13 @@ node:
     socketDir: /var/lib/kubelet/plugins/csi.kairon.zyvor.dev
     stagingDir: /var/lib/kairon/csi/staging
     publishDir: /var/lib/kairon/csi/publish
+    # chap: opt-in CHAP on kairon-node's own CSI consumption path.
+    # Off by default -- enabling grants kairon-node `get` on Secrets in
+    # the release namespace only (never cluster-wide) and passes
+    # --csi-chap-secret-namespace so a PV's nodeStageSecretRef is
+    # resolved for iSCSI login. Secrets must live in that namespace.
+    chap:
+      enabled: false
   # thirdPartyCSIDrivers: an explicit, operator-configured map of CSI
   # driver name -> its own Unix socket path kairon-node may dial directly
   # as a generic CSI client for a Machine boot disk -- see
@@ -117,7 +124,9 @@ node:
   # before proceeding: a still-fresh Lease despite the node showing
   # NotReady means kairon-node's own reconcile loop may still be alive,
   # and fence refuses rather than risk abandoning a still-managed Machine.
-  # See docs/guides/fencing-liveness-lease.md. Disabled means exactly
+  # See docs/guides/machine-fencing.md. When enabled, kairon-controller
+  # also feeds the same Leases into NodeUnreachable detection (Ready +
+  # stale → AgentLivenessStale). Disabled means exactly
   # kairon-node's behavior before this existed -- no Lease writes, no
   # extra RBAC.
   livenessLease:
@@ -435,6 +444,13 @@ metrics:
   # alerts.yaml's rule group into your own Prometheus rule_files config.
   prometheusRule:
     enabled: false
+# otel: opt-in OTLP/HTTP JSON reconcile spans (internal/oteltrace). Off by
+# default -- when enabled, set endpoint to your collector's /v1/traces URL
+# (e.g. http://otel-collector:4318/v1/traces). Tiny exporter, not the full
+# OpenTelemetry Go SDK. See docs/guides/observability.md.
+otel:
+  enabled: false
+  endpoint: ""
 ui:
   # Web dashboard (cmd/kairon-ui). Off by default -- opt in once you have a
   # token ready, same posture as migration.enabled.

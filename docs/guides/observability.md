@@ -188,10 +188,11 @@ Prometheus `rule_files` config directly.
 
 ## Real limits today (first cut)
 
-- No distributed tracing -- flagged deliberately in this project's own
-  production-readiness review as a design decision to make explicitly if
-  it comes up, not something to add by default (it would be a third
-  deliberate exception to Go-stdlib-only, after OIDC and CSI).
+- Distributed tracing is opt-in via `otel.enabled` / `KAIRON_OTEL_ENDPOINT`
+  (`internal/oteltrace`): OTLP/HTTP JSON reconcile spans for
+  `kairon-controller` and `kairon-node` item loops. Not the full
+  OpenTelemetry Go SDK — a deliberate narrow exporter so enabling tracing
+  does not pull a large dependency tree. Off by default.
 - `kairon-ui`'s `kairon_ui_request_duration_seconds` now carries a
   `route` label -- the registered mux *pattern* a request matched (e.g.
   `/api/v1/machines/{namespace}/{name}`), never the raw request path, so
@@ -212,7 +213,7 @@ Prometheus `rule_files` config directly.
   keep cardinality bounded. Still not a substitute for a real trace: it
   can tell you "machine reconciliation is failing repeatedly," not *which*
   Machine -- check the accompanying "... reconcile failed" log line
-  (which does carry namespace/name) for that.
+  (which does carry namespace/name) for that, or enable `otel.enabled`.
 
 ## Migration concurrency caps
 

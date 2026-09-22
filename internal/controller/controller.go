@@ -14,6 +14,7 @@ import (
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/oteltrace"
 	"github.com/zyvorai/kairon/internal/scheduler"
 )
 
@@ -25,6 +26,9 @@ type Controller struct {
 	// reconcile tick. Optional -- nil-checked, same convention as
 	// Agent.MigrationPeer.
 	Metrics *metrics.Recorder
+	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans
+	// (internal/oteltrace). Nil or empty endpoint is a no-op.
+	Tracer *oteltrace.Tracer
 	// MaxConcurrentPerNode/MaxConcurrentCluster cap how many non-terminal
 	// migrations may touch a single node / run cluster-wide at once. 0 (the
 	// default) is unlimited -- today's unchanged behavior. A migration that
@@ -45,6 +49,10 @@ type Controller struct {
 	// CiliumPolicySync enables MachineNetworkPolicy → CiliumNetworkPolicy
 	// sync when spec.cilium.sync is true. Off by default.
 	CiliumPolicySync bool
+	// NodeLivenessLeaseNamespace, when set, feeds kairon-node liveness
+	// Leases into detectUnreachableNodes (Ready + stale lease →
+	// NodeUnreachable). Empty keeps Node-Ready-only detection.
+	NodeLivenessLeaseNamespace string
 }
 
 // isActiveMigrationPhase reports whether a migration in this phase is
@@ -123,7 +131,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	migLoad := newMigrationLoad(migrations)
 	policyStates := c.loadMigrationPolicyStates(ctx, machines, migrations)
 	for _, migration := range migrations {
-		if err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, nodeLoad, migLoad, policyStates); err != nil {
+		span := c.Tracer.Start(ctx, "reconcile.migration", map[string]string{
+			"kind": "migration", "namespace": migration.Namespace(), "name": migration.Metadata.Name,
+		})
+		err := c.reconcileMigration(ctx, migration, machineIndex, machines, nodes, nodeLoad, migLoad, policyStates)
+		span.End(err)
+		if err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
@@ -143,7 +156,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, snapshot := range snapshots {
-		if err := c.reconcileSnapshot(ctx, snapshot, machineIndex); err != nil {
+		span := c.Tracer.Start(ctx, "reconcile.snapshot", map[string]string{
+			"kind": "snapshot", "namespace": snapshot.Namespace(), "name": snapshot.Metadata.Name,
+		})
+		err := c.reconcileSnapshot(ctx, snapshot, machineIndex)
+		span.End(err)
+		if err != nil {
 			status := snapshot.Status
 			status.Phase = "Failed"
 			status.ReadyToUse = false
@@ -163,7 +181,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, restore := range restores {
-		if err := c.reconcileSnapshotRestore(ctx, restore); err != nil {
+		span := c.Tracer.Start(ctx, "reconcile.snapshotrestore", map[string]string{
+			"kind": "snapshotrestore", "namespace": restore.Namespace(), "name": restore.Metadata.Name,
+		})
+		err := c.reconcileSnapshotRestore(ctx, restore)
+		span.End(err)
+		if err != nil {
 			status := restore.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()

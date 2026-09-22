@@ -5,7 +5,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/zyvorai/kairon/internal/csinode"
+	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -124,7 +128,64 @@ func TestResolveCSIVolumeStagesAndPublishes(t *testing.T) {
 		t.Fatalf("expected volume_context to carry the PV's volumeAttributes, got %+v", fake.stageCalls[0].GetVolumeContext())
 	}
 	if len(fake.stageCalls[0].GetSecrets()) != 0 {
-		t.Fatal("expected no secrets to be sent -- kairon-node's own CSI-client path never resolves nodeStageSecretRef")
+		t.Fatal("expected no secrets to be sent when the PV has no nodeStageSecretRef")
+	}
+}
+
+func TestResolveCSIVolumePassesChapSecretsFromAllowlistedNamespace(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/kairon-system/secrets/iscsi-chap" {
+			_ = json.NewEncoder(w).Encode(model.Secret{
+				Metadata: model.ObjectMeta{Name: "iscsi-chap", Namespace: "kairon-system"},
+				Data: map[string][]byte{
+					csinode.SecretKeyUsername: []byte("alice"),
+					csinode.SecretKeyPassword: []byte("s3cret"),
+				},
+			})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	kc, _ := kube.New(srv.URL, "", "", false)
+	kc.HTTP = srv.Client()
+
+	a := &Agent{
+		Kube:                   kc,
+		CSISocketPath:          socketPath,
+		CSIStagingDir:          t.TempDir(),
+		CSIPublishDir:          t.TempDir(),
+		CSIChapSecretNamespace: "kairon-system",
+	}
+	pv := testCSIPV("pv-1", "iscsi|10.0.0.1:3260|iqn.test:disk|0")
+	pv.Spec.CSI.NodeStageSecretRef = &model.SecretReference{Name: "iscsi-chap"}
+
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.Machine{}, pv); err != nil {
+		t.Fatalf("resolveCSIVolume: %v", err)
+	}
+	if len(fake.stageCalls) != 1 {
+		t.Fatalf("expected one stage call, got %d", len(fake.stageCalls))
+	}
+	got := fake.stageCalls[0].GetSecrets()
+	if got[csinode.SecretKeyUsername] != "alice" || got[csinode.SecretKeyPassword] != "s3cret" {
+		t.Fatalf("expected CHAP secrets on NodeStageVolume, got %+v", got)
+	}
+}
+
+func TestResolveCSIVolumeRefusesChapWithoutAllowlist(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{CSISocketPath: socketPath, CSIStagingDir: t.TempDir(), CSIPublishDir: t.TempDir()}
+	pv := testCSIPV("pv-1", "iscsi|10.0.0.1:3260|iqn.test:disk|0")
+	pv.Spec.CSI.NodeStageSecretRef = &model.SecretReference{Name: "iscsi-chap"}
+	if _, _, err := a.resolveCSIVolume(context.Background(), model.Machine{}, pv); err == nil {
+		t.Fatal("expected refusal when nodeStageSecretRef is set without CSIChapSecretNamespace")
+	}
+	if len(fake.stageCalls) != 0 {
+		t.Fatal("expected no stage call when CHAP resolution fails closed")
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/nodeliveness"
+	"github.com/zyvorai/kairon/internal/oteltrace"
 )
 
 var pciBDFPattern = regexp.MustCompile(`(?i)^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
@@ -45,6 +46,8 @@ type Agent struct {
 	// apiserver call health too. Optional, nil-checked, same convention as
 	// MigrationPeer.
 	Metrics *metrics.Recorder
+	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans.
+	Tracer *oteltrace.Tracer
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block
 	// (CSI-backed) PersistentVolume support -- see internal/agent/csi.go
 	// and internal/csinode. CSISocketPath empty (the default) means a
@@ -54,6 +57,13 @@ type Agent struct {
 	CSISocketPath string
 	CSIStagingDir string
 	CSIPublishDir string
+	// CSIChapSecretNamespace, when set, allows resolveCSIVolume to read a
+	// PV's nodeStageSecretRef for CHAP -- but only Secrets in this exact
+	// namespace. Empty (the default) refuses any secret ref, matching the
+	// deliberate "no cluster-wide Secret get" posture documented in
+	// SECURITY.md. Helm's node.csi.chap.enabled turns this on together
+	// with a namespaced Role granting secrets get in the release namespace.
+	CSIChapSecretNamespace string
 	// ImageCacheDir configures spec.image.source support -- see
 	// internal/agent/imageimport.go. Empty (the default) means a Machine
 	// setting spec.image.source is refused with a clear error rather than
@@ -127,7 +137,12 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 		if m.Spec.NodeName != a.NodeName {
 			continue
 		}
-		if err := a.reconcileMachine(ctx, m); err != nil {
+		span := a.Tracer.Start(ctx, "reconcile.machine", map[string]string{
+			"kind": "machine", "namespace": m.Namespace(), "name": m.Metadata.Name,
+		})
+		err := a.reconcileMachine(ctx, m)
+		span.End(err)
+		if err != nil {
 			a.Log.Error("machine reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
 			if a.Metrics != nil {
 				a.Metrics.ObserveReconcileItemError("machine")
@@ -160,7 +175,12 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 		if migration.Status.SourceNode != a.NodeName {
 			continue
 		}
-		if err := a.reconcileMigration(ctx, migration); err != nil {
+		span := a.Tracer.Start(ctx, "reconcile.migration", map[string]string{
+			"kind": "migration", "namespace": migration.Namespace(), "name": migration.Metadata.Name,
+		})
+		err := a.reconcileMigration(ctx, migration)
+		span.End(err)
+		if err != nil {
 			status := migration.Status
 			status.Phase = "Failed"
 			status.Message = err.Error()
