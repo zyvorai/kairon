@@ -11,6 +11,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 
 | I want to… | Read this |
 |---|---|
+| See the product landing | [Root README](https://github.com/zyvorai/kairon/blob/main/README.md) |
 | Install and run a first Machine | [getting-started.md](getting-started.md) |
 | Ten-minute architecture tour | [../ARCHITECTURE.md](https://github.com/zyvorai/kairon/blob/main/ARCHITECTURE.md) |
 | Deep architecture reference | [architecture.md](architecture.md) |
@@ -18,6 +19,8 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | CLI reference | [CLI.md](CLI.md) |
 | Dependency policy | [DEPENDENCIES.md](DEPENDENCIES.md) |
 | Release status & production gaps | [STATUS.md](STATUS.md) |
+| Hardware / lab matrix | [COMPATIBILITY.md](COMPATIBILITY.md) |
+| Roadmap (v0.7 gates) | [../ROADMAP.md](https://github.com/zyvorai/kairon/blob/main/ROADMAP.md) |
 | Migration failures / NeedsRecovery | [runbook-migration-failures.md](runbook-migration-failures.md) |
 | Security / threat model | [../SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md) |
 | Contributing | [../CONTRIBUTING.md](https://github.com/zyvorai/kairon/blob/main/CONTRIBUTING.md) |

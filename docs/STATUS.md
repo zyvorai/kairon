@@ -11,7 +11,7 @@ Release status and production gaps formerly maintained in the root README.
 
 ### Toward v0.7 (on `main`, not tagged yet)
 
-Already on `main` (see [`ROADMAP.md`](../ROADMAP.md)): eBPF operator surface (`kaironctl network flows|drop-reasons|stats|effective`, production `dataplaneMode: ebpf`), dashboard **Network** panel, multi-volume Machines (`volumes[1+]` → virtiofs), lease-aware `NodeUnreachable` (`AgentLivenessStale`), opt-in CSI node CHAP (`node.csi.chap.enabled`), opt-in OTel reconcile spans (`otel.enabled`).
+Already on `main` (see [`ROADMAP.md`](../ROADMAP.md)): eBPF operator surface (`kaironctl network flows|drop-reasons|stats|effective`, production `dataplaneMode: ebpf`), dashboard **Network** panel, multi-volume Machines (`volumes[1+]` → virtiofs), lease-aware `NodeUnreachable` (`AgentLivenessStale`), opt-in CSI node CHAP (`node.csi.chap.enabled`), opt-in OTel reconcile spans (`otel.enabled`). The root [README](../README.md) is the product landing for this track.
 
 **Still required before cutting v0.7.0:**
 

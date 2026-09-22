@@ -2,7 +2,7 @@
 
 ## v0.7 — Prove maturity, eBPF UX, STATUS gaps
 
-Shipped on `main` (not tagged): eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans.
+Shipped on `main` (not tagged): eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
 
 **Left before v0.7.0:**
 

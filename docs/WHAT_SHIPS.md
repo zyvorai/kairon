@@ -5,7 +5,7 @@ title: What ships today
 
 # What ships today
 
-Full feature inventory formerly maintained in the root README. Guides linked below remain authoritative for how-to detail.
+Full feature inventory. The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the short product landing; guides linked below remain authoritative for how-to detail.
 
 **Machine lifecycle & placement**
 - **Machine CRD** — CPU, memory, image, network, power state, volumes, DRA device claims
