@@ -103,6 +103,10 @@ type Recorder struct {
 	// NewUIRecorder. See ObserveHTTPRequest.
 	uiRequestDuration *prometheus.HistogramVec
 
+	// Live Machine resource usage -- only registered by NewNodeRecorder.
+	// See ObserveMachineResourceUsage.
+	machineResourceUsage *prometheus.GaugeVec
+
 	mu         sync.Mutex
 	phaseSince map[phaseKey]phaseState
 	completed  map[phaseKey]bool
@@ -223,14 +227,21 @@ func NewRecorder() *Recorder {
 func NewNodeRecorder() *Recorder {
 	reg := prometheus.NewRegistry()
 	reconcileDuration, reconcileErrors, reconcileItemErrors := newReconcileMetrics()
+	machineResourceUsage := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "kairon_machine_resource_usage",
+		Help: "Live Machine resource usage reported by FluxVM stats. " +
+			"resource is one of cpu_percent, memory_bytes, disk_read_bytes, disk_write_bytes. " +
+			"Preferred over continuous MachineStatus.resourceUsage etcd writes.",
+	}, []string{"namespace", "machine", "resource"})
 	r := &Recorder{
-		registry:            reg,
-		reconcileDuration:   reconcileDuration,
-		reconcileErrors:     reconcileErrors,
-		reconcileItemErrors: reconcileItemErrors,
-		apiRequestDuration:  newAPIRequestDurationMetric(),
+		registry:             reg,
+		reconcileDuration:    reconcileDuration,
+		reconcileErrors:      reconcileErrors,
+		reconcileItemErrors:  reconcileItemErrors,
+		apiRequestDuration:   newAPIRequestDurationMetric(),
+		machineResourceUsage: machineResourceUsage,
 	}
-	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.apiRequestDuration)
+	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.apiRequestDuration, r.machineResourceUsage)
 	return r
 }
 
@@ -487,6 +498,20 @@ func (r *Recorder) ObserveAPIRequest(method string, d time.Duration, err error) 
 		outcome = "error"
 	}
 	r.apiRequestDuration.WithLabelValues(method, outcome).Observe(d.Seconds())
+}
+
+// ObserveMachineResourceUsage publishes live FluxVM stats as Prometheus
+// gauges so operators can scrape high-frequency usage without continuous
+// MachineStatus.resourceUsage etcd writes. No-op when usage is nil or on
+// Recorders that did not register machineResourceUsage.
+func (r *Recorder) ObserveMachineResourceUsage(namespace, name string, usage *model.ResourceUsage) {
+	if r.machineResourceUsage == nil || usage == nil {
+		return
+	}
+	r.machineResourceUsage.WithLabelValues(namespace, name, "cpu_percent").Set(usage.CPUPercent)
+	r.machineResourceUsage.WithLabelValues(namespace, name, "memory_bytes").Set(float64(usage.MemoryBytes))
+	r.machineResourceUsage.WithLabelValues(namespace, name, "disk_read_bytes").Set(float64(usage.DiskReadBytes))
+	r.machineResourceUsage.WithLabelValues(namespace, name, "disk_write_bytes").Set(float64(usage.DiskWriteBytes))
 }
 
 // ObserveHTTPRequest records one kairon-ui HTTP request. No-op on any

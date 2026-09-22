@@ -35,25 +35,17 @@ type Scheduler struct {
 
 // Choose picks the winning node among every node passing eligible (a hard
 // filter: architecture/nodeSelector/required affinity-anti-affinity/
-// Ready+capable, exactly as before) by scoring each eligible node and
-// taking the highest score, breaking any remaining tie the same
-// deterministic-hash way as always. draPreferredNode is an optional DRA
-// topology-awareness hint (see internal/controller's draPreferredNode) --
-// pass "" when there's no such hint (the overwhelmingly common case: a
-// Machine with no deviceClaims, or a claim not yet allocated to a specific
-// node).
+// Ready+capable/CPU+memory capacity, exactly as before capacity scoring)
+// by scoring each eligible node and taking the highest score, breaking any
+// remaining tie the same deterministic-hash way as always.
 //
-// A Machine with no PreferredAffinity/PreferredAntiAffinity/
-// TopologySpreadConstraints and no DRA hint schedules identically to
-// before this scoring pass existed: score degenerates to exactly
-// -assigned[node], so the highest-scoring set is exactly the least-loaded
-// set, in the same node order, so the same hash tie-break lands on the
-// same node.
-func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.Machine, assigned map[string]int, draPreferredNode string) (string, error) {
+// load carries per-node Machine count plus reserved CPU/memory for this
+// reconcile pass so concurrent placements cannot overcommit a node.
+func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.Machine, load map[string]NodeLoad, draPreferredNode string) (string, error) {
 	var preSkew []model.Node
 	reasons := map[string]int{}
 	for _, n := range nodes {
-		ok, reason := s.eligible(m, n, nodes, machines)
+		ok, reason := s.eligible(m, n, nodes, machines, load[n.Metadata.Name])
 		if ok {
 			preSkew = append(preSkew, n)
 			continue
@@ -72,7 +64,7 @@ func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.
 	best := make([]model.Node, 0, len(eligible))
 	bestScore := 0
 	for i, n := range eligible {
-		sc := s.score(m, n, nodes, machines, assigned, draPreferredNode)
+		sc := s.score(m, n, nodes, machines, load[n.Metadata.Name], draPreferredNode)
 		switch {
 		case i == 0 || sc > bestScore:
 			bestScore = sc
@@ -90,17 +82,12 @@ func (s Scheduler) Choose(m model.Machine, nodes []model.Node, machines []model.
 	return best[int(h.Sum32())%len(best)].Metadata.Name, nil
 }
 
-// score combines: a load-balancing penalty (1 point per Machine already
-// assigned to the node -- the entirety of the old "least-loaded"
-// behavior), each satisfied PreferredAffinity/PreferredAntiAffinity term's
-// signed Weight, a topology-spread penalty per TopologySpreadConstraint
-// (see topologySpreadPenalty), and draPreferenceWeight if this node is the
-// DRA-preferred one. All soft signals are additive with the load penalty
-// on purpose -- a strong enough preference (a high Weight) can outweigh an
-// otherwise-imbalanced load, the same tradeoff Kubernetes' own weighted
-// scoring plugins make.
-func (s Scheduler) score(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine, assigned map[string]int, draPreferredNode string) int {
-	sc := -assigned[n.Metadata.Name]
+// score combines: remaining capacity percentage (or -count when
+// allocatable is unknown), each satisfied PreferredAffinity/
+// PreferredAntiAffinity term's signed Weight, topology-spread penalty,
+// PreferNoSchedule taint penalties, and draPreferenceWeight.
+func (s Scheduler) score(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine, load NodeLoad, draPreferredNode string) int {
+	sc := remainingCapacityScore(n, m, load)
 	for _, wt := range m.Spec.Placement.PreferredAffinity {
 		if termSatisfied(m, n, nodes, machines, wt.MachineAffinityTerm) {
 			sc += int(wt.Weight)
@@ -274,7 +261,7 @@ func minAfterPlacingOn(counts map[string]int, target string) int {
 // this Machine schedule" sees which constraint actually did it (insufficient
 // pinnable CPUs vs. an unsatisfied nodeSelector vs. architecture, etc.)
 // instead of one undifferentiated "no nodes match" message.
-func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine) (bool, string) {
+func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, machines []model.Machine, load NodeLoad) (bool, string) {
 	if n.Spec.Unschedulable || !ready(n) {
 		return false, "node is unschedulable or not Ready"
 	}
@@ -306,6 +293,9 @@ func (s Scheduler) eligible(m model.Machine, n model.Node, nodes []model.Node, m
 		if !toleratesTaint(m.Spec.Placement.Tolerations, taint) {
 			return false, fmt.Sprintf("untolerated %s taint %s", taint.Effect, taintKV(taint))
 		}
+	}
+	if ok, reason := capacityFits(n, m, load); !ok {
+		return false, reason
 	}
 	if m.Spec.Resources.CPUPinning {
 		requested, err := model.ParseVCPUs(m.Spec.Resources.CPU)

@@ -29,7 +29,7 @@ func node(name string, ready, capable bool) model.Node {
 func TestChooseLeastLoaded(t *testing.T) {
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}}
 	s := Scheduler{RequireCapableLabel: true}
-	got, err := s.Choose(m, []model.Node{node("a", true, true), node("b", true, true)}, nil, map[string]int{"a": 5, "b": 1}, "")
+	got, err := s.Choose(m, []model.Node{node("a", true, true), node("b", true, true)}, nil, LoadFromCounts(map[string]int{"a": 5, "b": 1}), "")
 	if err != nil || got != "b" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
@@ -38,7 +38,7 @@ func TestChooseLeastLoaded(t *testing.T) {
 func TestChooseRejectsUnready(t *testing.T) {
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
 	s := Scheduler{RequireCapableLabel: true}
-	_, err := s.Choose(m, []model.Node{node("a", false, true)}, nil, map[string]int{}, "")
+	_, err := s.Choose(m, []model.Node{node("a", false, true)}, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil {
 		t.Fatal("expected no eligible nodes")
 	}
@@ -49,7 +49,7 @@ func TestChooseExcludesUnschedulable(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	n := node("a", true, true)
 	n.Spec.Unschedulable = true
-	_, err := s.Choose(m, []model.Node{n}, nil, map[string]int{}, "")
+	_, err := s.Choose(m, []model.Node{n}, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil {
 		t.Fatal("expected unschedulable node to be excluded")
 	}
@@ -58,7 +58,7 @@ func TestChooseExcludesUnschedulable(t *testing.T) {
 func TestChooseAllowsUncapableWhenLabelNotRequired(t *testing.T) {
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
 	s := Scheduler{RequireCapableLabel: false}
-	got, err := s.Choose(m, []model.Node{node("a", true, false)}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{node("a", true, false)}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
@@ -71,13 +71,13 @@ func TestChooseFiltersByArchitecture(t *testing.T) {
 	amd := node("amd-node", true, true)
 
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}, Spec: model.MachineSpec{Placement: model.PlacementSpec{Architecture: "arm64"}}}
-	got, err := s.Choose(m, []model.Node{arm, amd}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{arm, amd}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "arm-node" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
 
 	noMatch := model.Machine{Metadata: model.ObjectMeta{Name: "db"}, Spec: model.MachineSpec{Placement: model.PlacementSpec{Architecture: "riscv64"}}}
-	if _, err := s.Choose(noMatch, []model.Node{arm, amd}, nil, map[string]int{}, ""); err == nil {
+	if _, err := s.Choose(noMatch, []model.Node{arm, amd}, nil, LoadFromCounts(map[string]int{}), ""); err == nil {
 		t.Fatal("expected no node to match an unavailable architecture")
 	}
 }
@@ -90,13 +90,13 @@ func TestChooseFiltersByNodeSelector(t *testing.T) {
 	west.Metadata.Labels["zone"] = "us-west"
 
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}, Spec: model.MachineSpec{Placement: model.PlacementSpec{NodeSelector: map[string]string{"zone": "us-east"}}}}
-	got, err := s.Choose(m, []model.Node{east, west}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{east, west}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "east" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
 
 	noMatch := model.Machine{Metadata: model.ObjectMeta{Name: "db"}, Spec: model.MachineSpec{Placement: model.PlacementSpec{NodeSelector: map[string]string{"zone": "us-central"}}}}
-	if _, err := s.Choose(noMatch, []model.Node{east, west}, nil, map[string]int{}, ""); err == nil {
+	if _, err := s.Choose(noMatch, []model.Node{east, west}, nil, LoadFromCounts(map[string]int{}), ""); err == nil {
 		t.Fatal("expected no node to match an unsatisfied node selector")
 	}
 }
@@ -114,7 +114,7 @@ func TestChooseTieBreaksByHashAcrossEqualLoad(t *testing.T) {
 
 	for _, name := range []string{"machine-one", "machine-two", "machine-three"} {
 		m := model.Machine{Metadata: model.ObjectMeta{Name: name}}
-		got, err := s.Choose(m, nodes, nil, assigned, "")
+		got, err := s.Choose(m, nodes, nil, LoadFromCounts(assigned), "")
 		if err != nil {
 			t.Fatalf("machine=%s err=%v", name, err)
 		}
@@ -122,7 +122,7 @@ func TestChooseTieBreaksByHashAcrossEqualLoad(t *testing.T) {
 			t.Fatalf("machine=%s got=%q want=%q", name, got, expected(name))
 		}
 		// Determinism: calling again for the same machine must return the same node.
-		again, err := s.Choose(m, nodes, nil, assigned, "")
+		again, err := s.Choose(m, nodes, nil, LoadFromCounts(assigned), "")
 		if err != nil || again != got {
 			t.Fatalf("machine=%s not deterministic: first=%q second=%q err=%v", name, got, again, err)
 		}
@@ -157,7 +157,7 @@ func TestChooseAffinityAndAntiAffinity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := Scheduler{RequireCapableLabel: true}
 			m := model.Machine{Metadata: model.ObjectMeta{Name: "subject", Namespace: "default"}, Spec: model.MachineSpec{Placement: tc.spec}}
-			got, err := s.Choose(m, tc.nodes, tc.machines, map[string]int{}, "")
+			got, err := s.Choose(m, tc.nodes, tc.machines, LoadFromCounts(map[string]int{}), "")
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("got %q, want an error", got)
@@ -185,7 +185,7 @@ func TestChooseAntiAffinityIgnoresTheMachineBeingScheduledItself(t *testing.T) {
 			AntiAffinity: []model.MachineAffinityTerm{{LabelSelector: map[string]string{"role": "db-primary"}, TopologyKey: "zone"}},
 		}},
 	}
-	got, err := s.Choose(self, []model.Node{east}, []model.Machine{self}, map[string]int{}, "")
+	got, err := s.Choose(self, []model.Node{east}, []model.Machine{self}, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "east" {
 		t.Fatalf("got %q err=%v, want east (must not self-exclude)", got, err)
 	}
@@ -195,7 +195,7 @@ func TestChooseNoEligibleNodesReasonIsPlacement(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	nodes := []model.Node{node("a", true, true), node("b", true, true)}
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}, Spec: model.MachineSpec{Placement: model.PlacementSpec{Architecture: "riscv64"}}}
-	_, err := s.Choose(m, nodes, nil, map[string]int{}, "")
+	_, err := s.Choose(m, nodes, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil {
 		t.Fatal("expected an error when Ready/capable nodes exist but none match placement")
 	}
@@ -241,7 +241,7 @@ func TestChoosePreferredAffinityScoring(t *testing.T) {
 			west := node("west", true, true)
 			west.Metadata.Labels["zone"] = "us-west"
 			m := model.Machine{Metadata: model.ObjectMeta{Name: "subject", Namespace: "default"}, Spec: model.MachineSpec{Placement: tc.spec}}
-			got, err := s.Choose(m, []model.Node{east, west}, []model.Machine{other}, tc.assigned, "")
+			got, err := s.Choose(m, []model.Node{east, west}, []model.Machine{other}, LoadFromCounts(tc.assigned), "")
 			if err != nil || got != tc.want {
 				t.Fatalf("got %q err=%v, want %q", got, err, tc.want)
 			}
@@ -270,7 +270,7 @@ func TestChooseTopologySpreadPrefersTheEmptierDomain(t *testing.T) {
 	}
 	// Equal load (0 assigned each): topology spread alone should favor west,
 	// which has zero existing "tier=web" machines vs east's two.
-	got, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 0}, "")
+	got, err := s.Choose(m, []model.Node{east, west}, existing, LoadFromCounts(map[string]int{"east": 0, "west": 0}), "")
 	if err != nil || got != "west" {
 		t.Fatalf("got %q err=%v, want west (fewer existing tier=web machines in that topology domain)", got, err)
 	}
@@ -303,7 +303,7 @@ func TestChooseHardMaxSkewRejectsNodeEvenWhenScoringWouldPreferIt(t *testing.T) 
 	// Placing on west instead makes it 1 vs east's 1, skew 0 -- allowed.
 	// DoNotSchedule must reject east outright despite its far better
 	// load score.
-	got, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 100}, "")
+	got, err := s.Choose(m, []model.Node{east, west}, existing, LoadFromCounts(map[string]int{"east": 0, "west": 100}), "")
 	if err != nil || got != "west" {
 		t.Fatalf("got %q err=%v, want west (east hard-rejected by maxSkew despite a much better load score)", got, err)
 	}
@@ -333,7 +333,7 @@ func TestChooseHardMaxSkewReturnsErrorWhenNoNodeSatisfiesIt(t *testing.T) {
 	// Both domains already balanced at 1 each -- placing the third
 	// Machine in either one makes it 2 vs the other's unchanged 1, skew 1
 	// > maxSkew 0. No node can satisfy it.
-	_, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 0}, "")
+	_, err := s.Choose(m, []model.Node{east, west}, existing, LoadFromCounts(map[string]int{"east": 0, "west": 0}), "")
 	if err == nil {
 		t.Fatal("expected an error: no node can satisfy maxSkew 0 when both domains are already balanced")
 	}
@@ -362,7 +362,7 @@ func TestChooseScheduleAnywayNeverHardRejects(t *testing.T) {
 			}},
 		}},
 	}
-	got, err := s.Choose(m, []model.Node{east, west}, existing, map[string]int{"east": 0, "west": 0}, "")
+	got, err := s.Choose(m, []model.Node{east, west}, existing, LoadFromCounts(map[string]int{"east": 0, "west": 0}), "")
 	if err != nil {
 		t.Fatalf("ScheduleAnyway must never return an error: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestChooseDRAPreferredNodeBreaksTies(t *testing.T) {
 	a := node("a", true, true)
 	b := node("b", true, true)
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "gpu-vm", Namespace: "default"}}
-	got, err := s.Choose(m, []model.Node{a, b}, nil, map[string]int{"a": 0, "b": 0}, "b")
+	got, err := s.Choose(m, []model.Node{a, b}, nil, LoadFromCounts(map[string]int{"a": 0, "b": 0}), "b")
 	if err != nil || got != "b" {
 		t.Fatalf("got %q err=%v, want b (the DRA-preferred node)", got, err)
 	}
@@ -388,7 +388,7 @@ func TestChooseWithNoSoftSignalsIgnoresUnrelatedDRAHint(t *testing.T) {
 	s := Scheduler{RequireCapableLabel: true}
 	a := node("a", true, true)
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "default"}}
-	got, err := s.Choose(m, []model.Node{a}, nil, map[string]int{"a": 0}, "some-other-node")
+	got, err := s.Choose(m, []model.Node{a}, nil, LoadFromCounts(map[string]int{"a": 0}), "some-other-node")
 	if err != nil || got != "a" {
 		t.Fatalf("got %q err=%v, want a", got, err)
 	}
@@ -402,7 +402,7 @@ func TestChooseNamesTheBlockingConstraintWhenEveryNodeIsFiltered(t *testing.T) {
 	}
 	a := node("a", true, true)
 	b := node("b", true, true)
-	_, err := s.Choose(m, []model.Node{a, b}, nil, map[string]int{"a": 0, "b": 0}, "")
+	_, err := s.Choose(m, []model.Node{a, b}, nil, LoadFromCounts(map[string]int{"a": 0, "b": 0}), "")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -419,7 +419,7 @@ func TestChooseAggregatesDistinctBlockingReasonsAcrossNodes(t *testing.T) {
 	}
 	amd := node("amd-node", true, true)
 	notReady := node("down-node", false, true)
-	_, err := s.Choose(m, []model.Node{amd, notReady}, nil, map[string]int{}, "")
+	_, err := s.Choose(m, []model.Node{amd, notReady}, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -439,7 +439,7 @@ func TestChooseNamesInsufficientPinnableCPUs(t *testing.T) {
 	}
 	a := node("a", true, true)
 	a.Metadata.Labels[model.PinnableCPUsLabel] = "2-5"
-	_, err := s.Choose(m, []model.Node{a}, nil, map[string]int{}, "")
+	_, err := s.Choose(m, []model.Node{a}, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -455,13 +455,13 @@ func TestChooseNoScheduleTaintExcludesUntoleratedMachine(t *testing.T) {
 	clean := node("clean", true, true)
 
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
-	got, err := s.Choose(m, []model.Node{tainted, clean}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{tainted, clean}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "clean" {
 		t.Fatalf("expected the untainted node, got %q err=%v", got, err)
 	}
 
 	// Alone, the tainted node is entirely unschedulable for a Machine with no toleration.
-	_, err = s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	_, err = s.Choose(m, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), "")
 	if err == nil || !strings.Contains(err.Error(), "untolerated NoSchedule taint dedicated=gpu") {
 		t.Fatalf("expected an error naming the untolerated taint, got %v", err)
 	}
@@ -472,7 +472,7 @@ func TestChooseNoExecuteTaintExcludesUntoleratedMachine(t *testing.T) {
 	tainted := node("tainted", true, true)
 	tainted.Spec.Taints = []model.Taint{{Key: "node.kubernetes.io/unreachable", Effect: model.TaintEffectNoExecute}}
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
-	if _, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, ""); err == nil {
+	if _, err := s.Choose(m, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), ""); err == nil {
 		t.Fatal("expected a NoExecute taint to exclude the node same as NoSchedule")
 	}
 }
@@ -487,7 +487,7 @@ func TestChooseEqualTolerationAdmitsMatchingTaint(t *testing.T) {
 			{Key: "dedicated", Operator: model.TolerationOpEqual, Value: "gpu", Effect: model.TaintEffectNoSchedule},
 		}}},
 	}
-	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "tainted" {
 		t.Fatalf("expected the toleration to admit the tainted node, got %q err=%v", got, err)
 	}
@@ -499,7 +499,7 @@ func TestChooseEqualTolerationAdmitsMatchingTaint(t *testing.T) {
 			{Key: "dedicated", Operator: model.TolerationOpEqual, Value: "tpu"},
 		}}},
 	}
-	if _, err := s.Choose(wrongValue, []model.Node{tainted}, nil, map[string]int{}, ""); err == nil {
+	if _, err := s.Choose(wrongValue, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), ""); err == nil {
 		t.Fatal("expected a mismatched toleration value to still exclude the node")
 	}
 }
@@ -514,7 +514,7 @@ func TestChooseExistsTolerationIgnoresValue(t *testing.T) {
 			{Key: "dedicated", Operator: model.TolerationOpExists},
 		}}},
 	}
-	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "tainted" {
 		t.Fatalf("expected Exists to tolerate regardless of value, got %q err=%v", got, err)
 	}
@@ -531,7 +531,7 @@ func TestChooseEmptyKeyExistsTolerationsToleratesEverything(t *testing.T) {
 		Metadata: model.ObjectMeta{Name: "job"},
 		Spec:     model.MachineSpec{Placement: model.PlacementSpec{Tolerations: []model.Toleration{{Operator: model.TolerationOpExists}}}},
 	}
-	got, err := s.Choose(m, []model.Node{tainted}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{tainted}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "tainted" {
 		t.Fatalf("expected the wildcard toleration to admit every taint, got %q err=%v", got, err)
 	}
@@ -544,13 +544,13 @@ func TestChoosePreferNoScheduleOnlyPenalizesScoreNeverExcludes(t *testing.T) {
 	clean := node("clean", true, true)
 
 	m := model.Machine{Metadata: model.ObjectMeta{Name: "db"}}
-	got, err := s.Choose(m, []model.Node{preferAvoid, clean}, nil, map[string]int{}, "")
+	got, err := s.Choose(m, []model.Node{preferAvoid, clean}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "clean" {
 		t.Fatalf("expected PreferNoSchedule to steer toward the clean node, got %q err=%v", got, err)
 	}
 
 	// Alone, a PreferNoSchedule taint never makes the node ineligible.
-	got, err = s.Choose(m, []model.Node{preferAvoid}, nil, map[string]int{}, "")
+	got, err = s.Choose(m, []model.Node{preferAvoid}, nil, LoadFromCounts(map[string]int{}), "")
 	if err != nil || got != "preferAvoid" {
 		t.Fatalf("expected a PreferNoSchedule-only node to still be schedulable, got %q err=%v", got, err)
 	}

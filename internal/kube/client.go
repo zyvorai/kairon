@@ -156,8 +156,18 @@ func namespacedObjectPath(ns, resource, name string) string {
 }
 
 func (c *Client) ListMachines(ctx context.Context) ([]model.Machine, error) {
+	return c.ListMachinesWithSelector(ctx, "")
+}
+
+// ListMachinesWithSelector lists Machines cluster-wide, optionally filtered
+// by a Kubernetes labelSelector (e.g. kairon.zyvor.dev/assigned-node=worker-1).
+func (c *Client) ListMachinesWithSelector(ctx context.Context, labelSelector string) ([]model.Machine, error) {
 	var list model.MachineList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machines", nil, &list, "")
+	path := "/apis/kairon.zyvor.dev/v1alpha1/machines"
+	if labelSelector != "" {
+		path += "?labelSelector=" + url.QueryEscape(labelSelector)
+	}
+	err := c.request(ctx, http.MethodGet, path, nil, &list, "")
 	return list.Items, err
 }
 
@@ -192,8 +202,18 @@ func (c *Client) PatchMachineStatus(ctx context.Context, ns, name string, status
 }
 
 func (c *Client) ListMachineMigrations(ctx context.Context) ([]model.MachineMigration, error) {
+	return c.ListMachineMigrationsWithSelector(ctx, "")
+}
+
+// ListMachineMigrationsWithSelector lists MachineMigrations cluster-wide,
+// optionally filtered by labelSelector.
+func (c *Client) ListMachineMigrationsWithSelector(ctx context.Context, labelSelector string) ([]model.MachineMigration, error) {
 	var list model.MachineMigrationList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations", nil, &list, "")
+	path := "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations"
+	if labelSelector != "" {
+		path += "?labelSelector=" + url.QueryEscape(labelSelector)
+	}
+	err := c.request(ctx, http.MethodGet, path, nil, &list, "")
 	return list.Items, err
 }
 

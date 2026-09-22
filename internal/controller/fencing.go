@@ -6,7 +6,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -41,7 +40,7 @@ func (c *Controller) detectUnreachableNodes(ctx context.Context, machines []mode
 			continue
 		}
 		unreachable := !readyNodes[m.Spec.NodeName]
-		current, found := findCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
+		current, found := model.FindCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
 		currentlyTrue := found && current.Status == "True"
 		if unreachable == currentlyTrue {
 			continue
@@ -53,8 +52,8 @@ func (c *Controller) detectUnreachableNodes(ctx context.Context, machines []mode
 			message = fmt.Sprintf("node %q is not Ready or no longer exists in the cluster; this Machine will NOT be automatically rescheduled -- see \"kaironctl fence\" only once you've confirmed out-of-band that the node is truly gone, not just unreachable", m.Spec.NodeName)
 		}
 		newStatus := m.Status
-		newStatus.Conditions = setCondition(m.Status.Conditions, model.Condition{
-			Type: model.ConditionNodeUnreachable, Status: status, Reason: reason, Message: message, LastTransitionTime: time.Now().UTC(),
+		newStatus.Conditions = model.SetCondition(m.Status.Conditions, model.Condition{
+			Type: model.ConditionNodeUnreachable, Status: status, Reason: reason, Message: message,
 		})
 		if err := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, newStatus); err != nil {
 			c.Log.Error("machine status patch failed (node reachability)", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
@@ -77,32 +76,4 @@ func nodeReady(n model.Node) bool {
 		}
 	}
 	return false
-}
-
-func findCondition(conditions []model.Condition, condType string) (model.Condition, bool) {
-	for _, c := range conditions {
-		if c.Type == condType {
-			return c, true
-		}
-	}
-	return model.Condition{}, false
-}
-
-// setCondition returns conditions with cond upserted by Type -- existing
-// conditions of other types are preserved, in order.
-func setCondition(conditions []model.Condition, cond model.Condition) []model.Condition {
-	out := make([]model.Condition, 0, len(conditions)+1)
-	replaced := false
-	for _, c := range conditions {
-		if c.Type == cond.Type {
-			out = append(out, cond)
-			replaced = true
-			continue
-		}
-		out = append(out, c)
-	}
-	if !replaced {
-		out = append(out, cond)
-	}
-	return out
 }

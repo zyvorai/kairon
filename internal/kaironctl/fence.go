@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
@@ -34,7 +33,7 @@ func cmdFence(ctx context.Context, kc *kube.Client, args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("get machine %s/%s: %w", *ns, name, err))
 	}
-	cond, found := findMachineCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
+	cond, found := model.FindCondition(m.Status.Conditions, model.ConditionNodeUnreachable)
 	if !found || cond.Status != "True" {
 		fatal(fmt.Errorf("machine %s/%s does not currently have %s=True -- nothing to fence (its node looks Ready to kairon-controller)", *ns, name, model.ConditionNodeUnreachable))
 	}
@@ -67,7 +66,10 @@ func cmdFence(ctx context.Context, kc *kube.Client, args []string) {
 	}
 	okf("fencing machine/%s off node %q (kairon-controller's last-observed reason: %s)", name, fencedNode, cond.Message)
 
-	if err := kc.PatchMachine(ctx, *ns, name, map[string]any{"spec": map[string]any{"nodeName": ""}}); err != nil {
+	if err := kc.PatchMachine(ctx, *ns, name, map[string]any{
+		"spec":     map[string]any{"nodeName": ""},
+		"metadata": map[string]any{"labels": map[string]any{model.AssignedNodeLabel: nil}},
+	}); err != nil {
 		fatal(fmt.Errorf("clear spec.nodeName on %s/%s: %w", *ns, name, err))
 	}
 	status := m.Status
@@ -79,38 +81,12 @@ func cmdFence(ctx context.Context, kc *kube.Client, args []string) {
 	status.Network = nil
 	status.AppliedVCPUs = 0
 	status.AppliedMemoryMiB = 0
-	status.Conditions = setMachineCondition(status.Conditions, model.Condition{
+	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
 		Type: model.ConditionFenced, Status: "True", Reason: "OperatorAttested",
-		Message: fmt.Sprintf("fenced off node %q by an operator: %s", fencedNode, *reason), LastTransitionTime: time.Now().UTC(),
+		Message: fmt.Sprintf("fenced off node %q by an operator: %s", fencedNode, *reason),
 	})
 	if err := kc.PatchMachineStatus(ctx, *ns, name, status); err != nil {
 		fatal(fmt.Errorf("clear runtime status on %s/%s: %w", *ns, name, err))
 	}
 	okf("machine/%s: spec.nodeName cleared; will be rescheduled onto a different node on kairon-controller's next reconcile tick", name)
-}
-
-func findMachineCondition(conditions []model.Condition, condType string) (model.Condition, bool) {
-	for _, c := range conditions {
-		if c.Type == condType {
-			return c, true
-		}
-	}
-	return model.Condition{}, false
-}
-
-func setMachineCondition(conditions []model.Condition, cond model.Condition) []model.Condition {
-	out := make([]model.Condition, 0, len(conditions)+1)
-	replaced := false
-	for _, c := range conditions {
-		if c.Type == cond.Type {
-			out = append(out, cond)
-			replaced = true
-			continue
-		}
-		out = append(out, c)
-	}
-	if !replaced {
-		out = append(out, cond)
-	}
-	return out
 }

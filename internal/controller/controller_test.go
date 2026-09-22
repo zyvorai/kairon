@@ -717,11 +717,13 @@ func TestColdMigrationRestartingCompletesToSucceeded(t *testing.T) {
 func TestReconcileMigrationSkipsTerminalPhases(t *testing.T) {
 	for _, terminal := range []string{"Succeeded", "Failed", "Blocked", "NeedsRecovery", "Cancelled"} {
 		t.Run(terminal, func(t *testing.T) {
-			machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
+			machine := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod", Labels: map[string]string{model.AssignedNodeLabel: "worker-1"}}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running"}, Status: model.MachineStatus{NodeName: "worker-1", Phase: "Running"}}
 			migration := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}, Status: model.MachineMigrationStatus{Phase: terminal}}
 			// worker-1 must be Ready in this fixture, or fencing detection
 			// (an orthogonal concern -- see fencing.go) would itself PATCH
 			// the Machine's status, which is not what this test is about.
+			// AssignedNodeLabel must already match spec.nodeName so label
+			// sync (also orthogonal) does not PATCH either.
 			patched := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {

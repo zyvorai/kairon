@@ -43,10 +43,9 @@ Known, deliberate scope limits (real limits, not hidden gaps):
     kaironctl runs under the invoking operator's own kubeconfig/RBAC, not a
     ServiceAccount this chart grants -- there is nothing here to check for
     either.
-  - Never checks the "watch" verb: nothing in this codebase actually issues
-    a watch (every reconcile loop polls via List on a timer), so there is no
-    call site to derive a "watch is needed" fact from. Every ClusterRole
-    grants "watch" defensively; this script neither requires nor flags it.
+  - Checks the "watch" verb for Watch* Client methods (internal/kube/watch.go,
+    used by kairon-node's event-driven reconcile). List/Get call sites still
+    do not imply a watch grant.
   - Ignores `resourceNames` scoping -- a rule granting "get"/"patch" on
     "secrets" scoped to resourceNames: ["kairon-ui-users"] counts as full
     coverage for GetSecret/PatchSecretStringData, without checking the
@@ -98,6 +97,13 @@ OVERRIDES = {
     # "this is an Event *reader*"), so it needs the same explicit override
     # SubjectAccessReview above does.
     "RecordEvent": ("", "events", "create"),
+    # Thin wrappers that only delegate to *WithSelector helpers (v0.6
+    # node-scoped list). Bodies have no path literal for the regex to read.
+    "ListMachines": ("kairon.zyvor.dev", "machines", "list"),
+    "ListMachineMigrations": ("kairon.zyvor.dev", "machinemigrations", "list"),
+    # Watch lives in internal/kube/watch.go; same resources as the List forms.
+    "WatchMachines": ("kairon.zyvor.dev", "machines", "watch"),
+    "WatchMachineMigrations": ("kairon.zyvor.dev", "machinemigrations", "watch"),
 }
 
 VERB_PREFIXES = [
@@ -107,6 +113,7 @@ VERB_PREFIXES = [
     ("Delete", "delete"),
     ("Patch", "patch"),
     ("Update", "update"),
+    ("Watch", "watch"),
 ]
 
 COMPONENTS = {
@@ -127,42 +134,47 @@ COMPONENTS = {
 
 def extract_client_methods():
     """Returns {method_name: (apiGroup, resource, verb)} learned directly
-    from internal/kube/client.go's own source, per the module docstring."""
-    src = CLIENT_GO.read_text()
-    func_re = re.compile(r"func \(c \*Client\) (\w+)\(ctx context\.Context[^\n]*\{(.*?)\n\}\n", re.DOTALL)
+    from internal/kube Client sources, per the module docstring."""
+    sources = [CLIENT_GO]
+    watch_go = ROOT / "internal/kube/watch.go"
+    if watch_go.exists():
+        sources.append(watch_go)
     methods = {}
     unresolved = []
-    for m in func_re.finditer(src):
-        name, body = m.group(1), m.group(2)
-        if not name[0].isupper():
-            continue  # unexported helper (request/doRequest), not a public API call site
-        if name in OVERRIDES:
-            methods[name] = OVERRIDES[name]
-            continue
-        verb = next((v for pfx, v in VERB_PREFIXES if name.startswith(pfx)), None)
-        if verb is None:
-            unresolved.append((name, "no verb prefix"))
-            continue
-        apigroup = resource = None
-        mm = re.search(r'namespaced?(?:Object)?Path\(ns,\s*"([a-z]+)"', body)
-        if mm:
-            apigroup, resource = "kairon.zyvor.dev", mm.group(1)
-        elif "leasePath(" in body:
-            apigroup, resource = "coordination.k8s.io", "leases"
-        else:
-            mm = re.search(r"/apis/([a-zA-Z0-9.\-]+)/v[0-9a-zA-Z]+/(?:namespaces/%s/)?([a-z]+)", body)
+    func_re = re.compile(r"func \(c \*Client\) (\w+)\(ctx context\.Context[^\n]*\{(.*?)\n\}\n", re.DOTALL)
+    for src_path in sources:
+        src = src_path.read_text()
+        for m in func_re.finditer(src):
+            name, body = m.group(1), m.group(2)
+            if not name[0].isupper():
+                continue  # unexported helper (request/doRequest), not a public API call site
+            if name in OVERRIDES:
+                methods[name] = OVERRIDES[name]
+                continue
+            verb = next((v for pfx, v in VERB_PREFIXES if name.startswith(pfx)), None)
+            if verb is None:
+                unresolved.append((name, "no verb prefix"))
+                continue
+            apigroup = resource = None
+            mm = re.search(r'namespaced?(?:Object)?Path\(ns,\s*"([a-z]+)"', body)
             if mm:
-                apigroup, resource = mm.group(1), mm.group(2)
+                apigroup, resource = "kairon.zyvor.dev", mm.group(1)
+            elif "leasePath(" in body:
+                apigroup, resource = "coordination.k8s.io", "leases"
             else:
-                mm = re.search(r"/api/v1/(?:namespaces/%s/)?([a-z]+)", body)
+                mm = re.search(r"/apis/([a-zA-Z0-9.\-]+)/v[0-9a-zA-Z]+/(?:namespaces/%s/)?([a-z]+)", body)
                 if mm:
-                    apigroup, resource = "", mm.group(1)
-        if resource is None:
-            unresolved.append((name, "no resource match"))
-            continue
-        if '"/status"' in body:
-            resource += "/status"
-        methods[name] = (apigroup, resource, verb)
+                    apigroup, resource = mm.group(1), mm.group(2)
+                else:
+                    mm = re.search(r"/api/v1/(?:namespaces/%s/)?([a-z]+)", body)
+                    if mm:
+                        apigroup, resource = "", mm.group(1)
+            if resource is None:
+                unresolved.append((name, "no resource match"))
+                continue
+            if '"/status"' in body:
+                resource += "/status"
+            methods[name] = (apigroup, resource, verb)
     if unresolved:
         print("FATAL: could not derive RBAC requirements for these Client methods:", file=sys.stderr)
         for name, reason in unresolved:
