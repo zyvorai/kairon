@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kairon share card</title>
+<style>
+:root { --ink:#0d0d0c; --soft:#5a544c; --signal:#ff5a15; --deep:#cc420a; --warm:#fbf7f2;
+  --sans:'Helvetica Neue',Helvetica,Arial,sans-serif; --mono:'SF Mono',Menlo,Consolas,monospace; }
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+body { width:1200px; height:630px; overflow:hidden; background:var(--warm); color:var(--ink); font-family:var(--sans); position:relative; }
+.bar { position:absolute; left:0; top:0; bottom:0; width:12px; background:var(--signal); }
+.wrap { position:absolute; left:56px; right:48px; top:40px; bottom:36px; display:flex; flex-direction:column; }
+.top { display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:18px; letter-spacing:.14em; text-transform:uppercase; color:var(--soft); }
+.top img { height:36px; }
+.top b { color:var(--deep); letter-spacing:.1em; }
+.top .r { margin-left:auto; letter-spacing:.08em; }
+h1 { margin:36px 0 0; font-size:52px; line-height:1.08; letter-spacing:-.025em; font-weight:700; max-width:1080px; }
+h1 em { font-style:normal; color:var(--signal); }
+.sub { margin:18px 0 0; font-size:24px; line-height:1.4; color:#26231f; max-width:980px; }
+.chips { margin-top:auto; display:flex; flex-wrap:wrap; gap:10px; padding-bottom:18px; }
+.chip { font-size:18px; font-weight:700; padding:6px 14px; border-radius:20px; background:var(--signal); color:#fff; border:2px solid var(--signal); }
+.chip.g { background:#fff; color:var(--deep); border:2px solid var(--signal); }
+.foot { padding-top:14px; border-top:3px solid var(--ink); display:flex; align-items:center; font-family:var(--mono); font-size:20px; color:var(--soft); }
+.foot b { color:var(--ink); }
+.foot .r { margin-left:auto; }
+</style>
+</head>
+<body>
+<div class="bar"></div>
+<div class="wrap">
+  <div class="top"><img src="zyvor-mark.svg" alt=""><b>Zyvor</b><span>&middot;</span><span>Kairon</span><span class="r">Kubernetes-native VMs</span></div>
+  <h1>Real VMs.<br><em>Real Kubernetes.</em></h1>
+  <p class="sub">Machine CRD desired state, capacity-aware placement, FluxVM/KVM execution — no virt-launcher in the hot path. Apache-2.0.</p>
+  <div class="chips">
+    <span class="chip">Machine CRD</span>
+    <span class="chip">FluxVM / KVM</span>
+    <span class="chip g">eBPF edge</span>
+    <span class="chip g">Stdlib controller</span>
+    <span class="chip g">Apache-2.0</span>
+  </div>
+  <div class="foot"><span><b>zyvor.dev/docs/kairon</b></span><span class="r">v0.6.0 &middot; Apache-2.0 &middot; x86_64 &amp; arm64</span></div>
+</div>
+</body>
+</html>

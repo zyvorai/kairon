@@ -1,15 +1,4 @@
-<div align="center">
-
-<img src="docs/assets/social-preview.png" alt="Kairon — Real VMs on Kubernetes without KubeVirt" width="720">
-
 # Kairon
-
-**Real VMs. Real Kubernetes. No virt-launcher.**
-
-A `Machine` is desired state. `kairon-controller` places it.
-`kairon-node` runs it on [FluxVM](https://github.com/zyvorai/fluxvm) / KVM —
-QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
-**Kubernetes stays the only source of truth.**
 
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zyvorai/kairon?display_name=tag)](https://github.com/zyvorai/kairon/releases/latest)
@@ -18,11 +7,25 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)
 
-[Why](#why-kairon) · [vs KubeVirt](#vs-kubevirt) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Status](#status)
+![Kairon — Kubernetes-native VMs without virt-launcher](docs/social/kairon-share-card.png)
 
-</div>
+**Real VMs. Real Kubernetes. No virt-launcher.**
 
----
+📖 **[Read the full docs](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)** — install, architecture, migration runbooks, and CLI.
+
+A `Machine` is desired state. `kairon-controller` places it. `kairon-node` runs it on [FluxVM](https://github.com/zyvorai/fluxvm) / KVM — QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor. **Kubernetes stays the only source of truth.**
+
+## Contents
+
+- [Why Kairon](#why-kairon)
+- [vs KubeVirt](#vs-kubevirt)
+- [Install](#install)
+- [Architecture](#architecture)
+- [What ships](#what-ships)
+- [Operate](#operate)
+- [Docs](#docs)
+- [Status](#status)
+- [License](#license)
 
 ## Why Kairon
 
