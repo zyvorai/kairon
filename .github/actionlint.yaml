@@ -1,0 +1,10 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+self-hosted-runner:
+  labels:
+    - kairon-lab
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # bcrypt hash in helm --set must stay single-quoted
+      - 'shellcheck reported issue in this script: SC2016:.+'

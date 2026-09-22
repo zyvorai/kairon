@@ -1,0 +1,56 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'web/**'
+      - 'website/**'
+      - '.github/workflows/codeql.yml'
+  schedule:
+    - cron: '17 4 * * 1'
+
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - if: matrix.language == 'go'
+        name: Autobuild Go
+        run: |
+          go build ./cmd/kairon-controller ./cmd/kairon-node ./cmd/kairon-ui \
+            ./cmd/kaironctl ./cmd/kubectl-kairon \
+            ./cmd/kairon-csi-node ./cmd/kairon-csi-controller
+      - if: matrix.language == 'javascript-typescript'
+        name: Build web + website
+        run: |
+          npm --prefix web install
+          npm --prefix web run build
+          npm --prefix website ci
+          npm --prefix website run build
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

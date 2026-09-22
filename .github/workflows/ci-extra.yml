@@ -1,0 +1,204 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+# Extra correctness / hygiene gates kept out of the main ci.yml critical
+# path. Collapsed into two jobs so free-tier runner concurrency is not
+# exhausted by a dozen one-step matrices.
+name: ci-extra
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-extra-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - uses: azure/setup-helm@v4.3.0
+      - name: Install shellcheck + kubeconform + actionlint
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          ver=v0.6.7
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${ver}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /tmp kubeconform
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          al=1.7.7
+          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${al}/actionlint_${al}_linux_amd64.tar.gz" \
+            | tar -xz -C /tmp actionlint
+          sudo mv /tmp/actionlint /usr/local/bin/actionlint
+      - name: Stdlib / forbidden-deps boundary
+        run: python3 scripts/check_stdlib_boundary.py
+      - name: License headers
+        run: python3 scripts/check_license_headers.py
+      - name: go mod tidy / verify
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+      - name: Scripts bash -n + shellcheck + certs
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find scripts -type f -name '*.sh' | sort)
+          for s in "${scripts[@]}"; do bash -n "$s"; done
+          shellcheck -S warning -e SC2155,SC2086,SC1091,SC2154 scripts/*.sh
+          chmod +x scripts/gen-webhook-tls-certs.sh scripts/gen-migration-mtls-certs.sh
+          tmp=$(mktemp -d)
+          scripts/gen-webhook-tls-certs.sh "$tmp/webhook"
+          test -f "$tmp/webhook/ca.pem"
+          scripts/gen-migration-mtls-certs.sh "$tmp/mig" worker-1=10.0.0.11
+          test -f "$tmp/mig/ca/ca.pem"
+      - name: actionlint
+        run: actionlint -color -config-file .github/actionlint.yaml
+      - name: kubeconform + YAML parse
+        run: |
+          set -euo pipefail
+          python3 -m pip install -q pyyaml
+          kubeconform -summary -strict -ignore-missing-schemas \
+            deploy/controller.yaml deploy/node.yaml deploy/ui.yaml deploy/rbac.yaml
+          kubeconform -summary -ignore-missing-schemas deploy/crd.yaml
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          root = Path('.')
+          paths = list((root / 'examples').glob('*.yaml')) if (root / 'examples').exists() else []
+          paths += list((root / 'charts/kairon/crds').glob('*.yaml'))
+          paths += [root / 'charts/kairon/values.yaml', root / 'charts/kairon/values-production.yaml']
+          for p in paths:
+              docs = list(yaml.safe_load_all(p.read_text()))
+              assert docs, p
+          print(f'yaml parse: OK ({len(paths)} files)')
+          PY
+      - name: Helm render matrix
+        run: |
+          set -euo pipefail
+          python3 -m pip install -q pyyaml
+          render() {
+            local name="$1"; shift
+            echo "==> helm template ($name)"
+            helm template kairon charts/kairon --namespace kairon-system "$@" > "/tmp/helm-${name}.yaml"
+            python3 -c "import yaml,sys; d=[x for x in yaml.safe_load_all(open(sys.argv[1])) if x]; assert d, sys.argv[1]" "/tmp/helm-${name}.yaml"
+          }
+          render default
+          render migration --set migration.enabled=true
+          render ui --set ui.enabled=true
+          render csi --set csiNode.enabled=true --set csiController.enabled=true
+          render cordon --set controller.cordonEvacuation.enabled=true
+          render lease --set node.livenessLease.enabled=true
+          render netpol --set controller.networkPolicy.enabled=true --set node.networkPolicy.enabled=true
+          render production \
+            -f charts/kairon/values-production.yaml \
+            --set webhook.tlsSecretName=ci-webhook-tls \
+            --set webhook.caBundle=Y2ktY2EtYnVuZGxl \
+            --set migration.dataplaneTlsSecretName=ci-mig \
+            --set ui.enabled=true
+          render everything \
+            --set ui.enabled=true \
+            --set migration.enabled=true \
+            --set csiNode.enabled=true \
+            --set csiController.enabled=true \
+            --set controller.cordonEvacuation.enabled=true \
+            --set node.livenessLease.enabled=true \
+            --set network.ciliumAttach.enabled=true \
+            --set network.ciliumPolicySync.enabled=true \
+            --set webhook.enabled=true \
+            --set webhook.tlsSecretName=ci-webhook-tls \
+            --set webhook.caBundle=Y2ktY2EtYnVuZGxl
+      - name: Docs guard
+        run: |
+          set -euo pipefail
+          for f in \
+            docs/COMPATIBILITY.md \
+            docs/DEPENDENCIES.md \
+            docs/STATUS.md \
+            docs/getting-started.md \
+            charts/kairon/values-production.yaml \
+            .github/workflows/hardware-migration.yml \
+            .github/workflows/release.yml \
+            scripts/hardware-migration-matrix.sh
+          do
+            test -f "$f"
+          done
+          grep -q 'values-production.yaml' docs/getting-started.md
+          grep -q 'COMPATIBILITY.md' docs/STATUS.md
+
+  build-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.x'
+      - uses: azure/setup-helm@v4.3.0
+      - name: Krew package
+        run: |
+          set -euo pipefail
+          make krew-package
+          test -f dist/krew/kairon.yaml
+          count=$(find dist/krew -maxdepth 1 -name 'kairon_*.tar.gz' | wc -l | tr -d ' ')
+          test "$count" = "4"
+          if grep -E 'CHANGE_ME|0000000000' dist/krew/kairon.yaml; then
+            echo "krew manifest still has placeholders" >&2
+            exit 1
+          fi
+      - name: Cross-compile CLIs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for goos in linux darwin; do
+            for goarch in amd64 arm64; do
+              for cmd in kaironctl kubectl-kairon; do
+                CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+                  go build -trimpath -ldflags '-s -w' \
+                  -o "dist/${cmd}-${goos}-${goarch}" "./cmd/${cmd}"
+              done
+            done
+          done
+          test "$(find dist -maxdepth 1 -type f -name 'kaironctl-*' -o -name 'kubectl-kairon-*' | wc -l | tr -d ' ')" = "8"
+      - name: Per-package race tests
+        run: |
+          set -euo pipefail
+          for p in \
+            ./internal/admission/ \
+            ./internal/agent/ \
+            ./internal/consoleproxy/ \
+            ./internal/controller/ \
+            ./internal/conversion/ \
+            ./internal/csinode/ \
+            ./internal/fluxvm/ \
+            ./internal/health/ \
+            ./internal/kaironctl/ \
+            ./internal/kube/ \
+            ./internal/leaderelection/ \
+            ./internal/metrics/ \
+            ./internal/migration/ \
+            ./internal/model/ \
+            ./internal/nodeliveness/ \
+            ./internal/ratelimit/ \
+            ./internal/scheduler/ \
+            ./internal/tlsreload/ \
+            ./internal/uiapi/
+          do
+            echo "==> go test -race $p"
+            go test -race -count=1 -timeout 10m "$p"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-extra-artifacts
+          path: |
+            dist/krew/
+            dist/kaironctl-*
+            dist/kubectl-kairon-*
