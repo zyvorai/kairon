@@ -11,6 +11,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-extra-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -203,25 +207,27 @@ jobs:
 
   cli-matrix:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        goos: [linux, darwin]
-        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27.x'
-      - name: Cross-compile CLIs (${{ matrix.goos }}/${{ matrix.goarch }})
+      - name: Cross-compile CLIs
         run: |
           set -euo pipefail
           mkdir -p dist
-          for cmd in kaironctl kubectl-kairon; do
-            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-              go build -trimpath -ldflags '-s -w' \
-              -o "dist/${cmd}-${{ matrix.goos }}-${{ matrix.goarch }}" "./cmd/${cmd}"
+          for goos in linux darwin; do
+            for goarch in amd64 arm64; do
+              for cmd in kaironctl kubectl-kairon; do
+                echo "==> ${cmd} ${goos}/${goarch}"
+                CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+                  go build -trimpath -ldflags '-s -w' \
+                  -o "dist/${cmd}-${goos}-${goarch}" "./cmd/${cmd}"
+              done
+            done
           done
           ls -la dist/
+          test "$(find dist -type f | wc -l | tr -d ' ')" = "8"
 
   package-tests:
     runs-on: ubuntu-latest
