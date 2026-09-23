@@ -89,7 +89,7 @@ jobs:
           digest="$(docker inspect --format='{{index .RepoDigests 0}}' "ghcr.io/zyvorai/kairon-${{ matrix.target }}:${{ github.ref_name }}" | cut -d'@' -f2)"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Generate SBOM for ${{ matrix.target }}
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
         with:
           image: ghcr.io/zyvorai/kairon-${{ matrix.target }}@${{ steps.push.outputs.digest }}
           format: spdx-json
