@@ -21,7 +21,7 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)
 
-[Why](#why-kairon) · [vs KubeVirt](#vs-kubevirt) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Status](#status)
+[Why](#why-kairon) · [vs KubeVirt](#vs-kubevirt) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Docs](#docs) · [Status](#status) · [License](#license)
 
 </div>
 
@@ -31,16 +31,7 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 
 KubeVirt makes a VM look like a Pod: `virt-launcher` → libvirt → QEMU, scheduled by the Pod scheduler. It works — and every layer is another thing you patch and debug at 2am.
 
-Kairon starts from a different premise: **a VM is not a Pod.**
-
-| You get | You don't get |
-|---|---|
-| A `Machine` CRD as desired state | A Pod wrapping a hypervisor |
-| Capacity-aware placement in the controller | Pod-scheduler virt plugins as the core model |
-| Node agent → FluxVM REST → KVM | libvirt in the hot path |
-| **Stdlib-only** controller & node ([policy](docs/DEPENDENCIES.md)) | A sprawling client-go operator surface |
-| Ambiguous live commits → `NeedsRecovery` | Silent split-brain hopes |
-| FluxVM **eBPF** edge + `MachineNetworkPolicy` | “Just use NetworkPolicy on the launcher Pod” |
+Kairon starts from a different premise: **a VM is not a Pod.** No `virt-launcher`, no libvirt in the hot path, no sprawling operator surface to learn before you can debug it — just a `Machine` CRD, a **stdlib-only** controller and node ([dependency policy](docs/DEPENDENCIES.md)), and Kubernetes as the only source of truth. The full breakdown is one section down, in [vs KubeVirt](#vs-kubevirt).
 
 Small enough to read in an afternoon. Honest about what's green and what isn't — see [Status](#status).
 
