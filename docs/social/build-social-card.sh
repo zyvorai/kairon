@@ -11,10 +11,12 @@ CHROME="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 
 SOCIAL_OUT="${1:-$HERE/kairon-social-card.jpg}"
 SHARE_OUT="${2:-$HERE/kairon-share-card.png}"
+KUBEVIRT_OUT="${3:-$HERE/../assets/kairon-vs-kubevirt.jpg}"
 
 PNG="$(mktemp "${TMPDIR:-/tmp}/kairon-social.XXXXXX.png")"
 PNG2="$(mktemp "${TMPDIR:-/tmp}/kairon-share.XXXXXX.png")"
-trap 'rm -f "$PNG" "$PNG2"' EXIT
+PNG3="$(mktemp "${TMPDIR:-/tmp}/kairon-vs-kubevirt.XXXXXX.png")"
+trap 'rm -f "$PNG" "$PNG2" "$PNG3"' EXIT
 
 "$CHROME" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1 \
   --window-size=1600,900 --screenshot="$PNG" "file://$HERE/kairon-social-card.html" >/dev/null 2>&1
@@ -25,3 +27,8 @@ echo "wrote $SOCIAL_OUT ($(sips -g pixelWidth -g pixelHeight "$SOCIAL_OUT" | awk
   --window-size=1200,630 --screenshot="$PNG2" "file://$HERE/kairon-share-card.html" >/dev/null 2>&1
 sips -s format png "$PNG2" --out "$SHARE_OUT" >/dev/null
 echo "wrote $SHARE_OUT ($(sips -g pixelWidth -g pixelHeight "$SHARE_OUT" | awk '/pixel/{printf "%s ", $2}')px, $(du -k "$SHARE_OUT" | cut -f1) KB)"
+
+"$CHROME" --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1 \
+  --window-size=1280,720 --screenshot="$PNG3" "file://$HERE/kairon-vs-kubevirt.html" >/dev/null 2>&1
+sips -s format jpeg -s formatOptions 92 "$PNG3" --out "$KUBEVIRT_OUT" >/dev/null
+echo "wrote $KUBEVIRT_OUT ($(sips -g pixelWidth -g pixelHeight "$KUBEVIRT_OUT" | awk '/pixel/{printf "%s ", $2}')px, $(du -k "$KUBEVIRT_OUT" | cut -f1) KB)"
