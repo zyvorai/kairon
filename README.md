@@ -19,7 +19,9 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 [![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://goreportcard.com/report/github.com/zyvorai/kairon)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://scorecard.dev/viewer/?uri=github.com/zyvorai/kairon)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)
+[![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
+[![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
+[![30-day PoC](https://img.shields.io/badge/30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
 
 [Why](#why-kairon) · [vs KubeVirt](#vs-kubevirt) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Docs](#docs) · [Status](#status) · [License](#license)
 
@@ -203,4 +205,6 @@ Report vulnerabilities to **security@zyvor.dev** — [`SECURITY.md`](SECURITY.md
 
 **Apache-2.0** — use, modify, and run in production at no charge ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 
-Enterprise support and Zyvor products are licensed separately → [sales@zyvor.dev](mailto:sales@zyvor.dev) · [zyvor.dev](https://zyvor.dev).
+Enterprise support and Zyvor products are licensed separately → [sales@zyvor.dev](mailto:sales@zyvor.dev) · [zyvor.dev](https://zyvor.dev/?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer).
+
+Evaluate with the team: [Book a demo](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer) · [30-day PoC](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer).
