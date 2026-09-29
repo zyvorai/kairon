@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="docs/assets/social-preview.png" alt="Kairon — Real VMs on Kubernetes without KubeVirt" width="720">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/social-preview-dark.png">
+  <img src="docs/assets/social-preview.png" alt="Kairon — Real VMs on Kubernetes without KubeVirt" width="720">
+</picture>
 
 # Kairon
 
@@ -13,9 +16,9 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 
 [![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zyvorai/kairon?display_name=tag)](https://github.com/zyvorai/kairon/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon)](https://goreportcard.com/report/github.com/zyvorai/kairon)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/zyvorai/kairon/badge)](https://scorecard.dev/viewer/?uri=github.com/zyvorai/kairon)
-[![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://goreportcard.com/report/github.com/zyvorai/kairon)
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://scorecard.dev/viewer/?uri=github.com/zyvorai/kairon)
+[![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon)
 
 [Why](#why-kairon) · [vs KubeVirt](#vs-kubevirt) · [Install](#install) · [Architecture](#architecture) · [What ships](#what-ships) · [Operate](#operate) · [Status](#status)
