@@ -2,6 +2,16 @@
 
 Kairon is Apache License 2.0 open source from [Zyvor](https://zyvor.dev).
 
+## Reporting bugs and requesting features
+
+Use [GitHub Issues](https://github.com/zyvorai/kairon/issues) for bug reports and enhancement requests, in English. Include the Kairon version (`VERSION` or `kaironctl version`), Kubernetes version, hypervisor backend, and the smallest reproduction you can. Issues and pull requests are public and searchable; maintainers aim to acknowledge new reports within 14 days.
+
+Do **not** file security vulnerabilities as public issues -- follow [SECURITY.md](SECURITY.md).
+
+## Pull request process
+
+Changes land through GitHub pull requests against `main`. `main` is branch-protected: a PR needs one approving review and green `lint`, `test`, and `analyze (go)` checks, and merges with linear history.
+
 1. Fork the repository and create a focused branch.
 2. Run `make all` before opening a pull request. That is `gofmt` check, `go vet`, `golangci-lint` (install it locally: https://golangci-lint.run/welcome/install/), race tests, a coverage floor (`internal/...` at or above `COVERAGE_THRESHOLD`, currently 50%), build/smoke, `scripts/validate.py`, RBAC coverage, and `helm lint`. The last two need `helm` and PyYAML.
 3. Add tests for scheduler, API, reconciliation or parsing changes.
@@ -11,6 +21,15 @@ Kairon is Apache License 2.0 open source from [Zyvor](https://zyvor.dev).
 7. By contributing, you agree that your contributions are licensed under the Apache License, Version 2.0.
 
 Commits should be small and reviewable. New features should prefer declarative API fields and idempotent reconciliation over imperative one-shot operations.
+
+## Requirements for acceptable contributions
+
+- **Coding standard:** Go code follows [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments), is `gofmt`-formatted, and passes `go vet` plus the linters in [`.golangci.yml`](.golangci.yml) with zero findings. TypeScript in `web/` must pass `npm --prefix web run typecheck`. Shell scripts must pass `shellcheck`.
+- **Tests:** new functionality and bug fixes must come with automated tests (Go `testing` for `internal/...`, Vitest for `web/`). A bug fix should include a regression test that fails without the fix. Coverage of `internal/...` must stay at or above `COVERAGE_THRESHOLD`.
+- **Warnings:** compiler, `go vet`, linter, CodeQL, and `govulncheck` findings are treated as errors and must be fixed, not suppressed, unless the suppression is justified in a code comment.
+- **Dependencies:** follow the stdlib-only rule above and [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+- **Docs:** user-visible behavior changes update `docs/` and `RELEASE_NOTES.md` (under `# Unreleased`).
+- **License:** new source files should carry an `SPDX-License-Identifier: Apache-2.0` header.
 
 Questions: https://zyvor.dev · security: security@zyvor.dev
 

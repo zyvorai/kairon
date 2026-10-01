@@ -1,26 +1,25 @@
 # OpenSSF Best Practices badge
 
-Scorecard's `CII-Best-Practices` check looks up this GitHub repo in the
-[OpenSSF Best Practices](https://www.bestpractices.dev/) API. A project
-entry must exist there (even at 0% / "in progress") before the score moves
-off zero.
+Kairon is registered as project
+[15141](https://www.bestpractices.dev/projects/15141) on
+[OpenSSF Best Practices](https://www.bestpractices.dev/). Scorecard's
+`CII-Best-Practices` check reads that entry: in progress → 2, passing → 5,
+silver → 7, gold → 10.
 
-## One-time registration (human GitHub OAuth)
+## Where the evidence lives
 
-1. Open: https://www.bestpractices.dev/en/projects/new?url=https%3A%2F%2Fgithub.com%2Fzyvorai%2Fkairon
-2. Sign in with the `zyvorai` GitHub org account that can claim the repo.
-3. Create the project (name: **Kairon**).
-4. Copy the numeric project id from the URL (`/projects/<id>`).
-5. Open a PR that adds this badge next to the others in [`README.md`](../README.md):
-
-```markdown
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)
-```
-
-6. Work the passing-tier questionnaire (many answers are already true for
-   this repo: Apache-2.0, `SECURITY.md`, CI, CodeQL, release signing, etc.).
-
-Passing tier → Scorecard score 5; silver 7; gold 10; in-progress alone → 2.
+| Criteria area | Evidence |
+|---------------|----------|
+| Description, obtain, feedback | [`README.md`](../README.md), [GitHub Issues](https://github.com/zyvorai/kairon/issues), [Releases](https://github.com/zyvorai/kairon/releases) |
+| Contribution process + requirements | [`CONTRIBUTING.md`](../CONTRIBUTING.md) (PR process, coding standard, test policy) |
+| License | [`LICENSE`](../LICENSE) (Apache-2.0) |
+| Interface docs | [`docs/CLI.md`](CLI.md), [`docs/guides/`](guides/), CRDs in [`charts/kairon`](../charts/kairon) |
+| Releases / notes | SemVer tags `vX.Y.Z`, [`RELEASE_NOTES.md`](../RELEASE_NOTES.md) |
+| Vulnerability reporting | [`SECURITY.md`](../SECURITY.md) (private email + GitHub advisories, 14-day ack) |
+| Build / test / CI | `make all`, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
+| Warnings / static analysis | `go vet`, `golangci-lint` ([`.golangci.yml`](../.golangci.yml)), CodeQL, `govulncheck`, Trivy |
+| Dynamic analysis | `go test -race`, native Go fuzzing ([`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml)) |
+| Signed delivery | cosign keyless signatures + SBOM attestations ([`release.yml`](../.github/workflows/release.yml)), `SHA256SUMS` |
 
 ## Maintained check
 

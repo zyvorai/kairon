@@ -4,7 +4,15 @@ Kairon is Apache-2.0 open-source software from [Zyvor](https://zyvor.dev). It co
 
 ## Reporting a vulnerability
 
-Please report security issues privately to **security@zyvor.dev**. Do not open a public GitHub issue for unfixed vulnerabilities.
+Please report security issues privately to **security@zyvor.dev** or through [GitHub private vulnerability reporting](https://github.com/zyvorai/kairon/security/advisories/new). Do not open a public GitHub issue for unfixed vulnerabilities.
+
+Include the affected version or commit, the component (`kairon-controller`, `kairon-node`, `kairon-ui`, `kaironctl`, CSI, Helm chart), reproduction steps, and impact.
+
+- We acknowledge reports within **14 days** (normally much sooner).
+- We aim to release a fix for medium-or-higher severity issues within **60 days** of the report, and faster for critical ones.
+- Fixes ship in a new release; the release notes and a GitHub Security Advisory identify the vulnerability (CVE where assigned) and credit the reporter unless they ask otherwise.
+
+Security fixes are made on `main` and released in the next tagged version; only the latest release is supported.
 
 ## v0.3 migration security
 
