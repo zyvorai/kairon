@@ -84,11 +84,11 @@ type LocalVolumeSource struct {
 // ever resolvable -- a PV naming any other CSI driver is rejected the
 // same way an unrecognized volume source always was.
 type CSIPersistentVolumeSource struct {
-	Driver               string            `json:"driver"`
-	VolumeHandle         string            `json:"volumeHandle"`
-	FSType               string            `json:"fsType,omitempty"`
-	ReadOnly             bool              `json:"readOnly,omitempty"`
-	VolumeAttributes     map[string]string `json:"volumeAttributes,omitempty"`
+	Driver           string            `json:"driver"`
+	VolumeHandle     string            `json:"volumeHandle"`
+	FSType           string            `json:"fsType,omitempty"`
+	ReadOnly         bool              `json:"readOnly,omitempty"`
+	VolumeAttributes map[string]string `json:"volumeAttributes,omitempty"`
 	// NodeStageSecretRef names a Secret holding CHAP username/password
 	// for Kairon's iSCSI driver. Resolved only when kairon-node's
 	// CSIChapSecretNamespace is set and the ref's namespace matches that

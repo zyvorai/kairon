@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -25,8 +24,6 @@ type Tracer struct {
 	Endpoint    string // e.g. http://otel-collector:4318/v1/traces
 	ServiceName string
 	HTTP        *http.Client
-
-	mu sync.Mutex
 }
 
 // Span is one timed reconcile unit (machine, migration, …).
