@@ -203,6 +203,8 @@ Report vulnerabilities to **security@zyvor.dev** — [`SECURITY.md`](SECURITY.md
 
 ## License
 
+Commercial subscriptions and support: see [docs/SUBSCRIPTION-MODEL.md](docs/SUBSCRIPTION-MODEL.md).
+
 **Apache-2.0** — use, modify, and run in production at no charge ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 
 Enterprise support and Zyvor products are licensed separately → [sales@zyvor.dev](mailto:sales@zyvor.dev) · [zyvor.dev](https://zyvor.dev/?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer).
