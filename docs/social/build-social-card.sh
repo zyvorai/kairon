@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
 # Render kairon social cards with Google Chrome + macOS `sips` (nothing to install).
 #   ./docs/social/build-social-card.sh
 # Outputs:

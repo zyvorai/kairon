@@ -508,7 +508,7 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		}
 		name = "/index.html"
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		http.NotFound(w, r)

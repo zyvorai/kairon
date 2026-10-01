@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { MachineDisruptionBudget } from '../types';

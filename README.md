@@ -18,6 +18,7 @@ QEMU, Cloud Hypervisor, Firecracker, or FluxVM's own hypervisor.
 [![Release](https://img.shields.io/github/v/release/zyvorai/kairon?display_name=tag)](https://github.com/zyvorai/kairon/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://goreportcard.com/report/github.com/zyvorai/kairon)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](https://scorecard.dev/viewer/?uri=github.com/zyvorai/kairon)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15141/badge)](https://www.bestpractices.dev/projects/15141)
 [![License: Apache-2.0](https://img.shields.io/github/license/zyvorai/kairon?style=flat-square&color=0071e3&labelColor=1d1d1f)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-zyvor.dev-ff5a15)](https://zyvor.dev/docs/kairon?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
 [![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
@@ -197,7 +198,7 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 
 **Toward v0.7** (on `main`, untagged): eBPF CLI + Network panel, multi-volume virtiofs, lease-aware fencing, CSI node CHAP, opt-in OTel. Single-host deploy smoke is green; **multi-host live migration is not yet green on the lab matrix** — see [`COMPATIBILITY.md`](docs/COMPATIBILITY.md). Cut v0.7.0 after that. Details → **[docs/STATUS.md](docs/STATUS.md)** · **[ROADMAP.md](ROADMAP.md)**.
 
-Report vulnerabilities to **security@zyvor.dev** — [`SECURITY.md`](SECURITY.md).
+Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/kairon/issues). Contributions → [`CONTRIBUTING.md`](CONTRIBUTING.md). Report vulnerabilities privately to **security@zyvor.dev** or via [GitHub private vulnerability reporting](https://github.com/zyvorai/kairon/security/advisories/new) — [`SECURITY.md`](SECURITY.md).
 
 ---
 

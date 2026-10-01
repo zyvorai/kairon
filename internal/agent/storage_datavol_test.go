@@ -16,13 +16,13 @@ import (
 
 func TestResolveDataVolumesMapsVirtiofsShares(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/v1/namespaces/default/persistentvolumeclaims/data-pvc":
+		switch r.URL.Path {
+		case "/api/v1/namespaces/default/persistentvolumeclaims/data-pvc":
 			_ = json.NewEncoder(w).Encode(model.PersistentVolumeClaim{
 				Spec:   model.PersistentVolumeClaimSpec{VolumeName: "pv-data"},
 				Status: model.PersistentVolumeClaimStatus{Phase: "Bound"},
 			})
-		case r.URL.Path == "/api/v1/persistentvolumes/pv-data":
+		case "/api/v1/persistentvolumes/pv-data":
 			_ = json.NewEncoder(w).Encode(model.PersistentVolume{
 				Spec: model.PersistentVolumeSpec{
 					VolumeMode: "Filesystem",
