@@ -85,14 +85,16 @@ except Exception as e:
 if (root / "VERSION").read_text().strip() != "v0.6.0":
     fail("VERSION must be v0.6.0")
 
-readme = (root / "README.md").read_text()
+# README is a landing page; detail lives in the docs it links to.
+readme_docs = ["README.md", "ARCHITECTURE.md", "docs/README.md", "docs/WHAT_SHIPS.md", "docs/STATUS.md"]
+readme = "\n".join((root / p).read_text() for p in readme_docs)
 for needle in [
-    "without KubeVirt", "without libvirt", "FluxVM", "Apache-2.0", "Production gaps",
+    "without KubeVirt", "no libvirt", "FluxVM", "Apache-2.0", "Production gaps",
     "MachineMigration", "MachineSnapshot", "adopt-only", "ResourceClaim", "vfio_devices",
     "MachineNetworkPolicy", "Network Fabric", "kaironctl install", "Cilium",
 ]:
     if needle not in readme:
-        fail(f"README missing {needle!r}")
+        fail(f"README and linked docs ({', '.join(readme_docs)}) missing {needle!r}")
 
 machine_crd = next(d for d in crds if d["metadata"]["name"] == "machines.kairon.zyvor.dev")
 net_props = machine_crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["network"]["properties"]
