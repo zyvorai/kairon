@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 // Mirrors internal/model/types.go's JSON shapes, trimmed to the fields
 // the UI actually renders or submits. Kept as one shared file since every
 // page depends on the same handful of resource shapes.

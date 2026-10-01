@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 
 // Auto-generated from the docs/ folder structure. Add _category_.json files

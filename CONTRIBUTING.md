@@ -29,7 +29,7 @@ Commits should be small and reviewable. New features should prefer declarative A
 - **Warnings:** compiler, `go vet`, linter, CodeQL, and `govulncheck` findings are treated as errors and must be fixed, not suppressed, unless the suppression is justified in a code comment.
 - **Dependencies:** follow the stdlib-only rule above and [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 - **Docs:** user-visible behavior changes update `docs/` and `RELEASE_NOTES.md` (under `# Unreleased`).
-- **License:** new source files should carry an `SPDX-License-Identifier: Apache-2.0` header.
+- **License:** every Go, Python, shell, TypeScript, and workflow file carries the Zyvor copyright and `SPDX-License-Identifier: Apache-2.0` header (enforced by `scripts/check_license_headers.py`).
 
 Questions: https://zyvor.dev · security: security@zyvor.dev
 

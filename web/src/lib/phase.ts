@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 // Badge color classification and formatting helpers shared by the
 // Machines/Migrations/Snapshots pages. Phase strings are exactly what
 // internal/agent and internal/controller set on status.phase -- see

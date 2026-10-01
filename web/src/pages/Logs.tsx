@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { logsURL, authHeaders, UNAUTHORIZED_EVENT } from '../api';

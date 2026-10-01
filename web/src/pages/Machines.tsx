@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, apiJSON, getConfig, isAdmin } from '../api';
 import { Machine } from '../types';

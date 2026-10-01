@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
-"""check_license_headers.py -- Go/Python/shell/workflow sources carry Zyvor headers."""
+"""check_license_headers.py -- Go/Python/shell/TypeScript/workflow sources carry Zyvor headers."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MARKER = "Copyright 2026 Zyvor"
 SPDX = "SPDX-License-Identifier: Apache-2.0"
 
-CHECK_SUFFIXES = {".go", ".py", ".sh"}
+CHECK_SUFFIXES = {".go", ".py", ".sh", ".ts", ".tsx"}
 # Also check workflow YAML (short header expected).
 CHECK_WORKFLOW_PREFIX = ".github/workflows/"
 

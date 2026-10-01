@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 export const token = () => sessionStorage.getItem('kairon-token') || '';
 export const username = () => sessionStorage.getItem('kairon-username') || '';
 export const isAdmin = () => sessionStorage.getItem('kairon-is-admin') === 'true';
