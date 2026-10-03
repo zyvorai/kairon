@@ -30,6 +30,10 @@ func (d NetworkAwareDestination) Prepare(ctx context.Context, session Session) (
 		_ = d.Inner.Abort(ctx, session)
 		return PrepareResult{}, fmt.Errorf("network migration restore: %w", err)
 	}
+	if err := restoreConntrack(ctx, d.Flux, session); err != nil {
+		_ = d.Inner.Abort(ctx, session)
+		return PrepareResult{}, err
+	}
 	return res, nil
 }
 

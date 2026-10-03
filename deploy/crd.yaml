@@ -209,6 +209,30 @@ spec:
                     additionalProperties:
                       type: string
                     description: Extra labels applied to the CiliumExternalWorkload.
+                  antiSpoof:
+                    type: boolean
+                    default: false
+                    description: Drop frames whose source MAC or IP is not assigned to this Machine. Enforced by the FluxVM eBPF edge.
+                  learnIP:
+                    type: boolean
+                    default: false
+                    description: Learn guestIP from ARP, DHCP, or ND so agent-less guests still project an address.
+                  qos:
+                    type: object
+                    description: Per-Machine token bucket projected into the FluxVM eBPF edge.
+                    properties:
+                      ingressMbps:
+                        type: integer
+                        minimum: 1
+                      egressMbps:
+                        type: integer
+                        minimum: 1
+                      ingressPps:
+                        type: integer
+                        minimum: 1
+                      egressPps:
+                        type: integer
+                        minimum: 1
               cloudInit:
                 type: object
                 description: Operator-supplied guest customization forwarded to
@@ -542,6 +566,22 @@ spec:
                         type: string
                       message:
                         type: string
+                  edge:
+                    type: object
+                    description: VM-edge eBPF projection. Identity is stable across IP changes.
+                    properties:
+                      identity:
+                        type: integer
+                      guestIPSource:
+                        type: string
+                      antiSpoof:
+                        type: boolean
+                      policyName:
+                        type: string
+                      conntrackRestored:
+                        type: integer
+                      blackholeWindowMs:
+                        type: integer
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -958,6 +998,22 @@ spec:
                   sampleRate:
                     type: integer
                     minimum: 0
+                  allowSNI:
+                    type: array
+                    items:
+                      type: string
+                    description: TLS SNI allow list (exact or *.suffix). Not an HTTP proxy.
+                  allowDNS:
+                    type: array
+                    items:
+                      type: string
+                    description: DNS qname allow list enforced at the VM edge.
+                  maxIngressMbps:
+                    type: integer
+                    minimum: 1
+                  maxIngressPps:
+                    type: integer
+                    minimum: 1
               cnp:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

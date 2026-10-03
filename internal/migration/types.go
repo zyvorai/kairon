@@ -37,6 +37,9 @@ type Session struct {
 	// from the destination driver's Prepare response.
 	DataPlaneEncrypted bool            `json:"dataPlaneEncrypted,omitempty"`
 	NetworkSnapshot    json.RawMessage `json:"networkSnapshot,omitempty"`
+	// ConntrackSnapshot is the per-Machine eBPF conntrack map exported on
+	// the source before live migration. Empty keeps the previous protocol.
+	ConntrackSnapshot json.RawMessage `json:"conntrackSnapshot,omitempty"`
 	// DiskPath, MAC, VCPUs and MemoryMiB describe the source runtime's
 	// current, live configuration -- not just the Machine's original spec
 	// -- so a real hypervisor-level adapter has enough information to

@@ -97,3 +97,20 @@ func TestValidateVmNetworkPolicyAllowsIcmp6ZeroPort(t *testing.T) {
 		t.Fatalf("expected icmp6/icmpv6 with port 0 to be valid, got %v", err)
 	}
 }
+
+func TestValidateNetworkQoSAndSNI(t *testing.T) {
+	zero := uint32(0)
+	if err := ValidateNetworkQoS(&NetworkQoS{EgressMbps: &zero}); err == nil {
+		t.Fatal("expected zero qos to be rejected")
+	}
+	mbps := uint32(100)
+	if err := ValidateNetworkQoS(&NetworkQoS{EgressMbps: &mbps}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateVmNetworkPolicy(VmNetworkPolicy{AllowSNI: []string{"*.vendor.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateVmNetworkPolicy(VmNetworkPolicy{AllowDNS: []string{"http://nope"}}); err == nil {
+		t.Fatal("expected invalid dns name")
+	}
+}

@@ -90,6 +90,22 @@ spec:
                   sampleRate:
                     type: integer
                     minimum: 0
+                  allowSNI:
+                    type: array
+                    items:
+                      type: string
+                    description: TLS SNI allow list (exact or *.suffix). Not an HTTP proxy.
+                  allowDNS:
+                    type: array
+                    items:
+                      type: string
+                    description: DNS qname allow list enforced at the VM edge.
+                  maxIngressMbps:
+                    type: integer
+                    minimum: 1
+                  maxIngressPps:
+                    type: integer
+                    minimum: 1
               cnp:
                 type: object
                 x-kubernetes-preserve-unknown-fields: true

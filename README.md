@@ -165,6 +165,8 @@ kaironctl evacuate worker-1 --wait
 kaironctl network status demo
 kaironctl network flows demo --limit 20
 kaironctl network drop-reasons demo
+kaironctl network identity demo
+kaironctl network capture demo --seconds 15
 
 # Dashboard
 helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \

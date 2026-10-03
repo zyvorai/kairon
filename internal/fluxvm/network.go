@@ -19,36 +19,44 @@ import (
 
 // WireVmNetworkPolicy is the snake_case JSON FluxVM expects for VmNetworkPolicy.
 type WireVmNetworkPolicy struct {
-	DefaultAllow  bool     `json:"default_allow"`
-	AllowCidrs    []string `json:"allow_cidrs,omitempty"`
-	DenyCidrs     []string `json:"deny_cidrs,omitempty"`
-	AllowPorts    []string `json:"allow_ports,omitempty"`
-	MaxEgressMbps *uint32  `json:"max_egress_mbps,omitempty"`
-	MaxEgressPps  *uint32  `json:"max_egress_pps,omitempty"`
-	AllowFqdns    []string `json:"allow_fqdns,omitempty"`
-	Groups        []string `json:"groups,omitempty"`
-	Labels        []string `json:"labels,omitempty"`
-	Entities      []string `json:"entities,omitempty"`
-	AuditMode     bool     `json:"audit_mode,omitempty"`
-	AllowIcmp     bool     `json:"allow_icmp,omitempty"`
-	SampleRate    uint32   `json:"sample_rate,omitempty"`
+	DefaultAllow   bool     `json:"default_allow"`
+	AllowCidrs     []string `json:"allow_cidrs,omitempty"`
+	DenyCidrs      []string `json:"deny_cidrs,omitempty"`
+	AllowPorts     []string `json:"allow_ports,omitempty"`
+	MaxEgressMbps  *uint32  `json:"max_egress_mbps,omitempty"`
+	MaxEgressPps   *uint32  `json:"max_egress_pps,omitempty"`
+	AllowFqdns     []string `json:"allow_fqdns,omitempty"`
+	Groups         []string `json:"groups,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+	Entities       []string `json:"entities,omitempty"`
+	AuditMode      bool     `json:"audit_mode,omitempty"`
+	AllowIcmp      bool     `json:"allow_icmp,omitempty"`
+	SampleRate     uint32   `json:"sample_rate,omitempty"`
+	AllowSNI       []string `json:"allow_sni,omitempty"`
+	AllowDNS       []string `json:"allow_dns,omitempty"`
+	MaxIngressMbps *uint32  `json:"max_ingress_mbps,omitempty"`
+	MaxIngressPps  *uint32  `json:"max_ingress_pps,omitempty"`
 }
 
 func ToWirePolicy(p model.VmNetworkPolicy) WireVmNetworkPolicy {
 	return WireVmNetworkPolicy{
-		DefaultAllow:  p.DefaultAllow,
-		AllowCidrs:    p.AllowCidrs,
-		DenyCidrs:     p.DenyCidrs,
-		AllowPorts:    p.AllowPorts,
-		MaxEgressMbps: p.MaxEgressMbps,
-		MaxEgressPps:  p.MaxEgressPps,
-		AllowFqdns:    p.AllowFqdns,
-		Groups:        p.Groups,
-		Labels:        p.Labels,
-		Entities:      p.Entities,
-		AuditMode:     p.AuditMode,
-		AllowIcmp:     p.AllowIcmp,
-		SampleRate:    p.SampleRate,
+		DefaultAllow:   p.DefaultAllow,
+		AllowCidrs:     p.AllowCidrs,
+		DenyCidrs:      p.DenyCidrs,
+		AllowPorts:     p.AllowPorts,
+		MaxEgressMbps:  p.MaxEgressMbps,
+		MaxEgressPps:   p.MaxEgressPps,
+		AllowFqdns:     p.AllowFqdns,
+		Groups:         p.Groups,
+		Labels:         p.Labels,
+		Entities:       p.Entities,
+		AuditMode:      p.AuditMode,
+		AllowIcmp:      p.AllowIcmp,
+		SampleRate:     p.SampleRate,
+		AllowSNI:       p.AllowSNI,
+		AllowDNS:       p.AllowDNS,
+		MaxIngressMbps: p.MaxIngressMbps,
+		MaxIngressPps:  p.MaxIngressPps,
 	}
 }
 
@@ -60,19 +68,23 @@ func ToWirePolicy(p model.VmNetworkPolicy) WireVmNetworkPolicy {
 // what was last requested).
 func FromWirePolicy(w WireVmNetworkPolicy) model.VmNetworkPolicy {
 	return model.VmNetworkPolicy{
-		DefaultAllow:  w.DefaultAllow,
-		AllowCidrs:    w.AllowCidrs,
-		DenyCidrs:     w.DenyCidrs,
-		AllowPorts:    w.AllowPorts,
-		MaxEgressMbps: w.MaxEgressMbps,
-		MaxEgressPps:  w.MaxEgressPps,
-		AllowFqdns:    w.AllowFqdns,
-		Groups:        w.Groups,
-		Labels:        w.Labels,
-		Entities:      w.Entities,
-		AuditMode:     w.AuditMode,
-		AllowIcmp:     w.AllowIcmp,
-		SampleRate:    w.SampleRate,
+		DefaultAllow:   w.DefaultAllow,
+		AllowCidrs:     w.AllowCidrs,
+		DenyCidrs:      w.DenyCidrs,
+		AllowPorts:     w.AllowPorts,
+		MaxEgressMbps:  w.MaxEgressMbps,
+		MaxEgressPps:   w.MaxEgressPps,
+		AllowFqdns:     w.AllowFqdns,
+		Groups:         w.Groups,
+		Labels:         w.Labels,
+		Entities:       w.Entities,
+		AuditMode:      w.AuditMode,
+		AllowIcmp:      w.AllowIcmp,
+		SampleRate:     w.SampleRate,
+		AllowSNI:       w.AllowSNI,
+		AllowDNS:       w.AllowDNS,
+		MaxIngressMbps: w.MaxIngressMbps,
+		MaxIngressPps:  w.MaxIngressPps,
 	}
 }
 
@@ -510,6 +522,30 @@ func BuildNetworkMap(n model.NetworkSpec) map[string]any {
 	}
 	if n.DataplaneMode != "" {
 		network["dataplane_mode"] = strings.ToLower(n.DataplaneMode)
+	}
+	if n.AntiSpoof {
+		network["anti_spoof"] = true
+	}
+	if n.LearnIP {
+		network["learn_ip"] = true
+	}
+	if n.QoS != nil {
+		qos := map[string]any{}
+		if n.QoS.IngressMbps != nil {
+			qos["ingress_mbps"] = *n.QoS.IngressMbps
+		}
+		if n.QoS.EgressMbps != nil {
+			qos["egress_mbps"] = *n.QoS.EgressMbps
+		}
+		if n.QoS.IngressPps != nil {
+			qos["ingress_pps"] = *n.QoS.IngressPps
+		}
+		if n.QoS.EgressPps != nil {
+			qos["egress_pps"] = *n.QoS.EgressPps
+		}
+		if len(qos) > 0 {
+			network["qos"] = qos
+		}
 	}
 	return network
 }

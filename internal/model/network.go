@@ -86,6 +86,23 @@ type NetworkSpec struct {
 	// ExternalWorkload is cluster-scoped — labels carry Machine identity.
 	CiliumNamespace string            `json:"ciliumNamespace,omitempty"`
 	CiliumLabels    map[string]string `json:"ciliumLabels,omitempty"`
+	// AntiSpoof drops frames whose source MAC or IP is not the one assigned
+	// to this Machine. Enforced by the FluxVM eBPF edge, not by Kairon.
+	AntiSpoof bool `json:"antiSpoof,omitempty"`
+	// LearnIP projects status.network.guestIP from ARP, DHCP, or ND on the
+	// tap so agent-less and Windows guests still get an address.
+	LearnIP bool `json:"learnIP,omitempty"`
+	// QoS is the per-Machine token bucket projected into the edge map.
+	QoS *NetworkQoS `json:"qos,omitempty"`
+}
+
+// NetworkQoS is a token bucket. A nil pointer means no bucket. An explicit
+// zero is rejected by ValidateNetworkQoS.
+type NetworkQoS struct {
+	IngressMbps *uint32 `json:"ingressMbps,omitempty"`
+	EgressMbps  *uint32 `json:"egressMbps,omitempty"`
+	IngressPps  *uint32 `json:"ingressPps,omitempty"`
+	EgressPps   *uint32 `json:"egressPps,omitempty"`
 }
 
 // ServiceFabricSpec declares FluxVM Service Fabric VIP membership for a Machine.
@@ -126,6 +143,18 @@ type MachineNetworkStatus struct {
 	TapName   string                  `json:"tapName,omitempty"`
 	Dataplane *MachineDataplaneStatus `json:"dataplane,omitempty"`
 	Cilium    *MachineCiliumStatus    `json:"cilium,omitempty"`
+	// Edge is the VM-edge eBPF projection (identity, learn source, conntrack).
+	Edge *MachineEdgeStatus `json:"edge,omitempty"`
+}
+
+// MachineEdgeStatus is the control-plane view of the FluxVM eBPF edge.
+type MachineEdgeStatus struct {
+	Identity          uint32 `json:"identity,omitempty"`
+	GuestIPSource     string `json:"guestIPSource,omitempty"` // agent|arp|dhcp|nd
+	AntiSpoof         bool   `json:"antiSpoof,omitempty"`
+	PolicyName        string `json:"policyName,omitempty"`
+	ConntrackRestored int    `json:"conntrackRestored,omitempty"`
+	BlackholeWindowMs int64  `json:"blackholeWindowMs,omitempty"`
 }
 
 // MachineCiliumStatus is projected when ciliumAttach (or CNP sync) is in use.
@@ -163,6 +192,12 @@ type VmNetworkPolicy struct {
 	AuditMode     bool     `json:"auditMode,omitempty"`
 	AllowIcmp     bool     `json:"allowIcmp,omitempty"`
 	SampleRate    uint32   `json:"sampleRate,omitempty"`
+	// AllowSNI is a TLS SNI allow list (exact or "*.suffix"). Not an HTTP proxy.
+	AllowSNI []string `json:"allowSNI,omitempty"`
+	// AllowDNS is a DNS qname allow list. Empty falls through to AllowFqdns.
+	AllowDNS       []string `json:"allowDNS,omitempty"`
+	MaxIngressMbps *uint32  `json:"maxIngressMbps,omitempty"`
+	MaxIngressPps  *uint32  `json:"maxIngressPps,omitempty"`
 }
 
 // MachineNetworkPolicy selects Machines and applies FluxVM VM-edge policy.
@@ -341,6 +376,58 @@ func ValidateVmNetworkPolicy(p VmNetworkPolicy) error {
 	}
 	if p.MaxEgressPps != nil && *p.MaxEgressPps == 0 {
 		return fmt.Errorf("maxEgressPps must be greater than zero when set")
+	}
+	if p.MaxIngressMbps != nil && *p.MaxIngressMbps == 0 {
+		return fmt.Errorf("maxIngressMbps must be greater than zero when set")
+	}
+	if p.MaxIngressPps != nil && *p.MaxIngressPps == 0 {
+		return fmt.Errorf("maxIngressPps must be greater than zero when set")
+	}
+	if err := validateNameList("allowSNI", p.AllowSNI); err != nil {
+		return err
+	}
+	if err := validateNameList("allowDNS", p.AllowDNS); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateNetworkQoS rejects an explicit zero bucket.
+func ValidateNetworkQoS(q *NetworkQoS) error {
+	if q == nil {
+		return nil
+	}
+	for _, pair := range []struct {
+		name string
+		v    *uint32
+	}{
+		{"ingressMbps", q.IngressMbps},
+		{"egressMbps", q.EgressMbps},
+		{"ingressPps", q.IngressPps},
+		{"egressPps", q.EgressPps},
+	} {
+		if pair.v != nil && *pair.v == 0 {
+			return fmt.Errorf("spec.network.qos.%s must be greater than zero when set", pair.name)
+		}
+	}
+	return nil
+}
+
+func validateNameList(field string, names []string) error {
+	for _, raw := range names {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" || strings.ContainsAny(name, " /:\\") {
+			return fmt.Errorf("%s: invalid name %q", field, raw)
+		}
+		body := strings.TrimPrefix(name, "*.")
+		if body == "" || strings.HasPrefix(body, ".") || strings.HasSuffix(body, ".") {
+			return fmt.Errorf("%s: invalid name %q", field, raw)
+		}
+		for _, label := range strings.Split(body, ".") {
+			if label == "" || strings.Contains(label, "*") {
+				return fmt.Errorf("%s: invalid name %q", field, raw)
+			}
+		}
 	}
 	return nil
 }

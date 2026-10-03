@@ -33,6 +33,8 @@ func newNetworkCmd(opts *Options) *cobra.Command {
   kaironctl network stats MACHINE        dataplane stats
   kaironctl network effective MACHINE    merged effective policy
   kaironctl network policies             list MachineNetworkPolicies
+  kaironctl network identity MACHINE     stable eBPF identity (survives IP move)
+  kaironctl network capture MACHINE      bounded ringbuf tap request (max 30s)
 `,
 	}
 	cmd.AddCommand(newNetworkStatusCmd(opts))
@@ -41,6 +43,9 @@ func newNetworkCmd(opts *Options) *cobra.Command {
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drop-reasons", "network-drop-reasons", "Show recent eBPF drop reasons for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "stats", "network-stats", "Show eBPF dataplane stats for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "effective", "network-effective", "Show merged effective network policy for a Machine"))
+	for _, sub := range newNetworkEdgeCmds(opts) {
+		cmd.AddCommand(sub)
+	}
 	return cmd
 }
 
