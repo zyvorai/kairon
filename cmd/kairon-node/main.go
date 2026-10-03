@@ -127,7 +127,8 @@ func run() int {
 		}
 	}()
 
-	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket, *migrationHeartbeatTTL)
+	restores := migration.NewRestoreStore()
+	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket, *migrationHeartbeatTTL, restores)
 	if err != nil {
 		log.Error("migration control plane", "error", err)
 		return 2
@@ -144,6 +145,7 @@ func run() int {
 		ImageCacheDir:          *imageCacheDir,
 		VFIOAllowlist:          vfioAllowlist,
 		MigrationPeer:          peer,
+		Restores:               restores,
 		SourceMigrator:         source,
 		MigrationPort:          *migrationPort,
 		CSISocketPath:          *csiSocket,
@@ -165,7 +167,7 @@ func run() int {
 	return 0
 }
 
-func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string, heartbeatTTL time.Duration) (*migration.Client, migration.SourceDriver, error) {
+func configureMigration(ctx context.Context, log *slog.Logger, cancel context.CancelFunc, nodeName string, fc *fluxvm.Client, addr, caPath, certPath, keyPath, serverName, stateDir, adapterSocket string, heartbeatTTL time.Duration, restores *migration.RestoreStore) (*migration.Client, migration.SourceDriver, error) {
 	configured := 0
 	for _, v := range []string{caPath, certPath, keyPath} {
 		if strings.TrimSpace(v) != "" {
@@ -195,12 +197,15 @@ func configureMigration(ctx context.Context, log *slog.Logger, cancel context.Ca
 
 	var destination migration.DestinationDriver = migration.UnsupportedDestinationDriver{Reason: "no Kairon migration adapter is configured; current FluxVM does not expose a verified live-migration API"}
 	var source migration.SourceDriver = migration.UnsupportedSourceDriver{Reason: "no Kairon migration adapter is configured; current FluxVM does not expose a verified live-migration API"}
+	if restores == nil {
+		restores = migration.NewRestoreStore()
+	}
 	if strings.TrimSpace(adapterSocket) != "" {
 		adapter := migration.NewAdapter(adapterSocket)
-		destination = migration.NetworkAwareDestination{Inner: adapter, Flux: fc}
+		destination = migration.NetworkAwareDestination{Inner: adapter, Flux: fc, Restores: restores}
 		source = migration.SourceAdapter{Adapter: adapter}
 	} else {
-		destination = migration.NetworkAwareDestination{Inner: destination, Flux: fc}
+		destination = migration.NetworkAwareDestination{Inner: destination, Flux: fc, Restores: restores}
 	}
 
 	migServer := &migration.Server{Store: migration.NewFileStore(stateDir), Driver: destination, NodeName: nodeName, HeartbeatTTL: heartbeatTTL}

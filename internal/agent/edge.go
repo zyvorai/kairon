@@ -26,6 +26,53 @@ func edgeRequested(m model.Machine) bool {
 	return strings.EqualFold(n.DataplaneMode, "ebpf")
 }
 
+func mergeSelectingPolicy(spec ebpfedge.EdgeSpec, p model.MachineNetworkPolicy) ebpfedge.EdgeSpec {
+	spec.PolicyName = p.Metadata.Name
+	spec.DefaultAllow = p.Spec.Policy.DefaultAllow
+	spec.AllowCIDRs = p.Spec.Policy.AllowCidrs
+	spec.DenyCIDRs = p.Spec.Policy.DenyCidrs
+	spec.AllowPorts = p.Spec.Policy.AllowPorts
+	spec.AllowSNI = p.Spec.Policy.AllowSNI
+	spec.AllowDNS = p.Spec.Policy.AllowDNS
+	if len(spec.AllowDNS) == 0 {
+		spec.AllowDNS = p.Spec.Policy.AllowFqdns
+	}
+	spec.AllowICMP = p.Spec.Policy.AllowIcmp
+	if spec.QoS.IngressMbps == 0 && p.Spec.Policy.MaxIngressMbps != nil {
+		spec.QoS.IngressMbps = *p.Spec.Policy.MaxIngressMbps
+	}
+	if spec.QoS.EgressMbps == 0 && p.Spec.Policy.MaxEgressMbps != nil {
+		spec.QoS.EgressMbps = *p.Spec.Policy.MaxEgressMbps
+	}
+	if spec.QoS.EgressPps == 0 && p.Spec.Policy.MaxEgressPps != nil {
+		spec.QoS.EgressPps = *p.Spec.Policy.MaxEgressPps
+	}
+	if spec.QoS.IngressPps == 0 && p.Spec.Policy.MaxIngressPps != nil {
+		spec.QoS.IngressPps = *p.Spec.Policy.MaxIngressPps
+	}
+	return spec
+}
+
+func (a *Agent) selectingPolicy(ctx context.Context, m model.Machine) (model.MachineNetworkPolicy, bool) {
+	if a.Kube == nil {
+		return model.MachineNetworkPolicy{}, false
+	}
+	policies, err := a.Kube.ListMachineNetworkPoliciesNamespace(ctx, m.Namespace())
+	if err != nil {
+		a.log().Warn("edge policy list failed", "machine", m.Metadata.Name, "error", err)
+		return model.MachineNetworkPolicy{}, false
+	}
+	for _, p := range policies {
+		if p.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if policySelectsMachine(p, m) {
+			return p, true
+		}
+	}
+	return model.MachineNetworkPolicy{}, false
+}
+
 func buildEdgeSpec(m model.Machine, guestIP string) ebpfedge.EdgeSpec {
 	spec := ebpfedge.EdgeSpec{
 		Namespace:    m.Namespace(),
@@ -60,13 +107,25 @@ func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guest
 	if !edgeRequested(m) || a.Flux == nil || runtimeID == "" {
 		return nil, nil
 	}
-	compiled, err := ebpfedge.Compile(buildEdgeSpec(m, guestIP))
+	spec := buildEdgeSpec(m, guestIP)
+	if p, ok := a.selectingPolicy(ctx, m); ok {
+		spec = mergeSelectingPolicy(spec, p)
+	}
+	compiled, err := ebpfedge.Compile(spec)
 	if err != nil {
 		return nil, fmt.Errorf("compile edge: %w", err)
 	}
 	status := &model.MachineEdgeStatus{
-		Identity:  compiled.Identity,
-		AntiSpoof: compiled.AntiSpoof,
+		Identity:   compiled.Identity,
+		AntiSpoof:  compiled.AntiSpoof,
+		PolicyName: compiled.PolicyName,
+	}
+	if guestIP != "" {
+		status.GuestIPSource = ebpfedge.IPSourceAgent
+	}
+	if res, ok := a.Restores.Get(m.Namespace(), m.Metadata.Name); ok {
+		status.ConntrackRestored = res.Restored
+		status.BlackholeWindowMs = res.BlackholeWindowMs
 	}
 	if err := a.Flux.ApplyEdge(ctx, runtimeID, compiled); err != nil {
 		if m.Spec.Network.DataplaneRequired {

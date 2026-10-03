@@ -14,6 +14,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/ebpfedge"
 	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -100,5 +101,43 @@ func TestEdgeNotRequestedSkipsFlux(t *testing.T) {
 	}
 	if raw := a.exportConntrackSnapshot(context.Background(), m, "vm-1"); raw != nil {
 		t.Fatalf("unexpected snapshot %s", raw)
+	}
+}
+
+func TestMergeSelectingPolicyCopiesSNIAndName(t *testing.T) {
+	spec := buildEdgeSpec(model.Machine{Metadata: model.ObjectMeta{Namespace: "demo", Name: "web"}}, "10.0.0.8")
+	mbps := uint32(50)
+	merged := mergeSelectingPolicy(spec, model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "egress-443"},
+		Spec: model.MachineNetworkPolicySpec{Policy: model.VmNetworkPolicy{
+			DefaultAllow:  false,
+			AllowSNI:      []string{"*.vendor.com"},
+			AllowFqdns:    []string{"api.vendor.com"},
+			MaxEgressMbps: &mbps,
+		}},
+	})
+	if merged.PolicyName != "egress-443" || merged.DefaultAllow || merged.AllowSNI[0] != "*.vendor.com" || merged.AllowDNS[0] != "api.vendor.com" || merged.QoS.EgressMbps != 50 {
+		t.Fatalf("merged %+v", merged)
+	}
+}
+
+func TestApplyEdgeProjectsConntrackRestore(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer fs.Close()
+	store := migration.NewRestoreStore()
+	store.Put("demo", "web", ebpfedge.RestoreResult{Restored: 4, BlackholeWindowMs: 25, Identity: 1})
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "demo", Name: "web"},
+		Spec:     model.MachineSpec{Network: model.NetworkSpec{DataplaneMode: "ebpf"}},
+	}
+	a := &Agent{Flux: fluxvm.New(fs.URL, ""), Restores: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	st, err := a.applyEdge(context.Background(), m, "vm-1", "10.0.0.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ConntrackRestored != 4 || st.BlackholeWindowMs != 25 || st.GuestIPSource != ebpfedge.IPSourceAgent {
+		t.Fatalf("status %+v", st)
 	}
 }

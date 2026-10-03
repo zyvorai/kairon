@@ -30,13 +30,16 @@ import (
 var pciBDFPattern = regexp.MustCompile(`(?i)^(?:[0-9a-f]{4}:)?[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$`)
 
 type Agent struct {
-	NodeName         string
-	Kube             *kube.Client
-	Flux             *fluxvm.Client
-	DefaultBackend   string
-	ImageRoot        string
-	VFIOAllowlist    map[string]struct{}
-	MigrationPeer    *migration.Client
+	NodeName       string
+	Kube           *kube.Client
+	Flux           *fluxvm.Client
+	DefaultBackend string
+	ImageRoot      string
+	VFIOAllowlist  map[string]struct{}
+	MigrationPeer  *migration.Client
+	// Restores is shared with the destination migration server. Nil skips
+	// conntrack result projection.
+	Restores         *migration.RestoreStore
 	SourceMigrator   migration.SourceDriver
 	MigrationPort    int
 	MigrationPeerURL func(context.Context, string) (string, error)

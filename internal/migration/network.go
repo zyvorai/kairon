@@ -16,6 +16,8 @@ import (
 type NetworkAwareDestination struct {
 	Inner DestinationDriver
 	Flux  *fluxvm.Client
+	// Restores receives conntrack restore results for status projection.
+	Restores *RestoreStore
 }
 
 func (d NetworkAwareDestination) Prepare(ctx context.Context, session Session) (PrepareResult, error) {
@@ -23,14 +25,19 @@ func (d NetworkAwareDestination) Prepare(ctx context.Context, session Session) (
 	if err != nil {
 		return res, err
 	}
-	if !res.TransferSupported || d.Flux == nil || len(session.NetworkSnapshot) == 0 || session.RuntimeID == "" {
+	if !res.TransferSupported || d.Flux == nil || session.RuntimeID == "" {
 		return res, nil
 	}
-	if err := d.Flux.NetworkMigrationRestore(ctx, session.RuntimeID, session.NetworkSnapshot); err != nil {
-		_ = d.Inner.Abort(ctx, session)
-		return PrepareResult{}, fmt.Errorf("network migration restore: %w", err)
+	if len(session.NetworkSnapshot) == 0 && len(session.ConntrackSnapshot) == 0 {
+		return res, nil
 	}
-	if err := restoreConntrack(ctx, d.Flux, session); err != nil {
+	if len(session.NetworkSnapshot) > 0 {
+		if err := d.Flux.NetworkMigrationRestore(ctx, session.RuntimeID, session.NetworkSnapshot); err != nil {
+			_ = d.Inner.Abort(ctx, session)
+			return PrepareResult{}, fmt.Errorf("network migration restore: %w", err)
+		}
+	}
+	if err := restoreConntrack(ctx, d.Flux, session, d.Restores); err != nil {
 		_ = d.Inner.Abort(ctx, session)
 		return PrepareResult{}, err
 	}

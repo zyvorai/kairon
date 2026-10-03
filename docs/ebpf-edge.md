@@ -42,3 +42,7 @@ Otherwise a FluxVM that does not have the endpoint yet is a warning.
 On live migration start the source exports `/network/conntrack`, stamps
 the stable identity, and puts the blob on `session.conntrackSnapshot`.
 The destination restore from the previous change then matches.
+
+## Policy and restore projection
+
+The selecting MachineNetworkPolicy is copied into the edge document (name, CIDRs, SNI, DNS, QoS when the Machine did not set one). A successful destination conntrack restore is recorded in the node store and projected as status.network.edge.conntrackRestored and blackholeWindowMs on the next tick.
