@@ -57,17 +57,25 @@ FluxVM serves these routes from the commit that adds
 `docs/vm-edge-contract.md`. An older FluxVM returns 404, which is a
 warning unless `dataplaneRequired` is set.
 
-What FluxVM does today:
+FluxVM needs dataplane schema 12 and its eBPF dataplane (`ebpf` or
+`cilium` mode). What it does:
 
 | Feature | State |
 | --- | --- |
-| Edge spec, conntrack restore, capture | Stored and validated. Identity mismatch and captures over 30s are rejected. |
-| Anti-spoof, SNI/DNS allow, QoS | Not enforced. The spec is not loaded into the BPF maps yet. |
-| Attributed drops | Placeholder events derived from the spec, not from the datapath. |
-| Learned IP | Echoes `assignedIP`. No ARP, DHCP or ND observation yet. |
-| Conntrack export | 400 unless the VM received a restore, so the source migrates without it. |
+| Anti-spoof | Enforced in the VM's TC program. Forged source IPs drop as `spoof_ip`; forged MACs drop as `spoof_mac` on a bridged tap. |
+| SNI / DNS allow | Enforced on TLS ClientHello (TCP 443) and DNS queries (port 53). Other names drop as `sni_deny` / `dns_deny`. |
+| QoS | Egress by a token bucket in the TC program, ingress by a `tbf` qdisc and a police action on the host interface. |
+| Attributed drops | Read from the datapath's per-reason counters, with the 5-tuple of the last packet. |
+| Learned IP | From guest ARP and IPv6 neighbor advertisements, else the DHCP lease. |
+| Conntrack | Export dumps the live table; restore is applied on attach if the VM is not yet attached. |
+| Persistence | The edge spec and a pending restore survive a FluxVM restart. |
 
-FluxVM keeps this state in memory, so it is lost when FluxVM restarts.
+A netns Machine is hooked on the host side of its namespace router, so
+MAC anti-spoof and ARP learning do not apply there; IP anti-spoof, the
+allow lists and QoS do. A netns Machine must set `spec.network.mac`.
+
+FluxVM's side is documented in
+[fluxvm docs/vm-edge-contract.md](https://github.com/zyvorai/fluxvm/blob/main/docs/vm-edge-contract.md).
 
 ## Installing the CRDs
 
