@@ -46,3 +46,7 @@ The destination restore from the previous change then matches.
 ## Policy and restore projection
 
 The selecting MachineNetworkPolicy is copied into the edge document (name, CIDRs, SNI, DNS, QoS when the Machine did not set one). A successful destination conntrack restore is recorded in the node store and projected as status.network.edge.conntrackRestored and blackholeWindowMs on the next tick.
+
+## Capture and learn-IP
+
+`kaironctl network capture` posts the session when `KAIRON_UI_URL` is set (max 30s). The node relays it to `POST /v1/vms/{id}/network/capture`. `learnIP` with no guest address reads `GET /v1/vms/{id}/network/learned-ip` and records `guestIPSource`.

@@ -70,3 +70,20 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+// LearnedIP reads an address the edge learned from ARP, DHCP, or ND.
+// GET /v1/vms/{id}/network/learned-ip.
+func (c *Client) LearnedIP(ctx context.Context, id string) (string, string, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/learned-ip", nil)
+	if err != nil {
+		return "", "", err
+	}
+	var body struct {
+		IP     string `json:"ip"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return "", "", err
+	}
+	return body.IP, body.Source, nil
+}

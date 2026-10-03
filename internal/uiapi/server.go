@@ -299,6 +299,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-flows", s.requireNamespace(namespaceFromPath, s.handleNetworkFlows))
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-drop-reasons", s.requireNamespace(namespaceFromPath, s.handleNetworkDropReasons))
 	api.HandleFunc("GET /api/v1/machines/{namespace}/{name}/network-drops", s.requireNamespace(namespaceFromPath, s.handleNetworkDrops))
+	api.HandleFunc("POST /api/v1/machines/{namespace}/{name}/network-capture", s.requireNamespace(namespaceFromPath, s.handleNetworkCapture))
 	// GET /api/v1/config reports server-wide feature flags (e.g.
 	// consoleEnabled), not per-namespace state -- not namespace-scoped.
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)

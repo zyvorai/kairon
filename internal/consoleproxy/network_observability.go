@@ -4,9 +4,13 @@
 package consoleproxy
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/zyvorai/kairon/internal/ebpfedge"
 )
 
 // handleNetworkEffective forwards to FluxVM's own
@@ -89,4 +93,28 @@ func (s *Server) handleNetworkDrops(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(data)
+}
+
+// handleNetworkCapture opens a bounded ringbuf tap.
+// POST /v1/vms/{id}/network/capture.
+func (s *Server) handleNetworkCapture(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var session ebpfedge.CaptureSession
+	if err := json.Unmarshal(body, &session); err != nil {
+		http.Error(w, "invalid capture session", http.StatusBadRequest)
+		return
+	}
+	if err := s.Flux.StartCapture(r.Context(), r.PathValue("runtimeID"), session); err != nil {
+		http.Error(w, fmt.Sprintf("network capture: %v", err), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
 }

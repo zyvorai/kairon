@@ -86,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /network-flows/{runtimeID}", s.handleNetworkFlows)
 	mux.HandleFunc("GET /network-drop-reasons/{runtimeID}", s.handleNetworkDropReasons)
 	mux.HandleFunc("GET /network-drops/{runtimeID}", s.handleNetworkDrops)
+	mux.HandleFunc("POST /network-capture/{runtimeID}", s.handleNetworkCapture)
 	return mux
 }
 

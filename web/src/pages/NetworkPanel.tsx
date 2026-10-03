@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { api } from '../api';
 
-type Tab = 'status' | 'flows' | 'drops' | 'effective';
+type Tab = 'status' | 'flows' | 'drops' | 'attributed' | 'effective';
 
 function pretty(data: unknown): string {
   try {
@@ -44,6 +44,7 @@ export default function NetworkPanel({
         let path = `${base}/network-stats`;
         if (tab === 'flows') path = `${base}/network-flows?limit=25`;
         else if (tab === 'drops') path = `${base}/network-drop-reasons?limit=25`;
+        else if (tab === 'attributed') path = `${base}/network-drops?limit=25`;
         else if (tab === 'effective') path = `${base}/network-effective`;
         const data = await api<unknown>(path);
         if (!cancelled) setBody(pretty(data));
@@ -70,6 +71,7 @@ export default function NetworkPanel({
               ['status', 'Stats'],
               ['flows', 'Flows'],
               ['drops', 'Drops'],
+              ['attributed', 'Attributed'],
               ['effective', 'Effective'],
             ] as const
           ).map(([id, label]) => (

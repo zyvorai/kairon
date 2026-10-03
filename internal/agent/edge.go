@@ -115,12 +115,26 @@ func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guest
 	if err != nil {
 		return nil, fmt.Errorf("compile edge: %w", err)
 	}
-	status := &model.MachineEdgeStatus{
-		Identity:   compiled.Identity,
-		AntiSpoof:  compiled.AntiSpoof,
-		PolicyName: compiled.PolicyName,
+	var statusSource string
+	if m.Spec.Network.LearnIP && guestIP == "" {
+		if ip, source, err := a.Flux.LearnedIP(ctx, runtimeID); err != nil {
+			a.log().Warn("learn-ip failed", "machine", m.Metadata.Name, "error", err)
+		} else if ip != "" {
+			guestIP = ip
+			compiled.AssignedIP = ip
+			if source == "" {
+				source = ebpfedge.IPSourceARP
+			}
+			statusSource = source
+		}
 	}
-	if guestIP != "" {
+	status := &model.MachineEdgeStatus{
+		Identity:      compiled.Identity,
+		AntiSpoof:     compiled.AntiSpoof,
+		PolicyName:    compiled.PolicyName,
+		GuestIPSource: statusSource,
+	}
+	if guestIP != "" && status.GuestIPSource == "" {
 		status.GuestIPSource = ebpfedge.IPSourceAgent
 	}
 	if res, ok := a.Restores.Get(m.Namespace(), m.Metadata.Name); ok {

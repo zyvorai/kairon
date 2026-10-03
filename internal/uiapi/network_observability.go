@@ -4,6 +4,7 @@
 package uiapi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -127,4 +128,50 @@ func (s *Server) handleNetworkDrops(w http.ResponseWriter, r *http.Request) {
 		nodePath += "?limit=" + limit
 	}
 	s.relayRawGET(w, ctx, nodeAddr, nodePath)
+}
+
+// handleNetworkCapture relays a bounded tap: kairon-ui -> kairon-node -> FluxVM.
+func (s *Server) handleNetworkCapture(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	nodeAddr, runtimeID, ok := s.requireDiagnosticsAccess(w, r, namespace, name)
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
+	defer cancel()
+	s.relayRawPOST(w, ctx, nodeAddr, "network-capture/"+runtimeID, body)
+}
+
+func (s *Server) relayRawPOST(w http.ResponseWriter, ctx context.Context, nodeAddr, nodePath string, body []byte) {
+	scheme := "http"
+	transport := http.DefaultTransport
+	if s.ConsoleTLS != nil {
+		scheme = "https"
+		transport = &http.Transport{TLSClientConfig: s.ConsoleTLS}
+	}
+	upstreamURL := fmt.Sprintf("%s://%s:%s/%s", scheme, nodeAddr, s.ConsolePort, nodePath)
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	upstreamReq.Header.Set("Authorization", "Bearer "+s.ConsoleToken)
+	upstreamReq.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Transport: transport}).Do(upstreamReq)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "connect to node relay: "+err.Error())
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("node relay returned HTTP %d", resp.StatusCode))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.Copy(w, resp.Body)
 }

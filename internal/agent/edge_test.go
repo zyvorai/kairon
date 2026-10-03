@@ -141,3 +141,27 @@ func TestApplyEdgeProjectsConntrackRestore(t *testing.T) {
 		t.Fatalf("status %+v", st)
 	}
 }
+
+func TestApplyEdgeLearnsIPWhenUnset(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/vms/vm-1/network/learned-ip" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ip":"10.0.0.15","source":"dhcp"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer fs.Close()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Namespace: "demo", Name: "web"},
+		Spec:     model.MachineSpec{Network: model.NetworkSpec{DataplaneMode: "ebpf", LearnIP: true}},
+	}
+	a := &Agent{Flux: fluxvm.New(fs.URL, ""), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	st, err := a.applyEdge(context.Background(), m, "vm-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.GuestIPSource != "dhcp" {
+		t.Fatalf("source %q", st.GuestIPSource)
+	}
+}

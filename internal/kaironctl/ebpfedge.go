@@ -4,7 +4,13 @@
 package kaironctl
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -71,10 +77,43 @@ is opened by the dataplane, not by this process. Seconds above 30 are rejected.`
 			if session.Filter != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "filter %s\n", session.Filter)
 			}
+			if err := postCapture(cmd.Context(), ns, args[0], session); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&seconds, "seconds", 15, "capture length, 1-30")
 	cmd.Flags().StringVar(&filter, "filter", "", "optional tcpdump-style filter passed to FluxVM")
 	return cmd
+}
+
+func postCapture(ctx context.Context, namespace, machine string, session ebpfedge.CaptureSession) error {
+	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
+	if base == "" {
+		return nil
+	}
+	body, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/machines/%s/%s/network-capture", base, namespace, machine)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token := os.Getenv("KAIRON_UI_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("capture post: HTTP %d", resp.StatusCode)
+	}
+	style.Log(style.EmojiOK, "capture posted")
+	return nil
 }
