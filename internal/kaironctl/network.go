@@ -30,6 +30,7 @@ func newNetworkCmd(opts *Options) *cobra.Command {
   kaironctl network status MACHINE       dataplane, Cilium attach, CNP sync
   kaironctl network flows MACHINE        recent eBPF flows
   kaironctl network drop-reasons MACHINE recent drop reasons
+  kaironctl network drops MACHINE        attributed drops (policy, spoof, sni)
   kaironctl network stats MACHINE        dataplane stats
   kaironctl network effective MACHINE    merged effective policy
   kaironctl network policies             list MachineNetworkPolicies
@@ -41,6 +42,7 @@ func newNetworkCmd(opts *Options) *cobra.Command {
 	cmd.AddCommand(newNetworkPoliciesCmd(opts))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "flows", "network-flows", "Show recent eBPF flows for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drop-reasons", "network-drop-reasons", "Show recent eBPF drop reasons for a Machine"))
+	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drops", "network-drops", "Show attributed eBPF drops for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "stats", "network-stats", "Show eBPF dataplane stats for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "effective", "network-effective", "Show merged effective network policy for a Machine"))
 	for _, sub := range newNetworkEdgeCmds(opts) {
@@ -145,7 +147,7 @@ func newNetworkObservabilityCmd(opts *Options, use, kind, short string) *cobra.C
 			return printObservability(ctx, m, kind, limit)
 		},
 	}
-	if use == "flows" || use == "drop-reasons" {
+	if use == "flows" || use == "drop-reasons" || use == "drops" {
 		cmd.Flags().IntVar(&limit, "limit", 10, "max entries to request")
 	}
 	return cmd

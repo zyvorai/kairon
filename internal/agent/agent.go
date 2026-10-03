@@ -817,6 +817,7 @@ func (a *Agent) reconcileMigration(ctx context.Context, item model.MachineMigrat
 		} else {
 			session.NetworkSnapshot = snap
 		}
+		session.ConntrackSnapshot = a.exportConntrackSnapshot(ctx, machine, rec.ID())
 		prepared, err := a.MigrationPeer.Prepare(ctx, targetURL, session)
 		if err != nil {
 			return fmt.Errorf("prepare target %s: %w", item.Status.TargetNode, err)

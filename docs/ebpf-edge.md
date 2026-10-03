@@ -30,3 +30,15 @@ the destination Machine. `status.network.edge.conntrackRestored` and
 - A Hubble UI inside kairon-ui (that is Paqtra).
 - Kairon-owned `.bpf.c`.
 - HTTP body inspection. SNI and DNS qname only.
+
+
+## Reconcile
+
+`kairon-node` posts the compiled document on each tick when
+`dataplaneMode: ebpf`, `antiSpoof`, `learnIP`, or `qos` is set.
+`dataplaneRequired` fails the Machine closed if that post fails.
+Otherwise a FluxVM that does not have the endpoint yet is a warning.
+
+On live migration start the source exports `/network/conntrack`, stamps
+the stable identity, and puts the blob on `session.conntrackSnapshot`.
+The destination restore from the previous change then matches.

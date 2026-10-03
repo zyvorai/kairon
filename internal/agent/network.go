@@ -453,6 +453,14 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 			return fmt.Errorf("dataplane required but attach unhealthy (mode=%s attached=%v)", dp.Mode, dp.Attached)
 		}
 	}
+	edge, err := a.applyEdge(ctx, m, rec.ID(), guestIP)
+	if err != nil {
+		return err
+	}
+	if edge != nil {
+		netStatus.Edge = edge
+		status.Network = netStatus
+	}
 	return nil
 }
 

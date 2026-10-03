@@ -75,3 +75,18 @@ func (s *Server) handleNetworkDropReasons(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(data)
 }
+
+// handleNetworkDrops forwards attributed eBPF drops.
+// GET /v1/vms/{id}/network/drops?limit=N.
+func (s *Server) handleNetworkDrops(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	data, err := s.Flux.AttributedDrops(r.Context(), r.PathValue("runtimeID"), parseLimit(r))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("network drops: %v", err), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
+}

@@ -112,3 +112,19 @@ func (s *Server) handleNetworkDropReasons(w http.ResponseWriter, r *http.Request
 	}
 	s.relayRawGET(w, ctx, nodeAddr, nodePath)
 }
+
+// handleNetworkDrops relays attributed drops: kairon-ui -> kairon-node -> FluxVM.
+func (s *Server) handleNetworkDrops(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	nodeAddr, runtimeID, ok := s.requireDiagnosticsAccess(w, r, namespace, name)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
+	defer cancel()
+	nodePath := "network-drops/" + runtimeID
+	if limit := r.URL.Query().Get("limit"); limit != "" {
+		nodePath += "?limit=" + limit
+	}
+	s.relayRawGET(w, ctx, nodeAddr, nodePath)
+}
