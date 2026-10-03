@@ -50,3 +50,26 @@ The selecting MachineNetworkPolicy is copied into the edge document (name, CIDRs
 ## Capture and learn-IP
 
 `kaironctl network capture` posts the session when `KAIRON_UI_URL` is set (max 30s). The node relays it to `POST /v1/vms/{id}/network/capture`. `learnIP` with no guest address reads `GET /v1/vms/{id}/network/learned-ip` and records `guestIPSource`.
+
+## FluxVM support
+
+FluxVM serves these routes from the commit that adds
+`docs/vm-edge-contract.md`. An older FluxVM returns 404, which is a
+warning unless `dataplaneRequired` is set.
+
+What FluxVM does today:
+
+| Feature | State |
+| --- | --- |
+| Edge spec, conntrack restore, capture | Stored and validated. Identity mismatch and captures over 30s are rejected. |
+| Anti-spoof, SNI/DNS allow, QoS | Not enforced. The spec is not loaded into the BPF maps yet. |
+| Attributed drops | Placeholder events derived from the spec, not from the datapath. |
+| Learned IP | Echoes `assignedIP`. No ARP, DHCP or ND observation yet. |
+| Conntrack export | 400 unless the VM received a restore, so the source migrates without it. |
+
+FluxVM keeps this state in memory, so it is lost when FluxVM restarts.
+
+## Installing the CRDs
+
+Apply `charts/kairon/crds/`. `deploy/crd.yaml` is behind the chart and
+drops `status.appliedMachines` and printer columns that the chart has.
