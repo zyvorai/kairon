@@ -71,5 +71,5 @@ FluxVM keeps this state in memory, so it is lost when FluxVM restarts.
 
 ## Installing the CRDs
 
-Apply `charts/kairon/crds/`. `deploy/crd.yaml` is behind the chart and
-drops `status.appliedMachines` and printer columns that the chart has.
+`deploy/crd.yaml` is generated from `charts/kairon/crds/` by `make crds`,
+and `make validate` fails if the two differ. Either can be applied.

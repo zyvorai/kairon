@@ -47,6 +47,7 @@ try:
         "machinesets.kairon.zyvor.dev",
         "machineinstancetypes.kairon.zyvor.dev",
         "migrationpolicies.kairon.zyvor.dev",
+        "machinesnapshotschedules.kairon.zyvor.dev",
     }
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")
@@ -74,6 +75,16 @@ try:
             fail(f"MachineMigration.status missing {field}")
 except Exception as e:
     fail(f"CRD semantic check failed: {e}")
+
+chart_crds = {
+    d["metadata"]["name"]: d
+    for p in sorted((root / "charts/kairon/crds").glob("*.yaml"))
+    for d in yaml.safe_load_all(p.read_text())
+}
+bundle_crds = {d["metadata"]["name"]: d for d in yaml.safe_load_all((root / "deploy/crd.yaml").read_text())}
+if chart_crds != bundle_crds:
+    drift = sorted(n for n in chart_crds.keys() | bundle_crds.keys() if chart_crds.get(n) != bundle_crds.get(n))
+    fail(f"deploy/crd.yaml differs from charts/kairon/crds ({', '.join(drift)}); run `make crds`")
 
 try:
     chart = yaml.safe_load((root / "charts/kairon/Chart.yaml").read_text())

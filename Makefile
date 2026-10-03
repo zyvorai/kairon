@@ -69,6 +69,9 @@ smoke: build
 validate:
 	python3 scripts/validate.py
 
+crds:
+	python3 scripts/gen-crd-bundle.py
+
 rbac-coverage:
 	python3 scripts/check_rbac_coverage.py
 

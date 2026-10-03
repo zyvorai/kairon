@@ -46,7 +46,7 @@ the guest IP changes, so MachineNetworkPolicy survives live migration.`,
 			}
 			id := ebpfedge.StableIdentity(ns, machine)
 			style.Log(style.EmojiOK, "identity %d for %s/%s", id, ns, machine)
-			fmt.Fprintf(cmd.OutOrStdout(), "%d\n", id)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d\n", id)
 			return nil
 		},
 	}
@@ -73,9 +73,9 @@ is opened by the dataplane, not by this process. Seconds above 30 are rejected.`
 				return err
 			}
 			style.Log(style.EmojiOK, "capture %s/%s for %ds token=%s", session.Namespace, session.Machine, session.Seconds, session.Token)
-			fmt.Fprintf(cmd.OutOrStdout(), "expires %s\n", session.ExpiresAt.Format(time.RFC3339))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "expires %s\n", session.ExpiresAt.Format(time.RFC3339))
 			if session.Filter != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "filter %s\n", session.Filter)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "filter %s\n", session.Filter)
 			}
 			if err := postCapture(cmd.Context(), ns, args[0], session); err != nil {
 				return err
