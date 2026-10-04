@@ -1,5 +1,36 @@
 # Roadmap
 
+## v0.8 — Beat KubeVirt
+
+Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and publish numbers, not claims. Kairon and FluxVM ship together; each item lands on `main` with CI and docs.
+
+**Proof**
+
+- [ ] Benchmarks vs KubeVirt on identical hardware (create→Running, guest-ready, per-VM overhead, density, migration downtime, control-plane RSS) → `docs/benchmarks/`
+- [ ] Hardware matrix fails on failure, real guest-agent smoke, `--write-compat`; recovery / source-failure / controller-failover drills
+
+**Storage (Atlas)**
+
+- [x] `spec.volumes[].atlas`: controller provisions disks through Atlas, gates scheduling, releases after runtime cleanup ([guide](docs/guides/machine-storage-atlas.md))
+- [ ] FluxVM in-place Ceph RBD boot for Atlas `rbd` volumes (shared-storage live migration, no block copy)
+- [ ] Third-party CSI `attachRequired` drivers (VolumeAttachment) + node-stage secrets
+- [ ] MachineSnapshot / backup through Atlas snapshots and S3 backup jobs; `kaironctl volumes`, MCP tools
+
+**Migration from VMware**
+
+- [ ] FluxVM OVA/OVF import with guestkit repair (virtio injection, VMware tools removal); `kaironctl import ova`
+
+**AI-agent sandboxes**
+
+- [ ] FluxVM live fork (`POST /v1/vms/{id}/fork`); `MachinePool` / `MachineClaim` CRDs with TTL and egress allowlists; scale subresource; MCP tools
+
+**Parity**
+
+- [ ] Disk hotplug of existing images/PVCs, NIC hot-unplug
+- [ ] `MachineBackup` / `MachineBackupRestore` with automatic fsfreeze
+- [ ] Block-mode PVCs, `kaironctl image upload`, OCI containerDisk images
+- [ ] Serve `v1beta1` as the storage version
+
 ## v0.7 — Prove maturity, eBPF UX, STATUS gaps
 
 Shipped on `main` (not tagged): eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
