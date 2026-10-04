@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -69,9 +70,18 @@ func (a *Agent) resolveThirdPartyCSIVolume(ctx context.Context, m model.Machine,
 	if err != nil {
 		return "", csiVolumeStatus{}, err
 	}
+	// A Block-mode volume is published as a device node at the target path
+	// itself; a Filesystem one as a directory holding disk.img.
+	block := pv.Spec.VolumeMode == "Block"
+	bootPath := func(publish string) string {
+		if block {
+			return publish
+		}
+		return filepath.Join(publish, bootDiskFileName)
+	}
 
 	if m.Status.VolumeStagingPath != "" && m.Status.VolumePublishPath != "" && m.Status.VolumeHandle == src.VolumeHandle && m.Status.VolumeDriver == src.Driver {
-		return filepath.Join(m.Status.VolumePublishPath, bootDiskFileName), csiVolumeStatus{
+		return bootPath(m.Status.VolumePublishPath), csiVolumeStatus{
 			StagingPath: m.Status.VolumeStagingPath, PublishPath: m.Status.VolumePublishPath, VolumeID: m.Status.VolumeHandle, Driver: src.Driver,
 		}, nil
 	}
@@ -94,6 +104,14 @@ func (a *Agent) resolveThirdPartyCSIVolume(ctx context.Context, m model.Machine,
 	volumeCapability := &csi.VolumeCapability{
 		AccessType: &csi.VolumeCapability_Mount{Mount: &csi.VolumeCapability_MountVolume{FsType: src.FSType}},
 		AccessMode: &csi.VolumeCapability_AccessMode{Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	}
+	if block {
+		volumeCapability.AccessType = &csi.VolumeCapability_Block{Block: &csi.VolumeCapability_BlockVolume{}}
+		// The CO owns the target's parent directory; the driver creates the
+		// device file itself.
+		if err := os.MkdirAll(filepath.Dir(publish), 0o750); err != nil {
+			return "", csiVolumeStatus{}, fmt.Errorf("create CSI publish parent for PersistentVolume %s: %w", pv.Metadata.Name, err)
+		}
 	}
 
 	if _, err := client.NodeStageVolume(ctx, &csi.NodeStageVolumeRequest{
@@ -119,7 +137,7 @@ func (a *Agent) resolveThirdPartyCSIVolume(ctx context.Context, m model.Machine,
 		return "", csiVolumeStatus{}, fmt.Errorf("NodePublishVolume for PersistentVolume %s (driver %s): %w", pv.Metadata.Name, src.Driver, err)
 	}
 
-	return filepath.Join(publish, bootDiskFileName), csiVolumeStatus{StagingPath: staging, PublishPath: publish, VolumeID: src.VolumeHandle, Driver: src.Driver}, nil
+	return bootPath(publish), csiVolumeStatus{StagingPath: staging, PublishPath: publish, VolumeID: src.VolumeHandle, Driver: src.Driver}, nil
 }
 
 // csiAttachmentName is kairon-node's VolumeAttachment name for a volume on

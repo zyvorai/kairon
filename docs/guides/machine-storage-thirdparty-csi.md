@@ -214,9 +214,11 @@ in full for Kairon's own driver; it applies identically here.
   any other third-party driver) cluster exists in this project's test
   environment to validate end-to-end. Treat this as an opt-in, first-cut
   capability until validated against your own real driver deployment.
-- **No raw block mode, no volume expansion, no snapshots** through this
-  path -- only `Filesystem`-mode `NodeStageVolume`/`NodePublishVolume`,
-  matching every other Kairon boot-disk source. A driver's own
+- **Raw block mode for the boot volume.** A `volumeMode: Block` PV is
+  staged and published with a `Block` volume capability; the publish
+  target is a device node the driver creates, and the Machine boots from
+  it directly instead of from `disk.img`.
+- **No volume expansion, no snapshots** through this path. A driver's own
   `ControllerExpandVolume`/snapshot support (if any) isn't wired up here.
 - **No health/stats reporting** (`NodeGetVolumeStats` is never called).
 - **Read-only host mount, larger container surface.** Enabling this

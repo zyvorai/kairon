@@ -5,10 +5,13 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/zyvorai/kairon/internal/csinode"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -88,6 +91,49 @@ func TestResolveCSIVolumeRoutesToThirdPartyDriverWhenAllowlisted(t *testing.T) {
 	}
 	if len(fake.stageCalls[0].GetSecrets()) != 0 {
 		t.Fatal("expected no secrets when the PV has no secret refs")
+	}
+}
+
+func TestResolveCSIVolumeThirdPartyBlockModePublishesDevice(t *testing.T) {
+	fake := &fakeCSINodeServer{}
+	socketPath := startFakeCSINode(t, fake)
+	a := &Agent{
+		CSIStagingDir:        t.TempDir(),
+		CSIPublishDir:        t.TempDir(),
+		ThirdPartyCSIDrivers: map[string]string{"rbd.csi.ceph.com": socketPath},
+	}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}}
+	pv := testThirdPartyCSIPV("pv-1", "rbd.csi.ceph.com", "rbd-image-123")
+	pv.Spec.VolumeMode = "Block"
+
+	path, _, err := a.resolveCSIVolume(context.Background(), m, pv)
+	if err != nil {
+		t.Fatalf("resolveCSIVolume: %v", err)
+	}
+	wantPath := filepath.Join(a.CSIPublishDir, "thirdparty", "rbd.csi.ceph.com", m.RuntimeName())
+	if path != wantPath {
+		t.Fatalf("got path %q, want the publish target itself %q", path, wantPath)
+	}
+	if fake.stageCalls[0].GetVolumeCapability().GetBlock() == nil || fake.publishCalls[0].GetVolumeCapability().GetBlock() == nil {
+		t.Fatal("expected a Block volume capability on stage and publish")
+	}
+	if fi, err := os.Stat(filepath.Dir(wantPath)); err != nil || !fi.IsDir() {
+		t.Fatalf("expected the publish parent directory to exist: %v", err)
+	}
+
+	m.Status = model.MachineStatus{VolumeStagingPath: "/s", VolumePublishPath: "/p", VolumeHandle: "rbd-image-123", VolumeDriver: "rbd.csi.ceph.com"}
+	if path, _, err = a.resolveCSIVolume(context.Background(), m, pv); err != nil || path != "/p" {
+		t.Fatalf("reused block path = %q, %v; want /p", path, err)
+	}
+}
+
+func TestResolveCSIVolumeOwnDriverRejectsBlockMode(t *testing.T) {
+	a := &Agent{CSIStagingDir: t.TempDir(), CSIPublishDir: t.TempDir()}
+	m := model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"}}
+	pv := testThirdPartyCSIPV("pv-1", csinode.DriverName, "iqn")
+	pv.Spec.VolumeMode = "Block"
+	if _, _, err := a.resolveCSIVolume(context.Background(), m, pv); err == nil || !strings.Contains(err.Error(), "Block-mode") {
+		t.Fatalf("expected a Block-mode error, got %v", err)
 	}
 }
 

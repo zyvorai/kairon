@@ -47,8 +47,9 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 	if err != nil {
 		return "", csiVolumeStatus{}, fmt.Errorf("get PersistentVolume %s: %w", pvc.Spec.VolumeName, err)
 	}
-	if pv.Spec.VolumeMode != "" && pv.Spec.VolumeMode != "Filesystem" {
-		return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): volumeMode %q is not supported as a Machine boot disk; only Filesystem-mode PersistentVolumes are", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, pv.Spec.VolumeMode)
+	block := pv.Spec.VolumeMode == "Block"
+	if pv.Spec.VolumeMode != "" && pv.Spec.VolumeMode != "Filesystem" && !block {
+		return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): volumeMode %q is not supported as a Machine boot disk", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, pv.Spec.VolumeMode)
 	}
 	if pv.Spec.CSI != nil {
 		path, volStatus, err := a.resolveCSIVolume(ctx, m, pv)
@@ -60,6 +61,10 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 	dir, err := hostDirForPV(pv)
 	if err != nil {
 		return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): %w", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, err)
+	}
+	if block {
+		// A Block-mode hostPath/local PV names the device itself.
+		return dir, csiVolumeStatus{}, nil
 	}
 	return filepath.Join(dir, bootDiskFileName), csiVolumeStatus{}, nil
 }

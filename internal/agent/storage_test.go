@@ -100,7 +100,7 @@ func TestResolveBootDiskPathRejectsUnboundPVC(t *testing.T) {
 	}
 }
 
-func TestResolveBootDiskPathRejectsBlockVolumeMode(t *testing.T) {
+func TestResolveBootDiskPathBlockHostPathBootsDevice(t *testing.T) {
 	pvc := model.PersistentVolumeClaim{
 		Spec:   model.PersistentVolumeClaimSpec{VolumeName: "pv-root"},
 		Status: model.PersistentVolumeClaimStatus{Phase: "Bound"},
@@ -128,6 +128,12 @@ func TestResolveBootDiskPathRejectsBlockVolumeMode(t *testing.T) {
 		Metadata: model.ObjectMeta{Namespace: "prod"},
 		Spec:     model.MachineSpec{Volumes: []model.MachineVolume{{Name: "root", ClaimName: "root-pvc"}}},
 	}
+	path, _, err := a.resolveBootDiskPath(context.Background(), m)
+	if err != nil || path != "/dev/sdb" {
+		t.Fatalf("got %q, %v; want the device path /dev/sdb", path, err)
+	}
+
+	pv.Spec.VolumeMode = "Bogus"
 	if _, _, err := a.resolveBootDiskPath(context.Background(), m); err == nil || !strings.Contains(err.Error(), "volumeMode") {
 		t.Fatalf("expected a volumeMode error, got %v", err)
 	}

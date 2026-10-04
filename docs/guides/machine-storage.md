@@ -43,10 +43,14 @@ exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
   shared folders (QEMU only). Default guest mount is `/mnt/<name>` (override
   with `guestPath`). FluxVM has no multi-block-disk create API yet; this is
   the supported first cut — not a raw virtio-blk data disk.
-- **`Filesystem`-mode `PersistentVolume`s only.** A `Block`-mode PV is
-  rejected with a clear error (`volumeMode "Block" is not supported...`) —
-  Kairon opens a file / directory inside the volume, it doesn't hand FluxVM
-  a raw block device.
+- **`Block`-mode boot volumes.** A `Filesystem`-mode PV boots from
+  `disk.img` inside it; a `Block`-mode PV boots from the raw device itself
+  (FluxVM opens it as the base image, format detected with `qemu-img`).
+  For `hostPath`/`local` PVs the PV path must name the device (for example
+  `/dev/disk/by-id/...`). For third-party CSI drivers kairon-node requests
+  a `Block` volume capability and boots from the published device node.
+  Kairon's own iSCSI driver serves `Filesystem` volumes only, and
+  `spec.volumes[1+]` (virtiofs shares) still require `Filesystem` mode.
 - **`hostPath`, `local`, or Kairon's own CSI-backed volume sources.**
   `hostPath`/`local` already name a real, present-today directory on a
   specific node, resolved directly, no attach/mount step. A `csi`-backed PV

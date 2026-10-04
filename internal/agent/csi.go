@@ -73,6 +73,9 @@ func (a *Agent) resolveCSIVolume(ctx context.Context, m model.Machine, pv model.
 		}
 		return "", csiVolumeStatus{}, fmt.Errorf("PersistentVolume %s names CSI driver %q -- only Kairon's own driver (%q) or a driver listed in this node's third-party allowlist can be used as a Machine boot disk", pv.Metadata.Name, src.Driver, csinode.DriverName)
 	}
+	if pv.Spec.VolumeMode == "Block" {
+		return "", csiVolumeStatus{}, fmt.Errorf("PersistentVolume %s is Block-mode, which Kairon's own CSI driver does not serve; use a Filesystem-mode volume or a third-party driver", pv.Metadata.Name)
+	}
 	if a.CSIStagingDir == "" || a.CSIPublishDir == "" {
 		return "", csiVolumeStatus{}, fmt.Errorf("this node has no CSI staging/publish directory configured -- see docs/guides/machine-storage-csi.md")
 	}
