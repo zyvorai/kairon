@@ -355,6 +355,31 @@ Four small FluxVM diagnostics (`internal/uiapi/diagnostics.go`):
 
 See `docs/guides/machine-diagnostics.md`.
 
+## VM-edge packet capture (`.../network-capture`)
+
+`POST /api/v1/machines/{ns}/{name}/network-capture` starts a FluxVM
+`tcpdump` capture on the Machine's dataplane interface; `GET` lists
+sessions and `GET .../network-capture/{token}` downloads the pcap
+(`internal/uiapi/network_observability.go`).
+
+- **Same authorization as the console and diagnostics**
+  (`requireDiagnosticsAccess`): any operator allowed to open this
+  Machine's console. This is weaker than guest exec, which needs an
+  admin. A pcap holds packet payloads (up to 1,600 bytes per frame), so
+  unencrypted guest traffic is readable by whoever can capture it.
+  Restrict console access on Machines whose traffic is sensitive: the
+  `kairon.zyvor.dev/console-allowed-users` annotation, or
+  `KAIRON_UI_RBAC_CONSOLE_CHECK=true` (a SubjectAccessReview on
+  `machines/console`).
+- **Bounded by FluxVM**: 1-30 seconds, 20,000 packets, one capture per
+  Machine at a time, the newest 16 kept, all deleted with the VM. The
+  token is restricted to `[A-Za-z0-9_-]` because it names the file, and
+  the filter is passed to tcpdump as a single argument after `--`, so it
+  cannot inject options.
+- **Off unless diagnostics are enabled** (`KAIRON_NODE_CONSOLE_TOKEN` on
+  kairon-node and kairon-ui); otherwise 501. Calling FluxVM directly
+  requires its admin role.
+
 ## Network observability (`.../network-effective`, `.../network-stats`, `.../network-flows`, `.../network-drop-reasons`)
 
 Four read-only network troubleshooting endpoints (`internal/uiapi/network_observability.go`):

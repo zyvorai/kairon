@@ -47,6 +47,9 @@ the multi-host matrix above.
 | Network flows/stats/drops | n/a | 2026-09-22 | `deploy-smoke` uses `network.mode: user` — FluxVM eBPF flow/drop/stats need tap+`dataplaneMode: ebpf` |
 | VM edge, Kairon-scheduled Machine | pass | 2026-10-04 | Host `175.110.122.71` (k3s, FluxVM `cilium` mode, schema 12). Machine `edge-demo` (tap+netns, `dataplaneMode: ebpf`, `antiSpoof`, `learnIP`, `qos`) Running; FluxVM loaded flags, egress 2000 pps, 3 allow-list names and a 100 Mbit `tbf` from Kairon's edge post; `status.network.edge` projected |
 | VM edge enforcement (FluxVM VMs on the same host) | pass | 2026-10-04 | DNS and SNI allow/deny, `spoof_ip` and `spoof_mac` (bridged tap), egress pps `rate_limit`, ingress police drops, learned IP via ARP, live conntrack export (14 entries), and edge + pending conntrack reapplied after FluxVM restart and VM stop/start |
+| VM edge packet capture via kairon-ui | pass | 2026-10-04 | `kaironctl network capture edge-demo --filter icmp -o icmp.pcap` through kairon-ui, the node relay (`KAIRON_NODE_CONSOLE_ADDR=:8092`) and FluxVM: pcap with ICMP echo request and reply; `captures` lists `done` with packet counts; unknown token 404 |
+| VM edge metrics | pass | 2026-10-04 | kairon-node `/metrics` exports `kairon_net_conntrack_restored_total` and `kairon_net_migration_blackhole_ms`; `kairon_net_drops_total` appears on the first drop (unit-tested) |
+| Policy-only edge, netns MAC default | unit tests | 2026-10-04 | Not yet run against a live Machine |
 
 ## Migration matrix
 

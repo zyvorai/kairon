@@ -59,6 +59,7 @@ flowchart TB
 | `NetworkSecurityGroup` | `POST /v1/network/groups` | security groups |
 | `Machine.spec.network.{antiSpoof,learnIP,qos}` + policy `allowSNI`/`allowDNS`/`maxIngress*` | `POST /v1/vms/{id}/network/edge` (schema 12 VM edge) | — |
 | `Machine.status.network.edge.*` | edge identity, `GET …/network/learned-ip`, conntrack restore result | — |
+| `kaironctl network capture` / `captures` | `POST`/`GET …/network/capture`, `GET …/network/capture/{token}` (tcpdump pcap) | — |
 | live migrate network | `…/network/migration/{quiesce,export,restore,resume}` + `GET`/`POST …/network/conntrack` | cross-node CT/policy continuity |
 | observability (pass-through) | `…/network/{stats,flows,drop-reasons}` | `/api/dataplane/hubble/flows` |
 
