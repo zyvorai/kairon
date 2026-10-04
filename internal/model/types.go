@@ -575,6 +575,60 @@ type MachineVolume struct {
 	GuestPath string `json:"guestPath,omitempty"`
 	// ReadOnly marks a data volume (volumes[1+]) as a read-only virtiofs share.
 	ReadOnly bool `json:"readOnly,omitempty"`
+	// Atlas asks kairon-controller to provision this volume through the
+	// Atlas storage control plane before the Machine is scheduled. In
+	// pvc mode the controller writes the resulting PVC name into
+	// ClaimName; ClaimName must be empty or already match it.
+	Atlas *AtlasVolumeSource `json:"atlas,omitempty"`
+}
+
+const (
+	AtlasModePVC = "pvc"
+	AtlasModeRBD = "rbd"
+	// FinalizerAtlasVolumes keeps a Machine around until kairon-controller
+	// has released its Atlas volumes. Released only after the node has
+	// dropped Finalizer (runtime-cleanup), so no VM still has the disk open.
+	FinalizerAtlasVolumes = "kairon.zyvor.dev/atlas-volumes"
+	// AnnotationAtlasVolumes holds the controller-owned JSON map of
+	// volume name -> AtlasVolumeState. Kept out of status because
+	// kairon-node patches status wholesale from its own (possibly stale) copy.
+	AnnotationAtlasVolumes = "kairon.zyvor.dev/atlas-volumes"
+
+	AtlasPhaseProvisioning = "Provisioning"
+	AtlasPhaseReady        = "Ready"
+	AtlasPhaseFailed       = "Failed"
+	AtlasPhaseDeleting     = "Deleting"
+)
+
+type AtlasVolumeSource struct {
+	// Size is a Kubernetes-style quantity (e.g. 20Gi).
+	Size string `json:"size"`
+	// Mode is pvc (default: Atlas creates a PVC on a StorageClass) or rbd
+	// (Atlas creates a raw Ceph RBD image; needs FluxVM in-place RBD).
+	Mode         string `json:"mode,omitempty"`
+	Policy       string `json:"policy,omitempty"`
+	StorageClass string `json:"storageClass,omitempty"`
+	BackendID    string `json:"backendID,omitempty"`
+	Pool         string `json:"pool,omitempty"`
+	// Retain keeps the Atlas volume when the Machine is deleted.
+	Retain bool `json:"retain,omitempty"`
+}
+
+func (s *AtlasVolumeSource) EffectiveMode() string {
+	if s == nil || s.Mode == "" {
+		return AtlasModePVC
+	}
+	return s.Mode
+}
+
+type AtlasVolumeState struct {
+	VolumeID  string `json:"volumeID,omitempty"`
+	JobID     string `json:"jobID,omitempty"`
+	NativeID  string `json:"nativeID,omitempty"`
+	ClaimName string `json:"claimName,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 type DeviceClaimReference struct {

@@ -53,6 +53,9 @@ type Controller struct {
 	// Leases into detectUnreachableNodes (Ready + stale lease →
 	// NodeUnreachable). Empty keeps Node-Ready-only detection.
 	NodeLivenessLeaseNamespace string
+	// Atlas provisions spec.volumes[].atlas through the Atlas storage
+	// gateway (internal/controller/atlas.go). Zero value disables it.
+	Atlas AtlasConfig
 }
 
 // isActiveMigrationPhase reports whether a migration in this phase is
@@ -111,6 +114,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.syncAssignedNodeLabels(ctx, machines)
 	machines = c.resolveInstanceTypes(ctx, machines)
+	machines, volumesNotReady := c.reconcileAtlasVolumes(ctx, machines)
 	c.reconcileCiliumAttach(ctx, machines)
 	c.reconcileCiliumPolicySync(ctx)
 	nodes, err := c.Kube.ListNodes(ctx)
@@ -234,6 +238,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	for _, m := range machines {
 		desired := m.DesiredPowerState()
 		if m.Metadata.DeletionTimestamp != nil || m.Spec.NodeName != "" || desired == "Stopped" || desired == "Halted" {
+			continue
+		}
+		if _, waiting := volumesNotReady[m.Namespace()+"/"+m.Metadata.Name]; waiting {
 			continue
 		}
 		pending = append(pending, m)

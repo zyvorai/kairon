@@ -18,6 +18,8 @@ These two are the trust boundary for host-level VM execution. They must stay rea
 
 Cilium integration (ExternalWorkload attach, CNP sync) uses **raw REST** against `apis/cilium.io/...` via `internal/kube` — the same pattern as other non-Kairon APIs. Do **not** add the Cilium Go SDK to controller/node.
 
+Atlas storage integration (`internal/controller/atlas.go`) imports `github.com/zyvorai/atlas/clients/go`, the Atlas project's own Go client. It is allowed in the controller because that module itself is Go standard library only (its CI fails on any non-stdlib package in its import graph), so the controller's graph gains no third-party code.
+
 The README “Go-stdlib only” badge refers to **this** control-plane surface, not every binary in the repo.
 
 ## Named exceptions

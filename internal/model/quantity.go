@@ -29,6 +29,34 @@ func ParseVCPUs(v string) (uint32, error) {
 	return uint32(math.Ceil(n)), nil
 }
 
+// ParseBytes parses a Kubernetes-style storage quantity into bytes.
+func ParseBytes(v string) (int64, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, fmt.Errorf("size quantity is empty")
+	}
+	units := []struct {
+		suffix string
+		bytes  float64
+	}{
+		{"Ti", 1 << 40}, {"Gi", 1 << 30}, {"Mi", 1 << 20}, {"Ki", 1 << 10},
+		{"T", 1e12}, {"G", 1e9}, {"M", 1e6}, {"K", 1e3}, {"k", 1e3},
+	}
+	num, mult := v, 1.0
+	for _, u := range units {
+		if strings.HasSuffix(v, u.suffix) {
+			mult = u.bytes
+			num = strings.TrimSpace(strings.TrimSuffix(v, u.suffix))
+			break
+		}
+	}
+	n, err := strconv.ParseFloat(num, 64)
+	if err != nil || n <= 0 || n*mult >= math.MaxInt64 {
+		return 0, fmt.Errorf("invalid size quantity %q", v)
+	}
+	return int64(math.Ceil(n * mult)), nil
+}
+
 func ParseMemoryMiB(v string) (uint64, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {

@@ -283,6 +283,18 @@ spec:
             - name: KAIRON_OTEL_SERVICE_NAME
               value: kairon-controller
 {{ end }}
+{{ if .Values.atlas.enabled }}
+            - name: KAIRON_ATLAS_URL
+              value: {{ required "atlas.url is required when atlas.enabled" .Values.atlas.url | quote }}
+            - name: KAIRON_ATLAS_TENANT
+              value: {{ .Values.atlas.tenantID | quote }}
+            - name: KAIRON_ATLAS_DEFAULT_POLICY
+              value: {{ .Values.atlas.defaultPolicy | quote }}
+{{ if .Values.atlas.tokenSecret.name }}
+            - name: KAIRON_ATLAS_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ .Values.atlas.tokenSecret.name | quote }}, key: {{ .Values.atlas.tokenSecret.key | quote }}}}
+{{ end }}
+{{ end }}
           ports:
             - {name: health, containerPort: {{ .Values.controller.healthPort }}}
 {{ if .Values.webhook.enabled }}

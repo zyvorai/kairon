@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	atlas "github.com/zyvorai/atlas/clients/go"
+
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -56,6 +58,10 @@ func run() int {
 	leaderElect := flag.Bool("leader-elect", false, "coordinate multiple kairon-controller replicas via a coordination.k8s.io/v1 Lease (see internal/leaderelection) so only the elected leader reconciles -- the admission webhook and health/metrics server are unaffected and always serve from every replica. Off by default for backward compatibility: turning it on requires the ServiceAccount to be granted the small, namespaced leases RBAC this needs, and -leader-elect-namespace (or KAIRON_CONTROLLER_NAMESPACE) to be set -- the Helm chart's controller.leaderElection.enabled turns both on together. Safe to enable even with a single replica; required once controller.replicaCount > 1")
 	leaderElectNamespace := flag.String("leader-elect-namespace", os.Getenv("KAIRON_CONTROLLER_NAMESPACE"), "namespace holding the leader-election Lease object; required when -leader-elect is set (defaults to KAIRON_CONTROLLER_NAMESPACE)")
 	leaderElectLeaseName := flag.String("leader-elect-lease-name", "kairon-controller", "name of the leader-election Lease object")
+	atlasURL := flag.String("atlas-url", os.Getenv("KAIRON_ATLAS_URL"), "Atlas storage gateway base URL (e.g. http://atlas.atlas-system:5110); enables spec.volumes[].atlas provisioning. Empty disables it")
+	atlasTokenFile := flag.String("atlas-token-file", os.Getenv("KAIRON_ATLAS_TOKEN_FILE"), "file holding the Atlas bearer token (falls back to KAIRON_ATLAS_TOKEN)")
+	atlasTenant := flag.String("atlas-tenant", envDefault("KAIRON_ATLAS_TENANT", "kairon"), "Atlas tenant_id for volumes Kairon creates")
+	atlasPolicy := flag.String("atlas-default-policy", os.Getenv("KAIRON_ATLAS_DEFAULT_POLICY"), "Atlas policy intent used when spec.volumes[].atlas.policy is empty")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -80,6 +86,11 @@ func run() int {
 			log.Error("webhook TLS", "error", err)
 			return 1
 		}
+	}
+	atlasCfg, err := atlasConfig(*atlasURL, *atlasTokenFile, *atlasTenant, *atlasPolicy)
+	if err != nil {
+		log.Error("atlas client", "error", err)
+		return 1
 	}
 	kc, err := kube.FromEnvironment()
 	if err != nil {
@@ -112,6 +123,7 @@ func run() int {
 		CiliumPolicySync:           *ciliumPolicySync,
 		NodeLivenessLeaseNamespace: *nodeLivenessLeaseNamespace,
 		Tracer:                     oteltrace.FromEnv(),
+		Atlas:                      atlasCfg,
 	}
 	if webhookTLSConfig != nil {
 		go func() {
@@ -144,6 +156,38 @@ func run() int {
 	}
 	elector.Run(ctx, runReconcile)
 	return 0
+}
+
+func atlasConfig(baseURL, tokenFile, tenant, policy string) (controller.AtlasConfig, error) {
+	cfg := controller.AtlasConfig{TenantID: tenant, DefaultPolicy: policy}
+	if strings.TrimSpace(baseURL) == "" {
+		return cfg, nil
+	}
+	token := os.Getenv("KAIRON_ATLAS_TOKEN")
+	if tokenFile != "" {
+		b, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return cfg, fmt.Errorf("read -atlas-token-file: %w", err)
+		}
+		token = strings.TrimSpace(string(b))
+	}
+	opts := []atlas.Option{atlas.WithUserAgent("kairon-controller/" + version)}
+	if token != "" {
+		opts = append(opts, atlas.WithToken(token))
+	}
+	client, err := atlas.New(baseURL, opts...)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Client = client
+	return cfg, nil
+}
+
+func envDefault(k, d string) string {
+	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		return v
+	}
+	return d
 }
 
 func envBool(k string, d bool) bool {

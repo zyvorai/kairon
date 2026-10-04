@@ -162,6 +162,22 @@ network:
     # namespaced CiliumNetworkPolicy. Grants controller RBAC on
     # ciliumnetworkpolicies when enabled.
     enabled: false
+atlas:
+  # Provision spec.volumes[].atlas through the Atlas storage gateway
+  # (docs/guides/machine-storage-atlas.md). The controller creates the
+  # volume (PVC or raw Ceph RBD image), waits for its job, and only then
+  # schedules the Machine.
+  enabled: false
+  # Atlas REST base URL, e.g. http://atlas.atlas-system.svc:5110
+  url: ""
+  tenantID: kairon
+  # Atlas policy intent used when a volume doesn't set atlas.policy.
+  defaultPolicy: ""
+  # Existing Secret holding the Atlas JWT; leave name empty when Atlas
+  # runs with ATLAS_AUTH_REQUIRED=0.
+  tokenSecret:
+    name: ""
+    key: token
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

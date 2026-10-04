@@ -977,14 +977,40 @@ spec:
                   type: object
                   required:
                   - name
-                  - claimName
+                  x-kubernetes-validations:
+                  - rule: "has(self.claimName) || has(self.atlas)"
+                    message: "each volume needs claimName or atlas"
                   properties:
                     name:
                       type: string
                       minLength: 1
                     claimName:
                       type: string
-                      minLength: 1
+                      description: Existing PersistentVolumeClaim. With atlas (mode pvc) the controller fills this in once Atlas has created the PVC.
+                    atlas:
+                      type: object
+                      description: Provision this volume through the Atlas storage control plane before scheduling (requires kairon-controller --atlas-url). See docs/guides/machine-storage-atlas.md.
+                      required:
+                      - size
+                      properties:
+                        size:
+                          type: string
+                          pattern: '^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|K|k|M|G|T)?$'
+                        mode:
+                          type: string
+                          enum: [pvc, rbd]
+                          description: pvc (default) creates a PVC on a StorageClass; rbd creates a raw Ceph RBD image the node opens in place.
+                        policy:
+                          type: string
+                        storageClass:
+                          type: string
+                        backendID:
+                          type: string
+                        pool:
+                          type: string
+                        retain:
+                          type: boolean
+                          description: Keep the Atlas volume when the Machine is deleted.
                     guestPath:
                       type: string
                       description: Guest mount path for volumes[1+] virtiofs shares (default /mnt/<name>). Ignored for volumes[0] boot disk.

@@ -32,6 +32,9 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 		return m.Spec.Image.Path, csiVolumeStatus{}, nil
 	}
 	vol := m.Spec.Volumes[0]
+	if vol.Atlas.EffectiveMode() == model.AtlasModeRBD {
+		return "", csiVolumeStatus{}, fmt.Errorf("spec.volumes[0]: atlas.mode=rbd needs FluxVM in-place RBD boot, which this kairon-node does not support yet; use atlas.mode=pvc")
+	}
 	if strings.TrimSpace(vol.ClaimName) == "" {
 		return "", csiVolumeStatus{}, fmt.Errorf("spec.volumes[0] requires claimName")
 	}
@@ -73,6 +76,9 @@ func (a *Agent) resolveDataVolumes(ctx context.Context, m model.Machine) ([]flux
 	}
 	out := make([]fluxvm.SharedFolder, 0, len(m.Spec.Volumes)-1)
 	for i, vol := range m.Spec.Volumes[1:] {
+		if vol.Atlas.EffectiveMode() == model.AtlasModeRBD {
+			return nil, fmt.Errorf("spec.volumes[%d]: atlas.mode=rbd is only for a boot disk; data volumes use atlas.mode=pvc", i+1)
+		}
 		if strings.TrimSpace(vol.ClaimName) == "" {
 			return nil, fmt.Errorf("spec.volumes[%d] requires claimName", i+1)
 		}

@@ -9,6 +9,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/prometheus/client_golang v1.24.1
 	github.com/spf13/cobra v1.10.2
+	github.com/zyvorai/atlas/clients/go v0.1.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
