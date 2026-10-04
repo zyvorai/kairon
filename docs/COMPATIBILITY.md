@@ -70,6 +70,7 @@ the multi-host matrix above.
 | Create / restart / delete smoke (≤100 VMs scaled down in CI) | not run | — | Multi-host matrix; single-host create/stop/start smoke is green above |
 | Cold migration | not run | — | |
 | Live pre-copy under load | not run | — | |
+| Guest agent exec after migration | not run | — | `echo` through kairon-ui → kairon-node → qemu-guest-agent in the migrated Machine; needs `spec.guestAgent.enabled` and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` |
 | Live + eBPF dataplane | not run | — | Machine with `spec.network.dataplaneMode=ebpf`; set `KAIRON_HW_EBPF_MACHINE`. Needs two hosts; also exercises the VM-edge conntrack export/restore |
 | Source failure during transfer | not run | — | |
 | Ambiguous commit → `NeedsRecovery` | not run | — | |

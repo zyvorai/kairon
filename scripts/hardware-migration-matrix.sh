@@ -19,6 +19,10 @@
 #   KAIRON_HW_CONTROLLER_SSH   # optional; restart a systemd controller instead of
 #                              # deleting controller Pods
 #   KAIRON_HW_REQUIRE_GUEST_IP # 1 (default): "healthy" also needs status.guestIP
+#   KAIRON_UI_URL / KAIRON_UI_TOKEN
+#                              # admin kairon-ui session for the guest-agent case,
+#                              # which runs a command in KAIRON_HW_MACHINE (needs
+#                              # spec.guestAgent.enabled) through ui -> node -> QGA
 #
 # Flags: --case=NAME (repeatable), --namespace=, --timeout=, --write-compat
 # (rewrite the matrix rows in docs/COMPATIBILITY.md). Exits 1 if any case
@@ -47,7 +51,7 @@ for arg in "$@"; do
   esac
 done
 if [[ ${#CASES[@]} -eq 0 ]]; then
-  CASES=(smoke cold live needs-recovery source-failure controller-failover)
+  CASES=(smoke cold live guest-agent needs-recovery source-failure controller-failover)
   [[ -n "${KAIRON_HW_EBPF_MACHINE:-}" ]] && CASES+=(live-ebpf)
 fi
 
@@ -67,6 +71,7 @@ T_EBPF="Live + eBPF dataplane"
 T_SRC="Source failure during transfer"
 T_RECOVERY="Ambiguous commit → NeedsRecovery"
 T_CTRL="Controller failover mid-migration"
+T_AGENT="Guest agent exec after migration"
 
 record() {
   local title="$1" result="$2" notes="${3:-}"
@@ -119,6 +124,25 @@ smoke() {
   return "$ok"
 }
 
+# guest_agent_exec -- runs `echo <nonce>` in $MACHINE through kairon-ui's
+# exec relay and checks the exit code and output.
+guest_agent_exec() {
+  if [[ "$(machine_field "$NAMESPACE" "$MACHINE" '((o.get("spec") or {}).get("guestAgent") or {}).get("enabled") or False')" != "True" ]]; then
+    NOTE="${MACHINE} has no spec.guestAgent.enabled"
+    return 1
+  fi
+  local nonce out
+  nonce="kairon-hw-$(date -u +%s)-$RANDOM"
+  out="$(curl -fsS -X POST -H "Authorization: Bearer ${KAIRON_UI_TOKEN}" -H "Content-Type: application/json" \
+    --data "{\"path\":\"/bin/sh\",\"args\":[\"-c\",\"echo ${nonce}\"],\"timeoutSeconds\":30}" \
+    "${KAIRON_UI_URL%/}/api/v1/machines/${NAMESPACE}/${MACHINE}/exec")" || { NOTE="exec request failed"; return 1; }
+  if ! python3 -c 'import json,sys; r=json.loads(sys.argv[1]); sys.exit(0 if r.get("exitCode")==0 and sys.argv[2] in r.get("stdout","") else 1)' "$out" "$nonce"; then
+    NOTE="unexpected exec result: ${out:0:200}"
+    return 1
+  fi
+  NOTE="${MACHINE} on $(machine_node "$NAMESPACE" "$MACHINE"): echo via QGA exit 0"
+}
+
 machine_gone() {
   local rc=0
   kube_exists "$1" || rc=$?
@@ -156,6 +180,15 @@ for case in "${CASES[@]}"; do
       ;;
     live)
       if migrate_and_verify "$MACHINE" live; then record "$T_LIVE" pass "$NOTE"; else record "$T_LIVE" fail "$NOTE"; fi
+      ;;
+    guest-agent)
+      if [[ -z "${KAIRON_UI_URL:-}" || -z "${KAIRON_UI_TOKEN:-}" ]]; then
+        record "$T_AGENT" "not run" "set KAIRON_UI_URL and KAIRON_UI_TOKEN"
+      elif guest_agent_exec; then
+        record "$T_AGENT" pass "$NOTE"
+      else
+        record "$T_AGENT" fail "$NOTE"
+      fi
       ;;
     live-ebpf)
       EBPF_MACHINE="${KAIRON_HW_EBPF_MACHINE:-$MACHINE}"
