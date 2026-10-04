@@ -74,6 +74,11 @@ rules:
     # (internal/controller/machinepool.go).
     resources: ["machineclaims"]
     verbs: ["delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # A MachineClaim's spec.egress becomes a MachineNetworkPolicy the
+    # controller creates on bind and deletes on release.
+    resources: ["machinenetworkpolicies"]
+    verbs: ["create", "delete"]
 {{ if .Values.controller.cordonEvacuation.enabled }}
   - apiGroups: ["kairon.zyvor.dev"]
     # cordonEvacuation is the only reason kairon-controller itself ever

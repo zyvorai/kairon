@@ -64,7 +64,7 @@ kaironctl scale machineset NAME --replicas N
 kaironctl scale machineset --selector k=v --replicas N
 kaironctl scale machinepool NAME --replicas N
 kaironctl import ova SOURCE [--url URL] [--name NAME] [--no-repair] [--dry-run] [create flags]
-kaironctl claim POOL [NAME] [--label k=v] [--retain] [--ttl 1h] [--wait 60s | --no-wait]
+kaironctl claim POOL [NAME] [--label k=v] [--retain] [--ttl 1h] [--allow-fqdn H] [--allow-sni N] [--allow-cidr C] [--allow-port P] [--allow-dns N] [--allow-icmp] [--wait 60s | --no-wait]
 kaironctl start|stop|pause|resume|halt MACHINE
 kaironctl disk attach|detach MACHINE NAME [--claim PVC]   # live, see guides/machine-hotplug.md
 kaironctl disk list MACHINE

@@ -104,6 +104,44 @@ type MachineClaimSpec struct {
 	// TTLSeconds, when set, deletes the claim this long after it binds,
 	// which releases the Machine per ReclaimPolicy.
 	TTLSeconds int64 `json:"ttlSeconds,omitempty"`
+	// Egress, when set, confines the bound Machine to these destinations
+	// for the claim's lifetime: kairon-controller creates a default-deny
+	// MachineNetworkPolicy for it and deletes it on release.
+	Egress *ClaimEgress `json:"egress,omitempty"`
+}
+
+// ClaimEgress is a per-claim egress allowlist, enforced by the FluxVM VM
+// edge through a MachineNetworkPolicy. Anything not listed is dropped.
+type ClaimEgress struct {
+	AllowCidrs []string `json:"allowCidrs,omitempty"`
+	AllowPorts []string `json:"allowPorts,omitempty"`
+	AllowFqdns []string `json:"allowFqdns,omitempty"`
+	AllowDNS   []string `json:"allowDNS,omitempty"`
+	AllowSNI   []string `json:"allowSNI,omitempty"`
+	AllowIcmp  bool     `json:"allowIcmp,omitempty"`
+}
+
+// Policy is the VM-edge policy a ClaimEgress becomes.
+func (e ClaimEgress) Policy() VmNetworkPolicy {
+	return VmNetworkPolicy{
+		DefaultAllow: false,
+		AllowCidrs:   e.AllowCidrs,
+		AllowPorts:   e.AllowPorts,
+		AllowFqdns:   e.AllowFqdns,
+		AllowDNS:     e.AllowDNS,
+		AllowSNI:     e.AllowSNI,
+		AllowIcmp:    e.AllowIcmp,
+	}
+}
+
+// ClaimEgressPolicyName is the MachineNetworkPolicy a claim's egress
+// allowlist is enforced through.
+func ClaimEgressPolicyName(claim string) string {
+	name := "claim-egress-" + claim
+	if len(name) > 253 {
+		name = name[:253]
+	}
+	return name
 }
 
 type MachineClaimStatus struct {
@@ -111,6 +149,8 @@ type MachineClaimStatus struct {
 	MachineName string     `json:"machineName,omitempty"`
 	BoundAt     *time.Time `json:"boundAt,omitempty"`
 	// BindMillis is creationTimestamp to bind, in milliseconds.
-	BindMillis int64  `json:"bindMillis,omitempty"`
-	Message    string `json:"message"`
+	BindMillis int64 `json:"bindMillis,omitempty"`
+	// EgressPolicy is the MachineNetworkPolicy enforcing spec.egress.
+	EgressPolicy string `json:"egressPolicy,omitempty"`
+	Message      string `json:"message"`
 }

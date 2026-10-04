@@ -58,8 +58,42 @@ is ready.
 | `spec.labels` | Added to the Machine at bind. |
 | `spec.reclaimPolicy` | `Delete` (default): deleting the claim deletes the Machine. `Retain`: the pool and claim labels are removed and the Machine is kept as a plain Machine. |
 | `spec.ttlSeconds` | Deletes the claim this long after it binds, which releases the Machine per `reclaimPolicy`. |
+| `spec.egress` | Egress allowlist for the claimed Machine (see below). |
 | `status.phase` | `Pending`, `Bound`, or `Lost` (the Machine was deleted out from under the claim). |
 | `status.bindMillis` | Claim creation to bind, in milliseconds. |
+| `status.egressPolicy` | Name of the MachineNetworkPolicy enforcing `spec.egress`. |
+
+## Per-claim egress
+
+`spec.egress` confines the claimed Machine to the listed destinations for as
+long as the claim is bound. Everything else is dropped at the VM's edge.
+
+```yaml
+spec:
+  poolName: agents
+  egress:
+    allowFqdns: [pypi.org, files.pythonhosted.org]
+    allowPorts: ["443"]
+```
+
+```bash
+kaironctl claim agents --allow-fqdn pypi.org --allow-fqdn files.pythonhosted.org --allow-port 443
+```
+
+At bind, kairon-controller creates a default-deny `MachineNetworkPolicy`
+named `claim-egress-<claim>`, targeting the Machine by name, with the fields
+below. Editing `spec.egress` updates the policy and removing it deletes the
+policy. Releasing the claim deletes the policy before the Machine is deleted
+or handed back.
+
+| Field | Meaning |
+| --- | --- |
+| `allowFqdns` | Hostnames the guest may resolve and reach. |
+| `allowSNI` | TLS server names allowed, exact or `*.suffix`. |
+| `allowCidrs` | Destination CIDRs allowed. |
+| `allowPorts` | Destination ports or ranges (`443`, `8000-8100`). |
+| `allowDNS` | DNS query names allowed; empty falls back to `allowFqdns`. |
+| `allowIcmp` | Allow ICMP. |
 
 Deleting a pool deletes its warm members only. Claimed Machines belong to
 their claims and are left running.
@@ -89,7 +123,5 @@ and `delete_machine`; `list_machine_pools` is read-only. See
 - Readiness is `status.phase == Running`, not a guest-agent heartbeat.
 - Members boot through the normal Machine path (scheduler, quota, webhook),
   so a pool counts against `MachineQuota` for every warm member.
-- Claims don't yet carry their own egress allowlist; apply a
-  `MachineNetworkPolicy` that selects the claim's labels.
 - FluxVM's node-local warm pools (`/v1/pools/{name}/claim`) are a separate,
   lower-level mechanism; a MachinePool works with any backend.

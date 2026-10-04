@@ -604,7 +604,8 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 		{
 			Name: "claim_machine",
 			Description: "Claim a booted Machine from a MachinePool (binds in one reconcile tick instead of a cold boot). " +
-				"Waits up to waitSeconds for the bind and returns the Machine name. Deleting the claim (release_claim) deletes the Machine unless retain is set.",
+				"Waits up to waitSeconds for the bind and returns the Machine name. Deleting the claim (release_claim) deletes the Machine unless retain is set. " +
+				"egress confines the claimed Machine to the listed destinations (everything else is dropped at the VM edge) until the claim is released.",
 			Write: true,
 			Schema: mcp.Object(map[string]any{
 				"namespace":   nsProp,
@@ -614,16 +615,25 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 				"retain":      map[string]any{"type": "boolean", "description": "keep the Machine when the claim is deleted"},
 				"ttlSeconds":  mcp.Integer("delete the claim this many seconds after it binds (optional)", 1, 7*24*3600),
 				"waitSeconds": mcp.Integer("seconds to wait for the bind, default 30; 0 returns at once", 0, 120),
+				"egress": map[string]any{"type": "object", "description": "egress allowlist for the claimed Machine (default deny)", "properties": map[string]any{
+					"allowFqdns": stringList("hostnames the guest may resolve and reach"),
+					"allowSNI":   stringList("TLS SNI names allowed (exact or *.suffix)"),
+					"allowCidrs": stringList("destination CIDRs allowed"),
+					"allowPorts": stringList("destination ports allowed, e.g. 443 or 8000-8100"),
+					"allowDNS":   stringList("DNS query names allowed; empty falls back to allowFqdns"),
+					"allowIcmp":  map[string]any{"type": "boolean"},
+				}},
 			}, "pool"),
 			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				var a struct {
-					Namespace   string            `json:"namespace"`
-					Pool        string            `json:"pool"`
-					Name        string            `json:"name"`
-					Labels      map[string]string `json:"labels"`
-					Retain      bool              `json:"retain"`
-					TTLSeconds  int64             `json:"ttlSeconds"`
-					WaitSeconds *int              `json:"waitSeconds"`
+					Namespace   string             `json:"namespace"`
+					Pool        string             `json:"pool"`
+					Name        string             `json:"name"`
+					Labels      map[string]string  `json:"labels"`
+					Retain      bool               `json:"retain"`
+					TTLSeconds  int64              `json:"ttlSeconds"`
+					WaitSeconds *int               `json:"waitSeconds"`
+					Egress      *model.ClaimEgress `json:"egress"`
 				}
 				if err := decodeArgs(raw, &a); err != nil {
 					return "", err
@@ -643,6 +653,7 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 					}
 					claim := newMachineClaim(ns, name, a.Pool, a.Labels, a.Retain)
 					claim.Spec.TTLSeconds = a.TTLSeconds
+					claim.Spec.Egress = a.Egress
 					if _, err := kc.CreateMachineClaim(ctx, ns, claim); err != nil {
 						return "", err
 					}
@@ -653,7 +664,7 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 					if err != nil {
 						return "", err
 					}
-					return mcp.JSON(map[string]any{"claim": name, "namespace": ns, "phase": got.Status.Phase, "machine": got.Status.MachineName, "bindMillis": got.Status.BindMillis})
+					return mcp.JSON(map[string]any{"claim": name, "namespace": ns, "phase": got.Status.Phase, "machine": got.Status.MachineName, "bindMillis": got.Status.BindMillis, "egressPolicy": got.Status.EgressPolicy})
 				})
 			},
 		},
@@ -769,4 +780,8 @@ func contains(list []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func stringList(desc string) map[string]any {
+	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }

@@ -63,6 +63,18 @@ spec:
               ttlSeconds:
                 type: integer
                 minimum: 1
+              egress:
+                type: object
+                description: Egress allowlist for the bound Machine, enforced
+                  through a default-deny MachineNetworkPolicy the controller
+                  owns for the claim's lifetime.
+                properties:
+                  allowCidrs: {type: array, items: {type: string}}
+                  allowPorts: {type: array, items: {type: string}}
+                  allowFqdns: {type: array, items: {type: string}}
+                  allowDNS: {type: array, items: {type: string}}
+                  allowSNI: {type: array, items: {type: string}}
+                  allowIcmp: {type: boolean}
           status:
             type: object
             properties:
@@ -76,6 +88,8 @@ spec:
                 format: date-time
               bindMillis:
                 type: integer
+              egressPolicy:
+                type: string
               message:
                 type: string
   - name: v1alpha1

@@ -238,7 +238,7 @@ func TestMCPPoolTools(t *testing.T) {
 
 	got := callMCP(t, true, srv.URL,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_machine_pools","arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"claim_machine","arguments":{"pool":"agents","name":"job-1","labels":{"team":"ml"},"retain":true,"waitSeconds":5}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"claim_machine","arguments":{"pool":"agents","name":"job-1","labels":{"team":"ml"},"retain":true,"waitSeconds":5,"egress":{"allowFqdns":["pypi.org"],"allowPorts":["443"]}}}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"release_claim","arguments":{"name":"job-1"}}}`,
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"delete_machine","arguments":{"name":"web-x"}}}`,
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"delete_machine","arguments":{"name":"solo"}}}`,
@@ -247,7 +247,8 @@ func TestMCPPoolTools(t *testing.T) {
 		t.Fatalf("list_machine_pools: %s", got["1"])
 	}
 	if !strings.Contains(got["2"], `"machine": "agents-ab12"`) || len(claimed) != 1 ||
-		!strings.Contains(claimed[0], `"poolName":"agents"`) || !strings.Contains(claimed[0], `"reclaimPolicy":"Retain"`) || !strings.Contains(claimed[0], `"team":"ml"`) {
+		!strings.Contains(claimed[0], `"poolName":"agents"`) || !strings.Contains(claimed[0], `"reclaimPolicy":"Retain"`) || !strings.Contains(claimed[0], `"team":"ml"`) ||
+		!strings.Contains(claimed[0], `"egress":{"allowPorts":["443"],"allowFqdns":["pypi.org"]}`) {
 		t.Fatalf("claim_machine: %s body=%v", got["2"], claimed)
 	}
 	if !strings.HasPrefix(got["4"], "tool-error:") || !strings.Contains(got["4"], "MachineSet web") {

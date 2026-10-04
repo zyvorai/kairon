@@ -29,11 +29,13 @@ type poolFake struct {
 	poolStatus   model.MachinePoolStatus
 	finalizers   map[string][]string
 	conflictOn   string
+	policies     map[string]model.MachineNetworkPolicy
+	policyOps    []string
 }
 
 func newPoolTestController(t *testing.T) (*Controller, *poolFake) {
 	t.Helper()
-	fake := &poolFake{machinePatch: map[string]map[string]any{}, claimStatus: map[string]model.MachineClaimStatus{}, finalizers: map[string][]string{}}
+	fake := &poolFake{machinePatch: map[string]map[string]any{}, claimStatus: map[string]model.MachineClaimStatus{}, finalizers: map[string][]string{}, policies: map[string]model.MachineNetworkPolicy{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
@@ -43,6 +45,39 @@ func newPoolTestController(t *testing.T) (*Controller, *poolFake) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
 		switch {
+		case strings.HasPrefix(path, "machinenetworkpolicies"):
+			name := strings.TrimPrefix(strings.TrimPrefix(path, "machinenetworkpolicies"), "/")
+			b, _ := json.Marshal(body)
+			switch r.Method {
+			case http.MethodGet:
+				p, ok := fake.policies[name]
+				if !ok {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"kind":"Status","reason":"NotFound","code":404}`)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(p)
+			case http.MethodPost:
+				var p model.MachineNetworkPolicy
+				_ = json.Unmarshal(b, &p)
+				fake.policies[p.Metadata.Name] = p
+				fake.policyOps = append(fake.policyOps, "create/"+p.Metadata.Name)
+				_, _ = w.Write(b)
+			case http.MethodPatch:
+				p := fake.policies[name]
+				var patch struct {
+					Spec model.MachineNetworkPolicySpec `json:"spec"`
+				}
+				_ = json.Unmarshal(b, &patch)
+				p.Spec = patch.Spec
+				fake.policies[name] = p
+				fake.policyOps = append(fake.policyOps, "patch/"+name)
+				_, _ = io.WriteString(w, `{}`)
+			case http.MethodDelete:
+				delete(fake.policies, name)
+				fake.policyOps = append(fake.policyOps, "delete/"+name)
+				_, _ = io.WriteString(w, `{}`)
+			}
 		case r.Method == http.MethodPost && path == "machines":
 			var m model.Machine
 			b, _ := json.Marshal(body)
@@ -285,5 +320,59 @@ func TestMachinePoolDeletionLeavesClaimedMembers(t *testing.T) {
 	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines[1:], map[string]bool{})
 	if f, ok := fake.finalizers["machinepools/p1"]; !ok || len(f) != 0 {
 		t.Fatalf("finalizer not removed: %v", fake.finalizers)
+	}
+}
+
+func TestMachineClaimEgressPolicyLifecycle(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	pool := testPool(1)
+	hash := machineSetTemplateHash(pool.Spec.Template)
+	claim := testClaim("agent", time.Second)
+	claim.Spec.Egress = &model.ClaimEgress{AllowFqdns: []string{"api.github.com"}, AllowPorts: []string{"443"}}
+	machines := []model.Machine{poolMember("p1-a", hash, model.PoolStateWarm, "Running", time.Minute)}
+
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, machines)
+	st := fake.claimStatus["agent"]
+	name := model.ClaimEgressPolicyName("agent")
+	if st.Phase != model.ClaimBound || st.EgressPolicy != name {
+		t.Fatalf("status = %+v", st)
+	}
+	p := fake.policies[name]
+	if p.Spec.MachineName != "p1-a" || p.Spec.Policy.DefaultAllow || p.Spec.Policy.AllowFqdns[0] != "api.github.com" || p.Metadata.Labels[model.LabelMachineClaim] != "agent" {
+		t.Fatalf("policy = %+v", p)
+	}
+
+	// A widened allowlist is pushed to the existing policy.
+	claim.Status = st
+	claim.Spec.Egress.AllowCidrs = []string{"10.0.0.0/8"}
+	machines[0].Metadata.Labels[model.LabelPoolState] = model.PoolStateClaimed
+	machines[0].Metadata.Labels[model.LabelMachineClaim] = "agent"
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, machines)
+	if got := fake.policies[name].Spec.Policy.AllowCidrs; len(got) != 1 || got[0] != "10.0.0.0/8" {
+		t.Fatalf("policy not updated: %+v", fake.policies[name])
+	}
+
+	// Release deletes the policy before the Machine.
+	now := time.Now()
+	claim.Metadata.DeletionTimestamp = &now
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, machines)
+	if _, ok := fake.policies[name]; ok {
+		t.Fatal("egress policy should be deleted on release")
+	}
+	if want := "create/" + name + ",patch/" + name + ",delete/" + name; strings.Join(fake.policyOps, ",") != want {
+		t.Fatalf("policy ops = %v, want %s", fake.policyOps, want)
+	}
+	if strings.Join(fake.deleted, ",") != "p1-a" {
+		t.Fatalf("deleted = %v", fake.deleted)
+	}
+}
+
+func TestMachineClaimWithoutEgressCreatesNoPolicy(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	pool := testPool(1)
+	machines := []model.Machine{poolMember("p1-a", machineSetTemplateHash(pool.Spec.Template), model.PoolStateWarm, "Running", time.Minute)}
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{testClaim("c1", time.Second)}, machines)
+	if len(fake.policyOps) != 0 || fake.claimStatus["c1"].EgressPolicy != "" {
+		t.Fatalf("ops = %v status = %+v", fake.policyOps, fake.claimStatus["c1"])
 	}
 }

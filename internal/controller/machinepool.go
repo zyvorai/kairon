@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
@@ -59,6 +60,11 @@ func (c *Controller) reconcileMachineClaim(ctx context.Context, claim model.Mach
 		}
 		status.Phase = model.ClaimBound
 		status.Message = ""
+		policy, err := c.ensureClaimEgress(ctx, claim, status.MachineName)
+		status.EgressPolicy = policy
+		if err != nil {
+			return status, err
+		}
 		if claim.Spec.TTLSeconds > 0 && status.BoundAt != nil && time.Since(*status.BoundAt) >= time.Duration(claim.Spec.TTLSeconds)*time.Second {
 			if err := c.Kube.DeleteMachineClaim(ctx, claim.Namespace(), claim.Metadata.Name); err != nil && !kube.IsNotFound(err) {
 				return status, fmt.Errorf("delete expired claim: %w", err)
@@ -98,6 +104,11 @@ func (c *Controller) reconcileMachineClaim(ctx context.Context, claim model.Mach
 			status.BindMillis = now.Sub(claim.Metadata.CreationTimestamp).Milliseconds()
 		}
 		status.Message = ""
+		policy, err := c.ensureClaimEgress(ctx, claim, m.Metadata.Name)
+		status.EgressPolicy = policy
+		if err != nil {
+			return status, err
+		}
 		c.Log.Info("machineclaim bound", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "machine", m.Metadata.Name, "pool", claim.Spec.PoolName)
 		return status, nil
 	}
@@ -144,11 +155,55 @@ func (c *Controller) bindMachine(ctx context.Context, claim model.MachineClaim, 
 	return c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": meta})
 }
 
+// ensureClaimEgress keeps the claim's egress MachineNetworkPolicy in step
+// with spec.egress for its bound Machine and returns its name ("" when
+// the claim has no allowlist; a previously created one is deleted).
+func (c *Controller) ensureClaimEgress(ctx context.Context, claim model.MachineClaim, machine string) (string, error) {
+	ns, name := claim.Namespace(), model.ClaimEgressPolicyName(claim.Metadata.Name)
+	if claim.Spec.Egress == nil {
+		if claim.Status.EgressPolicy != "" {
+			if err := c.Kube.DeleteMachineNetworkPolicy(ctx, ns, claim.Status.EgressPolicy); err != nil && !kube.IsNotFound(err) {
+				return claim.Status.EgressPolicy, fmt.Errorf("delete egress policy: %w", err)
+			}
+		}
+		return "", nil
+	}
+	spec := model.MachineNetworkPolicySpec{MachineName: machine, Policy: claim.Spec.Egress.Policy()}
+	existing, err := c.Kube.GetMachineNetworkPolicy(ctx, ns, name)
+	if kube.IsNotFound(err) {
+		_, err = c.Kube.CreateMachineNetworkPolicy(ctx, ns, model.MachineNetworkPolicy{
+			TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: "MachineNetworkPolicy"},
+			Metadata: model.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{model.LabelMachineClaim: claim.Metadata.Name}},
+			Spec:     spec,
+		})
+		if err != nil {
+			return "", fmt.Errorf("create egress policy: %w", err)
+		}
+		return name, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get egress policy: %w", err)
+	}
+	if existing.Spec.MachineName != spec.MachineName || !reflect.DeepEqual(existing.Spec.Policy, spec.Policy) {
+		patch := map[string]any{"spec": map[string]any{"machineName": spec.MachineName, "selector": nil, "policy": spec.Policy}}
+		if err := c.Kube.PatchMachineNetworkPolicy(ctx, ns, name, patch); err != nil {
+			return name, fmt.Errorf("update egress policy: %w", err)
+		}
+	}
+	return name, nil
+}
+
 // releaseMachineClaim deletes (or, for Retain, unlabels) the claim's
 // Machine, then drops the finalizer.
 func (c *Controller) releaseMachineClaim(ctx context.Context, claim model.MachineClaim, byName map[string]model.Machine) {
 	if !model.HasFinalizerList(claim.Metadata.Finalizers, model.FinalizerMachineClaim) {
 		return
+	}
+	if claim.Status.EgressPolicy != "" {
+		if err := c.Kube.DeleteMachineNetworkPolicy(ctx, claim.Namespace(), claim.Status.EgressPolicy); err != nil && !kube.IsNotFound(err) {
+			c.Log.Error("machineclaim egress policy delete failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+			return
+		}
 	}
 	name := claim.Status.MachineName
 	if m, ok := byName[claim.Namespace()+"/"+name]; ok && name != "" && m.Metadata.Labels[model.LabelMachineClaim] == claim.Metadata.Name {
