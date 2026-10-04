@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -173,6 +174,9 @@ func validateImageSource(img model.ImageSpec) error {
 	}
 	if !strings.HasPrefix(img.Source.HTTPURL, "http://") && !strings.HasPrefix(img.Source.HTTPURL, "https://") {
 		return fmt.Errorf("spec.image.source.httpURL %q must be an http:// or https:// URL", img.Source.HTTPURL)
+	}
+	if !slices.Contains(model.ImageSourceFormats, img.Source.Format) {
+		return fmt.Errorf("spec.image.source.format %q must be one of qcow2, raw, ova, vmdk, vhd, vhdx", img.Source.Format)
 	}
 	hexDigest, ok := strings.CutPrefix(img.Digest, imageSourceDigestPrefix)
 	if !ok || len(hexDigest) != sha256.Size*2 {

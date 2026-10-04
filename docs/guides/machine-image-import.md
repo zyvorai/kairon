@@ -9,6 +9,8 @@ operator already placed on the node, and what today's real limits are.
 |---|---|---|
 | `spec.image.path` (default) | A plain file path already present on the node the Machine is scheduled to | An operator/image pipeline has to put the file there first |
 | `spec.image.source.httpURL` | A plain `http(s)://` URL to a qcow2/raw image | `kairon-node` downloads it itself into a node-local, digest-keyed cache -- see below |
+| `spec.image.source.format` | `qcow2`/`raw` (default, booted as downloaded) or `ova`, `vmdk`, `vhd`, `vhdx` | Converted through FluxVM's image import before boot -- see [Converting and repairing](#converting-and-repairing) |
+| `spec.image.source.repair` | Offline virtio repair for VMs from VMware or another hypervisor | Same |
 
 `spec.image.source` and `spec.volumes` are mutually exclusive with each
 other in practice (a Machine only has one boot disk); when `spec.volumes` is
@@ -71,13 +73,38 @@ same digest skips straight to step 4 -- no re-download. This is the whole
 answer to "50 Machines booting the same golden image": the cache path is
 content-addressed and immutable once written, so it's shared for free.
 
+## Converting and repairing
+
+With `format: ova` (or `vmdk`, `vhd`, `vhdx`) or `repair: true`, kairon-node
+downloads and verifies the file as above, then calls FluxVM's
+`POST /v1/images/import` with the cached path. FluxVM converts it to raw and,
+with `repair`, fixes the guest offline: VMware tools disabled, virtio modules
+added to the initramfs and the initramfs rebuilt, `/dev/sdX` moved to
+`/dev/vdX` in fstab and grub, persistent NIC rules dropped and a DHCP fallback
+added. The resulting disk path is recorded in
+`<imageCacheDir>/imported/kairon-<digest prefix>[-repaired].json`, so the
+import runs once per digest per node.
+
+FluxVM reads the file from the same path kairon-node downloaded it to, so
+`imageCacheDir` must be the same host directory for both. The chart mounts
+`node.imageCacheDir` from the host at the same path, so this holds whenever
+it is set. `kaironctl import ova` builds such a Machine from an
+OVA; see [migrate-from-vmware.md](migrate-from-vmware.md).
+
+```yaml
+spec:
+  image:
+    source:
+      httpURL: https://files.example.com/web01.ova
+      format: ova
+      repair: true
+    digest: sha256:...
+```
+
 ## Real limits today (v1 of this feature)
 
-- **No format conversion.** The downloaded bytes are trusted via digest, not
-  inspected -- FluxVM already consumes qcow2/raw directly (see
-  [`machine-storage.md`](machine-storage.md)), so there's no `qemu-img
-  convert` step. VMDK/OVA or any other format needs the source file already
-  converted before it's fetched.
+- **Only the boot disk of a multi-disk OVA is attached.** The other
+  converted disks stay on the node (logged by kairon-node).
 - **`http(s)://` URLs only.** No OCI/container-registry references, no
   authenticated/private URLs (a URL with embedded credentials works the same
   as any other `http.Client` request, but there's no separate

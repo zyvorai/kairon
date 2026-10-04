@@ -344,6 +344,27 @@ type ImageSource struct {
 	// OCI/container-registry references are a deliberate non-goal --
 	// see docs/guides/machine-image-import.md.
 	HTTPURL string `json:"httpURL,omitempty"`
+	// Format is the downloaded file's format: qcow2 or raw (default,
+	// booted as-is), or ova, vmdk, vhd, vhdx, which kairon-node converts
+	// through FluxVM's image import before boot.
+	Format string `json:"format,omitempty"`
+	// Repair runs FluxVM's offline guest repair for VMs coming from
+	// VMware or another hypervisor (virtio initramfs, /dev/sdX to
+	// /dev/vdX, VMware tools disabled, DHCP fallback). Implies an import.
+	Repair bool `json:"repair,omitempty"`
+}
+
+// ImageSourceFormats are the accepted ImageSource.Format values.
+var ImageSourceFormats = []string{"", "qcow2", "raw", "ova", "vmdk", "vhd", "vhdx"}
+
+// NeedsImport reports whether the source goes through FluxVM's import
+// (conversion and/or repair) rather than being booted as downloaded.
+func (s ImageSource) NeedsImport() bool {
+	switch s.Format {
+	case "", "qcow2", "raw":
+		return s.Repair
+	}
+	return true
 }
 
 type ResourceSpec struct {

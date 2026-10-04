@@ -7,11 +7,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
@@ -66,6 +68,9 @@ func validateImageSource(img model.ImageSpec) error {
 	}
 	if !strings.HasPrefix(img.Source.HTTPURL, "http://") && !strings.HasPrefix(img.Source.HTTPURL, "https://") {
 		return fmt.Errorf("spec.image.source.httpURL %q must be an http:// or https:// URL", img.Source.HTTPURL)
+	}
+	if !slices.Contains(model.ImageSourceFormats, img.Source.Format) {
+		return fmt.Errorf("spec.image.source.format %q must be one of qcow2, raw, ova, vmdk, vhd, vhdx", img.Source.Format)
 	}
 	hexDigest, ok := strings.CutPrefix(img.Digest, digestPrefix)
 	if !ok || len(hexDigest) != sha256.Size*2 {
@@ -122,4 +127,70 @@ func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string)
 		return fmt.Errorf("finalize image cache entry for %s: %w", source, err)
 	}
 	return nil
+}
+
+// importedImage is the record kairon-node keeps next to the download cache
+// for a source that went through FluxVM's import, so later reconciles and
+// other Machines with the same digest reuse the converted disk.
+type importedImage struct {
+	Image    string   `json:"image"`
+	Actions  []string `json:"actions,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// importName is the FluxVM import name for a digest and repair choice; it
+// is also the record's file name under <cache>/imported/.
+func importName(img model.ImageSpec) string {
+	hexDigest := strings.TrimPrefix(img.Digest, digestPrefix)
+	name := "kairon-" + hexDigest[:24]
+	if img.Source.Repair {
+		name += "-repaired"
+	}
+	return name
+}
+
+// resolveImportedImage converts (and with Repair, fixes) the downloaded
+// file at cachedPath through FluxVM's POST /v1/images/import and returns
+// the boot disk path. Content-addressed like the download cache: one
+// import per digest and repair choice per node.
+func (a *Agent) resolveImportedImage(ctx context.Context, m model.Machine, cachedPath string) (string, error) {
+	name := importName(m.Spec.Image)
+	recordPath := filepath.Join(a.ImageCacheDir, "imported", name+".json")
+	if b, err := os.ReadFile(recordPath); err == nil {
+		var rec importedImage
+		if err := json.Unmarshal(b, &rec); err == nil && rec.Image != "" {
+			return rec.Image, nil
+		}
+	}
+	res, err := a.Flux.ImportImage(ctx, cachedPath, name, m.Spec.Image.Source.Repair)
+	if err != nil {
+		return "", fmt.Errorf("import %s (%s): %w", m.Spec.Image.Source.HTTPURL, dash(m.Spec.Image.Source.Format), err)
+	}
+	rec := importedImage{Image: res.Image}
+	if res.Repair != nil {
+		rec.Actions, rec.Warnings = res.Repair.Actions, res.Repair.Warnings
+		a.Log.Info("image repaired", "machine", m.Metadata.Name, "os", res.Repair.Distro, "actions", len(res.Repair.Actions), "warnings", strings.Join(res.Repair.Warnings, "; "))
+	}
+	if len(res.ExtraDisks) > 0 {
+		a.Log.Info("imported image has extra disks; only the boot disk is attached", "machine", m.Metadata.Name, "extraDisks", strings.Join(res.ExtraDisks, ","))
+	}
+	if err := os.MkdirAll(filepath.Dir(recordPath), 0o755); err != nil {
+		return "", err
+	}
+	b, _ := json.Marshal(rec)
+	tmp := recordPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, recordPath); err != nil {
+		return "", err
+	}
+	return res.Image, nil
+}
+
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

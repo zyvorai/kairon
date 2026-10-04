@@ -63,6 +63,7 @@ kaironctl edit [machine|machineset|migrationpolicy|snapshotschedule|quota|budget
 kaironctl scale machineset NAME --replicas N
 kaironctl scale machineset --selector k=v --replicas N
 kaironctl scale machinepool NAME --replicas N
+kaironctl import ova SOURCE [--url URL] [--name NAME] [--no-repair] [--dry-run] [create flags]
 kaironctl claim POOL [NAME] [--label k=v] [--retain] [--ttl 1h] [--wait 60s | --no-wait]
 kaironctl start|stop|pause|resume|halt MACHINE
 kaironctl top [machines|nodes] [--selector k=v]

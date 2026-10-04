@@ -249,6 +249,11 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			if err != nil {
 				return err
 			}
+			if m.Spec.Image.Source.NeedsImport() {
+				if cachedPath, err = a.resolveImportedImage(ctx, m, cachedPath); err != nil {
+					return err
+				}
+			}
 			m.Spec.Image.Path = cachedPath
 		}
 		bootDisk, rbdBoot, err := a.resolveAtlasRBDBoot(m)

@@ -170,6 +170,10 @@ func New(baseURL, token string) *Client {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte, error) {
+	return c.doWith(ctx, c.HTTP, method, path, body)
+}
+
+func (c *Client) doWith(ctx context.Context, hc *http.Client, method, path string, body any) ([]byte, error) {
 	var r io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -188,7 +192,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +202,42 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 		return nil, fmt.Errorf("fluxvm %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return data, nil
+}
+
+// importTimeout bounds POST /v1/images/import: a multi-disk OVA conversion
+// plus an initramfs rebuild takes minutes, not the default 20s.
+const importTimeout = 30 * time.Minute
+
+// ImportResult is the part of FluxVM's import response kairon-node uses.
+type ImportResult struct {
+	Image      string   `json:"image"`
+	ExtraDisks []string `json:"extra_disks"`
+	Repair     *struct {
+		OSType   string   `json:"os_type"`
+		Distro   string   `json:"distro"`
+		Actions  []string `json:"actions"`
+		Warnings []string `json:"warnings"`
+	} `json:"repair"`
+}
+
+// ImportImage converts source (a host path FluxVM can read: OVA, OVF,
+// VMDK, VHD(X), qcow2) into raw disks named name, optionally repairing the
+// boot disk for virtio.
+func (c *Client) ImportImage(ctx context.Context, source, name string, repair bool) (*ImportResult, error) {
+	hc := *c.HTTP
+	hc.Timeout = importTimeout
+	data, err := c.doWith(ctx, &hc, http.MethodPost, "/v1/images/import", map[string]any{"source": source, "name": name, "repair": repair})
+	if err != nil {
+		return nil, err
+	}
+	var out ImportResult
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode fluxvm import response: %w", err)
+	}
+	if out.Image == "" {
+		return nil, fmt.Errorf("fluxvm import returned no image path")
+	}
+	return &out, nil
 }
 
 func (c *Client) Ready(ctx context.Context) error {

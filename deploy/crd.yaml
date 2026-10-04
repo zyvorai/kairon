@@ -832,6 +832,11 @@ spec:
                       httpURL:
                         type: string
                         minLength: 1
+                      format:
+                        type: string
+                        enum: ["qcow2", "raw", "ova", "vmdk", "vhd", "vhdx"]
+                      repair:
+                        type: boolean
                   catalogName:
                     type: string
                     minLength: 1

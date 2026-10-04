@@ -7,13 +7,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -54,6 +58,8 @@ func TestValidateImageSourceRequiresURLAndDigest(t *testing.T) {
 		{"missing digest", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y"}}, false},
 		{"malformed digest", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y"}, Digest: "sha256:short"}, false},
 		{"valid", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y"}, Digest: validDigest}, true},
+		{"ova format", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y.ova", Format: "ova", Repair: true}, Digest: validDigest}, true},
+		{"bad format", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y", Format: "iso"}, Digest: validDigest}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -146,5 +152,63 @@ func TestResolveImageSourceRejectsMalformedSpec(t *testing.T) {
 	m := machineWithImageSource("not-a-url", "sha256:bad")
 	if _, err := a.resolveImageSource(context.Background(), m); err == nil {
 		t.Fatal("expected validation to reject a non-http URL and malformed digest")
+	}
+}
+
+func TestNeedsImport(t *testing.T) {
+	for _, c := range []struct {
+		src  model.ImageSource
+		want bool
+	}{
+		{model.ImageSource{}, false},
+		{model.ImageSource{Format: "qcow2"}, false},
+		{model.ImageSource{Format: "raw", Repair: true}, true},
+		{model.ImageSource{Format: "ova"}, true},
+		{model.ImageSource{Format: "vmdk"}, true},
+	} {
+		if got := c.src.NeedsImport(); got != c.want {
+			t.Errorf("%+v: NeedsImport = %v, want %v", c.src, got, c.want)
+		}
+	}
+}
+
+func TestResolveImportedImageCallsFluxVMOncePerDigest(t *testing.T) {
+	var calls atomic.Int32
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/images/import" {
+			http.NotFound(w, r)
+			return
+		}
+		calls.Add(1)
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"image":"/var/lib/fluxvm/images/imported/x/disk0.raw","extra_disks":[],"repair":{"os_type":"linux","distro":"ubuntu","actions":["disabled open-vm-tools.service"],"warnings":[]}}`)
+	}))
+	defer srv.Close()
+	a := &Agent{ImageCacheDir: t.TempDir(), Flux: fluxvm.New(srv.URL, ""), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m := machineWithImageSource("http://x/web01.ova", digestOf([]byte("ova")))
+	m.Spec.Image.Source.Format = "ova"
+	m.Spec.Image.Source.Repair = true
+
+	for range 2 {
+		got, err := a.resolveImportedImage(context.Background(), m, "/cache/sha256/abc")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "/var/lib/fluxvm/images/imported/x/disk0.raw" {
+			t.Fatalf("image = %q", got)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("FluxVM import called %d times, want 1", calls.Load())
+	}
+	name := importName(m.Spec.Image)
+	if !strings.HasSuffix(name, "-repaired") || !strings.Contains(gotBody, `"name":"`+name+`"`) || !strings.Contains(gotBody, `"source":"/cache/sha256/abc"`) || !strings.Contains(gotBody, `"repair":true`) {
+		t.Fatalf("name %q body %s", name, gotBody)
+	}
+	if _, err := os.Stat(filepath.Join(a.ImageCacheDir, "imported", name+".json")); err != nil {
+		t.Fatal(err)
 	}
 }
