@@ -15,12 +15,12 @@ spec:
     shortNames:
     - kms
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Machine
       type: string
       jsonPath: .spec.machineName
@@ -30,7 +30,7 @@ spec:
     - name: Ready
       type: boolean
       jsonPath: .status.readyToUse
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -78,3 +78,9 @@ spec:
                       type: string
                     atlasJobID:
                       type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

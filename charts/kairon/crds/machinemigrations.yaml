@@ -15,12 +15,12 @@ spec:
     shortNames:
     - kmm
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Machine
       type: string
       jsonPath: .spec.machineName
@@ -36,7 +36,7 @@ spec:
     - name: Phase
       type: string
       jsonPath: .status.phase
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -203,3 +203,9 @@ spec:
                   appliedAt:
                     type: string
                     format: date-time
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

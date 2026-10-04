@@ -17,12 +17,12 @@ spec:
     - km
     - kvmachine
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Node
       type: string
       jsonPath: .spec.nodeName
@@ -41,7 +41,7 @@ spec:
     - name: Message
       type: string
       jsonPath: .status.message
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -679,3 +679,9 @@ spec:
                         type: integer
                       blackholeWindowMs:
                         type: integer
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

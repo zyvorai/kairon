@@ -1,10 +1,46 @@
 # User guide: CRD versioning and the conversion webhook scaffold
 
-Every `kairon.zyvor.dev` CRD ships exactly one API version today,
-`v1alpha1`, `served: true`/`storage: true`. No live CRD in this project
-registers a second version -- this guide is about what already exists to
-make cutting one straightforward when it's actually needed, not a
-version-migration you need to do anything about today.
+Every `kairon.zyvor.dev` CRD serves two versions with an identical schema:
+
+| Version | served | storage |
+| --- | --- | --- |
+| `v1beta1` | yes | **yes** |
+| `v1alpha1` | yes | no |
+
+Because the schemas are the same (one YAML anchor in each
+`charts/kairon/crds/*.yaml`, checked by `scripts/validate.py`), the API
+server converts between them with the default `None` strategy: it only
+rewrites `apiVersion`. Existing `v1alpha1` manifests, GitOps repos and
+Kairon's own binaries (which still call `v1alpha1`) keep working; new
+objects are stored as `v1beta1`.
+
+## Upgrading an existing cluster
+
+Helm installs `crds/` only on first install and never upgrades them, so
+apply the CRDs yourself before upgrading the chart:
+
+```sh
+kubectl apply --server-side -f deploy/crd.yaml
+```
+
+Objects written before this stay stored as `v1alpha1` until something
+writes them again; that is harmless while both versions are served. To
+rewrite them all now (needed only before a future release stops serving
+`v1alpha1`), re-store each one and then drop `v1alpha1` from
+`status.storedVersions`:
+
+```sh
+for r in $(kubectl api-resources --api-group=kairon.zyvor.dev -o name); do
+  kubectl get "$r" -A -o json | kubectl replace -f -
+  kubectl patch crd "$r" --subresource=status --type=merge \
+    -p '{"status":{"storedVersions":["v1beta1"]}}'
+done
+```
+
+A later release moves Kairon's clients and examples to `v1beta1` and marks
+`v1alpha1` deprecated; removing it comes after that. A version with a
+*different* schema (say `v1`) needs the conversion webhook described
+below.
 
 ## Why this needed real work ahead of time
 
@@ -44,7 +80,7 @@ this project to an actual API version bump nobody's asked for yet.
   than an opaque transport error.
 - **`ConvertMachineQuota`** (`internal/conversion/machinequota.go`): the
   worked example. It converts a `MachineQuota` between a hypothetical
-  `kairon.zyvor.dev/v1beta1` and today's `v1alpha1`, renaming
+  `kairon.zyvor.dev/v1` and today's `v1alpha1`, renaming
   `spec.maxTotalCpu`/`maxTotalMemory` to `spec.maxCpu`/`maxMemory` and the
   matching `status` fields -- dropping the redundant "Total" qualifier, a
   plausible real API cleanup. `spec.maxMachines`/`status.usedMachines`
@@ -75,25 +111,22 @@ this project to an actual API version bump nobody's asked for yet.
 
 ## What doesn't exist yet, on purpose
 
-No CRD manifest (`charts/kairon/crds/machinequotas.yaml`,
-`deploy/crd.yaml`) declares `kairon.zyvor.dev/v1beta1` or a
-`spec.conversion` block. `/convert/machinequotas` is live code, reachable
-and tested, but the real Kubernetes API server has no reason to ever call
-it today -- there's nothing to convert *to*. This is deliberate: the
-scaffold proves the machinery works without taking on the actual risk and
-churn of a live version bump nobody currently needs.
+No CRD declares a `spec.conversion` webhook: `v1alpha1` and `v1beta1` share a
+schema, so `None` is enough. `/convert/machinequotas` (which converts
+between a *hypothetical* renamed-field `v1` MachineQuota and
+`v1alpha1`) is live, tested code the API server never calls; it is the
+template for the first version whose schema actually differs.
 
-## What actually cutting a real version requires
+## What cutting a schema-changing version requires
 
-When a real `v1beta1` (for `MachineQuota` or otherwise) is genuinely
-needed:
+When a version with a different schema is needed:
 
 1. **Add the new version to the CRD's `spec.versions`** (`served: true`,
    `storage: false` initially -- flip `storage` to the new version only
    once every component that writes the CRD directly, if any, is updated
-   to tolerate it, and keep `v1alpha1` first in the array as long as
-   anything still assumes index 0 is the canonical version --
-   `scripts/validate.py` does today).
+   to tolerate it; `scripts/validate.py` expects the storage version
+   first in the array and today requires identical schemas, so update it
+   too).
 2. **Add `spec.conversion`** to that same CRD object:
    ```yaml
    spec:
@@ -142,11 +175,10 @@ needed:
 
 ## Real limits today
 
-- **Nothing here is live enforcement or live conversion.** No `kubectl`
-  command's behavior changes because this scaffold exists. It's
-  infrastructure, proven correct, not yet connected to anything a real
-  cluster does.
-- **Only `MachineQuota` has a worked converter.** The other seven CRDs
+- **The conversion webhook is not live.** `v1alpha1` ↔ `v1beta1` uses the
+  API server's `None` conversion; the webhook is infrastructure for a
+  future schema change.
+- **Only `MachineQuota` has a worked converter.** The other CRDs
   have no `Converter` implementation yet -- `ConvertMachineQuota` is the
   template, not a generic field-rename engine every kind gets for free.
 - **The `crds/`-directory templating gap (step 4 above) is unsolved.**

@@ -30,7 +30,7 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 - [ ] Disk hotplug of existing images/PVCs, NIC hot-unplug
 - [ ] `MachineBackup` / `MachineBackupRestore` with automatic fsfreeze
 - [ ] Block-mode PVCs, `kaironctl image upload`, OCI containerDisk images
-- [ ] Serve `v1beta1` as the storage version
+- [x] Serve `v1beta1` as the storage version (v1alpha1 still served; clients move next)
 
 ## v0.7 — Prove maturity, eBPF UX, STATUS gaps
 

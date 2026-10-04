@@ -16,12 +16,12 @@ spec:
     shortNames:
     - mdb
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: MinAvailable
       type: string
       jsonPath: .spec.minAvailable
@@ -31,7 +31,7 @@ spec:
     - name: Allowed
       type: integer
       jsonPath: .status.disruptionsAllowed
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -69,6 +69,12 @@ spec:
                 type: integer
               disruptionsAllowed:
                 type: integer
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -84,17 +90,17 @@ spec:
     shortNames:
     - mit
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: CPU
       type: string
       jsonPath: .spec.resources.cpu
     - name: Memory
       type: string
       jsonPath: .spec.resources.memory
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -158,6 +164,11 @@ spec:
                         items:
                           type: integer
                           minimum: 0
+  - name: v1alpha1
+    served: true
+    storage: false
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -173,12 +184,12 @@ spec:
     shortNames:
     - kmm
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Machine
       type: string
       jsonPath: .spec.machineName
@@ -194,7 +205,7 @@ spec:
     - name: Phase
       type: string
       jsonPath: .status.phase
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -361,6 +372,12 @@ spec:
                   appliedAt:
                     type: string
                     format: date-time
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -376,19 +393,19 @@ spec:
     shortNames:
     - kmnp
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Machine
       type: string
       jsonPath: .spec.machineName
     - name: Phase
       type: string
       jsonPath: .status.phase
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -502,6 +519,12 @@ spec:
                 type: string
               ciliumSyncMessage:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -517,19 +540,19 @@ spec:
     shortNames:
     - mq
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: MaxMachines
       type: integer
       jsonPath: .spec.maxMachines
     - name: UsedMachines
       type: integer
       jsonPath: .status.usedMachines
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -554,6 +577,12 @@ spec:
                 type: integer
               usedTotalMemoryMiB:
                 type: integer
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -570,12 +599,12 @@ spec:
     - km
     - kvmachine
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Node
       type: string
       jsonPath: .spec.nodeName
@@ -594,7 +623,7 @@ spec:
     - name: Message
       type: string
       jsonPath: .status.message
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1232,6 +1261,12 @@ spec:
                         type: integer
                       blackholeWindowMs:
                         type: integer
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1247,12 +1282,12 @@ spec:
     shortNames:
     - ms
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Replicas
       type: integer
       jsonPath: .spec.replicas
@@ -1265,7 +1300,7 @@ spec:
     - name: Strategy
       type: string
       jsonPath: .spec.strategy
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1317,6 +1352,12 @@ spec:
                 type: integer
               message:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1332,12 +1373,12 @@ spec:
     shortNames:
     - kmsr
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Snapshot
       type: string
       jsonPath: .spec.snapshotName
@@ -1347,7 +1388,7 @@ spec:
     - name: Phase
       type: string
       jsonPath: .status.phase
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1382,6 +1423,12 @@ spec:
                 type: string
               atlasJobID:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1397,12 +1444,12 @@ spec:
     shortNames:
     - kms
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Machine
       type: string
       jsonPath: .spec.machineName
@@ -1412,7 +1459,7 @@ spec:
     - name: Ready
       type: boolean
       jsonPath: .status.readyToUse
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1460,6 +1507,12 @@ spec:
                       type: string
                     atlasJobID:
                       type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1475,12 +1528,12 @@ spec:
     shortNames:
     - mss
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: IntervalSeconds
       type: integer
       jsonPath: .spec.intervalSeconds
@@ -1499,7 +1552,7 @@ spec:
     - name: StartingDeadline
       type: integer
       jsonPath: .spec.startingDeadlineSeconds
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1541,6 +1594,12 @@ spec:
               nextRunTime:
                 type: string
                 format: date-time
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1556,12 +1615,12 @@ spec:
     shortNames:
     - mp
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: MaxConcurrent
       type: integer
       jsonPath: .spec.maxConcurrent
@@ -1571,7 +1630,7 @@ spec:
     - name: Active
       type: integer
       jsonPath: .status.activeMigrations
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1597,6 +1656,12 @@ spec:
             properties:
               activeMigrations:
                 type: integer
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1612,12 +1677,12 @@ spec:
     shortNames:
     - knsg
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Group
       type: string
       jsonPath: .spec.groupName
@@ -1627,7 +1692,7 @@ spec:
     - name: Identity
       type: integer
       jsonPath: .status.identity
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -1704,3 +1769,9 @@ spec:
                 type: integer
               appliedOn:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

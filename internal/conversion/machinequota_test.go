@@ -21,12 +21,12 @@ func TestConvertMachineQuotaAlphaToBetaRenamesFields(t *testing.T) {
 		},
 	}
 
-	out, err := ConvertMachineQuota(in, machineQuotaV1Beta1)
+	out, err := ConvertMachineQuota(in, machineQuotaV1)
 	if err != nil {
 		t.Fatalf("ConvertMachineQuota: %v", err)
 	}
-	if out["apiVersion"] != machineQuotaV1Beta1 {
-		t.Fatalf("expected apiVersion %q, got %v", machineQuotaV1Beta1, out["apiVersion"])
+	if out["apiVersion"] != machineQuotaV1 {
+		t.Fatalf("expected apiVersion %q, got %v", machineQuotaV1, out["apiVersion"])
 	}
 
 	spec := out["spec"].(map[string]any)
@@ -51,7 +51,7 @@ func TestConvertMachineQuotaAlphaToBetaRenamesFields(t *testing.T) {
 
 func TestConvertMachineQuotaBetaToAlphaRenamesFieldsBack(t *testing.T) {
 	in := map[string]any{
-		"apiVersion": machineQuotaV1Beta1,
+		"apiVersion": machineQuotaV1,
 		"spec":       map[string]any{"maxCpu": "16", "maxMemory": "32Gi"},
 		"status":     map[string]any{"usedCpuCores": float64(4), "usedMemoryMiB": float64(8192)},
 	}
@@ -78,13 +78,13 @@ func TestConvertMachineQuotaRoundTripsCleanly(t *testing.T) {
 		"status":     map[string]any{"usedMachines": float64(1), "usedTotalCpuCores": float64(2), "usedTotalMemoryMiB": float64(4096)},
 	}
 
-	toBeta, err := ConvertMachineQuota(original, machineQuotaV1Beta1)
+	toV1, err := ConvertMachineQuota(original, machineQuotaV1)
 	if err != nil {
-		t.Fatalf("v1alpha1 -> v1beta1: %v", err)
+		t.Fatalf("v1alpha1 -> v1: %v", err)
 	}
-	backToAlpha, err := ConvertMachineQuota(toBeta, machineQuotaV1Alpha1)
+	backToAlpha, err := ConvertMachineQuota(toV1, machineQuotaV1Alpha1)
 	if err != nil {
-		t.Fatalf("v1beta1 -> v1alpha1: %v", err)
+		t.Fatalf("v1 -> v1alpha1: %v", err)
 	}
 
 	origSpec, roundSpec := original["spec"].(map[string]any), backToAlpha["spec"].(map[string]any)
@@ -116,7 +116,7 @@ func TestConvertMachineQuotaRejectsUnknownVersions(t *testing.T) {
 	if _, err := ConvertMachineQuota(map[string]any{"apiVersion": machineQuotaV1Alpha1}, "kairon.zyvor.dev/v2"); err == nil {
 		t.Fatal("expected an error for an unsupported target version")
 	}
-	if _, err := ConvertMachineQuota(map[string]any{"apiVersion": ""}, machineQuotaV1Beta1); err == nil {
+	if _, err := ConvertMachineQuota(map[string]any{"apiVersion": ""}, machineQuotaV1); err == nil {
 		t.Fatal("expected an error for an object with no apiVersion")
 	}
 }
@@ -126,7 +126,7 @@ func TestConvertMachineQuotaDoesNotMutateTheOriginalObject(t *testing.T) {
 		"apiVersion": machineQuotaV1Alpha1,
 		"spec":       map[string]any{"maxTotalCpu": "16"},
 	}
-	if _, err := ConvertMachineQuota(in, machineQuotaV1Beta1); err != nil {
+	if _, err := ConvertMachineQuota(in, machineQuotaV1); err != nil {
 		t.Fatalf("ConvertMachineQuota: %v", err)
 	}
 	if in["apiVersion"] != machineQuotaV1Alpha1 {

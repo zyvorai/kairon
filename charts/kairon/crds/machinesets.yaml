@@ -15,12 +15,12 @@ spec:
     shortNames:
     - ms
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Replicas
       type: integer
       jsonPath: .spec.replicas
@@ -33,7 +33,7 @@ spec:
     - name: Strategy
       type: string
       jsonPath: .spec.strategy
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -85,3 +85,9 @@ spec:
                 type: integer
               message:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

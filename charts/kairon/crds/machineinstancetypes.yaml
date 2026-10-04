@@ -15,17 +15,17 @@ spec:
     shortNames:
     - mit
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: CPU
       type: string
       jsonPath: .spec.resources.cpu
     - name: Memory
       type: string
       jsonPath: .spec.resources.memory
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -89,3 +89,8 @@ spec:
                         items:
                           type: integer
                           minimum: 0
+  - name: v1alpha1
+    served: true
+    storage: false
+    additionalPrinterColumns: *columns
+    schema: *schema

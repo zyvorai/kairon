@@ -81,7 +81,7 @@ func (c *Controller) WebhookHandler() http.Handler {
 	// /convert/machinequotas is a scaffold, not live enforcement: no
 	// MachineQuota CRD registers a second version yet, so the API server
 	// never actually calls this route today. It exists, and is tested,
-	// so cutting a real kairon.zyvor.dev/v1beta1 later is "wire the CRD's
+	// so cutting a real kairon.zyvor.dev/v1 later is "wire the CRD's
 	// spec.conversion at that version," not "build a conversion webhook
 	// from scratch" -- see docs/guides/crd-versioning.md and
 	// internal/conversion's package doc comment.

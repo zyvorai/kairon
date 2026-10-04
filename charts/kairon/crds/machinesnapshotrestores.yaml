@@ -15,12 +15,12 @@ spec:
     shortNames:
     - kmsr
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Snapshot
       type: string
       jsonPath: .spec.snapshotName
@@ -30,7 +30,7 @@ spec:
     - name: Phase
       type: string
       jsonPath: .status.phase
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -65,3 +65,9 @@ spec:
                 type: string
               atlasJobID:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

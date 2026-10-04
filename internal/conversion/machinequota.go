@@ -10,12 +10,12 @@ import (
 
 const (
 	machineQuotaV1Alpha1 = "kairon.zyvor.dev/v1alpha1"
-	machineQuotaV1Beta1  = "kairon.zyvor.dev/v1beta1"
+	machineQuotaV1       = "kairon.zyvor.dev/v1"
 )
 
 // machineQuotaSpecRenames/machineQuotaStatusRenames are v1alpha1's field
-// names -> v1beta1's, the worked example this scaffold proves itself
-// against: v1beta1 drops the redundant "Total" qualifier
+// names -> v1's, the worked example this scaffold proves itself
+// against: v1 drops the redundant "Total" qualifier
 // (MachineQuota.spec.maxTotalCpu/maxTotalMemory,
 // status.usedTotalCpuCores/usedTotalMemoryMiB) -- a quota's cap is
 // inherently a total, the word never carried real information.
@@ -30,7 +30,7 @@ var (
 
 // ConvertMachineQuota is the worked example proving internal/conversion's
 // machinery end-to-end -- see the package doc comment. No live
-// MachineQuota CRD registers kairon.zyvor.dev/v1beta1 yet (see
+// MachineQuota CRD registers kairon.zyvor.dev/v1 yet (see
 // docs/guides/crd-versioning.md); this is ready to wire in the moment it
 // does, not something built from scratch that day.
 func ConvertMachineQuota(obj map[string]any, toVersion string) (map[string]any, error) {
@@ -46,10 +46,10 @@ func ConvertMachineQuota(obj map[string]any, toVersion string) (map[string]any, 
 		return nil, fmt.Errorf("copy object: %w", err)
 	}
 	switch {
-	case from == machineQuotaV1Alpha1 && toVersion == machineQuotaV1Beta1:
+	case from == machineQuotaV1Alpha1 && toVersion == machineQuotaV1:
 		renameFieldsIn(out, "spec", machineQuotaSpecRenames)
 		renameFieldsIn(out, "status", machineQuotaStatusRenames)
-	case from == machineQuotaV1Beta1 && toVersion == machineQuotaV1Alpha1:
+	case from == machineQuotaV1 && toVersion == machineQuotaV1Alpha1:
 		renameFieldsIn(out, "spec", invertRenames(machineQuotaSpecRenames))
 		renameFieldsIn(out, "status", invertRenames(machineQuotaStatusRenames))
 	default:

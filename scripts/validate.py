@@ -60,11 +60,16 @@ try:
     for d in crds:
         if d["spec"]["group"] != "kairon.zyvor.dev":
             fail(f"unexpected group for {d['metadata']['name']}")
+        versions = {v["name"]: v for v in d["spec"]["versions"]}
         v = d["spec"]["versions"][0]
-        if v["name"] != "v1alpha1":
-            fail(f"{d['metadata']['name']} must expose v1alpha1")
+        if v["name"] != "v1beta1" or not v.get("storage"):
+            fail(f"{d['metadata']['name']} must store v1beta1 (first version)")
+        elif "v1alpha1" not in versions or not versions["v1alpha1"].get("served") or versions["v1alpha1"].get("storage"):
+            fail(f"{d['metadata']['name']} must still serve v1alpha1 (not as storage)")
+        elif versions["v1alpha1"].get("schema") != v.get("schema"):
+            fail(f"{d['metadata']['name']} v1alpha1 and v1beta1 schemas must match (conversion: None)")
         elif d["metadata"]["name"] not in no_status and "status" not in v.get("subresources", {}):
-            fail(f"{d['metadata']['name']} must expose v1alpha1 + status")
+            fail(f"{d['metadata']['name']} must expose v1beta1 + status")
     migration = next(d for d in crds if d["metadata"]["name"] == "machinemigrations.kairon.zyvor.dev")
     props = migration["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]
     if "destination" in props["spec"]["properties"]:

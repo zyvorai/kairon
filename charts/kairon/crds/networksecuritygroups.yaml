@@ -15,12 +15,12 @@ spec:
     shortNames:
     - knsg
   versions:
-  - name: v1alpha1
+  - name: v1beta1
     served: true
     storage: true
-    subresources:
+    subresources: &subresources
       status: {}
-    additionalPrinterColumns:
+    additionalPrinterColumns: &columns
     - name: Group
       type: string
       jsonPath: .spec.groupName
@@ -30,7 +30,7 @@ spec:
     - name: Identity
       type: integer
       jsonPath: .status.identity
-    schema:
+    schema: &schema
       openAPIV3Schema:
         type: object
         required:
@@ -107,3 +107,9 @@ spec:
                 type: integer
               appliedOn:
                 type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema

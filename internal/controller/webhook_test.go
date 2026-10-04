@@ -738,7 +738,7 @@ func TestWebhookHandlerConvertMachineQuotaEndToEnd(t *testing.T) {
 		Kind:       "ConversionReview",
 		Request: &conversion.Request{
 			UID:               "conv-1",
-			DesiredAPIVersion: "kairon.zyvor.dev/v1beta1",
+			DesiredAPIVersion: "kairon.zyvor.dev/v1",
 			Objects:           []json.RawMessage{obj},
 		},
 	}
@@ -767,8 +767,8 @@ func TestWebhookHandlerConvertMachineQuotaEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(out.Response.ConvertedObjects[0], &converted); err != nil {
 		t.Fatalf("decode converted object: %v", err)
 	}
-	if converted["apiVersion"] != "kairon.zyvor.dev/v1beta1" {
-		t.Fatalf("expected the converted object's apiVersion to be v1beta1, got %v", converted["apiVersion"])
+	if converted["apiVersion"] != "kairon.zyvor.dev/v1" {
+		t.Fatalf("expected the converted object's apiVersion to be v1, got %v", converted["apiVersion"])
 	}
 	spec := converted["spec"].(map[string]any)
 	if spec["maxCpu"] != "16" {
