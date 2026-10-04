@@ -52,8 +52,11 @@ nor callable.
 | `list_network_policies` | `namespace` (omit for all) | read |
 | `machine_network` | `name`, `namespace`, `kind`, `limit` | read |
 | `machine_edge_identity` | `name`, `namespace` | read |
+| `machine_volumes` | `name`, `namespace` | read |
+| `get_machine_snapshot` | `name` (snapshot), `namespace` | read |
 | `set_power_state` | `name`, `namespace`, `state` (`Running`, `Stopped`, `Paused`, `Halted`) | write |
 | `create_snapshot` | `name`, `namespace`, `snapshotName`, `class` | write |
+| `snapshot_volume` | `name`, `namespace`, `volume`, `snapshotName`, `class` | write |
 | `network_capture` | `name`, `namespace`, `seconds` (1-30), `filter`, `output` | write |
 
 `machine_network` `kind` is one of `network-effective`, `network-stats`,

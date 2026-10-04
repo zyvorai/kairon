@@ -59,6 +59,33 @@ When a Machine is deleted, kairon-node first tears down the VM and drops its
 volumes (except `retain: true` ones) and release its own finalizer, so a disk
 is never deleted under a running guest.
 
+## Snapshots and restore
+
+A MachineSnapshot of a Machine with Atlas volumes snapshots those volumes
+through Atlas (`POST /volumes/{id}/snapshots`) instead of creating CSI
+VolumeSnapshots; other volumes on the same Machine still use CSI. Each
+volume's Atlas job and snapshot id appear in
+`status.volumeSnapshots[].atlasJobID` / `atlasSnapshotID`. Guest quiesce
+(`spec.guestAgent.enabled`) works the same as for CSI. Set
+`spec.volumeNames` (or `kaironctl snapshot MACHINE --volume NAME`) to
+snapshot only some volumes.
+
+Deleting the MachineSnapshot deletes its Atlas snapshots (finalizer
+`kairon.zyvor.dev/atlas-snapshots`). A snapshot that volumes were cloned
+from is refused by Atlas; Kairon logs it, leaves it in Atlas and lets the
+MachineSnapshot go.
+
+A MachineSnapshotRestore of an Atlas snapshot calls Atlas
+`POST /snapshots/{id}/restore` with `targetClaimName`, the namespace,
+`storageClassName` and `storageSize`; Atlas creates the PVC. The restore is
+Succeeded once that PVC is Bound.
+
+```sh
+kaironctl volumes web            # source, claim, size, Atlas phase, backend id
+kaironctl snapshot web --volume root --name before-upgrade
+kaironctl restore before-upgrade --target-claim web-root-restored
+```
+
 ## Raw RBD mode
 
 `atlas.mode: rbd` (boot disk, `volumes[0]`, only) creates a raw Ceph RBD

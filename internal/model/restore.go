@@ -53,4 +53,6 @@ type MachineSnapshotRestoreStatus struct {
 	// clears a previously-set value under JSON merge-patch semantics.
 	Message           string `json:"message"`
 	RestoredClaimName string `json:"restoredClaimName,omitempty"`
+	// AtlasJobID tracks an Atlas snapshot restore job.
+	AtlasJobID string `json:"atlasJobID,omitempty"`
 }

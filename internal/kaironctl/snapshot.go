@@ -16,15 +16,17 @@ import (
 
 func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS]"))
+		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS] [--volume NAME]..."))
 	}
 	machine := args[0]
 	fs := flag.NewFlagSet("snapshot", flag.ExitOnError)
 	ns := fs.String("namespace", "default", "namespace")
 	name := fs.String("name", "", "MachineSnapshot name")
 	class := fs.String("class", "", "VolumeSnapshotClass name")
+	var volumes stringSliceFlag
+	fs.Var(&volumes, "volume", "snapshot only this spec.volumes name (repeatable); default all")
 	_ = fs.Parse(args[1:])
-	out, err := createSnapshot(ctx, kc, *ns, machine, *name, *class)
+	out, err := createSnapshot(ctx, kc, *ns, machine, *name, *class, volumes...)
 	if err != nil {
 		fatal(err)
 	}
@@ -33,14 +35,14 @@ func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 
 // createSnapshot creates a MachineSnapshot; an empty name is generated
 // from the Machine name and the current time.
-func createSnapshot(ctx context.Context, kc *kube.Client, namespace, machine, name, class string) (model.MachineSnapshot, error) {
+func createSnapshot(ctx context.Context, kc *kube.Client, namespace, machine, name, class string, volumes ...string) (model.MachineSnapshot, error) {
 	if name == "" {
 		name = resourceName(machine + "-" + time.Now().UTC().Format("20060102-150405"))
 	}
 	snapshot := model.MachineSnapshot{
 		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshot},
 		Metadata: model.ObjectMeta{Name: name, Namespace: namespace},
-		Spec:     model.MachineSnapshotSpec{MachineName: machine, VolumeSnapshotClassName: class},
+		Spec:     model.MachineSnapshotSpec{MachineName: machine, VolumeSnapshotClassName: class, VolumeNames: volumes},
 	}
 	return kc.CreateMachineSnapshot(ctx, namespace, snapshot)
 }

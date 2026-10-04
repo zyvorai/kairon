@@ -302,6 +302,94 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
+			Name: "machine_volumes",
+			Description: "A Machine's volumes: source (pvc, atlas-pvc, atlas-rbd), claim, size, Atlas provisioning phase, " +
+				"backend id (pvc:NAME or rbd:POOL/IMAGE) and error message.",
+			Schema: refSchema(nil),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a machineRef
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					m, err := kc.GetMachine(ctx, a.ns(nsDefault), a.Name)
+					if err != nil {
+						return "", err
+					}
+					return mcp.JSON(map[string]any{"volumes": machineVolumes(m)})
+				})
+			},
+		},
+		{
+			Name: "snapshot_volume",
+			Description: "Snapshot one of a Machine's volumes (a MachineSnapshot with spec.volumeNames). Atlas volumes use Atlas " +
+				"snapshots, others CSI VolumeSnapshots. Check progress with get_machine_snapshot.",
+			Write: true,
+			Schema: refSchema(map[string]any{
+				"volume":       mcp.String("spec.volumes name to snapshot"),
+				"snapshotName": mcp.String("MachineSnapshot name (optional)"),
+				"class":        mcp.String("VolumeSnapshotClass name for CSI volumes (optional)"),
+			}, "volume"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					machineRef
+					Volume       string `json:"volume"`
+					SnapshotName string `json:"snapshotName"`
+					Class        string `json:"class"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Volume == "" {
+					return "", fmt.Errorf("volume is required")
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					m, err := kc.GetMachine(ctx, ns, a.Name)
+					if err != nil {
+						return "", err
+					}
+					found := false
+					for _, v := range m.Spec.Volumes {
+						found = found || v.Name == a.Volume
+					}
+					if !found {
+						return "", fmt.Errorf("machine %s/%s has no volume %q", ns, a.Name, a.Volume)
+					}
+					name := a.SnapshotName
+					if name == "" {
+						name = resourceName(a.Name + "-" + a.Volume + "-" + time.Now().UTC().Format("20060102-150405"))
+					}
+					out, err := createSnapshot(ctx, kc, ns, a.Name, name, a.Class, a.Volume)
+					if err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("machinesnapshot %s/%s created for volume %s", out.Metadata.Namespace, out.Metadata.Name, a.Volume), nil
+				})
+			},
+		},
+		{
+			Name:        "get_machine_snapshot",
+			Description: "Get a MachineSnapshot's phase, readiness and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id).",
+			Schema: mcp.Object(map[string]any{
+				"namespace": nsProp,
+				"name":      mcp.String("MachineSnapshot name"),
+			}, "name"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a machineRef
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					s, err := kc.GetMachineSnapshot(ctx, a.ns(nsDefault), a.Name)
+					if err != nil {
+						return "", err
+					}
+					return mcp.JSON(map[string]any{"metadata": s.Metadata, "spec": s.Spec, "status": s.Status})
+				})
+			},
+		},
+		{
 			Name: "network_capture",
 			Description: "Run a bounded tcpdump capture (1-30 s) on a Machine's VM edge via kairon-ui and FluxVM. " +
 				"With output, waits for it and writes the pcap to that local path; otherwise returns the session token " +

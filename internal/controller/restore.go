@@ -82,6 +82,9 @@ func (c *Controller) reconcileSnapshotRestore(ctx context.Context, restore model
 	if err == nil && existing.Metadata.Name != "" {
 		return c.finishRestoreFromPVCState(ctx, restore, existing)
 	}
+	if ref.AtlasSnapshotID != "" {
+		return c.restoreFromAtlasSnapshot(ctx, restore, ref)
+	}
 
 	size := restore.Spec.StorageSize
 	if size == "" {

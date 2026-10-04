@@ -1089,7 +1089,7 @@ func TestSnapshotPendingWhenNotYetReady(t *testing.T) {
 	if err := ctl.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if phase != "Pending" || !strings.Contains(message, "waiting for CSI VolumeSnapshots") || readyToUse == nil || *readyToUse {
+	if phase != "Pending" || !strings.Contains(message, "waiting for volume snapshots") || readyToUse == nil || *readyToUse {
 		t.Fatalf("phase=%q message=%q readyToUse=%v", phase, message, readyToUse)
 	}
 }

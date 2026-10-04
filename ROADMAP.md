@@ -14,7 +14,8 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 - [x] `spec.volumes[].atlas`: controller provisions disks through Atlas, gates scheduling, releases after runtime cleanup ([guide](docs/guides/machine-storage-atlas.md))
 - [x] FluxVM in-place Ceph RBD boot for Atlas `rbd` volumes (shared-storage live migration, no block copy)
 - [x] Third-party CSI `attachRequired` drivers (VolumeAttachment) + node-stage secrets
-- [ ] MachineSnapshot / backup through Atlas snapshots and S3 backup jobs; `kaironctl volumes`, MCP tools
+- [x] MachineSnapshot / restore through Atlas snapshots; `kaironctl volumes`, MCP `machine_volumes` / `snapshot_volume`
+- [ ] Backup through Atlas S3 backup jobs
 
 **Migration from VMware**
 

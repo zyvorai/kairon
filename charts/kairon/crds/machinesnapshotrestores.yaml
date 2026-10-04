@@ -63,3 +63,5 @@ spec:
                 type: string
               restoredClaimName:
                 type: string
+              atlasJobID:
+                type: string

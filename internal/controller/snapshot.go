@@ -48,6 +48,11 @@ func (c *Controller) reconcileSnapshot(ctx context.Context, snapshot model.Machi
 	if len(machine.Spec.Volumes) == 0 {
 		return fmt.Errorf("machine has no PVC-backed spec.volumes to snapshot")
 	}
+	volumes, err := snapshotVolumes(snapshot, machine)
+	if err != nil {
+		return err
+	}
+	machine.Spec.Volumes = volumes
 
 	quiesce := machine.Spec.GuestAgent.Enabled
 	switch {
@@ -138,12 +143,13 @@ func (c *Controller) awaitGuestFreeze(ctx context.Context, snapshot model.Machin
 // AnnotationQuiesceRequest, which kairon-node's own reconcile reads as
 // "thaw now" (see internal/agent/quiesce.go) -- the request/response
 // pair's other direction from requestGuestFreeze/awaitGuestFreeze above.
-func (c *Controller) requestGuestThaw(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine) error {
+func (c *Controller) requestGuestThaw(ctx context.Context, snapshot model.MachineSnapshot, machine model.Machine, refs []model.VolumeSnapshotReference) error {
 	clear := map[string]any{"metadata": map[string]any{"annotations": map[string]any{model.AnnotationQuiesceRequest: nil}}}
 	if err := c.Kube.PatchMachine(ctx, machine.Namespace(), machine.Metadata.Name, clear); err != nil {
 		return fmt.Errorf("request guest thaw on machine %s/%s: %w", machine.Namespace(), machine.Metadata.Name, err)
 	}
 	status := snapshot.Status
+	status.VolumeSnapshots = refs
 	status.Phase = "Thawing"
 	status.Message = "VolumeSnapshots requested; waiting for the guest filesystem to thaw"
 	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
@@ -172,7 +178,22 @@ func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot mode
 	refs := make([]model.VolumeSnapshotReference, 0, len(machine.Spec.Volumes))
 	allReady := true
 	created := false
+	if err := c.ensureAtlasSnapshotFinalizer(ctx, &snapshot, machine); err != nil {
+		return err
+	}
 	for _, volume := range machine.Spec.Volumes {
+		if volume.Atlas != nil && c.Atlas.Client != nil {
+			ref, made, err := c.stepAtlasSnapshot(ctx, snapshot, machine, volume)
+			if made {
+				created = true
+			}
+			if err != nil {
+				return c.failSnapshot(ctx, snapshot, machine, append(refs, ref), err)
+			}
+			allReady = allReady && ref.ReadyToUse
+			refs = append(refs, ref)
+			continue
+		}
 		if strings.TrimSpace(volume.Name) == "" || strings.TrimSpace(volume.ClaimName) == "" {
 			return fmt.Errorf("machine volume requires name and claimName")
 		}
@@ -215,7 +236,16 @@ func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot mode
 		// Every VolumeSnapshot this pass needed has had its create call
 		// issued -- thaw now rather than holding the guest frozen through
 		// the (potentially slow, async) wait for CSI readiness below.
-		return c.requestGuestThaw(ctx, snapshot, machine)
+		return c.requestGuestThaw(ctx, snapshot, machine, refs)
+	}
+	if created && !allReady {
+		// Persist Atlas job IDs right away so the next tick polls them
+		// instead of starting another snapshot.
+		status := snapshot.Status
+		status.VolumeSnapshots = refs
+		status.Phase = "Pending"
+		status.Message = "waiting for volume snapshots"
+		return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
 	}
 
 	status := snapshot.Status
@@ -223,10 +253,10 @@ func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot mode
 	status.ReadyToUse = allReady
 	if allReady {
 		status.Phase = "Succeeded"
-		status.Message = "all CSI VolumeSnapshots are ready to use"
+		status.Message = "all volume snapshots are ready to use"
 	} else {
 		status.Phase = "Pending"
-		status.Message = "waiting for CSI VolumeSnapshots"
+		status.Message = "waiting for volume snapshots"
 	}
 	return c.Kube.PatchMachineSnapshotStatus(ctx, snapshot.Namespace(), snapshot.Metadata.Name, status)
 }
@@ -242,6 +272,11 @@ func (c *Controller) reconcileVolumeSnapshots(ctx context.Context, snapshot mode
 // yet) never has the finalizer and returns immediately, deleting exactly
 // as before this existed.
 func (c *Controller) reconcileSnapshotDeletion(ctx context.Context, snapshot model.MachineSnapshot, machines map[string]model.Machine) error {
+	if model.HasFinalizerList(snapshot.Metadata.Finalizers, model.FinalizerAtlasSnapshots) {
+		if err := c.releaseAtlasSnapshots(ctx, &snapshot); err != nil {
+			return err
+		}
+	}
 	if !model.HasFinalizerList(snapshot.Metadata.Finalizers, model.FinalizerSnapshotQuiesce) {
 		return nil
 	}
@@ -263,4 +298,27 @@ func (c *Controller) reconcileSnapshotDeletion(ctx context.Context, snapshot mod
 	finals := model.RemoveFinalizer(snapshot.Metadata.Finalizers, model.FinalizerSnapshotQuiesce)
 	patch := map[string]any{"metadata": map[string]any{"finalizers": finals}}
 	return c.Kube.PatchMachineSnapshot(ctx, snapshot.Namespace(), snapshot.Metadata.Name, patch)
+}
+
+// snapshotVolumes returns the Machine volumes spec.volumeNames selects, or
+// all of them when it is empty.
+func snapshotVolumes(snapshot model.MachineSnapshot, machine model.Machine) ([]model.MachineVolume, error) {
+	if len(snapshot.Spec.VolumeNames) == 0 {
+		return machine.Spec.Volumes, nil
+	}
+	out := make([]model.MachineVolume, 0, len(snapshot.Spec.VolumeNames))
+	for _, name := range snapshot.Spec.VolumeNames {
+		found := false
+		for _, v := range machine.Spec.Volumes {
+			if v.Name == name {
+				out = append(out, v)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("spec.volumeNames: machine %s has no volume %q", machine.Metadata.Name, name)
+		}
+	}
+	return out, nil
 }

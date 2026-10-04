@@ -152,3 +152,66 @@ func TestMCPWriteToolsAreGated(t *testing.T) {
 		t.Fatalf("bad state: %s", got["2"])
 	}
 }
+
+func TestMCPVolumeTools(t *testing.T) {
+	var created []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/db":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"db","namespace":"default","annotations":{"kairon.zyvor.dev/atlas-volumes":"{\"root\":{\"volumeID\":\"vol-1\",\"nativeID\":\"rbd:vms/db-root\",\"mode\":\"rbd\",\"phase\":\"Ready\"}}"}},
+				"spec":{"volumes":[{"name":"root","atlas":{"size":"20Gi","mode":"rbd","pool":"vms"}},{"name":"data","claimName":"db-data"}]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots":
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			created = append(created, string(b))
+			mu.Unlock()
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots/s1":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"s1","namespace":"default"},"spec":{"machineName":"db"},"status":{"phase":"Succeeded","readyToUse":true,"volumeSnapshots":[{"volumeName":"root","volumeSnapshotName":"x","atlasSnapshotID":"snap-9"}]}}`)
+		default:
+			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got := callMCP(t, true, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"machine_volumes","arguments":{"name":"db"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"snapshot_volume","arguments":{"name":"db","volume":"root","snapshotName":"s1"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"snapshot_volume","arguments":{"name":"db","volume":"nope"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_machine_snapshot","arguments":{"name":"s1"}}}`,
+	)
+	for _, want := range []string{`"source": "atlas-rbd"`, `"nativeID": "rbd:vms/db-root"`, `"phase": "Ready"`, `"claimName": "db-data"`} {
+		if !strings.Contains(got["1"], want) {
+			t.Fatalf("machine_volumes missing %s: %s", want, got["1"])
+		}
+	}
+	if !strings.Contains(got["2"], "created for volume root") || len(created) != 1 || !strings.Contains(created[0], `"volumeNames":["root"]`) {
+		t.Fatalf("snapshot_volume: %s created=%v", got["2"], created)
+	}
+	if !strings.HasPrefix(got["3"], "tool-error: machine default/db has no volume") || len(created) != 1 {
+		t.Fatalf("unknown volume: %s", got["3"])
+	}
+	if !strings.Contains(got["4"], `"atlasSnapshotID": "snap-9"`) {
+		t.Fatalf("get_machine_snapshot: %s", got["4"])
+	}
+
+	list := callMCP(t, false, srv.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)["1"]
+	if strings.Contains(list, "snapshot_volume") || !strings.Contains(list, "machine_volumes") {
+		t.Fatalf("snapshot_volume must be write-gated: %s", list)
+	}
+}
+
+func TestWriteVolumesTable(t *testing.T) {
+	var b bytes.Buffer
+	if err := writeVolumes(&b, []volumeInfo{{Name: "root", Source: "atlas-pvc", ClaimName: "c", Size: "10Gi", Phase: "Ready", NativeID: "pvc:c"}}, "table"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "NAME") || !strings.Contains(b.String(), "atlas-pvc") {
+		t.Fatalf("table: %s", b.String())
+	}
+	if err := writeVolumes(&b, nil, "yaml"); err == nil {
+		t.Fatal("expected error for unknown output")
+	}
+}

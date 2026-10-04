@@ -24,6 +24,8 @@ Read tools are always offered:
 | `list_network_policies` | MachineNetworkPolicies | Kubernetes API |
 | `machine_network` | `kind` = `network-effective`, `network-stats`, `network-flows`, `network-drops`, `network-drop-reasons` or `network-capture` (capture sessions); `limit` for flows and drops | kairon-ui |
 | `machine_edge_identity` | The stable VM-edge identity | computed locally |
+| `machine_volumes` | Each `spec.volumes` entry: source (`pvc`, `atlas-pvc`, `atlas-rbd`), claim, size, Atlas phase, backend id, error | Kubernetes API |
+| `get_machine_snapshot` | A MachineSnapshot's phase and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id) | Kubernetes API |
 
 Write tools are offered only with `--allow-write`:
 
@@ -31,6 +33,7 @@ Write tools are offered only with `--allow-write`:
 | --- | --- |
 | `set_power_state` | Sets `spec.powerState` to `Running`, `Stopped`, `Paused` or `Halted`. |
 | `create_snapshot` | Creates a MachineSnapshot (name generated unless `snapshotName` is set). |
+| `snapshot_volume` | Snapshots one named volume (MachineSnapshot with `spec.volumeNames`); Atlas volumes use Atlas snapshots. |
 | `network_capture` | Runs a 1-30 s tcpdump capture on the Machine's VM edge. With `output`, waits and writes the pcap to that path on the machine running kaironctl; otherwise returns the token. |
 
 Delete, migrate, exec, and edge or policy changes are not exposed.
@@ -66,7 +69,7 @@ tools on the Hermes side as well:
 
 ```yaml
     tools:
-      exclude: [set_power_state, create_snapshot, network_capture]
+      exclude: [set_power_state, create_snapshot, snapshot_volume, network_capture]
 ```
 
 ## Credentials

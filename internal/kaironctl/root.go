@@ -108,6 +108,7 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		legacyCmd(opts, "fence", "Fence a Machine on a dead node for reschedule", fenceExamples, cmdFence),
 		legacyCmd(opts, "snapshot", "Create a MachineSnapshot", snapshotExamples, cmdSnapshot),
 		legacyCmd(opts, "restore", "Restore a MachineSnapshot to a PVC", restoreExamples, cmdRestore),
+		legacyCmd(opts, "volumes", "List a Machine's volumes and their provisioning state", volumesExamples, cmdVolumes),
 	)
 	return root
 }
@@ -254,6 +255,10 @@ const cancelExamples = `  $ kaironctl cancel-migration demo-mig`
 
 const fenceExamples = `  $ kaironctl fence demo --reason "node worker-1 confirmed dead"`
 
-const snapshotExamples = `  $ kaironctl snapshot demo --name before-upgrade --class csi-snapclass`
+const snapshotExamples = `  $ kaironctl snapshot demo --name before-upgrade --class csi-snapclass
+  $ kaironctl snapshot demo --volume data`
+
+const volumesExamples = `  $ kaironctl volumes demo
+  $ kaironctl volumes demo -n prod -o json`
 
 const restoreExamples = `  $ kaironctl restore before-upgrade --target-claim demo-restored`

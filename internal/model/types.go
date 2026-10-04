@@ -25,7 +25,9 @@ const (
 	// target Machine has no guest agent enabled, or that hasn't reached
 	// that point yet, deletes exactly as before this existed.
 	FinalizerSnapshotQuiesce = "kairon.zyvor.dev/snapshot-quiesce"
-	CapableLabel             = "kairon.zyvor.dev/capable"
+	// FinalizerAtlasSnapshots deletes a MachineSnapshot's Atlas snapshots.
+	FinalizerAtlasSnapshots = "kairon.zyvor.dev/atlas-snapshots"
+	CapableLabel            = "kairon.zyvor.dev/capable"
 	// AssignedNodeLabel is stamped onto a Machine whenever the controller
 	// (or a migration cutover) sets spec.nodeName. kairon-node lists with
 	// this labelSelector so each agent only receives its own Machines
@@ -936,6 +938,9 @@ type MachineSnapshotList struct {
 type MachineSnapshotSpec struct {
 	MachineName             string `json:"machineName"`
 	VolumeSnapshotClassName string `json:"volumeSnapshotClassName,omitempty"`
+	// VolumeNames limits the snapshot to these spec.volumes[].name entries;
+	// empty means every volume.
+	VolumeNames []string `json:"volumeNames,omitempty"`
 }
 
 type MachineSnapshotStatus struct {
@@ -950,6 +955,10 @@ type VolumeSnapshotReference struct {
 	VolumeName         string `json:"volumeName"`
 	VolumeSnapshotName string `json:"volumeSnapshotName"`
 	ReadyToUse         bool   `json:"readyToUse,omitempty"`
+	// AtlasSnapshotID / AtlasJobID are set instead of a CSI VolumeSnapshot
+	// for a volume provisioned through Atlas (spec.volumes[].atlas).
+	AtlasSnapshotID string `json:"atlasSnapshotID,omitempty"`
+	AtlasJobID      string `json:"atlasJobID,omitempty"`
 }
 
 func (s MachineSnapshot) Namespace() string {

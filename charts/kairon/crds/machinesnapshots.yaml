@@ -46,6 +46,11 @@ spec:
                 minLength: 1
               volumeSnapshotClassName:
                 type: string
+              volumeNames:
+                type: array
+                description: Limit the snapshot to these spec.volumes[].name entries; empty means all.
+                items:
+                  type: string
           status:
             type: object
             properties:
@@ -69,3 +74,7 @@ spec:
                       type: string
                     readyToUse:
                       type: boolean
+                    atlasSnapshotID:
+                      type: string
+                    atlasJobID:
+                      type: string
