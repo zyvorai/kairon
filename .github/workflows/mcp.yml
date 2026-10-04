@@ -1,0 +1,89 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+
+name: mcp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'internal/mcp/**'
+      - 'internal/kaironctl/**'
+      - 'internal/kube/**'
+      - 'cmd/kaironctl/**'
+      - 'scripts/test-mcp-sdk.py'
+      - '.hermes/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/mcp.yml'
+  pull_request:
+    paths:
+      - 'internal/mcp/**'
+      - 'internal/kaironctl/**'
+      - 'internal/kube/**'
+      - 'cmd/kaironctl/**'
+      - 'scripts/test-mcp-sdk.py'
+      - '.hermes/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/mcp.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
+        with:
+          go-version: '1.27.x'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
+        with:
+          python-version: '3.12'
+      - name: MCP unit tests
+        run: go test -race ./internal/mcp/... && go test -race -run MCP ./internal/kaironctl/...
+      - name: Build kaironctl
+        run: go build -o bin/kaironctl ./cmd/kaironctl
+      - name: Raw JSON-RPC smoke
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"bogus/method"}' \
+            | bin/kaironctl mcp serve > out.jsonl
+          python3 - <<'EOF'
+          import json
+          r = {m["id"]: m for m in map(json.loads, open("out.jsonl")) if "id" in m}
+          assert r[1]["result"]["protocolVersion"] == "2025-06-18", r[1]
+          assert r[1]["result"]["serverInfo"]["name"] == "kairon", r[1]
+          names = {t["name"] for t in r[2]["result"]["tools"]}
+          assert "list_machines" in names and "set_power_state" not in names, names
+          assert r[3]["error"]["code"] == -32601, r[3]
+          print("raw JSON-RPC smoke: PASS")
+          EOF
+      - name: Official MCP SDK end-to-end
+        run: |
+          python3 -m pip install --quiet 'mcp>=1.10,<3'
+          python3 scripts/test-mcp-sdk.py bin/kaironctl
+      - name: Validate Hermes example config
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import yaml
+          cfg = yaml.safe_load(open(".hermes/config.example.yaml"))
+          servers = cfg["mcp_servers"]
+          assert servers, "mcp_servers is empty"
+          for name, s in servers.items():
+              assert s.get("command"), f"{name}: missing command"
+              assert "mcp" in s.get("args", []) and "serve" in s.get("args", []), f"{name}: args must run 'mcp serve'"
+          print("hermes example config:", ", ".join(servers))
+          EOF
