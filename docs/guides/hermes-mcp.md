@@ -9,7 +9,9 @@ captures.
 
 FluxVM has a matching server, `fluxctl mcp serve`, for the VMs on one host
 (see FluxVM's `docs/mcp.md`). Use both to give an agent the cluster view and
-the host view.
+the host view. For end-to-end setup of both, scoped credentials, other MCP
+clients and example workflows, see [AI agent integration](../ai-agents.md).
+This page is the `kaironctl mcp serve` reference.
 
 ## Tools
 

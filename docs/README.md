@@ -40,7 +40,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/machine-quotas.md`](guides/machine-quotas.md) · [`guides/machine-disruption-budgets.md`](guides/machine-disruption-budgets.md) | `MachineQuota`/`MachineDisruptionBudget` reference, including the admission webhook |
 | [`runbook-migration-failures.md`](runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |
 | [`guides/machine-fencing.md`](guides/machine-fencing.md) | `NodeUnreachable`/`Fenced` conditions, `kaironctl fence`'s safety model, storage/network migration preflight labels |
-| [`guides/hermes-mcp.md`](guides/hermes-mcp.md) | `kaironctl mcp serve`: MCP tools for Hermes Agent and other AI agents, write gating, credentials |
+| [`ai-agents.md`](ai-agents.md) · [`guides/hermes-mcp.md`](guides/hermes-mcp.md) | AI agent integration over MCP (Hermes Agent, Claude Code, Cursor): Kairon and FluxVM servers, scoped credentials, workflows; `kaironctl mcp serve` reference |
 | [`guides/kairon-ui-ha.md`](guides/kairon-ui-ha.md) | Running `ui.replicaCount > 1`: what's shared, how, and its real limits |
 | [`guides/kairon-controller-ha.md`](guides/kairon-controller-ha.md) | Running `controller.replicaCount > 1`: Lease-based leader election, RBAC, bare-metal setup |
 | [`guides/observability.md`](guides/observability.md) | What each component's `/metrics` exposes, the `kairon-health` alert group, and the renamed `PrometheusRule` |

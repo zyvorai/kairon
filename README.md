@@ -169,7 +169,7 @@ kaironctl network drops demo          # VM edge: spoof_ip, dns_deny, sni_deny, r
 kaironctl network identity demo
 kaironctl network capture demo --seconds 15 --output demo.pcap
 
-# AI agents (Hermes Agent and other MCP clients): docs/guides/hermes-mcp.md
+# AI agents (Hermes Agent and other MCP clients): docs/ai-agents.md
 kaironctl mcp serve                 # add --allow-write for power/snapshot/capture
 
 # Dashboard

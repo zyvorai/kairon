@@ -125,7 +125,8 @@ clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
 `machine_network`, `machine_edge_identity`. Write tools, only with
 `--allow-write`: `set_power_state`, `create_snapshot`, `network_capture`. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
-network data. See [guides/hermes-mcp.md](guides/hermes-mcp.md).
+network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
+other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.
 
 ## Meta
 
