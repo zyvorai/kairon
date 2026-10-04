@@ -1,4 +1,4 @@
-# User guide: CPU/memory hotplug
+# User guide: CPU, memory, disk and NIC hotplug
 
 How growing `spec.resources` on a running Machine works, and what today's
 real limits are.
@@ -88,3 +88,68 @@ by the amount FluxVM reports actually landed.
   `spec.resources` -- this is expected, not a bug, and mirrors real QEMU
   behavior (see FluxVM's own hotplug docs).
 - QEMU-only, since that's the only FluxVM backend with hotplug support.
+
+## Disk hotplug: `spec.disks`
+
+`spec.disks` attaches PersistentVolumeClaims to a running Machine as SCSI
+block disks. Add an entry and kairon-node hot-adds the disk on its next tick;
+remove it and the disk is unplugged. The PVC and its data are never touched.
+
+```yaml
+spec:
+  disks:
+  - name: data          # [a-z0-9-], up to 32 chars, not "root"
+    claimName: db-data
+```
+
+or `kaironctl disk attach db data --claim db-data` /
+`kaironctl disk detach db data` / `kaironctl disk list db`.
+
+- The PV must be hostPath- or local-backed. A **Block**-mode PV attaches its
+  device path (e.g. `/dev/vg0/data`); a **Filesystem**-mode PV attaches the
+  `disk.img` inside its directory, as for boot volumes. CSI-backed PVs are
+  refused here (use `spec.volumes` for those).
+- In the guest the disk shows up as
+  `/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<name>`; device letters are not
+  stable, the serial is.
+- FluxVM's `policy.allowed_image_dirs`, when set, must include the PV
+  directories; block devices must live under `/dev`.
+- `status.attachedDisks` lists what kairon-node attached. Only those are ever
+  detached, so a disk attached to the VM by other means is left alone. A VM
+  recreated from scratch (stop/start, cold migration) gets every `spec.disks`
+  entry re-attached.
+- QEMU's image locking refuses a disk another running VM already has open.
+
+## NIC hotplug and hot-unplug: `spec.network.extraInterfaces`
+
+On a `mode: tap` Machine, `spec.network.extraInterfaces` adds up to three
+bridged NICs next to the primary one, live:
+
+```yaml
+spec:
+  network:
+    mode: tap
+    bridge: br0
+    extraInterfaces:
+    - name: lan
+      bridge: br-lan
+    - name: dmz
+      bridge: br-dmz
+      mac: 02:aa:bb:cc:dd:ee   # optional
+```
+
+or `kaironctl nic add fw lan --bridge br-lan` / `kaironctl nic remove fw lan`
+/ `kaironctl nic list fw`.
+
+- Without `mac`, the MAC is derived from the Machine UID and interface name,
+  so it stays the same across restarts.
+- Removing an entry hot-unplugs that NIC and deletes its host tap. The guest
+  must acknowledge the PCIe unplug within 10 seconds; Linux guests do.
+- The primary NIC (`spec.network.bridge`) can't be hot-removed.
+- NICs keep their PCIe slot when one in the middle is removed, so guest
+  interface names of the others don't change.
+- `status.attachedInterfaces` records each NIC with the MAC used.
+
+The MCP tools `machine_disk` and `machine_nic` (write, `--allow-write`) make
+the same spec edits for agents.
+

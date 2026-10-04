@@ -369,6 +369,100 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
+			Name: "machine_disk",
+			Description: "Hot-attach (action attach, needs claim) or detach (action detach) a PVC-backed block disk on a " +
+				"running Machine via spec.disks. The guest sees a SCSI disk whose serial is the disk name.",
+			Write: true,
+			Schema: refSchema(map[string]any{
+				"action": mcp.String("attach or detach"),
+				"disk":   mcp.String("disk name ([a-z0-9-], not 'root')"),
+				"claim":  mcp.String("PersistentVolumeClaim (attach only)"),
+			}, "action", "disk"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					machineRef
+					Action string `json:"action"`
+					Disk   string `json:"disk"`
+					Claim  string `json:"claim"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Action != "attach" && a.Action != "detach" {
+					return "", fmt.Errorf("action must be attach or detach")
+				}
+				if a.Action == "attach" && a.Claim == "" {
+					return "", fmt.Errorf("claim is required to attach")
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					m, err := kc.GetMachine(ctx, ns, a.Name)
+					if err != nil {
+						return "", err
+					}
+					disks, err := withDisk(m.Spec.Disks, a.Disk, a.Claim, a.Action == "attach")
+					if err != nil {
+						return "", err
+					}
+					if err := kc.PatchMachine(ctx, ns, a.Name, map[string]any{
+						"metadata": map[string]any{"resourceVersion": m.Metadata.ResourceVersion},
+						"spec":     map[string]any{"disks": disks},
+					}); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("machine %s/%s: disk %s %s requested; status.attachedDisks shows when it is live", ns, a.Name, a.Disk, a.Action), nil
+				})
+			},
+		},
+		{
+			Name: "machine_nic",
+			Description: "Hot-add (action add, needs bridge) or remove (action remove) an extra bridged NIC on a running " +
+				"tap-mode Machine via spec.network.extraInterfaces. At most 3 extra NICs.",
+			Write: true,
+			Schema: refSchema(map[string]any{
+				"action": mcp.String("add or remove"),
+				"nic":    mcp.String("interface name"),
+				"bridge": mcp.String("host bridge (add only)"),
+				"mac":    mcp.String("MAC address (add only, optional)"),
+			}, "action", "nic"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					machineRef
+					Action string `json:"action"`
+					NIC    string `json:"nic"`
+					Bridge string `json:"bridge"`
+					MAC    string `json:"mac"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Action != "add" && a.Action != "remove" {
+					return "", fmt.Errorf("action must be add or remove")
+				}
+				if a.Action == "add" && a.Bridge == "" {
+					return "", fmt.Errorf("bridge is required to add")
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					m, err := kc.GetMachine(ctx, ns, a.Name)
+					if err != nil {
+						return "", err
+					}
+					list, err := withInterface(m.Spec.Network, model.ExtraInterface{Name: a.NIC, Bridge: a.Bridge, MAC: a.MAC}, a.Action == "add")
+					if err != nil {
+						return "", err
+					}
+					if err := kc.PatchMachine(ctx, ns, a.Name, map[string]any{
+						"metadata": map[string]any{"resourceVersion": m.Metadata.ResourceVersion},
+						"spec":     map[string]any{"network": map[string]any{"extraInterfaces": list}},
+					}); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("machine %s/%s: nic %s %s requested; status.attachedInterfaces shows when it is live", ns, a.Name, a.NIC, a.Action), nil
+				})
+			},
+		},
+		{
 			Name:        "get_machine_snapshot",
 			Description: "Get a MachineSnapshot's phase, readiness and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id).",
 			Schema: mcp.Object(map[string]any{

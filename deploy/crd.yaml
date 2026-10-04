@@ -1005,6 +1005,27 @@ spec:
                       egressPps:
                         type: integer
                         minimum: 1
+                  extraInterfaces:
+                    type: array
+                    description: Bridged NICs hot-added to the running guest (mode tap only) and hot-removed when dropped. See docs/guides/machine-hotplug.md.
+                    maxItems: 3
+                    x-kubernetes-list-type: map
+                    x-kubernetes-list-map-keys: [name]
+                    items:
+                      type: object
+                      required: [name, bridge]
+                      properties:
+                        name:
+                          type: string
+                          pattern: '^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$'
+                        bridge:
+                          type: string
+                          minLength: 1
+                          maxLength: 15
+                        mac:
+                          type: string
+                          pattern: '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+                          description: Defaults to a MAC derived from the Machine UID and name.
               cloudInit:
                 type: object
                 description: Operator-supplied guest customization forwarded to
@@ -1219,6 +1240,25 @@ spec:
                     readOnly:
                       type: boolean
                       description: Mount volumes[1+] virtiofs share read-only.
+              disks:
+                type: array
+                description: PVC-backed block disks hot-attached to the running guest as SCSI disks (serial = name) and detached when removed. hostPath/local PVs only; Block mode attaches the device, Filesystem mode the disk.img inside it. See docs/guides/machine-hotplug.md.
+                maxItems: 16
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name, claimName]
+                  x-kubernetes-validations:
+                  - rule: "self.name != 'root'"
+                    message: "disk name 'root' is reserved for the boot disk"
+                  properties:
+                    name:
+                      type: string
+                      pattern: '^[a-z0-9][a-z0-9-]{0,31}$'
+                    claimName:
+                      type: string
+                      minLength: 1
               deviceClaims:
                 type: array
                 items:
@@ -1371,6 +1411,21 @@ spec:
                     port:
                       type: integer
                     guestIP:
+                      type: string
+              attachedDisks:
+                type: array
+                items:
+                  type: string
+              attachedInterfaces:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    bridge:
+                      type: string
+                    mac:
                       type: string
               network:
                 type: object

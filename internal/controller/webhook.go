@@ -299,6 +299,12 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := validateNetworkMAC(m.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := model.ValidateDisks(m.Spec.Disks); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := model.ValidateExtraInterfaces(m.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
 	if err := model.ValidateDataplaneMode(m.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}

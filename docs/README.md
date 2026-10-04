@@ -62,7 +62,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/machine-snapshot-quiesce.md`](guides/machine-snapshot-quiesce.md) | Real guest `fsfreeze`/`fsthaw` around `MachineSnapshot`, and the controller↔node coordination protocol behind it |
 | [`guides/machine-snapshot-restore.md`](guides/machine-snapshot-restore.md) | Restoring a `MachineSnapshot` volume into a new `PersistentVolumeClaim` via the standard CSI `dataSource` flow |
 | [`guides/machine-pause-resume.md`](guides/machine-pause-resume.md) · [`guides/machine-halt.md`](guides/machine-halt.md) | `spec.powerState: Paused`/`Halted`: suspending guest CPUs vs. powering off the VMM process while FluxVM keeps its record |
-| [`guides/machine-hotplug.md`](guides/machine-hotplug.md) | Growing `spec.resources.cpu`/`.memory` on an already-`Running` Machine via FluxVM's real QMP hotplug |
+| [`guides/machine-hotplug.md`](guides/machine-hotplug.md) | Growing `spec.resources.cpu`/`.memory`, and hot-attaching PVC disks (`spec.disks`) and extra NICs (`spec.network.extraInterfaces`) on a `Running` Machine |
 | [`guides/machine-resource-limits.md`](guides/machine-resource-limits.md) | `spec.resources.limits`: real, kernel-enforced cgroup v2 caps, and `status.resourceUsage` live usage |
 | [`guides/machine-placement.md`](guides/machine-placement.md) | Scheduler internals: affinity/anti-affinity, weighted soft scoring, `topologySpreadConstraints`, DRA topology hints |
 | [`guides/machine-sriov.md`](guides/machine-sriov.md) | SR-IOV NIC passthrough by reusing the existing GPU/VFIO DRA mechanism — why Multus doesn't apply to Kairon Machines at all |

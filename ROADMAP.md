@@ -30,7 +30,7 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 
 **Parity**
 
-- [ ] Disk hotplug of existing images/PVCs, NIC hot-unplug
+- [x] Disk hotplug of existing images/PVCs, NIC hot-unplug: FluxVM attaches an existing file or block device (`{name, path}`) and hot-removes extra NICs; Kairon `spec.disks` and `spec.network.extraInterfaces` reconcile live, `kaironctl disk|nic`, MCP `machine_disk`/`machine_nic` (CSI-backed `spec.disks` still to come)
 - [ ] `MachineBackup` / `MachineBackupRestore` with automatic fsfreeze
 - [ ] Block-mode PVCs, `kaironctl image upload`, OCI containerDisk images
 - [x] Serve `v1beta1` as the storage version (v1alpha1 still served; clients move next)

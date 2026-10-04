@@ -281,3 +281,46 @@ func TestWriteVolumesTable(t *testing.T) {
 		t.Fatal("expected error for unknown output")
 	}
 }
+
+func TestMCPHotplugTools(t *testing.T) {
+	var patches []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const path = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/fw"
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == path:
+			_, _ = io.WriteString(w, `{"metadata":{"name":"fw","namespace":"default","uid":"u1","resourceVersion":"7"},
+				"spec":{"network":{"mode":"tap","bridge":"br0","extraInterfaces":[{"name":"lan","bridge":"br-lan"}]},"disks":[{"name":"data","claimName":"c1"}]}}`)
+		case r.Method == http.MethodPatch && r.URL.Path == path:
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			patches = append(patches, string(b))
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got := callMCP(t, true, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"machine_disk","arguments":{"name":"fw","action":"attach","disk":"logs","claim":"c2"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"machine_disk","arguments":{"name":"fw","action":"attach","disk":"data","claim":"c3"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"machine_nic","arguments":{"name":"fw","action":"remove","nic":"lan"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"machine_nic","arguments":{"name":"fw","action":"add","nic":"dmz"}}}`,
+	)
+	if !strings.Contains(got["1"], "disk logs attach requested") || !strings.HasPrefix(got["2"], "tool-error: disk \"data\" is already") {
+		t.Fatalf("machine_disk: %q / %q", got["1"], got["2"])
+	}
+	if !strings.Contains(got["3"], "nic lan remove requested") || !strings.HasPrefix(got["4"], "tool-error: bridge is required") {
+		t.Fatalf("machine_nic: %q / %q", got["3"], got["4"])
+	}
+	sort.Strings(patches)
+	if len(patches) != 2 ||
+		!strings.Contains(patches[0], `"disks":[{"name":"data","claimName":"c1"},{"name":"logs","claimName":"c2"}]`) ||
+		!strings.Contains(patches[0], `"resourceVersion":"7"`) ||
+		!strings.Contains(patches[1], `"extraInterfaces":[]`) {
+		t.Fatalf("patches = %v", patches)
+	}
+}

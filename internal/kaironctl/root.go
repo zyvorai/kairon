@@ -111,6 +111,8 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		legacyCmd(opts, "snapshot", "Create a MachineSnapshot", snapshotExamples, cmdSnapshot),
 		legacyCmd(opts, "restore", "Restore a MachineSnapshot to a PVC", restoreExamples, cmdRestore),
 		legacyCmd(opts, "volumes", "List a Machine's volumes and their provisioning state", volumesExamples, cmdVolumes),
+		legacyCmd(opts, "disk", "Hot-attach or detach a PVC-backed disk on a Machine", diskExamples, cmdDisk),
+		legacyCmd(opts, "nic", "Hot-add or remove an extra NIC on a Machine", nicExamples, cmdNIC),
 	)
 	return root
 }
@@ -264,6 +266,14 @@ const evacuateExamples = `  $ kaironctl evacuate worker-1 --strategy cold --wait
 const recoverExamples = `  $ kaironctl recover demo-mig --action confirm-committed --diagnosis "..." --reason "..."`
 
 const cancelExamples = `  $ kaironctl cancel-migration demo-mig`
+
+const diskExamples = `  $ kaironctl disk attach db data --claim db-data
+  $ kaironctl disk list db
+  $ kaironctl disk detach db data`
+
+const nicExamples = `  $ kaironctl nic add fw lan --bridge br-lan
+  $ kaironctl nic list fw
+  $ kaironctl nic remove fw lan`
 
 const fenceExamples = `  $ kaironctl fence demo --reason "node worker-1 confirmed dead"`
 

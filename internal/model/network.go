@@ -4,8 +4,10 @@
 package model
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
+	"net"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -95,6 +97,62 @@ type NetworkSpec struct {
 	LearnIP bool `json:"learnIP,omitempty"`
 	// QoS is the per-Machine token bucket projected into the edge map.
 	QoS *NetworkQoS `json:"qos,omitempty"`
+	// ExtraInterfaces are bridged NICs hot-added to the running guest
+	// (mode tap only) and hot-removed when dropped from this list.
+	ExtraInterfaces []ExtraInterface `json:"extraInterfaces,omitempty"`
+}
+
+// MaxExtraInterfaces is how many NICs fit next to the primary on FluxVM's
+// four hotplug PCIe ports.
+const MaxExtraInterfaces = 3
+
+// ExtraInterface is one hot-pluggable bridged NIC.
+type ExtraInterface struct {
+	Name   string `json:"name"`
+	Bridge string `json:"bridge"`
+	// MAC defaults to one derived from the Machine UID and Name, so it is
+	// stable across restarts.
+	MAC string `json:"mac,omitempty"`
+}
+
+// ExtraInterfaceMAC is iface.MAC, or a locally administered unicast MAC
+// derived from the Machine UID and interface name.
+func ExtraInterfaceMAC(machineUID string, iface ExtraInterface) string {
+	if iface.MAC != "" {
+		return strings.ToLower(iface.MAC)
+	}
+	sum := sha256.Sum256([]byte(machineUID + "/" + iface.Name))
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+}
+
+// ValidateExtraInterfaces checks spec.network.extraInterfaces.
+func ValidateExtraInterfaces(ns NetworkSpec) error {
+	if len(ns.ExtraInterfaces) == 0 {
+		return nil
+	}
+	if ns.Mode != "tap" {
+		return fmt.Errorf("spec.network.extraInterfaces needs spec.network.mode tap (got %q)", ns.Mode)
+	}
+	if len(ns.ExtraInterfaces) > MaxExtraInterfaces {
+		return fmt.Errorf("spec.network.extraInterfaces: at most %d", MaxExtraInterfaces)
+	}
+	seen := map[string]bool{}
+	for i, iface := range ns.ExtraInterfaces {
+		if iface.Name == "" || iface.Bridge == "" {
+			return fmt.Errorf("spec.network.extraInterfaces[%d]: name and bridge are required", i)
+		}
+		if seen[iface.Name] {
+			return fmt.Errorf("spec.network.extraInterfaces[%d]: duplicate name %q", i, iface.Name)
+		}
+		seen[iface.Name] = true
+		if iface.MAC != "" {
+			hw, err := net.ParseMAC(iface.MAC)
+			if err != nil || len(hw) != 6 {
+				return fmt.Errorf("spec.network.extraInterfaces[%d].mac %q: not a 6-octet Ethernet address", i, iface.MAC)
+			}
+		}
+	}
+	return nil
 }
 
 // NetworkQoS is a token bucket. A nil pointer means no bucket. An explicit

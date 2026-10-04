@@ -62,6 +62,8 @@ nor callable.
 | `claim_machine` | `pool`, `namespace`, `name`, `labels`, `retain`, `ttlSeconds`, `waitSeconds` (0-120) | write |
 | `release_claim` | `name` (claim), `namespace` | write |
 | `delete_machine` | `name`, `namespace` | write |
+| `machine_disk` | `name`, `namespace`, `action` (`attach`, `detach`), `disk`, `claim` | write |
+| `machine_nic` | `name`, `namespace`, `action` (`add`, `remove`), `nic`, `bridge`, `mac` | write |
 
 `machine_network` `kind` is one of `network-effective`, `network-stats`,
 `network-flows`, `network-drops`, `network-drop-reasons` or

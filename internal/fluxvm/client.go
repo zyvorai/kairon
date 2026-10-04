@@ -51,6 +51,13 @@ type Record struct {
 		MemoryMiB uint64 `json:"memory_mib,omitempty"`
 		Network   struct {
 			MAC string `json:"mac,omitempty"`
+			// Extra are the VM's extra NICs; an entry with no TapName
+			// is a slot freed by an unplug.
+			Extra []struct {
+				Bridge  string `json:"bridge,omitempty"`
+				MAC     string `json:"mac,omitempty"`
+				TapName string `json:"tap_name,omitempty"`
+			} `json:"extra,omitempty"`
 		} `json:"network,omitempty"`
 	} `json:"request,omitempty"`
 }
@@ -478,6 +485,54 @@ func (c *Client) HotplugMemory(ctx context.Context, id string, addMemoryMiB uint
 		return 0, fmt.Errorf("decode hotplug memory response: %w", err)
 	}
 	return out.MemoryMiB, nil
+}
+
+// Disk is one entry of GET /v1/vms/{id}/disks.
+type Disk struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Format string `json:"format"`
+}
+
+// ListDisks returns the VM's root and data disks.
+func (c *Client) ListDisks(ctx context.Context, id string) ([]Disk, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/disks", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Items []Disk `json:"items"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode disk list: %w", err)
+	}
+	return out.Items, nil
+}
+
+// AttachDisk attaches the existing image file or block device at path as
+// data disk name, hot-adding it when the VM is running.
+func (c *Client) AttachDisk(ctx context.Context, id, name, path string) error {
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/disks", map[string]any{"name": name, "path": path})
+	return err
+}
+
+// DetachDisk unplugs data disk name. For a path-attached disk FluxVM only
+// removes its link, never the source.
+func (c *Client) DetachDisk(ctx context.Context, id, name string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/v1/vms/"+url.PathEscape(id)+"/disks/"+url.PathEscape(name), nil)
+	return err
+}
+
+// HotplugNIC hot-adds a bridged virtio-net NIC with the given MAC.
+func (c *Client) HotplugNIC(ctx context.Context, id, bridge, mac string) error {
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/hotplug/nic", map[string]any{"bridge": bridge, "mac": mac})
+	return err
+}
+
+// UnplugNIC hot-removes the extra NIC with this MAC and deletes its tap.
+func (c *Client) UnplugNIC(ctx context.Context, id, mac string) error {
+	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/hotplug/nic/unplug", map[string]any{"mac": mac})
+	return err
 }
 
 // SetResourceLimits applies a partial cgroup v2 resource-control patch to a

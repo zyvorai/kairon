@@ -38,6 +38,8 @@ Write tools are offered only with `--allow-write`:
 | `network_capture` | Runs a 1-30 s tcpdump capture on the Machine's VM edge. With `output`, waits and writes the pcap to that path on the machine running kaironctl; otherwise returns the token. |
 | `claim_machine` | Creates a MachineClaim against `pool` and waits up to `waitSeconds` (default 30) for it to bind; returns the Machine name and bind time. Optional `labels`, `retain`, `ttlSeconds`. |
 | `release_claim` | Deletes a MachineClaim; its Machine is deleted too unless the claim was made with `retain`. |
+| `machine_disk` | Adds (`attach`, with `claim`) or removes (`detach`) a `spec.disks` entry; kairon-node hot-attaches or unplugs the PVC disk. |
+| `machine_nic` | Adds (`add`, with `bridge`) or removes (`remove`) a `spec.network.extraInterfaces` entry; kairon-node hot-adds or unplugs the NIC. |
 | `delete_machine` | Deletes a Machine. Refuses MachineSet replicas (the set would recreate them). |
 
 Migrate, exec, and edge or policy changes are not exposed.

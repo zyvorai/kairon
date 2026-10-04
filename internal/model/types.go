@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -216,10 +217,14 @@ type MachineSpec struct {
 	// load/affinity/topology scoring) -- see
 	// internal/scheduler.SortByPriorityDesc and
 	// docs/guides/machine-placement.md.
-	Priority     int32                  `json:"priority,omitempty"`
-	Placement    PlacementSpec          `json:"placement,omitempty"`
-	Security     SecuritySpec           `json:"security,omitempty"`
-	Volumes      []MachineVolume        `json:"volumes,omitempty"`
+	Priority  int32           `json:"priority,omitempty"`
+	Placement PlacementSpec   `json:"placement,omitempty"`
+	Security  SecuritySpec    `json:"security,omitempty"`
+	Volumes   []MachineVolume `json:"volumes,omitempty"`
+	// Disks are PVC-backed block disks hot-attached to the running guest
+	// as SCSI disks (serial = name), added and removed live as this list
+	// changes. See MachineDisk.
+	Disks        []MachineDisk          `json:"disks,omitempty"`
 	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
 	GuestAgent   GuestAgentSpec         `json:"guestAgent,omitempty"`
 	// Sandbox opts this Machine into FluxVM's own agent-sandbox track
@@ -600,6 +605,37 @@ type SecuritySpec struct {
 	TPM        bool `json:"tpm,omitempty"`
 }
 
+// MachineDisk attaches a PersistentVolumeClaim as a block disk. A
+// Block-mode hostPath/local PV attaches its device path; a Filesystem-mode
+// one attaches the disk.img inside its directory. Removing the entry
+// detaches the disk; the PVC's data is never touched.
+type MachineDisk struct {
+	// Name is the FluxVM disk name and the guest-visible SCSI serial
+	// (/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<name>).
+	Name      string `json:"name"`
+	ClaimName string `json:"claimName"`
+}
+
+// ValidateDisks checks spec.disks: unique FluxVM-safe names and a claim.
+func ValidateDisks(disks []MachineDisk) error {
+	seen := map[string]bool{}
+	for i, d := range disks {
+		if !diskNameRE.MatchString(d.Name) || d.Name == "root" {
+			return fmt.Errorf("spec.disks[%d].name %q: use 1-32 of [a-z0-9-], starting alphanumeric, not 'root'", i, d.Name)
+		}
+		if seen[d.Name] {
+			return fmt.Errorf("spec.disks[%d]: duplicate name %q", i, d.Name)
+		}
+		seen[d.Name] = true
+		if strings.TrimSpace(d.ClaimName) == "" {
+			return fmt.Errorf("spec.disks[%d] requires claimName", i)
+		}
+	}
+	return nil
+}
+
+var diskNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+
 type MachineVolume struct {
 	Name      string `json:"name"`
 	ClaimName string `json:"claimName"`
@@ -794,6 +830,21 @@ type MachineStatus struct {
 	// (Machine deletion, spec.powerState: Stopped, spec.powerState:
 	// Halted).
 	AppliedServiceFabricMemberships []AppliedServiceFabricMembership `json:"appliedServiceFabricMemberships,omitempty"`
+	// AttachedDisks names the spec.disks entries kairon-node has attached
+	// to the running VM. Only these are ever detached when removed from
+	// spec, so disks attached by other means are left alone.
+	AttachedDisks []string `json:"attachedDisks,omitempty"`
+	// AttachedInterfaces are the spec.network.extraInterfaces kairon-node
+	// has hot-added, with the MAC it used (generated when spec left it
+	// empty), so removal can unplug the exact NIC.
+	AttachedInterfaces []AttachedInterface `json:"attachedInterfaces,omitempty"`
+}
+
+// AttachedInterface is one hot-added extra NIC.
+type AttachedInterface struct {
+	Name   string `json:"name"`
+	Bridge string `json:"bridge"`
+	MAC    string `json:"mac"`
 }
 
 type Condition struct {

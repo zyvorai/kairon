@@ -398,6 +398,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		a.Log.Error("hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", hotplugErr)
 		status.Message = hotplugErr.Error()
 	}
+	attachedDisks, attachedIfaces, devErr := a.reconcileDevices(ctx, m, rec)
+	status.AttachedDisks = attachedDisks
+	status.AttachedInterfaces = attachedIfaces
+	if devErr != nil {
+		a.Log.Error("device hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", devErr)
+		status.Message = devErr.Error()
+	}
 	appliedLimits, limitsErr := a.reconcileResourceLimits(ctx, m, rec)
 	status.AppliedResourceLimits = appliedLimits
 	if limitsErr != nil {
