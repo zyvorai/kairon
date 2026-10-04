@@ -41,7 +41,15 @@ const (
 	DefaultNamespace         = "default"
 	AnnotationAdoptOnly      = "kairon.zyvor.dev/adopt-only"
 	AnnotationVFIOBDF        = "kairon.zyvor.dev/vfio-bdf"
-	AnnotationMigrationRef   = "kairon.zyvor.dev/migration"
+	// AnnotationForkFrom names a running Machine in the same namespace and
+	// on the same node. When this Machine has no runtime yet, kairon-node
+	// forks the parent's FluxVM runtime (POST /v1/vms/{id}/fork) instead
+	// of booting a new one. See docs/guides/machine-fork.md.
+	AnnotationForkFrom = "kairon.zyvor.dev/fork-from"
+	// LabelForkedFrom is stamped on fork children so they can be listed
+	// by parent.
+	LabelForkedFrom        = "kairon.zyvor.dev/forked-from"
+	AnnotationMigrationRef = "kairon.zyvor.dev/migration"
 	// AnnotationConsoleAllowedUsers opts a Machine into a per-Machine VNC
 	// console access allowlist -- a comma-separated list of kairon-ui
 	// operator usernames (see internal/uiapi's consoleAuthorized). Unset

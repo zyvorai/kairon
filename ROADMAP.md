@@ -26,7 +26,7 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 
 - [x] FluxVM live fork (`POST /v1/vms/{id}/fork`, `fluxctl fork-vm`, MCP `vm_fork`): one parent snapshot, N children sharing its memory file with reflinked disks
 - [x] `MachinePool` / `MachineClaim` CRDs: warm pre-booted Machines, claim binds in one tick, claim TTL and reclaim policy; scale subresource on MachinePool and MachineSet; MCP `list_machine_pools`, `claim_machine`, `release_claim`, `delete_machine`
-- [ ] Per-claim egress allowlists; Kairon `fork_machine` on top of FluxVM fork
+- [x] Per-claim egress allowlists; Kairon `fork_machine` on top of FluxVM fork
 
 **Parity**
 

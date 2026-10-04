@@ -96,6 +96,7 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		legacyCmd(opts, "edit", "Edit a Kairon resource (only flags you pass are patched)", editExamples, cmdEdit),
 		legacyCmd(opts, "scale", "Scale a MachineSet or MachinePool", scaleExamples, cmdScale),
 		legacyCmd(opts, "claim", "Claim a warm Machine from a MachinePool", claimExamples, cmdClaim),
+		legacyCmd(opts, "fork", "Fork a running Machine into live copies", forkExamples, cmdFork),
 		legacyCmd(opts, "import", "Create a Machine from a VMware OVA", importExamples, cmdImport),
 		legacyCmd(opts, "top", "Show live Machine or node resource usage", topExamples, cmdTop),
 		legacyCmd(opts, "trigger", "Trigger a SnapshotSchedule run now", triggerExamples, cmdTrigger),
@@ -246,6 +247,10 @@ const editExamples = `  $ kaironctl edit machine demo --priority 10
 const importExamples = `  $ kaironctl import ova https://files.example.com/web01.ova
   $ kaironctl import ova ./web01.ova --url https://files.example.com/web01.ova --name web01 --network tap
   $ kaironctl import ova https://files.example.com/db.ova --cpu 8 --memory 32Gi --sha256 sha256:... --dry-run`
+
+const forkExamples = `  $ kaironctl fork base
+  $ kaironctl fork base --count 8 --prefix trial
+  $ kaironctl fork base --count 4 --no-wait`
 
 const claimExamples = `  $ kaironctl claim agents
   $ kaironctl claim agents job-42 --label team=ml --wait 30s

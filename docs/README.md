@@ -53,6 +53,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/migrate-from-vmware.md`](guides/migrate-from-vmware.md) | Moving VMware VMs to Kairon: `kaironctl import ova`, offline virtio repair, checklist |
 | [`guides/machine-image-import.md`](guides/machine-image-import.md) | `spec.image.source`: downloading a remote image URL into `kairon-node`'s own digest-keyed cache |
 | [`guides/machine-sets.md`](guides/machine-sets.md) | `MachineSet`: replica reconciliation, `RollingUpdate`/`Recreate` rollout strategy |
+| [`guides/machine-fork.md`](guides/machine-fork.md) | `kaironctl fork` / `fork_machine`: live copies of a Running Machine from one memory snapshot |
 | [`guides/machine-pools.md`](guides/machine-pools.md) | `MachinePool` / `MachineClaim`: warm, pre-booted Machines claimed in one reconcile tick |
 | [`guides/machine-instance-types.md`](guides/machine-instance-types.md) | `MachineInstanceType`: a reusable named CPU/memory shape resolved into `spec.resources` once |
 | [`guides/machine-cpu-numa.md`](guides/machine-cpu-numa.md) | `spec.resources.numaNode`/`.cpuSet`/`.hugepages`: qemu-only NUMA/hugepage passthroughs, and what they don't guarantee (no real host-core pinning) |

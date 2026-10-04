@@ -65,6 +65,7 @@ kaironctl scale machineset --selector k=v --replicas N
 kaironctl scale machinepool NAME --replicas N
 kaironctl import ova SOURCE [--url URL] [--name NAME] [--no-repair] [--dry-run] [create flags]
 kaironctl claim POOL [NAME] [--label k=v] [--retain] [--ttl 1h] [--allow-fqdn H] [--allow-sni N] [--allow-cidr C] [--allow-port P] [--allow-dns N] [--allow-icmp] [--wait 60s | --no-wait]
+kaironctl fork MACHINE [--count N] [--prefix P] [--wait 60s | --no-wait]   # see guides/machine-fork.md
 kaironctl start|stop|pause|resume|halt MACHINE
 kaironctl disk attach|detach MACHINE NAME [--claim PVC]   # live, see guides/machine-hotplug.md
 kaironctl disk list MACHINE
@@ -153,7 +154,7 @@ clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
 `machine_network`, `machine_edge_identity`, `machine_volumes`,
 `get_machine_snapshot`, `list_machine_pools`, `list_backups`. Write tools, only with `--allow-write`:
 `set_power_state`, `create_snapshot`, `snapshot_volume`, `network_capture`,
-`claim_machine`, `release_claim`, `delete_machine`, `machine_disk`, `machine_nic`,
+`claim_machine`, `release_claim`, `fork_machine`, `delete_machine`, `machine_disk`, `machine_nic`,
 `machine_backup`. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and

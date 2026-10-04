@@ -669,6 +669,55 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
+			Name: "fork_machine",
+			Description: "Fork a Running Machine into count live copies on the same node: memory, CPU state and disk are copied from one snapshot, " +
+				"so children start where the parent is, in milliseconds. Needs a flux-vm backend Machine with user or no networking. " +
+				"Children are normal Machines (labelled kairon.zyvor.dev/forked-from); delete them with delete_machine.",
+			Write: true,
+			Schema: mcp.Object(map[string]any{
+				"namespace":   nsProp,
+				"name":        mcp.String("Machine to fork"),
+				"count":       mcp.Integer("number of children, default 1", 1, maxForkCount),
+				"prefix":      mcp.String("child name prefix; children are PREFIX-1..N (optional)"),
+				"waitSeconds": mcp.Integer("seconds to wait for the children to run, default 60; 0 returns at once", 0, 300),
+			}, "name"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Namespace   string `json:"namespace"`
+					Name        string `json:"name"`
+					Count       int    `json:"count"`
+					Prefix      string `json:"prefix"`
+					WaitSeconds *int   `json:"waitSeconds"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Name == "" {
+					return "", fmt.Errorf("name is required")
+				}
+				if a.Count == 0 {
+					a.Count = 1
+				}
+				wait := 60
+				if a.WaitSeconds != nil {
+					wait = min(max(*a.WaitSeconds, 0), 300)
+				}
+				return withKube(ctx, time.Duration(wait)*time.Second+mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := machineRef{Namespace: a.Namespace}.ns(nsDefault)
+					names, err := forkMachine(ctx, kc, ns, a.Name, a.Count, a.Prefix)
+					if err != nil {
+						return "", err
+					}
+					if wait > 0 {
+						if err := waitForRunning(ctx, kc, ns, names, time.Duration(wait)*time.Second); err != nil {
+							return "", err
+						}
+					}
+					return mcp.JSON(map[string]any{"parent": a.Name, "namespace": ns, "children": names, "running": wait > 0})
+				})
+			},
+		},
+		{
 			Name:        "release_claim",
 			Description: "Delete a MachineClaim. With reclaimPolicy Delete (the default) its Machine is deleted too.",
 			Write:       true,

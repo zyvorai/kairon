@@ -61,6 +61,7 @@ nor callable.
 | `network_capture` | `name`, `namespace`, `seconds` (1-30), `filter`, `output` | write |
 | `claim_machine` | `pool`, `namespace`, `name`, `labels`, `retain`, `ttlSeconds`, `waitSeconds` (0-120), `egress` | write |
 | `release_claim` | `name` (claim), `namespace` | write |
+| `fork_machine` | `name`, `namespace`, `count` (1-32), `prefix`, `waitSeconds` (0-300) | write |
 | `delete_machine` | `name`, `namespace` | write |
 | `machine_disk` | `name`, `namespace`, `action` (`attach`, `detach`), `disk`, `claim` | write |
 | `machine_nic` | `name`, `namespace`, `action` (`add`, `remove`), `nic`, `bridge`, `mac` | write |

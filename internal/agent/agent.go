@@ -326,6 +326,12 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	}
 	freshlyCreated := rec == nil
 	switch {
+	case freshlyCreated && m.Metadata.Annotations[model.AnnotationForkFrom] != "":
+		rec, err = a.forkRuntime(ctx, m)
+		if err != nil {
+			return err
+		}
+		a.Log.Info("forked runtime", "machine", m.Metadata.Name, "parent", m.Metadata.Annotations[model.AnnotationForkFrom], "runtimeID", rec.ID())
 	case freshlyCreated && m.Spec.Sandbox != nil:
 		rec, err = a.Flux.CreateSandboxForMachine(ctx, m)
 		if err != nil {

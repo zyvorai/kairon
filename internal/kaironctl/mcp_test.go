@@ -17,6 +17,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/mcp"
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 type fakeKairon struct {
@@ -260,7 +261,7 @@ func TestMCPPoolTools(t *testing.T) {
 	}
 
 	list := callMCP(t, false, srv.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)["1"]
-	for _, w := range []string{"claim_machine", "release_claim", "delete_machine"} {
+	for _, w := range []string{"claim_machine", "release_claim", "delete_machine", "fork_machine"} {
 		if strings.Contains(list, w) {
 			t.Fatalf("%s must be write-gated", w)
 		}
@@ -369,5 +370,49 @@ func TestMCPBackupTools(t *testing.T) {
 		!strings.Contains(created[0], `"quiesce":"required"`) || !strings.Contains(created[0], `"atlas":{}`) ||
 		!strings.Contains(created[1], `"backupName":"nightly"`) || !strings.Contains(created[1], `"machineName":"web"`) {
 		t.Fatalf("created = %v", created)
+	}
+}
+
+func TestMCPForkMachine(t *testing.T) {
+	var created []model.Machine
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		const base = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines"
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == base+"/base":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"base","labels":{"kairon.zyvor.dev/machineset":"web"}},"spec":{"nodeName":"n1","image":{"path":"/i.qcow2"},"resources":{"cpu":"1","memory":"512Mi"},"runtime":{"backend":"flux-vm"}},"status":{"phase":"Running"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == base+"/busy":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"busy"},"spec":{"nodeName":"n1","volumes":[{"name":"d","persistentVolumeClaim":{"claimName":"c"}}]},"status":{"phase":"Running"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == base:
+			var m model.Machine
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			created = append(created, m)
+			_ = json.NewEncoder(w).Encode(m)
+		default:
+			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got := callMCP(t, true, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"fork_machine","arguments":{"name":"base","count":2,"prefix":"try","waitSeconds":0}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fork_machine","arguments":{"name":"busy","waitSeconds":0}}}`,
+	)
+	if !strings.Contains(got["1"], `"try-1"`) || !strings.Contains(got["1"], `"try-2"`) || len(created) != 2 {
+		t.Fatalf("fork_machine: %s created=%d", got["1"], len(created))
+	}
+	kid := created[0]
+	if kid.Spec.NodeName != "n1" || kid.Spec.Runtime.Backend != "flux-vm" ||
+		kid.Metadata.Annotations[model.AnnotationForkFrom] != "base" ||
+		kid.Metadata.Labels[model.LabelForkedFrom] != "base" ||
+		kid.Metadata.Labels[model.AssignedNodeLabel] != "n1" ||
+		kid.Metadata.Labels["kairon.zyvor.dev/machineset"] != "" {
+		t.Fatalf("child = %+v", kid)
+	}
+	if !strings.HasPrefix(got["2"], "tool-error:") || !strings.Contains(got["2"], "volumes") {
+		t.Fatalf("forking a Machine with volumes must refuse: %s", got["2"])
 	}
 }
