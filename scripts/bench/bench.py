@@ -205,14 +205,20 @@ PLATFORMS = {
 }
 
 
-def wait_gone(ns, kind, selector, timeout):
+def delete_and_wait(ns, delete_kind, watch_kind, selector, timeout):
+    # A loaded API server (or KubeVirt's virt-api webhook) can drop part of a
+    # label-selected delete, so it is re-sent until everything is gone.
     deadline = time.time() + timeout
+    next_delete = 0.0
     while time.time() < deadline:
-        out = kubectl(["get", kind, "-n", ns, "-l", selector, "-o", "name"], check=False)
-        if not out.strip():
+        if time.time() >= next_delete:
+            kubectl(["delete", delete_kind, "-n", ns, "-l", selector, "--wait=false"], check=False)
+            next_delete = time.time() + 30
+        if not kubectl(["get", watch_kind, "-n", ns, "-l", selector, "-o", "name"], check=False).strip() and \
+                not kubectl(["get", delete_kind, "-n", ns, "-l", selector, "-o", "name"], check=False).strip():
             return
         time.sleep(2)
-    raise RuntimeError(f"{kind} with {selector} still present after {timeout}s")
+    raise RuntimeError(f"{watch_kind} with {selector} still present after {timeout}s")
 
 
 def pct(values, q):
@@ -262,8 +268,7 @@ def run_density(a, p, n, procs):
         res["migration"] = migrate(a, names[0])
     log(f"N={n}: running {len(running)}/{n} ready {len(ready)}/{n} "
         f"p50 running={res['running_ms_p50']} ready={res['ready_ms_p50']} per-VM={res['per_vm_kib']} KiB")
-    kubectl(["delete", p["kind"], "-n", ns, "-l", selector, "--wait=false"], check=False)
-    wait_gone(ns, p["watch"], selector, a.timeout)
+    delete_and_wait(ns, p["kind"], p["watch"], selector, a.timeout)
     return res
 
 
@@ -351,9 +356,14 @@ def main():
     control = {"rss_kib": rss_kib(procs["control"]),
                "cpu_millicores": idle_cpu_millicores(procs["control"], a.idle_seconds),
                "processes": sorted({proc_name(x) for x in pids(procs["control"])})}
-    runs = []
+    runs, error = [], ""
     for n in [int(x) for x in a.sizes.replace(" ", ",").split(",") if x]:
-        runs.append(run_density(a, p, n, procs))
+        try:
+            runs.append(run_density(a, p, n, procs))
+        except RuntimeError as e:
+            error = f"N={n}: {e}"
+            log(error)
+            break
     result = {
         "platform": a.platform, "version": platform_version(a.platform),
         "date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -361,13 +371,15 @@ def main():
         "vm": {"cpu": a.cpu, "memory": a.memory, "image": a.image or a.containerdisk, "ready_port": a.ready_port},
         "control_plane_idle": control, "density": runs,
     }
+    if error:
+        result["error"] = error
     out = a.out or f"docs/benchmarks/{a.platform}-{datetime.date.today():%Y-%m-%d}.json"
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with open(out, "w") as f:
         json.dump(result, f, indent=2)
         f.write("\n")
     log(f"wrote {out}")
-    failed = any(r["ready"] < r["n"] for r in runs)
+    failed = bool(error) or any(r["ready"] < r["n"] for r in runs)
     return 1 if failed else 0
 
 
