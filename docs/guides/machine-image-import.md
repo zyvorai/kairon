@@ -132,6 +132,43 @@ spec:
   flow Docker Hub, quay.io and ghcr.io use for public images). gzip and
   uncompressed layers; zstd layers are rejected.
 
+## Uploading images
+
+For an image that isn't already on a web server or registry, upload it to
+kairon-ui's image store and boot it through the same `httpURL` path:
+
+```bash
+helm upgrade kairon ./charts/kairon -n kairon-system --reuse-values \
+  --set ui.enabled=true --set ui.imageStore.enabled=true \
+  --set node.imageCacheDir=/var/lib/fluxvm/images/cache
+
+export KAIRON_UI_URL=https://kairon-ui.example.com KAIRON_UI_TOKEN=<admin session token>
+kaironctl image upload ./noble-server-cloudimg-amd64.qcow2 --name ubuntu-24.04
+```
+
+```yaml
+image:
+  source:
+    httpURL: http://kairon-ui.kairon-system.svc:8082/images/sha256/8f43...
+    format: qcow2
+  digest: sha256:8f43...
+```
+
+- kaironctl hashes the file first and sends the digest; kairon-ui rejects
+  the upload if the bytes it received hash differently. Blobs are stored
+  once per digest on a PVC (`ui.imageStore.size`, `storageClassName`, or
+  `existingClaim`); names are pointers, and deleting the last name pointing
+  at a blob deletes it.
+- Upload and delete need an admin account; listing needs any login.
+- `GET /images/sha256/<digest>` is **unauthenticated** so kairon-node can
+  fetch without kairon-ui credentials (it verifies the digest itself).
+  Anyone who can reach kairon-ui and knows a digest can download that
+  image; keep secrets out of uploaded images or restrict network access.
+- `ui.imageStore.publicURL` sets the URL nodes download from. The default
+  `http://kairon-ui.<namespace>.svc:<port>` needs cluster DNS from the node
+  host (kairon-node runs with `hostNetwork`).
+- One upload is capped at `ui.imageStore.maxBytes` (64Gi by default).
+
 ## Real limits today (v1 of this feature)
 
 - **Only the boot disk of a multi-disk OVA is attached.** The other

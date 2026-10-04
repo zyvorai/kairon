@@ -176,6 +176,14 @@ type Server struct {
 	// namespaced kairon object at all, so node-scoped routes are exempt
 	// too -- see requireNamespace's own call sites in Handler() below.
 	NamespaceScopingEnabled bool
+	// ImageStoreDir enables the uploaded-image store (images.go): empty
+	// disables every /api/v1/images route and /images/ blob serving.
+	ImageStoreDir string
+	// ImageStorePublicURL is the base URL nodes download uploaded images
+	// from; empty means the upload request's own scheme and host.
+	ImageStorePublicURL string
+	// ImageStoreMaxBytes caps one upload; 0 means no limit.
+	ImageStoreMaxBytes int64
 }
 
 // Handler returns the full mux: auth-gated /api/v1/... routes plus, if
@@ -309,6 +317,10 @@ func (s *Server) Handler() http.Handler {
 	// Neither of these two is namespace-scoped: {username} is not
 	// {namespace}, and a password is a per-account credential, not a
 	// per-namespace one.
+	api.HandleFunc("GET /api/v1/images", s.handleListImages)
+	api.HandleFunc("PUT /api/v1/images/{name}", s.handleUploadImage)
+	api.HandleFunc("DELETE /api/v1/images/{name}", s.handleDeleteImage)
+
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
 	api.HandleFunc("POST /api/v1/users/{username}/password", s.handleResetPassword)
 
@@ -329,6 +341,9 @@ func (s *Server) Handler() http.Handler {
 	// gated by the single-use ticket handleConsoleTicket issues instead
 	// (that ticket-issuing call *is* behind the normal auth above).
 	top.HandleFunc("GET /api/v1/machines/{namespace}/{name}/console", s.handleConsole)
+	// Unauthenticated: kairon-node downloads uploaded images by digest and
+	// verifies them itself -- see handleServeImageBlob.
+	top.HandleFunc("GET /images/sha256/{digest}", s.handleServeImageBlob)
 	// The SPA route is intentionally unauthenticated (same as netra's own
 	// serveWeb registration) -- it serves static JS/CSS/HTML, not data;
 	// every actual data fetch the page makes goes through the auth-gated

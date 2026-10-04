@@ -127,6 +127,19 @@ kaironctl backup delete NAME
 `get`, `describe` and `delete` also take `backup` and `backuprestore`. See
 [guides/machine-backup.md](guides/machine-backup.md).
 
+## Images
+
+```bash
+kaironctl image upload FILE [--name NAME] [--format qcow2|raw|ova|vmdk|vhd|vhdx] [--replace]
+kaironctl image list
+kaironctl image delete NAME
+```
+
+`upload` streams a disk image to kairon-ui's image store
+(`ui.imageStore.enabled`) and prints the `spec.image` block to boot it.
+Needs `KAIRON_UI_URL` and an admin `KAIRON_UI_TOKEN` session token. See
+[guides/machine-image-import.md](guides/machine-image-import.md#uploading-images).
+
 ## AI agents (MCP)
 
 ```bash

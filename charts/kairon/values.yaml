@@ -496,6 +496,22 @@ ui:
   # as one cluster-wide counter -- real, documented first-cut limits, not
   # bugs.
   replicaCount: 1
+  # Content-addressed store for images uploaded with `kaironctl image
+  # upload`; nodes download them by digest via spec.image.source.httpURL
+  # (needs node.imageCacheDir). See docs/guides/machine-image-import.md.
+  imageStore:
+    enabled: false
+    # Base URL kairon-node downloads from; default
+    # http://kairon-ui.<namespace>.svc:<ui.service.port>. kairon-node runs
+    # with hostNetwork, so set a node-reachable address if cluster DNS is
+    # not resolvable from the host.
+    publicURL: ""
+    size: 50Gi
+    storageClassName: ""
+    # Use a pre-created claim (required for ui.replicaCount > 1: ReadWriteMany).
+    existingClaim: ""
+    maxBytes: 68719476736  # 64Gi per upload
+    fsGroup: 65532
   image:
     repository: ghcr.io/zyvorai/kairon-ui
     tag: ""  # defaults to .Chart.AppVersion in templates

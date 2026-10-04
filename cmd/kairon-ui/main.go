@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -57,6 +58,9 @@ func run() int {
 	trustedProxyHeader := flag.String("trusted-proxy-header", env("KAIRON_UI_TRUSTED_PROXY_HEADER", ""), "header (e.g. X-Forwarded-For) to read the real client address from for rate limiting, instead of the immediate TCP peer -- only trusted from a peer matching -trusted-proxy-cidrs; empty (the default) is unchanged behavior")
 	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", env("KAIRON_UI_TRUSTED_PROXY_CIDRS", ""), "comma-separated CIDRs (e.g. your Ingress/load-balancer's pod or node network) that -trusted-proxy-header is ever trusted from; required alongside it, otherwise any direct client could spoof that header")
 	namespaceScopingEnabled := flag.Bool("namespace-scoping-enabled", env("KAIRON_UI_NAMESPACE_SCOPING_ENABLED", "false") == "true", "restrict each non-admin session-token operator to the namespaces listed in their own ui.auth.users[].namespaces entry or reachable via ui.oidc.namespaceGroups; false (the default) is today's unchanged behavior -- every authenticated operator sees and acts on every namespace")
+	imageStoreDir := flag.String("image-store-dir", env("KAIRON_UI_IMAGE_STORE_DIR", ""), "directory for images uploaded with kaironctl image upload; empty disables the image store")
+	imageStorePublicURL := flag.String("image-store-public-url", env("KAIRON_UI_IMAGE_STORE_PUBLIC_URL", ""), "base URL kairon-node downloads uploaded images from (e.g. http://kairon-ui.kairon-system.svc:8082); empty uses the upload request's host")
+	imageStoreMaxBytes := flag.Int64("image-store-max-bytes", envInt64("KAIRON_UI_IMAGE_STORE_MAX_BYTES", 64<<30), "largest accepted upload in bytes (0 = unlimited)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -213,6 +217,9 @@ func run() int {
 		TrustedProxyHeader:      *trustedProxyHeader,
 		TrustedProxyCIDRs:       trustedProxyNets,
 		NamespaceScopingEnabled: *namespaceScopingEnabled,
+		ImageStoreDir:           *imageStoreDir,
+		ImageStorePublicURL:     *imageStorePublicURL,
+		ImageStoreMaxBytes:      *imageStoreMaxBytes,
 	}
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
@@ -334,6 +341,13 @@ func loadNamespaceGroups(raw string) (map[string][]string, error) {
 
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+
+func envInt64(k string, d int64) int64 {
+	if v, err := strconv.ParseInt(os.Getenv(k), 10, 64); err == nil {
 		return v
 	}
 	return d
