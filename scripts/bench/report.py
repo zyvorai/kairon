@@ -38,7 +38,9 @@ def main(paths):
             rows["create to Running, p50"].append(ms(d["running_ms_p50"]))
             rows["create to SSH ready, p50"].append(ms(d["ready_ms_p50"]))
             rows["create to SSH ready, max"].append(ms(d["ready_ms_max"]))
-            rows["host RSS per VM"].append(mib(d["per_vm_kib"]))
+            # Only meaningful once every VM is up and the baseline was clean.
+            per_vm = d["per_vm_kib"] if d["ready"] == d["n"] and (d["per_vm_kib"] or 0) > 0 else None
+            rows["host RSS per VM"].append(mib(per_vm))
             rows["VMs ready"].append(f"{d['ready']}/{d['n']}")
         for k, vals in rows.items():
             print(f"| N={n}: {k} | " + " | ".join(vals) + " |")

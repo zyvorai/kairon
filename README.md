@@ -72,6 +72,7 @@ Every layer you remove is one less thing to patch, one less log to read and one 
 |---|---|---|
 | A VM is | A `Machine`: its own CRD, its own lifecycle | A Pod in disguise (`virt-launcher`) |
 | Pods per running VM | **0** | 1 `virt-launcher` pod each |
+| Measured on one node ([benchmark](docs/benchmarks/kairon-vs-kubevirt.md)) | **63 MiB** idle control plane; 5 VMs to SSH in **25 s** (p50) | 905 MiB; 185 s |
 | Path to KVM | `kairon-node` → FluxVM REST → KVM | `virt-handler` → `virt-launcher` → libvirt → QEMU |
 | Hypervisors | **QEMU, Cloud Hypervisor, Firecracker, FluxVM** | QEMU via libvirt |
 | MicroVMs and warm pools | Firecracker / FluxVM sandboxes, FluxVM warm pools ([24 ms claim measured](https://github.com/zyvorai/fluxvm/tree/main/docs/benchmarks)) | Not a target |

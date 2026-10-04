@@ -6,7 +6,8 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 
 **Proof**
 
-- [ ] Benchmarks vs KubeVirt on identical hardware (create→Running, guest-ready, per-VM overhead, density, migration downtime, control-plane RSS) → `docs/benchmarks/`
+- [x] Benchmarks vs KubeVirt on identical hardware (create→Running, guest-ready, per-VM overhead, density, control-plane RSS) → [`docs/benchmarks/`](docs/benchmarks/kairon-vs-kubevirt.md)
+- [ ] Migration downtime vs KubeVirt (needs a second node)
 - [x] Hardware matrix fails on failure, real guest-agent smoke, `--write-compat`; recovery / source-failure / controller-failover drills
 
 **Storage (Atlas)**
