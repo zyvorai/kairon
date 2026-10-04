@@ -1,5 +1,14 @@
 # Unreleased
 
+## Added
+
+- **VM edge, enforced by FluxVM.** `spec.network.antiSpoof`, `learnIP` and `qos`, and a selecting MachineNetworkPolicy's `allowSNI`, `allowDNS` and `maxIngress*`, are posted to FluxVM as a per-Machine edge and enforced in its TC program (FluxVM dataplane schema 12): anti-spoof drops (`spoof_ip`, `spoof_mac`), DNS and TLS SNI allow lists (`dns_deny`, `sni_deny`), egress and ingress rate limits (`rate_limit`), guest-IP learning from ARP/ND/DHCP (`status.network.edge.guestIPSource`), attributed drops (`kaironctl network drops`), and live-migration conntrack export/restore with an identity check (`status.network.edge.conntrackRestored`, `blackholeWindowMs`). FluxVM persists the edge across its own restarts. See `docs/ebpf-edge.md`.
+
+## Docs
+
+- `docs/ebpf-edge.md` rewritten as the full VM-edge reference: example, fields, name matching, reconcile, status, drop reasons, migration, troubleshooting and limits.
+- Machine networking and network-policy guides, CLI reference and compatibility matrix updated for the VM edge. Netns Machines need `spec.network.mac`.
+
 # Kairon v0.6.0
 
 Production Foundations: the control plane stops hammering etcd and listing the whole cluster every few seconds, schedules against real node capacity, ships a hardened Helm profile, and publishes signed release artifacts with expanded GitHub CI.

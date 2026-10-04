@@ -67,6 +67,9 @@ kaironctl top [machines|nodes] [--selector k=v]
 kaironctl trigger snapshotschedule NAME
 kaironctl network status MACHINE [--flows] [--drop-reasons] [--limit N]
 kaironctl network policies   # same as get networkpolicies
+kaironctl network flows|drop-reasons|drops|stats|effective MACHINE [--limit N]
+kaironctl network identity MACHINE
+kaironctl network capture MACHINE [--seconds 1-30] [--filter EXPR]
 ```
 
 ### Network status
@@ -76,6 +79,22 @@ attach/mode, Cilium ExternalWorkload identity/IP (when `ciliumAttach` is set),
 and any matching `MachineNetworkPolicy` with `spec.cilium.sync`. `--flows` /
 `--drop-reasons` call the existing uiapi pass-through when `KAIRON_UI_URL`
 (and optionally `KAIRON_UI_TOKEN`) is set.
+
+### VM edge
+
+- `kaironctl network drops MACHINE` — drops recorded by FluxVM's VM edge,
+  with Kairon's reason names (`spoof_ip`, `spoof_mac`, `dns_deny`,
+  `sni_deny`, `rate_limit`, `policy_deny`, `default_deny`, `malformed`,
+  `migration`), the policy name, flow and packet count. `--limit`
+  defaults to 10. Needs `KAIRON_UI_URL`.
+- `kaironctl network identity MACHINE` — the Machine's stable edge
+  identity (FNV-1a of namespace and name). Computed locally; no cluster
+  access needed.
+- `kaironctl network capture MACHINE --seconds 15` — builds a capture
+  session (1-30 seconds) and, with `KAIRON_UI_URL` set, posts it to
+  FluxVM. FluxVM records it but does not capture packets yet.
+
+See [ebpf-edge.md](ebpf-edge.md).
 
 ## Migrate / recover / fence / snapshot
 

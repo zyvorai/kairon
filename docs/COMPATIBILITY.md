@@ -45,6 +45,8 @@ the multi-host matrix above.
 | UI overview + machines API | pass | 2026-09-22 | http://80.79.5.173:8082 |
 | Network `effective` (console relay) | pass | 2026-09-22 | Needs matching `KAIRON_NODE_CONSOLE_TOKEN` in both env files; redeploy leaves existing env untouched |
 | Network flows/stats/drops | n/a | 2026-09-22 | `deploy-smoke` uses `network.mode: user` — FluxVM eBPF flow/drop/stats need tap+`dataplaneMode: ebpf` |
+| VM edge, Kairon-scheduled Machine | pass | 2026-10-04 | Host `175.110.122.71` (k3s, FluxVM `cilium` mode, schema 12). Machine `edge-demo` (tap+netns, `dataplaneMode: ebpf`, `antiSpoof`, `learnIP`, `qos`) Running; FluxVM loaded flags, egress 2000 pps, 3 allow-list names and a 100 Mbit `tbf` from Kairon's edge post; `status.network.edge` projected |
+| VM edge enforcement (FluxVM VMs on the same host) | pass | 2026-10-04 | DNS and SNI allow/deny, `spoof_ip` and `spoof_mac` (bridged tap), egress pps `rate_limit`, ingress police drops, learned IP via ARP, live conntrack export (14 entries), and edge + pending conntrack reapplied after FluxVM restart and VM stop/start |
 
 ## Migration matrix
 
@@ -53,7 +55,7 @@ the multi-host matrix above.
 | Create / restart / delete smoke (≤100 VMs scaled down in CI) | not run | — | Multi-host matrix; single-host create/stop/start smoke is green above |
 | Cold migration | not run | — | |
 | Live pre-copy under load | not run | — | |
-| Live + eBPF dataplane | not run | — | Machine with `spec.network.dataplaneMode=ebpf`; set `KAIRON_HW_EBPF_MACHINE` |
+| Live + eBPF dataplane | not run | — | Machine with `spec.network.dataplaneMode=ebpf`; set `KAIRON_HW_EBPF_MACHINE`. Needs two hosts; also exercises the VM-edge conntrack export/restore |
 | Source failure during transfer | not run | — | |
 | Ambiguous commit → `NeedsRecovery` | not run | — | |
 | Controller failover mid-migration | not run | — | |

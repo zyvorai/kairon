@@ -59,11 +59,49 @@ spec:
   cluster-wide Cilium dataplane default, also set `/etc/fluxvm.toml`
   `sandbox.dataplane.mode = "cilium"` on each node (Helm `network.ciliumDataplane`
   documents this; it does not rewrite the TOML itself).
-- `mac` — must be a standard 6-octet Ethernet address (colon- or
+- `mac` — required with `netns: true` (FluxVM fails the create with
+  `netns networking requires an explicit MAC address` otherwise). Must be
+  a standard 6-octet Ethernet address (colon- or
   hyphen-separated hex, like the example above). With
   `webhook.enabled` set, a malformed `mac` is rejected immediately on
   `kubectl apply`/edit instead of only failing once `kairon-node` asks
   FluxVM to attach the NIC -- see [SECURITY.md](https://github.com/zyvorai/kairon/blob/main/SECURITY.md#machine-network-mac-address-admission).
+
+### VM edge: anti-spoof, learn-IP, QoS
+
+```yaml
+spec:
+  network:
+    mode: tap
+    netns: true
+    mac: "52:54:00:12:34:56"
+    dataplaneMode: ebpf
+    antiSpoof: true
+    learnIP: true
+    qos:
+      ingressMbps: 100   # network -> guest
+      egressMbps: 50     # guest -> network
+      ingressPps: 20000
+      egressPps: 2000
+```
+
+- `antiSpoof` — FluxVM drops guest traffic whose source IP (and, on a
+  bridged tap, source MAC) is not the Machine's; drops show up as
+  `spoof_ip` / `spoof_mac` in `kaironctl network drops`.
+- `learnIP` — when Kairon has no guest IP, it uses the address FluxVM
+  learned from the guest's ARP or IPv6 neighbor advertisements, or its
+  DHCP lease (`status.network.edge.guestIPSource`).
+- `qos` — each limit is optional; an explicit `0` is rejected. Egress is
+  enforced in the eBPF program, ingress by qdiscs on the host interface.
+  A selecting MachineNetworkPolicy's `maxIngress*` / `maxEgress*` fill
+  any limit left unset here.
+
+Setting any of these, or `dataplaneMode: ebpf`, makes `kairon-node` post
+the VM edge to FluxVM each tick. That is also what makes a policy's
+`allowSNI` / `allowDNS` take effect for this Machine. FluxVM needs its
+eBPF dataplane and dataplane schema 12. On a netns Machine, MAC
+anti-spoof and ARP learning do not apply; use a bridged tap if you need
+them. Full reference: [ebpf-edge.md](../ebpf-edge.md).
 
 ### Cilium cluster network (ExternalWorkload)
 
@@ -187,6 +225,10 @@ notice and retract one that's no longer current.
 | `status.network.dataplane.schemaVersion` | BPF schema |
 | `status.network.dataplane.policyFingerprint` | Committed policy fingerprint |
 | `status.network.dataplane.policySynced` | Maps match durable policy |
+| `status.network.edge.identity` | Stable VM-edge identity (survives IP changes and migration) |
+| `status.network.edge.antiSpoof` / `policyName` | Edge anti-spoof requested; MachineNetworkPolicy merged into the edge |
+| `status.network.edge.guestIPSource` | `agent`, `arp`, `nd` or `dhcp` |
+| `status.network.edge.conntrackRestored` / `blackholeWindowMs` | Conntrack entries moved by the last live migration, and the gap between export and restore |
 | `status.appliedServiceFabricMemberships` | Ground truth of which `(service, port, guestIP)` backends Kairon has actually registered -- used to prune stale ones, see above |
 
 ## Node readiness
@@ -201,6 +243,12 @@ On live migrate, the source agent quiesces and exports network state; the
 target restores after prepare and resumes after commit. Snapshots travel on
 the mTLS peer session — not in CRD status. Requires a working migration
 adapter for memory transfer; see [migration-adapter.md](../migration-adapter.md).
+
+For Machines with the VM edge, the source also exports FluxVM's live
+conntrack table onto the migration session and the destination restores
+it before resume, so established connections keep flowing. A snapshot
+whose identity does not match the Machine is rejected. See
+[ebpf-edge.md](../ebpf-edge.md#live-migration).
 
 ## Examples
 

@@ -120,6 +120,40 @@ spec:
 | `auditMode` | Log-and-allow instead of drop |
 | `allowIcmp` | Permit ICMP/ICMPv6 through L4 checks |
 | `sampleRate` | Allow-event sampling (0 = off) |
+| `allowSNI` | TLS SNI allow list (`example.com` or `*.example.com`); VM edge only |
+| `allowDNS` | DNS query-name allow list, same syntax; falls back to `allowFqdns` when empty; VM edge only |
+| `maxIngressMbps` / `maxIngressPps` | Network-to-guest limits; VM edge only |
+
+### SNI, DNS and ingress limits (VM edge)
+
+`allowSNI`, `allowDNS` and `maxIngress*` are not part of the FluxVM VM
+policy. `kairon-node` copies them into the per-Machine VM edge, which
+FluxVM enforces in the same TC program:
+
+```yaml
+spec:
+  selector:
+    app: web
+  policy:
+    defaultAllow: true
+    allowSNI: ["example.com", "*.example.com"]
+    allowDNS: ["example.com", "*.example.com"]
+    maxIngressMbps: 100
+```
+
+- They only apply to Machines that request the edge: `antiSpoof`,
+  `learnIP`, `qos`, or `dataplaneMode: ebpf` on `spec.network`.
+  `dataplaneMode: cilium` alone does not.
+- `*.example.com` does not match `example.com`; list both.
+- DNS is checked on queries to port 53 and SNI on TLS ClientHellos to
+  TCP 443. DNS over HTTPS, QUIC and other ports are not inspected; pair
+  the lists with `allowPorts` / `allowCidrs` to close those paths.
+- Denials appear as `dns_deny` / `sni_deny` in `kaironctl network
+  drops`. With `auditMode: true` they are recorded but allowed.
+- When a Machine selects more than one policy, the first one listed is
+  merged into the edge.
+
+Details: [ebpf-edge.md](../ebpf-edge.md).
 
 ### Optional CNP body
 
@@ -314,6 +348,10 @@ as opposed to "what was configured":
   eBPF-observed network flows (allowed and denied).
 - **`GET .../network-stats`** -- real, eBPF-dataplane-derived byte/packet
   counters for the Machine.
+- **`GET .../network-drops?limit=N`** (`kaironctl network drops`) --
+  VM-edge drops named with Kairon's reasons (`spoof_ip`, `dns_deny`,
+  `sni_deny`, `rate_limit`, `policy_deny`, ...), each with the policy
+  name, flow and packet count. See [ebpf-edge.md](../ebpf-edge.md#drops).
 
 These need the console/diagnostics relay (`KAIRON_NODE_CONSOLE_TOKEN` on
 both `kairon-ui` and `kairon-node`). Flows / drops / stats also need

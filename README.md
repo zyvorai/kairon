@@ -165,6 +165,7 @@ kaironctl evacuate worker-1 --wait
 kaironctl network status demo
 kaironctl network flows demo --limit 20
 kaironctl network drop-reasons demo
+kaironctl network drops demo          # VM edge: spoof_ip, dns_deny, sni_deny, rate_limit, ...
 kaironctl network identity demo
 kaironctl network capture demo --seconds 15
 
@@ -174,7 +175,7 @@ helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
 kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 ```
 
-→ [Relocating](docs/guides/relocating-a-machine.md) · [Network fabric](docs/network-fabric.md) · [NeedsRecovery](docs/runbook-migration-failures.md) · [CLI](docs/CLI.md)
+→ [Relocating](docs/guides/relocating-a-machine.md) · [Network fabric](docs/network-fabric.md) · [VM edge](docs/ebpf-edge.md) · [NeedsRecovery](docs/runbook-migration-failures.md) · [CLI](docs/CLI.md)
 
 ---
 
