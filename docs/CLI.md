@@ -69,7 +69,8 @@ kaironctl network status MACHINE [--flows] [--drop-reasons] [--limit N]
 kaironctl network policies   # same as get networkpolicies
 kaironctl network flows|drop-reasons|drops|stats|effective MACHINE [--limit N]
 kaironctl network identity MACHINE
-kaironctl network capture MACHINE [--seconds 1-30] [--filter EXPR]
+kaironctl network capture MACHINE [--seconds 1-30] [--filter EXPR] [--output FILE]
+kaironctl network captures MACHINE
 ```
 
 ### Network status
@@ -90,9 +91,12 @@ and any matching `MachineNetworkPolicy` with `spec.cilium.sync`. `--flows` /
 - `kaironctl network identity MACHINE` — the Machine's stable edge
   identity (FNV-1a of namespace and name). Computed locally; no cluster
   access needed.
-- `kaironctl network capture MACHINE --seconds 15` — builds a capture
-  session (1-30 seconds) and, with `KAIRON_UI_URL` set, posts it to
-  FluxVM. FluxVM records it but does not capture packets yet.
+- `kaironctl network capture MACHINE --seconds 15 [--filter EXPR] [--output FILE]`
+  — starts a tcpdump capture (1-30 seconds) on the Machine's VM edge in
+  FluxVM. With `--output`, waits for it to finish and writes the pcap.
+  Needs `KAIRON_UI_URL`; without it the session is only printed.
+- `kaironctl network captures MACHINE` — capture sessions with their
+  state (`running`, `done`, `failed`, `interrupted`) and packet counts.
 
 See [ebpf-edge.md](ebpf-edge.md).
 

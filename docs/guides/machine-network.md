@@ -59,8 +59,9 @@ spec:
   cluster-wide Cilium dataplane default, also set `/etc/fluxvm.toml`
   `sandbox.dataplane.mode = "cilium"` on each node (Helm `network.ciliumDataplane`
   documents this; it does not rewrite the TOML itself).
-- `mac` — required with `netns: true` (FluxVM fails the create with
-  `netns networking requires an explicit MAC address` otherwise). Must be
+- `mac` — optional. A `netns: true` Machine that omits it gets a stable
+  generated MAC (`52:54:00:` plus three bytes of an FNV-1a hash of
+  namespace and name), which FluxVM requires for netns networking. Must be
   a standard 6-octet Ethernet address (colon- or
   hyphen-separated hex, like the example above). With
   `webhook.enabled` set, a malformed `mac` is rejected immediately on
@@ -97,8 +98,9 @@ spec:
   any limit left unset here.
 
 Setting any of these, or `dataplaneMode: ebpf`, makes `kairon-node` post
-the VM edge to FluxVM each tick. That is also what makes a policy's
-`allowSNI` / `allowDNS` take effect for this Machine. FluxVM needs its
+the VM edge to FluxVM each tick. A `mode: tap` Machine with none of them
+also gets an edge when a selecting MachineNetworkPolicy sets `allowSNI`,
+`allowDNS` or `maxIngress*`. FluxVM needs its
 eBPF dataplane and dataplane schema 12. On a netns Machine, MAC
 anti-spoof and ARP learning do not apply; use a bridged tap if you need
 them. Full reference: [ebpf-edge.md](../ebpf-edge.md).

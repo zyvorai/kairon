@@ -317,7 +317,7 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 		return CreateRequest{}, fmt.Errorf("spec.security.tpm requires the qemu or cloud-hypervisor backend; Machine resolves to backend %q", backend)
 	}
 	tenant := m.Namespace()
-	network := BuildNetworkMap(m.Spec.Network)
+	network := BuildNetworkMap(m.EffectiveNetwork())
 	image := m.Spec.Image.Path
 	if m.Spec.Image.CatalogName != "" {
 		// FluxVM's own CreateVmRequest.image field already accepts a

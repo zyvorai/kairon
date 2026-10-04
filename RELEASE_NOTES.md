@@ -3,11 +3,18 @@
 ## Added
 
 - **VM edge, enforced by FluxVM.** `spec.network.antiSpoof`, `learnIP` and `qos`, and a selecting MachineNetworkPolicy's `allowSNI`, `allowDNS` and `maxIngress*`, are posted to FluxVM as a per-Machine edge and enforced in its TC program (FluxVM dataplane schema 12): anti-spoof drops (`spoof_ip`, `spoof_mac`), DNS and TLS SNI allow lists (`dns_deny`, `sni_deny`), egress and ingress rate limits (`rate_limit`), guest-IP learning from ARP/ND/DHCP (`status.network.edge.guestIPSource`), attributed drops (`kaironctl network drops`), and live-migration conntrack export/restore with an identity check (`status.network.edge.conntrackRestored`, `blackholeWindowMs`). FluxVM persists the edge across its own restarts. See `docs/ebpf-edge.md`.
+- **Policy-only VM edge.** A `mode: tap` Machine selected by a MachineNetworkPolicy with `allowSNI`, `allowDNS` or `maxIngress*` now gets the edge even without Machine edge fields (previously `dataplaneMode: cilium` alone left those policy fields unenforced). Uses the policy list the network reconcile already fetches; no extra API calls.
+- **VM-edge Prometheus metrics.** kairon-node registers and feeds `kairon_net_drops_total{namespace,machine,reason,policy}` from FluxVM's attributed drops, and `kairon_net_conntrack_restored_total` / `kairon_net_migration_blackhole_ms` from migration restores.
+- **Packet capture download.** `kaironctl network capture MACHINE --output FILE` waits for FluxVM's tcpdump capture and writes the pcap; `kaironctl network captures MACHINE` lists sessions. New kairon-ui routes `GET /api/v1/machines/{ns}/{name}/network-capture[/{token}]` relay through kairon-node to FluxVM (needs FluxVM with capture support and `tcpdump` on the node).
+
+## Changed
+
+- **Netns Machines no longer need `spec.network.mac`.** One is generated (`52:54:00:` plus an FNV-1a hash of namespace/name), stable across restarts and migrations.
 
 ## Docs
 
 - `docs/ebpf-edge.md` rewritten as the full VM-edge reference: example, fields, name matching, reconcile, status, drop reasons, migration, troubleshooting and limits.
-- Machine networking and network-policy guides, CLI reference and compatibility matrix updated for the VM edge. Netns Machines need `spec.network.mac`.
+- Machine networking and network-policy guides, CLI reference and compatibility matrix updated for the VM edge. Netns Machines get a generated MAC when `spec.network.mac` is omitted.
 
 # Kairon v0.6.0
 

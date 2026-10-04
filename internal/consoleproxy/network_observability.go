@@ -95,7 +95,56 @@ func (s *Server) handleNetworkDrops(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-// handleNetworkCapture opens a bounded ringbuf tap.
+// handleNetworkCaptures lists capture sessions.
+// GET /v1/vms/{id}/network/capture.
+func (s *Server) handleNetworkCaptures(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	data, err := s.Flux.CaptureSessions(r.Context(), r.PathValue("runtimeID"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("network captures: %v", err), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(data)
+}
+
+// handleNetworkCaptureFile streams a finished capture's pcap, passing on
+// FluxVM's 404 / 409. GET /v1/vms/{id}/network/capture/{token}.
+func (s *Server) handleNetworkCaptureFile(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	resp, err := s.Flux.CaptureFile(r.Context(), r.PathValue("runtimeID"), r.PathValue("token"))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("network capture: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	copyCaptureResponse(w, resp)
+}
+
+// copyCaptureResponse relays a pcap download: 200, 404 and 409 keep their
+// status, anything else becomes 502.
+func copyCaptureResponse(w http.ResponseWriter, resp *http.Response) {
+	status := resp.StatusCode
+	switch status {
+	case http.StatusOK, http.StatusNotFound, http.StatusConflict:
+	default:
+		status = http.StatusBadGateway
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	}
+	w.WriteHeader(status)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// handleNetworkCapture starts a bounded packet capture.
 // POST /v1/vms/{id}/network/capture.
 func (s *Server) handleNetworkCapture(w http.ResponseWriter, r *http.Request) {
 	if !s.checkToken(w, r) {
@@ -111,10 +160,14 @@ func (s *Server) handleNetworkCapture(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid capture session", http.StatusBadRequest)
 		return
 	}
-	if err := s.Flux.StartCapture(r.Context(), r.PathValue("runtimeID"), session); err != nil {
+	data, err := s.Flux.StartCapture(r.Context(), r.PathValue("runtimeID"), session)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("network capture: %v", err), http.StatusBadGateway)
 		return
 	}
+	if len(data) == 0 {
+		data = body
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
+	_, _ = w.Write(data)
 }

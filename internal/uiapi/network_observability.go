@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 )
 
 // relayRawGET is relayToNodeGet's raw-passthrough counterpart -- for a
@@ -145,6 +146,62 @@ func (s *Server) handleNetworkCapture(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
 	defer cancel()
 	s.relayRawPOST(w, ctx, nodeAddr, "network-capture/"+runtimeID, body)
+}
+
+// handleNetworkCaptures lists capture sessions: kairon-ui -> kairon-node -> FluxVM.
+func (s *Server) handleNetworkCaptures(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	nodeAddr, runtimeID, ok := s.requireDiagnosticsAccess(w, r, namespace, name)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
+	defer cancel()
+	s.relayRawGET(w, ctx, nodeAddr, "network-capture/"+runtimeID)
+}
+
+// handleNetworkCaptureFile streams a finished capture's pcap. 404 (unknown
+// token) and 409 (still running) are passed through so a client can poll.
+func (s *Server) handleNetworkCaptureFile(w http.ResponseWriter, r *http.Request) {
+	namespace, name := r.PathValue("namespace"), r.PathValue("name")
+	nodeAddr, runtimeID, ok := s.requireDiagnosticsAccess(w, r, namespace, name)
+	if !ok {
+		return
+	}
+	token := r.PathValue("token")
+	ctx, cancel := context.WithTimeout(r.Context(), execRelayClientTimeout)
+	defer cancel()
+	scheme := "http"
+	transport := http.DefaultTransport
+	if s.ConsoleTLS != nil {
+		scheme = "https"
+		transport = &http.Transport{TLSClientConfig: s.ConsoleTLS}
+	}
+	upstreamURL := fmt.Sprintf("%s://%s:%s/network-capture/%s/%s", scheme, nodeAddr, s.ConsolePort, url.PathEscape(runtimeID), url.PathEscape(token))
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	upstreamReq.Header.Set("Authorization", "Bearer "+s.ConsoleToken)
+	resp, err := (&http.Client{Transport: transport}).Do(upstreamReq)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "connect to node relay: "+err.Error())
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		w.Header().Set("Content-Type", "application/vnd.tcpdump.pcap")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", token+".pcap"))
+		_, _ = io.Copy(w, resp.Body)
+	case http.StatusNotFound:
+		writeError(w, http.StatusNotFound, "capture not found")
+	case http.StatusConflict:
+		writeError(w, http.StatusConflict, "capture is still running")
+	default:
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("node relay returned HTTP %d", resp.StatusCode))
+	}
 }
 
 func (s *Server) relayRawPOST(w http.ResponseWriter, ctx context.Context, nodeAddr, nodePath string, body []byte) {

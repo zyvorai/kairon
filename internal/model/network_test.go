@@ -114,3 +114,32 @@ func TestValidateNetworkQoSAndSNI(t *testing.T) {
 		t.Fatal("expected invalid dns name")
 	}
 }
+
+func TestDefaultMACIsStableAndLocal(t *testing.T) {
+	a := DefaultMAC("demo", "web")
+	if a != DefaultMAC("demo", "web") {
+		t.Fatal("not deterministic")
+	}
+	if a == DefaultMAC("demo", "db") || a == DefaultMAC("other", "web") {
+		t.Fatal("collides across names")
+	}
+	if len(a) != 17 || a[:9] != "52:54:00:" {
+		t.Fatalf("mac %q", a)
+	}
+}
+
+func TestEffectiveNetworkFillsNetnsMAC(t *testing.T) {
+	m := Machine{Metadata: ObjectMeta{Namespace: "demo", Name: "web"}}
+	m.Spec.Network = NetworkSpec{Mode: "tap", NetNS: true}
+	if got := m.EffectiveNetwork().MAC; got != DefaultMAC("demo", "web") {
+		t.Fatalf("netns tap MAC %q", got)
+	}
+	m.Spec.Network.MAC = "52:54:00:aa:bb:cc"
+	if got := m.EffectiveNetwork().MAC; got != "52:54:00:aa:bb:cc" {
+		t.Fatalf("explicit MAC replaced: %q", got)
+	}
+	m.Spec.Network = NetworkSpec{Mode: "tap", Bridge: "virbr0"}
+	if got := m.EffectiveNetwork().MAC; got != "" {
+		t.Fatalf("bridged tap got %q; FluxVM assigns those", got)
+	}
+}

@@ -167,7 +167,7 @@ kaironctl network flows demo --limit 20
 kaironctl network drop-reasons demo
 kaironctl network drops demo          # VM edge: spoof_ip, dns_deny, sni_deny, rate_limit, ...
 kaironctl network identity demo
-kaironctl network capture demo --seconds 15
+kaironctl network capture demo --seconds 15 --output demo.pcap
 
 # Dashboard
 helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \

@@ -51,10 +51,32 @@ func (c *Client) AttributedDrops(ctx context.Context, id string, limit int) (jso
 	return c.do(ctx, http.MethodGet, path, nil)
 }
 
-// StartCapture opens a bounded ringbuf tap. POST /v1/vms/{id}/network/capture.
-func (c *Client) StartCapture(ctx context.Context, id string, session ebpfedge.CaptureSession) error {
-	_, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/network/capture", session)
-	return err
+// StartCapture starts a bounded packet capture and returns FluxVM's view of
+// the session (with its state). POST /v1/vms/{id}/network/capture.
+func (c *Client) StartCapture(ctx context.Context, id string, session ebpfedge.CaptureSession) (json.RawMessage, error) {
+	return c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/network/capture", session)
+}
+
+// CaptureSessions lists a VM's capture sessions with their state.
+// GET /v1/vms/{id}/network/capture.
+func (c *Client) CaptureSessions(ctx context.Context, id string) (json.RawMessage, error) {
+	return c.do(ctx, http.MethodGet, "/v1/vms/"+url.PathEscape(id)+"/network/capture", nil)
+}
+
+// CaptureFile opens a finished capture's pcap. The response is returned as
+// is, error statuses included (409 while running, 404 when unknown), so a
+// relay can pass them on; the caller closes the body.
+// GET /v1/vms/{id}/network/capture/{token}.
+func (c *Client) CaptureFile(ctx context.Context, id, token string) (*http.Response, error) {
+	path := "/v1/vms/" + url.PathEscape(id) + "/network/capture/" + url.PathEscape(token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	return c.HTTP.Do(req)
 }
 
 func itoa(n int) string {

@@ -9,11 +9,73 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/ebpfedge"
 	"github.com/zyvorai/kairon/internal/model"
 )
+
+// edgeDropLimit is how many drop entries one tick reads per Machine.
+const edgeDropLimit = 256
+
+// edgeCache holds the policy list from the last network reconcile, so a
+// Machine that did not ask for the edge can be checked without another list
+// call, and the last drop counts seen per series, so FluxVM's cumulative
+// counters become Prometheus increments.
+type edgeCache struct {
+	mu       sync.Mutex
+	policies []model.MachineNetworkPolicy
+	drops    map[string]uint64
+}
+
+func (c *edgeCache) setPolicies(p []model.MachineNetworkPolicy) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.policies = p
+}
+
+func (c *edgeCache) selecting(m model.Machine) (model.MachineNetworkPolicy, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.policies {
+		if p.Namespace() != m.Namespace() || p.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if policySelectsMachine(p, m) {
+			return p, true
+		}
+	}
+	return model.MachineNetworkPolicy{}, false
+}
+
+// dropDeltas returns how much each series grew since the last call. A series
+// that shrank (FluxVM evicted flow entries, or restarted) counts from zero.
+// Series under prefix that are no longer reported are forgotten.
+func (c *edgeCache) dropDeltas(prefix string, totals map[string]uint64) map[string]uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.drops == nil {
+		c.drops = map[string]uint64{}
+	}
+	for key := range c.drops {
+		if _, ok := totals[key]; !ok && strings.HasPrefix(key, prefix) {
+			delete(c.drops, key)
+		}
+	}
+	out := map[string]uint64{}
+	for key, now := range totals {
+		last := c.drops[key]
+		switch {
+		case now > last:
+			out[key] = now - last
+		case now < last:
+			out[key] = now
+		}
+		c.drops[key] = now
+	}
+	return out
+}
 
 // edgeRequested reports whether this Machine asked for the VM-edge eBPF
 // contract. Empty Machines stay on today's path so a legacy FluxVM is not
@@ -24,6 +86,14 @@ func edgeRequested(m model.Machine) bool {
 		return true
 	}
 	return strings.EqualFold(n.DataplaneMode, "ebpf")
+}
+
+// policyNeedsEdge reports whether a policy sets fields only the VM edge
+// enforces, so selecting it turns the edge on for any tap Machine.
+func policyNeedsEdge(p model.MachineNetworkPolicy) bool {
+	pol := p.Spec.Policy
+	return len(pol.AllowSNI) > 0 || len(pol.AllowDNS) > 0 ||
+		pol.MaxIngressMbps != nil || pol.MaxIngressPps != nil
 }
 
 func mergeSelectingPolicy(spec ebpfedge.EdgeSpec, p model.MachineNetworkPolicy) ebpfedge.EdgeSpec {
@@ -103,13 +173,30 @@ func buildEdgeSpec(m model.Machine, guestIP string) ebpfedge.EdgeSpec {
 // applyEdge posts the compiled document and returns the status fragment.
 // A FluxVM that does not know the endpoint yet is a warning unless the
 // Machine asked to fail closed.
-func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guestIP string) (*model.MachineEdgeStatus, error) {
-	if !edgeRequested(m) || a.Flux == nil || runtimeID == "" {
+// nicMAC is the MAC FluxVM assigned the NIC; anti-spoof uses it when the
+// Machine does not set one.
+func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guestIP, nicMAC string) (*model.MachineEdgeStatus, error) {
+	if a.Flux == nil || runtimeID == "" {
+		return nil, nil
+	}
+	var policy model.MachineNetworkPolicy
+	var selected bool
+	if edgeRequested(m) {
+		policy, selected = a.selectingPolicy(ctx, m)
+	} else if m.Spec.Network.Mode == "tap" {
+		policy, selected = a.edge.selecting(m)
+		if !selected || !policyNeedsEdge(policy) {
+			return nil, nil
+		}
+	} else {
 		return nil, nil
 	}
 	spec := buildEdgeSpec(m, guestIP)
-	if p, ok := a.selectingPolicy(ctx, m); ok {
-		spec = mergeSelectingPolicy(spec, p)
+	if spec.AssignedMAC == "" {
+		spec.AssignedMAC = nicMAC
+	}
+	if selected {
+		spec = mergeSelectingPolicy(spec, policy)
 	}
 	compiled, err := ebpfedge.Compile(spec)
 	if err != nil {
@@ -146,8 +233,52 @@ func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guest
 			return nil, fmt.Errorf("dataplane required but edge apply failed: %w", err)
 		}
 		a.log().Warn("edge apply failed; continuing", "machine", m.Metadata.Name, "error", err)
+		return status, nil
 	}
+	a.observeEdgeDrops(ctx, m, runtimeID)
 	return status, nil
+}
+
+// observeEdgeDrops feeds kairon_net_drops_total from FluxVM's attributed
+// drops. Best effort: a failed read only skips this tick's increment.
+func (a *Agent) observeEdgeDrops(ctx context.Context, m model.Machine, runtimeID string) {
+	rec := a.Metrics.Edge()
+	if rec == nil {
+		return
+	}
+	raw, err := a.Flux.AttributedDrops(ctx, runtimeID, edgeDropLimit)
+	if err != nil {
+		a.log().Debug("edge drops read failed", "machine", m.Metadata.Name, "error", err)
+		return
+	}
+	var body struct {
+		Items []struct {
+			Reason     string `json:"reason"`
+			PolicyName string `json:"policyName"`
+			Direction  string `json:"direction"`
+			SrcIP      string `json:"srcIP"`
+			DstIP      string `json:"dstIP"`
+			Proto      string `json:"proto"`
+			DstPort    uint16 `json:"dstPort"`
+			Packets    uint64 `json:"packets"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return
+	}
+	type series struct{ reason, policy string }
+	totals := map[string]uint64{}
+	labels := map[string]series{}
+	prefix := m.Namespace() + "/" + m.Metadata.Name + "/"
+	for _, it := range body.Items {
+		key := fmt.Sprintf("%s%s|%s|%s|%s|%s|%s|%d", prefix, it.Reason, it.PolicyName, it.Direction, it.SrcIP, it.DstIP, it.Proto, it.DstPort)
+		totals[key] = it.Packets
+		labels[key] = series{it.Reason, it.PolicyName}
+	}
+	for key, delta := range a.edge.dropDeltas(prefix, totals) {
+		l := labels[key]
+		rec.ObserveDrops(m.Namespace(), m.Metadata.Name, l.reason, l.policy, delta)
+	}
 }
 
 func (a *Agent) log() *slog.Logger {

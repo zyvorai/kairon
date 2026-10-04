@@ -49,6 +49,8 @@ type Agent struct {
 	// apiserver call health too. Optional, nil-checked, same convention as
 	// MigrationPeer.
 	Metrics *metrics.Recorder
+	// edge caches the last policy list and drop counts for the VM edge.
+	edge edgeCache
 	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans.
 	Tracer *oteltrace.Tracer
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block

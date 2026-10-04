@@ -5,6 +5,7 @@ package model
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -390,6 +391,28 @@ func ValidateVmNetworkPolicy(p VmNetworkPolicy) error {
 		return err
 	}
 	return nil
+}
+
+// DefaultMAC is the MAC a Machine gets when its netns tap leaves
+// spec.network.mac empty: QEMU's 52:54:00 prefix plus 24 bits of FNV-1a over
+// namespace and name, so a recreate or migration keeps the same address.
+func DefaultMAC(namespace, name string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(namespace))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(name))
+	v := h.Sum32()
+	return fmt.Sprintf("52:54:00:%02x:%02x:%02x", byte(v>>16), byte(v>>8), byte(v))
+}
+
+// EffectiveNetwork is spec.network as sent to FluxVM: a netns tap without a
+// MAC gets DefaultMAC, since FluxVM cannot create a netns NIC without one.
+func (m Machine) EffectiveNetwork() NetworkSpec {
+	n := m.Spec.Network
+	if n.Mode == "tap" && n.NetNS && n.MAC == "" {
+		n.MAC = DefaultMAC(m.Namespace(), m.Metadata.Name)
+	}
+	return n
 }
 
 // ValidateNetworkQoS rejects an explicit zero bucket.

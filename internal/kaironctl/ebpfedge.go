@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -56,13 +57,17 @@ the guest IP changes, so MachineNetworkPolicy survives live migration.`,
 
 func newNetworkCaptureCmd(opts *Options) *cobra.Command {
 	var seconds int
-	var filter string
+	var filter, output string
 	cmd := &cobra.Command{
 		Use:   "capture MACHINE",
-		Short: "Build a bounded eBPF capture request (max 30s)",
-		Long: `Prints the capture session Kairon would hand to FluxVM. The ringbuf
-is opened by the dataplane, not by this process. Seconds above 30 are rejected.`,
-		Args: cobra.ExactArgs(1),
+		Short: "Capture packets on a Machine's VM edge (max 30s)",
+		Long: `Asks FluxVM to run a bounded packet capture (tcpdump) on the Machine's
+dataplane interface. Needs KAIRON_UI_URL (and KAIRON_UI_TOKEN when kairon-ui
+requires one); without it the session is only printed. With --output, waits
+for the capture to finish and writes the pcap there. Seconds above 30 are
+rejected.`,
+		Example: `  kaironctl network capture web --seconds 10 --filter "udp port 53" --output dns.pcap`,
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ns := opts.Namespace
 			if ns == "" {
@@ -77,43 +82,106 @@ is opened by the dataplane, not by this process. Seconds above 30 are rejected.`
 			if session.Filter != "" {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "filter %s\n", session.Filter)
 			}
-			if err := postCapture(cmd.Context(), ns, args[0], session); err != nil {
+			posted, err := postCapture(cmd.Context(), ns, args[0], session)
+			if err != nil {
 				return err
 			}
+			if output == "" {
+				return nil
+			}
+			if !posted {
+				return fmt.Errorf("--output needs KAIRON_UI_URL")
+			}
+			n, err := downloadCapture(cmd.Context(), ns, args[0], session, output)
+			if err != nil {
+				return err
+			}
+			style.Log(style.EmojiOK, "wrote %d bytes to %s", n, output)
 			return nil
 		},
 	}
 	cmd.Flags().IntVar(&seconds, "seconds", 15, "capture length, 1-30")
-	cmd.Flags().StringVar(&filter, "filter", "", "optional tcpdump-style filter passed to FluxVM")
+	cmd.Flags().StringVar(&filter, "filter", "", "optional tcpdump filter expression")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "wait for the capture and write the pcap to this file")
 	return cmd
 }
 
-func postCapture(ctx context.Context, namespace, machine string, session ebpfedge.CaptureSession) error {
+func uiRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
-	if base == "" {
-		return nil
-	}
-	body, err := json.Marshal(session)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/api/v1/machines/%s/%s/network-capture", base, namespace, machine)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Content-Type", "application/json")
 	if token := os.Getenv("KAIRON_UI_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	return http.DefaultClient.Do(req)
+}
+
+// postCapture reports whether the session was sent; without KAIRON_UI_URL
+// it is only printed.
+func postCapture(ctx context.Context, namespace, machine string, session ebpfedge.CaptureSession) (bool, error) {
+	if strings.TrimSpace(os.Getenv("KAIRON_UI_URL")) == "" {
+		return false, nil
+	}
+	body, err := json.Marshal(session)
 	if err != nil {
-		return err
+		return false, err
+	}
+	resp, err := uiRequest(ctx, http.MethodPost, fmt.Sprintf("/api/v1/machines/%s/%s/network-capture", namespace, machine), bytes.NewReader(body))
+	if err != nil {
+		return false, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("capture post: HTTP %d", resp.StatusCode)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return false, fmt.Errorf("capture post: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
-	style.Log(style.EmojiOK, "capture posted")
-	return nil
+	style.Log(style.EmojiOK, "capture started")
+	return true, nil
+}
+
+// downloadCapture waits out the capture, then polls until FluxVM stops
+// answering 409 (still running) and writes the pcap.
+func downloadCapture(ctx context.Context, namespace, machine string, session ebpfedge.CaptureSession, output string) (int64, error) {
+	path := fmt.Sprintf("/api/v1/machines/%s/%s/network-capture/%s", namespace, machine, session.Token)
+	wait := time.Duration(session.Seconds) * time.Second
+	deadline := time.Now().Add(wait + 30*time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(wait):
+		}
+		resp, err := uiRequest(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return 0, err
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			defer func() { _ = resp.Body.Close() }()
+			f, err := os.Create(output)
+			if err != nil {
+				return 0, err
+			}
+			n, err := io.Copy(f, resp.Body)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			return n, err
+		case http.StatusConflict:
+			_ = resp.Body.Close()
+			if time.Now().After(deadline) {
+				return 0, fmt.Errorf("capture %s is still running after %s", session.Token, wait+30*time.Second)
+			}
+			wait = time.Second
+		default:
+			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			return 0, fmt.Errorf("capture download: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		}
+	}
 }

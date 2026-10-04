@@ -20,7 +20,8 @@ FluxVM's side (routes, wire format, BPF maps, host requirements) is in
 | SNI / DNS allow | `allowSNI`, `allowDNS` (or `allowFqdns`) on the selecting MachineNetworkPolicy | `POST …/network/edge` |
 | Attributed drops | `kaironctl network drops` | `GET /v1/vms/{id}/network/drops` |
 | Conntrack move | migration session `conntrackSnapshot` | `GET` / `POST /v1/vms/{id}/network/conntrack` |
-| Capture request | `kaironctl network capture` | `POST /v1/vms/{id}/network/capture` (max 30s) |
+| Packet capture | `kaironctl network capture [--output FILE]`, `kaironctl network captures` | `POST` / `GET /v1/vms/{id}/network/capture`, `GET …/capture/{token}` (max 30s) |
+| Metrics | kairon-node `/metrics` | `kairon_net_drops_total`, `kairon_net_conntrack_restored_total`, `kairon_net_migration_blackhole_ms` |
 
 ## Requirements
 
@@ -29,7 +30,9 @@ FluxVM's side (routes, wire format, BPF maps, host requirements) is in
   In `legacy` mode FluxVM rejects an edge that enforces anything.
 - A `mode: tap` Machine. `user` and `macvtap` networking have no edge
   hook.
-- A netns Machine (`netns: true`) must set `spec.network.mac`.
+- A netns Machine (`netns: true`) without `spec.network.mac` gets a stable
+  generated one: `52:54:00:` followed by three bytes of an FNV-1a hash of
+  namespace and name. It stays the same across restarts and migrations.
 - On AppArmor hosts, FluxVM's current AppArmor profile; an older
   profile stops every VM from attaching to the eBPF dataplane.
 
@@ -85,17 +88,21 @@ With this, the guest can resolve and open TLS connections to
 | `learnIP` | Fill the guest IP from what the guest announces (ARP, IPv6 ND) when Kairon has no address for it. |
 | `qos.egressMbps`, `qos.egressPps` | Guest-to-network limits, enforced in the TC program. |
 | `qos.ingressMbps`, `qos.ingressPps` | Network-to-guest limits, enforced by qdiscs on the host interface. |
-| `mac` | The MAC anti-spoof expects. Required for netns Machines. |
+| `mac` | The MAC anti-spoof expects. Generated for a netns Machine that omits it. |
 | `dataplaneMode: ebpf` | Requests the eBPF dataplane and turns the edge on even with no other edge field. |
 | `dataplaneRequired` | Fail the Machine if the edge post fails, instead of logging a warning. |
 
 QoS fields are pointers: absent means no limit, and an explicit `0` is
 rejected.
 
-The edge is posted only when the Machine sets `antiSpoof`, `learnIP`,
-`qos`, or `dataplaneMode: ebpf`. A Machine with `dataplaneMode: cilium`
-and none of the others gets no edge, so a policy's `allowSNI` /
-`allowDNS` do not apply to it.
+The edge is posted when the Machine sets `antiSpoof`, `learnIP`, `qos`,
+or `dataplaneMode: ebpf`, or when it is a `mode: tap` Machine selected by
+a MachineNetworkPolicy that sets `allowSNI`, `allowDNS`,
+`maxIngressMbps` or `maxIngressPps`. So a policy's allow lists also apply
+to a Machine with no edge fields, including `dataplaneMode: cilium`. A
+policy-only edge has `dataplaneRequired` off: if FluxVM rejects it, the
+node logs a warning and the Machine keeps running. The policy list comes
+from the same per-tick fetch the network reconcile already makes.
 
 ## Policy fields
 
@@ -245,11 +252,57 @@ waiting for new connections to be allowed again.
 
 ## Capture
 
-`kaironctl network capture MACHINE --seconds 15 [--filter EXPR]` builds
-a capture session (1-30 seconds, random token) and, when `KAIRON_UI_URL`
-is set, posts it through kairon-ui and the node to FluxVM. FluxVM
-records the session; it does not capture packets yet. Use
-`kaironctl network flows` for packet-level detail.
+```bash
+export KAIRON_UI_URL=http://kairon-ui:22000 KAIRON_UI_TOKEN=...
+kaironctl network capture web --seconds 10 --filter "udp port 53" --output dns.pcap
+kaironctl network captures web
+tcpdump -nr dns.pcap
+```
+
+`capture` builds a session (1-30 seconds, random token) and posts it
+through kairon-ui and the node to FluxVM, which runs `tcpdump` on the
+Machine's dataplane interface inside its network namespace. With
+`--output`, kaironctl waits `seconds`, then polls the download (FluxVM
+answers 409 while the capture runs) and writes the pcap. Without
+`KAIRON_UI_URL` the session is only printed.
+
+FluxVM limits: one capture per Machine at a time, 20,000 packets,
+1,600-byte frames, a filter of at most 512 bytes, and the newest 16
+captures kept. A bad filter fails the request with tcpdump's message.
+`captures` lists each session's `state` (`running`, `done`, `failed`,
+`interrupted`) and packet count. The node host needs `tcpdump`.
+
+| kairon-ui route | Node relay | FluxVM |
+| --- | --- | --- |
+| `POST /api/v1/machines/{ns}/{name}/network-capture` | `POST /network-capture/{runtimeID}` | `POST /v1/vms/{id}/network/capture` |
+| `GET /api/v1/machines/{ns}/{name}/network-capture` | `GET /network-capture/{runtimeID}` | `GET /v1/vms/{id}/network/capture` |
+| `GET /api/v1/machines/{ns}/{name}/network-capture/{token}` | `GET /network-capture/{runtimeID}/{token}` | `GET /v1/vms/{id}/network/capture/{token}` |
+
+All three need diagnostics enabled (`KAIRON_NODE_CONSOLE_TOKEN` set on
+kairon-node and kairon-ui, matching `KAIRON_NODE_CONSOLE_PORT` on the UI
+if the node uses `KAIRON_NODE_CONSOLE_ADDR`); otherwise kairon-ui
+returns 501. 404 and 409 from FluxVM pass through unchanged.
+
+## Metrics
+
+kairon-node registers these on its health address (`--health-addr`,
+`/metrics`):
+
+| Metric | Type | Labels | Source |
+| --- | --- | --- | --- |
+| `kairon_net_drops_total` | counter | `namespace`, `machine`, `reason`, `policy` | FluxVM's attributed drops, read after each edge apply (up to 256 flows). |
+| `kairon_net_conntrack_restored_total` | counter | — | Entries restored on a migration destination. |
+| `kairon_net_migration_blackhole_ms` | histogram | — | Milliseconds between conntrack export and restore. |
+
+Drop counters are per flow in FluxVM; kairon-node adds the increase
+since the last read. A counter that goes down (VM restart or re-attach)
+is counted from zero, and a flow that leaves the top 256 is forgotten.
+`policy` is `-` for drops not tied to a policy (anti-spoof, rate
+limits). `kairon_net_drops_total` has no series until the first drop.
+
+```promql
+sum by (namespace, machine, reason) (rate(kairon_net_drops_total[5m]))
+```
 
 ## CLI
 
@@ -260,9 +313,10 @@ records the session; it does not capture packets yet. Use
 | `kaironctl network drops MACHINE [--limit N]` | Attributed drops. |
 | `kaironctl network drop-reasons MACHINE` | Raw kernel drop reasons. |
 | `kaironctl network flows MACHINE` | Recent flows. |
-| `kaironctl network capture MACHINE` | Builds and posts a capture request. |
+| `kaironctl network capture MACHINE [--output FILE]` | Starts a capture; with `--output`, waits and writes the pcap. |
+| `kaironctl network captures MACHINE` | Capture sessions and their state. |
 
-`drops`, `drop-reasons`, `flows` and `capture` go through kairon-ui:
+`drops`, `drop-reasons`, `flows`, `capture` and `captures` go through kairon-ui:
 set `KAIRON_UI_URL` and, if required, `KAIRON_UI_TOKEN`.
 
 ## Netns Machines
@@ -283,9 +337,12 @@ ARP learning matters.
 
 | Symptom | Check |
 | --- | --- |
-| No `status.network.edge` | The Machine sets none of `antiSpoof`, `learnIP`, `qos`, `dataplaneMode: ebpf`. |
+| No `status.network.edge` | The Machine sets none of `antiSpoof`, `learnIP`, `qos`, `dataplaneMode: ebpf`, and no selecting policy sets `allowSNI`, `allowDNS` or `maxIngress*` (or the Machine is not `mode: tap`). |
 | `edge apply failed; continuing` in kairon-node logs | FluxVM rejected the edge: legacy mode, BPF objects older than schema 12, or an invalid MAC or name. The FluxVM error is in the log line. |
-| Machine fails with `netns networking requires an explicit MAC address` | Set `spec.network.mac`. |
+| Machine fails with `netns networking requires an explicit MAC address` | kairon-node is older than the MAC default; upgrade it or set `spec.network.mac`. |
+| `kaironctl network capture` returns HTTP 501 | Diagnostics are off: set `KAIRON_NODE_CONSOLE_TOKEN` on kairon-node and kairon-ui. |
+| Capture returns 400 `a capture is already running` | One capture per Machine; wait for it. |
+| Capture returns 400 `spawn tcpdump` | Install `tcpdump` on the node, and FluxVM's current AppArmor profile. |
 | `dataplane.attached: false` on every Machine of a node | FluxVM cannot load BPF; on AppArmor hosts, install FluxVM's current profile. |
 | Allowed name is denied | List the apex as well as `*.apex`; check the client does not use DoH or QUIC. |
 | Traffic drops as `spoof_ip` after an IP change | Wait one tick, or check `status.network.guestIP`. |
@@ -296,10 +353,8 @@ FluxVM's `docs/vm-edge-contract.md`.
 
 ## Limits
 
-- No Prometheus metrics yet. `internal/metrics` defines
-  `kairon_net_drops_total`, `kairon_net_conntrack_restored_total` and
-  `kairon_net_migration_blackhole_ms`, but no binary registers them.
-- Capture requests are recorded by FluxVM but no packets are captured.
+- Drop metrics are sampled from FluxVM's top 256 flows on each tick,
+  so a very wide spread of dropped flows is under-counted.
 - Verified on a single host. The conntrack move across two hosts is
   covered by unit tests and FluxVM's restore path, not yet by a two-host
   run.

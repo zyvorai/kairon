@@ -141,9 +141,11 @@ spec:
     maxIngressMbps: 100
 ```
 
-- They only apply to Machines that request the edge: `antiSpoof`,
-  `learnIP`, `qos`, or `dataplaneMode: ebpf` on `spec.network`.
-  `dataplaneMode: cilium` alone does not.
+- They apply to every selected `mode: tap` Machine. Setting any of them
+  turns the VM edge on for that Machine even when its `spec.network` has
+  no edge field (`antiSpoof`, `learnIP`, `qos`, `dataplaneMode: ebpf`),
+  including `dataplaneMode: cilium` Machines. A policy-only edge is
+  best effort: if FluxVM rejects it, the node logs a warning.
 - `*.example.com` does not match `example.com`; list both.
 - DNS is checked on queries to port 53 and SNI on TLS ClientHellos to
   TCP 443. DNS over HTTPS, QUIC and other ports are not inspected; pair

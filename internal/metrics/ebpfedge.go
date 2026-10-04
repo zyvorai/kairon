@@ -48,6 +48,17 @@ func (r *EdgeRecorder) ObserveDrop(namespace, machine, reason, policy string) {
 	r.Drops.WithLabelValues(namespace, machine, reason, policy).Inc()
 }
 
+// ObserveDrops adds n packets to the attributed drop counter.
+func (r *EdgeRecorder) ObserveDrops(namespace, machine, reason, policy string, n uint64) {
+	if r == nil || n == 0 {
+		return
+	}
+	if policy == "" {
+		policy = "-"
+	}
+	r.Drops.WithLabelValues(namespace, machine, reason, policy).Add(float64(n))
+}
+
 // ObserveConntrackRestore records how many entries moved and how long the
 // guest was black-holed.
 func (r *EdgeRecorder) ObserveConntrackRestore(restored int, blackholeMs int64) {

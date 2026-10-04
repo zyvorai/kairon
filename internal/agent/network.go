@@ -41,6 +41,7 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 		}
 		return err
 	}
+	a.edge.setPolicies(policies)
 	machines, err := a.Kube.ListMachines(ctx)
 	if err != nil {
 		return err
@@ -453,7 +454,7 @@ func (a *Agent) projectNetworkStatus(ctx context.Context, m model.Machine, rec *
 			return fmt.Errorf("dataplane required but attach unhealthy (mode=%s attached=%v)", dp.Mode, dp.Attached)
 		}
 	}
-	edge, err := a.applyEdge(ctx, m, rec.ID(), guestIP)
+	edge, err := a.applyEdge(ctx, m, rec.ID(), guestIP, rec.Request.Network.MAC)
 	if err != nil {
 		return err
 	}

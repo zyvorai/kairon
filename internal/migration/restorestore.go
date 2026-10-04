@@ -15,6 +15,8 @@ import (
 type RestoreStore struct {
 	mu   sync.Mutex
 	last map[string]ebpfedge.RestoreResult
+	// Observe, when set, is called with every recorded restore (metrics).
+	Observe func(restored int, blackholeMs int64)
 }
 
 // NewRestoreStore returns an empty store.
@@ -32,11 +34,15 @@ func (s *RestoreStore) Put(namespace, machine string, res ebpfedge.RestoreResult
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.last == nil {
 		s.last = map[string]ebpfedge.RestoreResult{}
 	}
 	s.last[restoreKey(namespace, machine)] = res
+	observe := s.Observe
+	s.mu.Unlock()
+	if observe != nil {
+		observe(res.Restored, res.BlackholeWindowMs)
+	}
 }
 
 // Get returns the last restore for a Machine.

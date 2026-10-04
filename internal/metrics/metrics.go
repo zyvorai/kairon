@@ -82,6 +82,10 @@ type Recorder struct {
 	// MachineSet's rollout status to report here.
 	machineSetStatus *prometheus.GaugeVec
 
+	// VM-edge drops and conntrack restores -- only registered by
+	// NewNodeRecorder, see Edge.
+	edge *EdgeRecorder
+
 	// Reconcile-loop metrics -- registered by NewRecorder and
 	// NewNodeRecorder (kairon-controller/kairon-node both run one), see
 	// ObserveReconcile/ObserveReconcileItemError.
@@ -242,7 +246,17 @@ func NewNodeRecorder() *Recorder {
 		machineResourceUsage: machineResourceUsage,
 	}
 	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.apiRequestDuration, r.machineResourceUsage)
+	r.edge = NewEdgeRecorder(reg)
 	return r
+}
+
+// Edge is the VM-edge metric set, registered by NewNodeRecorder only. Nil on
+// other recorders and on a nil Recorder; EdgeRecorder methods accept nil.
+func (r *Recorder) Edge() *EdgeRecorder {
+	if r == nil {
+		return nil
+	}
+	return r.edge
 }
 
 // NewUIRecorder builds the metric set kairon-ui uses: its own HTTP request

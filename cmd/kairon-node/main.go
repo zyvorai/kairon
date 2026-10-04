@@ -128,6 +128,7 @@ func run() int {
 	}()
 
 	restores := migration.NewRestoreStore()
+	restores.Observe = rec.Edge().ObserveConntrackRestore
 	peer, source, err := configureMigration(ctx, log, cancel, node, fc, *migrationAddr, *migrationCA, *migrationCert, *migrationKey, *migrationServerName, *migrationStateDir, *migrationAdapterSocket, *migrationHeartbeatTTL, restores)
 	if err != nil {
 		log.Error("migration control plane", "error", err)
