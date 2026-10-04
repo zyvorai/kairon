@@ -80,6 +80,7 @@ HELM_SET_FLAGS = [
     "controller.cordonEvacuation.enabled=true",
     "node.livenessLease.enabled=true",
     "node.csi.chap.enabled=true",
+    "node.thirdPartyCSIDrivers.example\\.csi=/run/example.sock",
     "network.ciliumAttach.enabled=true",
     "network.ciliumPolicySync.enabled=true",
     "ui.auth.rbacConsoleCheck=true",

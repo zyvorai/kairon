@@ -69,6 +69,10 @@ func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
 		out, err = kc.GetMachineSnapshot(ctx, ns, name)
 	case "restore", "restores", "machinesnapshotrestores":
 		out, err = kc.GetMachineSnapshotRestore(ctx, ns, name)
+	case "backup", "backups", "machinebackups":
+		out, err = kc.GetMachineBackup(ctx, ns, name)
+	case "backuprestore", "backuprestores", "machinebackuprestores":
+		out, err = kc.GetMachineBackupRestore(ctx, ns, name)
 	case "quota", "quotas", "machinequotas":
 		out, err = kc.GetMachineQuota(ctx, ns, name)
 	case "budget", "budgets", "machinedisruptionbudgets":

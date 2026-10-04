@@ -27,6 +27,7 @@ Read tools are always offered:
 | `machine_volumes` | Each `spec.volumes` entry: source (`pvc`, `atlas-pvc`, `atlas-rbd`), claim, size, Atlas phase, backend id, error | Kubernetes API |
 | `get_machine_snapshot` | A MachineSnapshot's phase and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id) | Kubernetes API |
 | `list_machine_pools` | MachinePools with warm size, ready and claimed counts | Kubernetes API |
+| `list_backups` | MachineBackups and MachineBackupRestores with phase, node, size, quiesce result and Atlas backup ids | Kubernetes API |
 
 Write tools are offered only with `--allow-write`:
 
@@ -40,6 +41,7 @@ Write tools are offered only with `--allow-write`:
 | `release_claim` | Deletes a MachineClaim; its Machine is deleted too unless the claim was made with `retain`. |
 | `machine_disk` | Adds (`attach`, with `claim`) or removes (`detach`) a `spec.disks` entry; kairon-node hot-attaches or unplugs the PVC disk. |
 | `machine_nic` | Adds (`add`, with `bridge`) or removes (`remove`) a `spec.network.extraInterfaces` entry; kairon-node hot-adds or unplugs the NIC. |
+| `machine_backup` | Creates a `MachineBackup` (`create`), a `MachineBackupRestore` into the halted Machine (`restore`, with `backup`), or deletes a backup (`delete`). |
 | `delete_machine` | Deletes a Machine. Refuses MachineSet replicas (the set would recreate them). |
 
 Migrate, exec, and edge or policy changes are not exposed.

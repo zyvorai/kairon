@@ -324,3 +324,49 @@ func TestMCPHotplugTools(t *testing.T) {
 		t.Fatalf("patches = %v", patches)
 	}
 }
+
+func TestMCPBackupTools(t *testing.T) {
+	var created []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const base = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/"
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && (r.URL.Path == base+"machinebackups" || r.URL.Path == base+"machinebackuprestores"):
+			b, _ := io.ReadAll(r.Body)
+			created = append(created, string(b))
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && r.URL.Path == base+"machinebackups":
+			_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"nightly"},"spec":{"machineName":"web"},"status":{"phase":"Succeeded","message":"","disk":{"phase":"Succeeded","message":"","quiesced":true}}}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == base+"machinebackuprestores":
+			_, _ = io.WriteString(w, `{"items":[]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == base+"machinebackups/nightly":
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got := callMCP(t, true, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"machine_backup","arguments":{"name":"web","action":"create","backup":"nightly","quiesce":"required","atlas":true}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_backups","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"machine_backup","arguments":{"name":"web","action":"restore"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"machine_backup","arguments":{"name":"web","action":"restore","backup":"nightly"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"machine_backup","arguments":{"name":"web","action":"delete","backup":"nightly"}}}`,
+	)
+	if !strings.Contains(got["1"], "machinebackup default/nightly created") || !strings.Contains(got["2"], `"quiesced": true`) {
+		t.Fatalf("create/list: %q / %q", got["1"], got["2"])
+	}
+	if !strings.HasPrefix(got["3"], "tool-error: backup is required") || !strings.Contains(got["4"], "once machine web is halted") || !strings.Contains(got["5"], "deleted") {
+		t.Fatalf("restore/delete: %q / %q / %q", got["3"], got["4"], got["5"])
+	}
+	sort.Strings(created) // MachineBackup sorts before MachineBackupRestore by kind
+	if len(created) != 2 ||
+		!strings.Contains(created[0], `"quiesce":"required"`) || !strings.Contains(created[0], `"atlas":{}`) ||
+		!strings.Contains(created[1], `"backupName":"nightly"`) || !strings.Contains(created[1], `"machineName":"web"`) {
+		t.Fatalf("created = %v", created)
+	}
+}

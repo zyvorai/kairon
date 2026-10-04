@@ -60,6 +60,10 @@ func canonicalKind(kind string) (string, error) {
 		return "snapshot", nil
 	case "restore", "restores", "machinesnapshotrestores":
 		return "restore", nil
+	case "backup", "backups", "machinebackups":
+		return "backup", nil
+	case "backuprestore", "backuprestores", "machinebackuprestores":
+		return "backuprestore", nil
 	case "quota", "quotas", "machinequotas":
 		return "quota", nil
 	case "budget", "budgets", "machinedisruptionbudgets":
@@ -102,6 +106,10 @@ func deleteByKindName(ctx context.Context, kc *kube.Client, ns, kind, name strin
 		return canonical, kc.DeleteMachineSnapshot(ctx, ns, name)
 	case "restore":
 		return canonical, kc.DeleteMachineSnapshotRestore(ctx, ns, name)
+	case "backup":
+		return canonical, kc.DeleteMachineBackup(ctx, ns, name)
+	case "backuprestore":
+		return canonical, kc.DeleteMachineBackupRestore(ctx, ns, name)
 	case "quota":
 		return canonical, kc.DeleteMachineQuota(ctx, ns, name)
 	case "budget":
@@ -176,6 +184,22 @@ func matchingNames(ctx context.Context, kc *kube.Client, ns, kind string, select
 		}
 	case "restore", "restores", "machinesnapshotrestores":
 		items, err := kc.ListMachineSnapshotRestoresNamespace(ctx, ns)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			names = appendIfMatch(names, it.Metadata.Name, it.Metadata.Labels, selector)
+		}
+	case "backup", "backups", "machinebackups":
+		items, err := kc.ListMachineBackupsNamespace(ctx, ns)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			names = appendIfMatch(names, it.Metadata.Name, it.Metadata.Labels, selector)
+		}
+	case "backuprestore", "backuprestores", "machinebackuprestores":
+		items, err := kc.ListMachineBackupRestoresNamespace(ctx, ns)
 		if err != nil {
 			return nil, err
 		}

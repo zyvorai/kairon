@@ -5,6 +5,241 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  name: machinebackuprestores.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinebackuprestores
+    singular: machinebackuprestore
+    kind: MachineBackupRestore
+    shortNames:
+    - kmbr
+  versions:
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources: &subresources
+      status: {}
+    additionalPrinterColumns: &columns
+    - name: Backup
+      type: string
+      jsonPath: .spec.backupName
+    - name: Machine
+      type: string
+      jsonPath: .status.machineName
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema: &schema
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - backupName
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: a MachineBackupRestore is immutable; create a new one
+            properties:
+              backupName:
+                type: string
+                minLength: 1
+              machineName:
+                type: string
+              storageClassName:
+                type: string
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+              message:
+                type: string
+              nodeName:
+                type: string
+              machineName:
+                type: string
+              completionTime:
+                type: string
+                format: date-time
+              disk:
+                type: object
+                properties:
+                  phase:
+                    type: string
+                  message:
+                    type: string
+                  name:
+                    type: string
+                  sizeBytes:
+                    type: integer
+                  quiesced:
+                    type: boolean
+                  disks:
+                    type: array
+                    items:
+                      type: string
+              volumes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    volumeName:
+                      type: string
+                    phase:
+                      type: string
+                    message:
+                      type: string
+                    atlasJobID:
+                      type: string
+                    atlasBackupID:
+                      type: string
+                    atlasVolumeID:
+                      type: string
+                    claimName:
+                      type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinebackups.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinebackups
+    singular: machinebackup
+    kind: MachineBackup
+    shortNames:
+    - kmb
+  versions:
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources: &subresources
+      status: {}
+    additionalPrinterColumns: &columns
+    - name: Machine
+      type: string
+      jsonPath: .spec.machineName
+    - name: Node
+      type: string
+      jsonPath: .status.nodeName
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Quiesced
+      type: boolean
+      jsonPath: .status.disk.quiesced
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema: &schema
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - machineName
+            x-kubernetes-validations:
+            - rule: self == oldSelf
+              message: a MachineBackup is immutable; create a new one
+            properties:
+              machineName:
+                type: string
+                minLength: 1
+              quiesce:
+                type: string
+                enum: [auto, required, never]
+              atlas:
+                type: object
+                properties:
+                  bucketID:
+                    type: string
+                  volumeNames:
+                    type: array
+                    items:
+                      type: string
+                  keep:
+                    type: integer
+                    minimum: 0
+                  maxAgeSeconds:
+                    type: integer
+                    minimum: 0
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+              message:
+                type: string
+              nodeName:
+                type: string
+              completionTime:
+                type: string
+                format: date-time
+              disk:
+                type: object
+                properties:
+                  phase:
+                    type: string
+                  message:
+                    type: string
+                  name:
+                    type: string
+                  sizeBytes:
+                    type: integer
+                  quiesced:
+                    type: boolean
+                  disks:
+                    type: array
+                    items:
+                      type: string
+              volumes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    volumeName:
+                      type: string
+                    phase:
+                      type: string
+                    message:
+                      type: string
+                    atlasJobID:
+                      type: string
+                    atlasBackupID:
+                      type: string
+                    atlasVolumeID:
+                      type: string
+                    claimName:
+                      type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
   name: machineclaims.kairon.zyvor.dev
 spec:
   group: kairon.zyvor.dev

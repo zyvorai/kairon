@@ -62,6 +62,7 @@ func run() int {
 	atlasTokenFile := flag.String("atlas-token-file", os.Getenv("KAIRON_ATLAS_TOKEN_FILE"), "file holding the Atlas bearer token (falls back to KAIRON_ATLAS_TOKEN)")
 	atlasTenant := flag.String("atlas-tenant", envDefault("KAIRON_ATLAS_TENANT", "kairon"), "Atlas tenant_id for volumes Kairon creates")
 	atlasPolicy := flag.String("atlas-default-policy", os.Getenv("KAIRON_ATLAS_DEFAULT_POLICY"), "Atlas policy intent used when spec.volumes[].atlas.policy is empty")
+	atlasBackupBucket := flag.String("atlas-backup-bucket", os.Getenv("KAIRON_ATLAS_BACKUP_BUCKET"), "Atlas S3 bucket id a MachineBackup uses when spec.atlas.bucketID is empty")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -92,6 +93,7 @@ func run() int {
 		log.Error("atlas client", "error", err)
 		return 1
 	}
+	atlasCfg.BackupBucketID = *atlasBackupBucket
 	kc, err := kube.FromEnvironment()
 	if err != nil {
 		log.Error("kubernetes client", "error", err)

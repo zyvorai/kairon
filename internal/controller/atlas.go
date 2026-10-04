@@ -23,6 +23,9 @@ type AtlasConfig struct {
 	Client        *atlas.Client
 	TenantID      string
 	DefaultPolicy string
+	// BackupBucketID is the Atlas S3 bucket a MachineBackup uses when its
+	// spec.atlas.bucketID is empty.
+	BackupBucketID string
 }
 
 func hasAtlasVolumes(m model.Machine) bool {

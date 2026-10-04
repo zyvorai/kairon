@@ -247,6 +247,79 @@ func (c *Client) ImportImage(ctx context.Context, source, name string, repair bo
 	return &out, nil
 }
 
+// backupTimeout bounds a full-disk backup or restore copy.
+const backupTimeout = 2 * time.Hour
+
+// Backup is one entry of FluxVM's backup list or a backup response.
+type Backup struct {
+	Name      string `json:"name"`
+	VMName    string `json:"vm_name"`
+	CreatedAt string `json:"created_at"`
+	SizeBytes int64  `json:"size_bytes"`
+	Quiesced  bool   `json:"quiesced"`
+	Disks     []struct {
+		Name string `json:"name"`
+	} `json:"disks"`
+}
+
+// BackupVM writes the VM's root and FluxVM-owned data disks to FluxVM's
+// backups directory under name. quiesce is auto, required or never.
+func (c *Client) BackupVM(ctx context.Context, id, name, quiesce string) (Backup, error) {
+	hc := *c.HTTP
+	hc.Timeout = backupTimeout
+	data, err := c.doWith(ctx, &hc, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/backup", map[string]any{"name": name, "all_disks": true, "quiesce": quiesce})
+	if err != nil {
+		return Backup{}, err
+	}
+	var out Backup
+	if err := json.Unmarshal(data, &out); err != nil {
+		return Backup{}, fmt.Errorf("decode fluxvm backup response: %w", err)
+	}
+	return out, nil
+}
+
+func (c *Client) ListBackups(ctx context.Context) ([]Backup, error) {
+	data, err := c.do(ctx, http.MethodGet, "/v1/backups", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Items []Backup `json:"items"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode fluxvm backup list: %w", err)
+	}
+	return out.Items, nil
+}
+
+// DeleteBackup deletes a backup; a backup that is already gone is not an
+// error.
+func (c *Client) DeleteBackup(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/v1/backups/"+url.PathEscape(name), nil)
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		return nil
+	}
+	return err
+}
+
+// RestoreBackup copies backup name's disks into the stopped VM id and
+// returns the disks it restored.
+func (c *Client) RestoreBackup(ctx context.Context, id, name string) ([]string, error) {
+	hc := *c.HTTP
+	hc.Timeout = backupTimeout
+	data, err := c.doWith(ctx, &hc, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/restore-backup", map[string]any{"name": name})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Restored []string `json:"restored"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode fluxvm restore response: %w", err)
+	}
+	return out.Restored, nil
+}
+
 func (c *Client) Ready(ctx context.Context) error {
 	_, err := c.do(ctx, http.MethodGet, "/readyz", nil)
 	if err == nil {

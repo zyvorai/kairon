@@ -184,6 +184,9 @@ atlas:
   tenantID: kairon
   # Atlas policy intent used when a volume doesn't set atlas.policy.
   defaultPolicy: ""
+  # Atlas S3 bucket id for MachineBackup spec.atlas when it names none
+  # (docs/guides/machine-backup.md).
+  backupBucketID: ""
   # Existing Secret holding the Atlas JWT; leave name empty when Atlas
   # runs with ATLAS_AUTH_REQUIRED=0.
   tokenSecret:

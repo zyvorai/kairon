@@ -591,6 +591,77 @@ func (c *Client) PatchMachineClaimStatus(ctx context.Context, ns, name string, s
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machineclaims", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+func (c *Client) ListMachineBackups(ctx context.Context) ([]model.MachineBackup, error) {
+	var list model.MachineBackupList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinebackups", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineBackupsNamespace(ctx context.Context, ns string) ([]model.MachineBackup, error) {
+	var list model.MachineBackupList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinebackups"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineBackup(ctx context.Context, ns, name string) (model.MachineBackup, error) {
+	var b model.MachineBackup
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinebackups", name), nil, &b, "")
+	return b, err
+}
+
+func (c *Client) CreateMachineBackup(ctx context.Context, ns string, b model.MachineBackup) (model.MachineBackup, error) {
+	var out model.MachineBackup
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinebackups"), b, &out, "")
+	return out, err
+}
+
+func (c *Client) DeleteMachineBackup(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinebackups", name), nil, nil, "")
+}
+
+func (c *Client) PatchMachineBackup(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinebackups", name), patch, nil, "application/merge-patch+json")
+}
+
+// PatchMachineBackupStatus merge-patches only the given status keys, since
+// the controller and kairon-node each own different ones.
+func (c *Client) PatchMachineBackupStatus(ctx context.Context, ns, name string, status map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinebackups", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineBackupRestores(ctx context.Context) ([]model.MachineBackupRestore, error) {
+	var list model.MachineBackupRestoreList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinebackuprestores", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineBackupRestoresNamespace(ctx context.Context, ns string) ([]model.MachineBackupRestore, error) {
+	var list model.MachineBackupRestoreList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinebackuprestores"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineBackupRestore(ctx context.Context, ns, name string) (model.MachineBackupRestore, error) {
+	var r model.MachineBackupRestore
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinebackuprestores", name), nil, &r, "")
+	return r, err
+}
+
+func (c *Client) CreateMachineBackupRestore(ctx context.Context, ns string, r model.MachineBackupRestore) (model.MachineBackupRestore, error) {
+	var out model.MachineBackupRestore
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinebackuprestores"), r, &out, "")
+	return out, err
+}
+
+func (c *Client) DeleteMachineBackupRestore(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinebackuprestores", name), nil, nil, "")
+}
+
+// PatchMachineBackupRestoreStatus merge-patches only the given status keys.
+func (c *Client) PatchMachineBackupRestoreStatus(ctx context.Context, ns, name string, status map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinebackuprestores", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
 	var list model.MachineInstanceTypeList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")

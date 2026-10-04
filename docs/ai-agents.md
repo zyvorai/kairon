@@ -64,6 +64,8 @@ nor callable.
 | `delete_machine` | `name`, `namespace` | write |
 | `machine_disk` | `name`, `namespace`, `action` (`attach`, `detach`), `disk`, `claim` | write |
 | `machine_nic` | `name`, `namespace`, `action` (`add`, `remove`), `nic`, `bridge`, `mac` | write |
+| `list_backups` | `namespace` | read |
+| `machine_backup` | `name`, `namespace`, `action` (`create`, `restore`, `delete`), `backup`, `quiesce`, `atlas`, `storageClass` | write |
 
 `machine_network` `kind` is one of `network-effective`, `network-stats`,
 `network-flows`, `network-drops`, `network-drop-reasons` or

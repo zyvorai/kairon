@@ -134,6 +134,9 @@ type Agent struct {
 	// into projectNetworkStatus) runs machine-by-machine inside a single
 	// goroutine, never concurrently (see Run's ticker loop below).
 	guestIPCheckedAt map[string]time.Time
+	// backups tracks MachineBackup/MachineBackupRestore disk copies
+	// running in their own goroutines (see backup.go).
+	backups backupJobs
 }
 
 func (a *Agent) Reconcile(ctx context.Context) error {
@@ -172,6 +175,15 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	}
 	if err := a.reconcileNetworkResources(ctx); err != nil {
 		return err
+	}
+	local := make(map[string]model.Machine, len(machines))
+	for _, m := range machines {
+		if m.Spec.NodeName == a.NodeName {
+			local[m.Namespace()+"/"+m.Metadata.Name] = m
+		}
+	}
+	if err := a.reconcileBackups(ctx, local); err != nil {
+		a.Log.Error("machine backup reconcile failed", "error", err)
 	}
 	migSelector := model.MigrationSourceNodeLabelSelector(a.NodeName)
 	migrations, err := a.Kube.ListMachineMigrationsWithSelector(ctx, migSelector)

@@ -118,7 +118,14 @@ kaironctl fence MACHINE --reason REASON
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS] [--volume NAME]...
 kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl volumes MACHINE [-n NS] [-o table|json]
+kaironctl backup create MACHINE [--name NAME] [--quiesce auto|required|never] [--atlas] [--atlas-bucket ID] [--keep N]
+kaironctl backup list
+kaironctl backup restore BACKUP [--machine NAME] [--storage-class NAME]   # Machine must be halted
+kaironctl backup delete NAME
 ```
+
+`get`, `describe` and `delete` also take `backup` and `backuprestore`. See
+[guides/machine-backup.md](guides/machine-backup.md).
 
 ## AI agents (MCP)
 
@@ -131,9 +138,10 @@ kaironctl mcp serve --allow-write   # also power, snapshot, capture
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) and other MCP
 clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
 `machine_network`, `machine_edge_identity`, `machine_volumes`,
-`get_machine_snapshot`, `list_machine_pools`. Write tools, only with `--allow-write`:
+`get_machine_snapshot`, `list_machine_pools`, `list_backups`. Write tools, only with `--allow-write`:
 `set_power_state`, `create_snapshot`, `snapshot_volume`, `network_capture`,
-`claim_machine`, `release_claim`, `delete_machine`, `machine_disk`, `machine_nic`. It
+`claim_machine`, `release_claim`, `delete_machine`, `machine_disk`, `machine_nic`,
+`machine_backup`. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
 other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.

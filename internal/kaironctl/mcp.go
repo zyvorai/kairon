@@ -463,6 +463,100 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
+			Name: "list_backups",
+			Description: "List MachineBackups and MachineBackupRestores in a namespace: phase, node, size, whether the guest " +
+				"was quiesced, Atlas volume backup ids and messages.",
+			Schema: mcp.Object(map[string]any{"namespace": nsProp}),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a machineRef
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					backups, err := kc.ListMachineBackupsNamespace(ctx, ns)
+					if err != nil {
+						return "", err
+					}
+					restores, err := kc.ListMachineBackupRestoresNamespace(ctx, ns)
+					if err != nil && !kube.IsNotFound(err) {
+						return "", err
+					}
+					type item struct {
+						Name    string `json:"name"`
+						Machine string `json:"machine"`
+						Status  any    `json:"status"`
+					}
+					out := map[string][]item{"backups": {}, "restores": {}}
+					for _, b := range backups {
+						out["backups"] = append(out["backups"], item{b.Metadata.Name, b.Spec.MachineName, b.Status})
+					}
+					for _, r := range restores {
+						out["restores"] = append(out["restores"], item{r.Metadata.Name, r.Status.MachineName, r.Status})
+					}
+					return mcp.JSON(out)
+				})
+			},
+		},
+		{
+			Name: "machine_backup",
+			Description: "Back up a Machine (action create): FluxVM copies the disks of an image-booted Machine on its node, " +
+				"freezing guest filesystems through the guest agent; atlas=true also backs up Atlas volumes to S3. " +
+				"action restore copies MachineBackup `backup` back into Machine `name`, which must be halted first " +
+				"(Atlas volumes restore into new volumes). action delete removes MachineBackup `backup` and its FluxVM copy.",
+			Write: true,
+			Schema: refSchema(map[string]any{
+				"action":       mcp.String("create, restore or delete", "create", "restore", "delete"),
+				"backup":       mcp.String("MachineBackup name: optional for create, required for restore and delete"),
+				"quiesce":      mcp.String("guest fsfreeze: auto (default), required or never", "auto", "required", "never"),
+				"atlas":        map[string]any{"type": "boolean", "description": "also back up Atlas volumes to S3 (create only)"},
+				"storageClass": mcp.String("StorageClass for restored Atlas volumes (restore only)"),
+			}, "action"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					machineRef
+					Action       string `json:"action"`
+					Backup       string `json:"backup"`
+					Quiesce      string `json:"quiesce"`
+					Atlas        bool   `json:"atlas"`
+					StorageClass string `json:"storageClass"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Action != "create" && a.Backup == "" {
+					return "", fmt.Errorf("backup is required for %s", a.Action)
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					switch a.Action {
+					case "create":
+						var atlasSpec *model.MachineBackupAtlas
+						if a.Atlas {
+							atlasSpec = &model.MachineBackupAtlas{}
+						}
+						b, err := createBackup(ctx, kc, ns, a.Name, a.Backup, a.Quiesce, atlasSpec)
+						if err != nil {
+							return "", err
+						}
+						return fmt.Sprintf("machinebackup %s/%s created; list_backups shows its progress", ns, b.Metadata.Name), nil
+					case "restore":
+						r, err := createBackupRestore(ctx, kc, ns, a.Backup, "", a.Name, a.StorageClass)
+						if err != nil {
+							return "", err
+						}
+						return fmt.Sprintf("machinebackuprestore %s/%s created; the disk copy starts once machine %s is halted", ns, r.Metadata.Name, a.Name), nil
+					case "delete":
+						if err := kc.DeleteMachineBackup(ctx, ns, a.Backup); err != nil {
+							return "", err
+						}
+						return fmt.Sprintf("machinebackup %s/%s deleted", ns, a.Backup), nil
+					}
+					return "", fmt.Errorf("action must be create, restore or delete")
+				})
+			},
+		},
+		{
 			Name:        "get_machine_snapshot",
 			Description: "Get a MachineSnapshot's phase, readiness and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id).",
 			Schema: mcp.Object(map[string]any{

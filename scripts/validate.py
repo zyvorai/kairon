@@ -50,6 +50,8 @@ try:
         "machineinstancetypes.kairon.zyvor.dev",
         "migrationpolicies.kairon.zyvor.dev",
         "machinesnapshotschedules.kairon.zyvor.dev",
+        "machinebackups.kairon.zyvor.dev",
+        "machinebackuprestores.kairon.zyvor.dev",
     }
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")

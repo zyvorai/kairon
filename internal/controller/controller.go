@@ -204,6 +204,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	if err := c.reconcileMachineBackups(ctx, machineIndex); err != nil {
+		return err
+	}
+
 	machineSets, err := c.Kube.ListMachineSets(ctx)
 	if err != nil && !kube.IsNotFound(err) {
 		return err

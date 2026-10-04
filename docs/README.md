@@ -60,6 +60,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/machine-windows-guests.md`](guides/machine-windows-guests.md) | What Windows guest support covers today (legacy-BIOS + cloudbase-init, and now UEFI Secure Boot/vTPM for Windows 11 given a node-configured OVMF vars template) |
 | [`guides/migration-policies.md`](guides/migration-policies.md) | `MigrationPolicy`: selector-scoped migration bandwidth defaulting and concurrency caps |
 | [`guides/machine-snapshot-quiesce.md`](guides/machine-snapshot-quiesce.md) | Real guest `fsfreeze`/`fsthaw` around `MachineSnapshot`, and the controller↔node coordination protocol behind it |
+| [`guides/machine-backup.md`](guides/machine-backup.md) | Full disk backups with guest fsfreeze (`MachineBackup`) through FluxVM or Atlas S3, and in-place restore (`MachineBackupRestore`) |
 | [`guides/machine-snapshot-restore.md`](guides/machine-snapshot-restore.md) | Restoring a `MachineSnapshot` volume into a new `PersistentVolumeClaim` via the standard CSI `dataSource` flow |
 | [`guides/machine-pause-resume.md`](guides/machine-pause-resume.md) · [`guides/machine-halt.md`](guides/machine-halt.md) | `spec.powerState: Paused`/`Halted`: suspending guest CPUs vs. powering off the VMM process while FluxVM keeps its record |
 | [`guides/machine-hotplug.md`](guides/machine-hotplug.md) | Growing `spec.resources.cpu`/`.memory`, and hot-attaching PVC disks (`spec.disks`) and extra NICs (`spec.network.extraInterfaces`) on a `Running` Machine |

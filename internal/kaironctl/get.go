@@ -73,6 +73,23 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		for _, r := range items {
 			fmt.Printf("%s\t%s\t%s\t%s\n", r.Metadata.Name, r.Spec.SnapshotName, dash(r.Status.RestoredClaimName), style.Phase(os.Stdout, r.Status.Phase))
 		}
+	case "backup", "backups", "machinebackups":
+		items, err := kc.ListMachineBackupsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(b model.MachineBackup) map[string]string { return b.Metadata.Labels })
+		printBackups(items)
+	case "backuprestore", "backuprestores", "machinebackuprestores":
+		items, err := kc.ListMachineBackupRestoresNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(r model.MachineBackupRestore) map[string]string { return r.Metadata.Labels })
+		fmt.Printf("NAME\tBACKUP\tMACHINE\tPHASE\tMESSAGE\n")
+		for _, r := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\n", r.Metadata.Name, r.Spec.BackupName, dash(r.Status.MachineName), style.Phase(os.Stdout, r.Status.Phase), dash(r.Status.Message))
+		}
 	case "quota", "quotas", "machinequotas":
 		items, err := kc.ListMachineQuotasNamespace(ctx, ns)
 		if err != nil {

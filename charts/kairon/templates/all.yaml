@@ -30,7 +30,7 @@ rules:
     resources: ["events"]
     verbs: ["create"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status", "machinesets", "machinesets/status", "machinepools", "machinepools/status", "machineclaims", "machineclaims/status", "migrationpolicies", "migrationpolicies/status"]
+    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinesnapshots", "machinesnapshots/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinequotas", "machinequotas/status", "machinesnapshotrestores", "machinesnapshotrestores/status", "machinesets", "machinesets/status", "machinepools", "machinepools/status", "machineclaims", "machineclaims/status", "migrationpolicies", "migrationpolicies/status", "machinebackups", "machinebackups/status", "machinebackuprestores", "machinebackuprestores/status"]
     verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["kairon.zyvor.dev"]
     # Read-only: MachineInstanceType is pure reference data
@@ -69,6 +69,11 @@ rules:
     # the same way this one was found by hand.
     resources: ["machinesnapshots"]
     verbs: ["create", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # A deleting MachinePool deletes the claims bound to its warm members
+    # (internal/controller/machinepool.go).
+    resources: ["machineclaims"]
+    verbs: ["delete"]
 {{ if .Values.controller.cordonEvacuation.enabled }}
   - apiGroups: ["kairon.zyvor.dev"]
     # cordonEvacuation is the only reason kairon-controller itself ever
@@ -157,7 +162,7 @@ rules:
     resources: ["persistentvolumeclaims", "persistentvolumes"]
     verbs: ["get"]
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status"]
+    resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinebackups", "machinebackups/status", "machinebackuprestores", "machinebackuprestores/status"]
     verbs: ["get", "list", "watch", "patch"]
   # Read-only: internal/agent/hotplug.go's own resize-past-quota self-check
   # (independent of webhook.enabled) needs to list MachineQuotas/Machines
@@ -320,6 +325,8 @@ spec:
               value: {{ .Values.atlas.tenantID | quote }}
             - name: KAIRON_ATLAS_DEFAULT_POLICY
               value: {{ .Values.atlas.defaultPolicy | quote }}
+            - name: KAIRON_ATLAS_BACKUP_BUCKET
+              value: {{ .Values.atlas.backupBucketID | quote }}
 {{ if .Values.atlas.tokenSecret.name }}
             - name: KAIRON_ATLAS_TOKEN
               valueFrom: {secretKeyRef: {name: {{ .Values.atlas.tokenSecret.name | quote }}, key: {{ .Values.atlas.tokenSecret.key | quote }}}}
