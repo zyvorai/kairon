@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -280,33 +281,9 @@ func printPolicyHints(ctx context.Context, kc *kube.Client, m model.Machine) {
 // printObservability fetches flows/drop-reasons via the UI API when
 // KAIRON_UI_URL is set (same pass-through uiapi already exposes).
 func printObservability(ctx context.Context, m model.Machine, kind string, limit int) error {
-	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
-	if base == "" {
-		return fmt.Errorf("set KAIRON_UI_URL to reach uiapi %s pass-through", kind)
-	}
-	token := os.Getenv("KAIRON_UI_TOKEN")
-	if token == "" {
-		token = os.Getenv("KAIRON_CONSOLE_TOKEN")
-	}
-	path := fmt.Sprintf("%s/api/v1/machines/%s/%s/%s", base, m.Namespace(), m.Metadata.Name, kind)
-	if limit > 0 {
-		path += fmt.Sprintf("?limit=%d", limit)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	body, err := fetchObservability(ctx, m.Namespace(), m.Metadata.Name, kind, limit)
 	if err != nil {
 		return err
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	style.Log(style.EmojiInfo, "%s:", kind)
 	var pretty any
@@ -318,4 +295,38 @@ func printObservability(ctx context.Context, m model.Machine, kind string, limit
 	enc.SetIndent("  ", "  ")
 	_ = enc.Encode(pretty)
 	return nil
+}
+
+// fetchObservability GETs a Machine's uiapi pass-through route and
+// returns the body.
+func fetchObservability(ctx context.Context, namespace, name, kind string, limit int) ([]byte, error) {
+	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
+	if base == "" {
+		return nil, fmt.Errorf("set KAIRON_UI_URL to reach uiapi %s pass-through", kind)
+	}
+	token := os.Getenv("KAIRON_UI_TOKEN")
+	if token == "" {
+		token = os.Getenv("KAIRON_CONSOLE_TOKEN")
+	}
+	path := fmt.Sprintf("%s/api/v1/machines/%s/%s/%s", base, url.PathEscape(namespace), url.PathEscape(name), kind)
+	if limit > 0 {
+		path += fmt.Sprintf("?limit=%d", limit)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }

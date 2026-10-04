@@ -7,6 +7,8 @@
 - **VM-edge Prometheus metrics.** kairon-node registers and feeds `kairon_net_drops_total{namespace,machine,reason,policy}` from FluxVM's attributed drops, and `kairon_net_conntrack_restored_total` / `kairon_net_migration_blackhole_ms` from migration restores.
 - **Packet capture download.** `kaironctl network capture MACHINE --output FILE` waits for FluxVM's tcpdump capture and writes the pcap; `kaironctl network captures MACHINE` lists sessions. New kairon-ui routes `GET /api/v1/machines/{ns}/{name}/network-capture[/{token}]` relay through kairon-node to FluxVM (needs FluxVM with capture support and `tcpdump` on the node).
 
+- **MCP server for AI agents.** `kaironctl mcp serve` speaks the Model Context Protocol over stdio, so Hermes Agent and other MCP clients can list and inspect Machines, network policies and VM-edge data (effective policy, stats, flows, drops, captures). `--allow-write` adds `set_power_state`, `create_snapshot` and `network_capture`; without it those tools are neither listed nor callable. No new dependencies. See `docs/guides/hermes-mcp.md` and `.hermes/config.example.yaml`.
+
 ## Changed
 
 - **Netns Machines no longer need `spec.network.mac`.** One is generated (`52:54:00:` plus an FNV-1a hash of namespace/name), stable across restarts and migrations.

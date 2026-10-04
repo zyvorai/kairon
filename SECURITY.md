@@ -380,6 +380,26 @@ sessions and `GET .../network-capture/{token}` downloads the pcap
   kairon-node and kairon-ui); otherwise 501. Calling FluxVM directly
   requires its admin role.
 
+## MCP server for AI agents (`kaironctl mcp serve`)
+
+- **No new privilege.** It runs as a local subprocess of the agent and
+  acts with whatever `KAIRON_KUBE_*` and `KAIRON_UI_TOKEN` credentials it
+  is given; there is no listener and no Kairon-side identity. Scope those
+  credentials (a Kubernetes Role with only the verbs the agent should
+  have, a non-admin kairon-ui account) rather than relying on the tool
+  list.
+- **Writes are opt-in.** Without `--allow-write`, the power, snapshot and
+  capture tools are neither listed nor callable. Delete, migrate, exec,
+  and edge or policy changes are not exposed at all.
+- **Prompt injection.** Tool results include data a guest or tenant can
+  influence (Machine messages, flow and drop records, console-derived
+  status). An agent that reads them and also has write tools can be
+  steered; keep agents that process untrusted Machines read-only.
+- **Local file writes.** `network_capture` with `output` writes a pcap to
+  that path with the server process's permissions.
+- Tokens come from the environment and are never included in tool
+  results; tool output is capped at 64 KB.
+
 ## Network observability (`.../network-effective`, `.../network-stats`, `.../network-flows`, `.../network-drop-reasons`)
 
 Four read-only network troubleshooting endpoints (`internal/uiapi/network_observability.go`):

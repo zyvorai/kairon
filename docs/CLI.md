@@ -112,6 +112,21 @@ kaironctl snapshot MACHINE [--name NAME] [--class CLASS]
 kaironctl restore SNAPSHOT --target-claim NAME
 ```
 
+## AI agents (MCP)
+
+```bash
+kaironctl mcp serve                 # read tools only
+kaironctl mcp serve --allow-write   # also power, snapshot, capture
+```
+
+`kaironctl mcp serve` is a Model Context Protocol server on stdin/stdout for
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) and other MCP
+clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
+`machine_network`, `machine_edge_identity`. Write tools, only with
+`--allow-write`: `set_power_state`, `create_snapshot`, `network_capture`. It
+uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
+network data. See [guides/hermes-mcp.md](guides/hermes-mcp.md).
+
 ## Meta
 
 ```text

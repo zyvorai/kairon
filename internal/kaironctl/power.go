@@ -15,8 +15,12 @@ func cmdPower(ctx context.Context, kc *kube.Client, args []string, state string)
 	if len(args) != 1 {
 		fatal(fmt.Errorf("command requires NAME"))
 	}
-	if err := kc.PatchMachine(ctx, ns, args[0], map[string]any{"spec": map[string]any{"powerState": state}}); err != nil {
+	if err := setPowerState(ctx, kc, ns, args[0], state); err != nil {
 		fatal(err)
 	}
 	okf("machine/%s -> %s", args[0], state)
+}
+
+func setPowerState(ctx context.Context, kc *kube.Client, namespace, name, state string) error {
+	return kc.PatchMachine(ctx, namespace, name, map[string]any{"spec": map[string]any{"powerState": state}})
 }

@@ -24,19 +24,25 @@ func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	name := fs.String("name", "", "MachineSnapshot name")
 	class := fs.String("class", "", "VolumeSnapshotClass name")
 	_ = fs.Parse(args[1:])
-	if *name == "" {
-		*name = resourceName(machine + "-" + time.Now().UTC().Format("20060102-150405"))
-	}
-	snapshot := model.MachineSnapshot{
-		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshot},
-		Metadata: model.ObjectMeta{Name: *name, Namespace: *ns},
-		Spec:     model.MachineSnapshotSpec{MachineName: machine, VolumeSnapshotClassName: *class},
-	}
-	out, err := kc.CreateMachineSnapshot(ctx, *ns, snapshot)
+	out, err := createSnapshot(ctx, kc, *ns, machine, *name, *class)
 	if err != nil {
 		fatal(err)
 	}
 	okf("machinesnapshot/%s created", out.Metadata.Name)
+}
+
+// createSnapshot creates a MachineSnapshot; an empty name is generated
+// from the Machine name and the current time.
+func createSnapshot(ctx context.Context, kc *kube.Client, namespace, machine, name, class string) (model.MachineSnapshot, error) {
+	if name == "" {
+		name = resourceName(machine + "-" + time.Now().UTC().Format("20060102-150405"))
+	}
+	snapshot := model.MachineSnapshot{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachineSnapshot},
+		Metadata: model.ObjectMeta{Name: name, Namespace: namespace},
+		Spec:     model.MachineSnapshotSpec{MachineName: machine, VolumeSnapshotClassName: class},
+	}
+	return kc.CreateMachineSnapshot(ctx, namespace, snapshot)
 }
 
 func cmdRestore(ctx context.Context, kc *kube.Client, args []string) {
