@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -200,6 +201,71 @@ func TestMCPVolumeTools(t *testing.T) {
 	list := callMCP(t, false, srv.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)["1"]
 	if strings.Contains(list, "snapshot_volume") || !strings.Contains(list, "machine_volumes") {
 		t.Fatalf("snapshot_volume must be write-gated: %s", list)
+	}
+}
+
+func TestMCPPoolTools(t *testing.T) {
+	var claimed, deleted []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinepools":
+			_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"agents"},"spec":{"replicas":4},"status":{"readyReplicas":3,"claimed":2}}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims":
+			b, _ := io.ReadAll(r.Body)
+			claimed = append(claimed, string(b))
+			_, _ = w.Write(b)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims/job-1":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"job-1"},"spec":{"poolName":"agents"},"status":{"phase":"Bound","machineName":"agents-ab12","bindMillis":180}}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims/job-1":
+			deleted = append(deleted, "claim/job-1")
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web-x":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"web-x","labels":{"kairon.zyvor.dev/machineset":"web"}}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/solo":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"solo"}}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/solo":
+			deleted = append(deleted, "machine/solo")
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got := callMCP(t, true, srv.URL,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_machine_pools","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"claim_machine","arguments":{"pool":"agents","name":"job-1","labels":{"team":"ml"},"retain":true,"waitSeconds":5}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"release_claim","arguments":{"name":"job-1"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"delete_machine","arguments":{"name":"web-x"}}}`,
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"delete_machine","arguments":{"name":"solo"}}}`,
+	)
+	if !strings.Contains(got["1"], `"ready": 3`) || !strings.Contains(got["1"], `"claimed": 2`) {
+		t.Fatalf("list_machine_pools: %s", got["1"])
+	}
+	if !strings.Contains(got["2"], `"machine": "agents-ab12"`) || len(claimed) != 1 ||
+		!strings.Contains(claimed[0], `"poolName":"agents"`) || !strings.Contains(claimed[0], `"reclaimPolicy":"Retain"`) || !strings.Contains(claimed[0], `"team":"ml"`) {
+		t.Fatalf("claim_machine: %s body=%v", got["2"], claimed)
+	}
+	if !strings.HasPrefix(got["4"], "tool-error:") || !strings.Contains(got["4"], "MachineSet web") {
+		t.Fatalf("delete_machine on a MachineSet replica must refuse: %s", got["4"])
+	}
+	sort.Strings(deleted)
+	if strings.Join(deleted, ",") != "claim/job-1,machine/solo" {
+		t.Fatalf("deleted = %v", deleted)
+	}
+
+	list := callMCP(t, false, srv.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)["1"]
+	for _, w := range []string{"claim_machine", "release_claim", "delete_machine"} {
+		if strings.Contains(list, w) {
+			t.Fatalf("%s must be write-gated", w)
+		}
+	}
+	if !strings.Contains(list, "list_machine_pools") {
+		t.Fatalf("list_machine_pools missing: %s", list)
 	}
 }
 

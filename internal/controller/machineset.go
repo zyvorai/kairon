@@ -195,6 +195,7 @@ func (c *Controller) reconcileMachineSet(ctx context.Context, ms model.MachineSe
 		Replicas:        len(owned),
 		ReadyReplicas:   readyCurrent,
 		UpdatedReplicas: len(current),
+		Selector:        model.LabelMachineSet + "=" + ms.Metadata.Name,
 	}
 
 	// Added once, before any owned Machine is ever created -- guarantees

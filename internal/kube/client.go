@@ -519,6 +519,78 @@ func (c *Client) PatchMachineSet(ctx context.Context, ns, name string, patch map
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesets", name), patch, nil, "application/merge-patch+json")
 }
 
+func (c *Client) ListMachinePools(ctx context.Context) ([]model.MachinePool, error) {
+	var list model.MachinePoolList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinepools", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachinePoolsNamespace(ctx context.Context, ns string) ([]model.MachinePool, error) {
+	var list model.MachinePoolList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machinepools"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachinePool(ctx context.Context, ns, name string) (model.MachinePool, error) {
+	var p model.MachinePool
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machinepools", name), nil, &p, "")
+	return p, err
+}
+
+func (c *Client) CreateMachinePool(ctx context.Context, ns string, p model.MachinePool) (model.MachinePool, error) {
+	var out model.MachinePool
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machinepools"), p, &out, "")
+	return out, err
+}
+
+func (c *Client) DeleteMachinePool(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machinepools", name), nil, nil, "")
+}
+
+func (c *Client) PatchMachinePool(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinepools", name), patch, nil, "application/merge-patch+json")
+}
+
+func (c *Client) PatchMachinePoolStatus(ctx context.Context, ns, name string, status model.MachinePoolStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinepools", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
+func (c *Client) ListMachineClaims(ctx context.Context) ([]model.MachineClaim, error) {
+	var list model.MachineClaimList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineclaims", nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) ListMachineClaimsNamespace(ctx context.Context, ns string) ([]model.MachineClaim, error) {
+	var list model.MachineClaimList
+	err := c.request(ctx, http.MethodGet, namespacePath(ns, "machineclaims"), nil, &list, "")
+	return list.Items, err
+}
+
+func (c *Client) GetMachineClaim(ctx context.Context, ns, name string) (model.MachineClaim, error) {
+	var mc model.MachineClaim
+	err := c.request(ctx, http.MethodGet, namespacedObjectPath(ns, "machineclaims", name), nil, &mc, "")
+	return mc, err
+}
+
+func (c *Client) CreateMachineClaim(ctx context.Context, ns string, mc model.MachineClaim) (model.MachineClaim, error) {
+	var out model.MachineClaim
+	err := c.request(ctx, http.MethodPost, namespacePath(ns, "machineclaims"), mc, &out, "")
+	return out, err
+}
+
+func (c *Client) DeleteMachineClaim(ctx context.Context, ns, name string) error {
+	return c.request(ctx, http.MethodDelete, namespacedObjectPath(ns, "machineclaims", name), nil, nil, "")
+}
+
+func (c *Client) PatchMachineClaim(ctx context.Context, ns, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machineclaims", name), patch, nil, "application/merge-patch+json")
+}
+
+func (c *Client) PatchMachineClaimStatus(ctx context.Context, ns, name string, status model.MachineClaimStatus) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machineclaims", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
 	var list model.MachineInstanceTypeList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")

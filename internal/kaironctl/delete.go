@@ -66,6 +66,10 @@ func canonicalKind(kind string) (string, error) {
 		return "budget", nil
 	case "machineset", "machinesets":
 		return "machineset", nil
+	case "machinepool", "machinepools":
+		return "machinepool", nil
+	case "machineclaim", "machineclaims", "claim", "claims":
+		return "machineclaim", nil
 	case "instancetype", "instancetypes", "machineinstancetypes":
 		return "instancetype", nil
 	case "migrationpolicy", "migrationpolicies":
@@ -104,6 +108,10 @@ func deleteByKindName(ctx context.Context, kc *kube.Client, ns, kind, name strin
 		return canonical, kc.DeleteMachineDisruptionBudget(ctx, ns, name)
 	case "machineset":
 		return canonical, kc.DeleteMachineSet(ctx, ns, name)
+	case "machinepool":
+		return canonical, kc.DeleteMachinePool(ctx, ns, name)
+	case "machineclaim":
+		return canonical, kc.DeleteMachineClaim(ctx, ns, name)
 	case "instancetype":
 		return canonical, kc.DeleteMachineInstanceType(ctx, ns, name)
 	case "migrationpolicy":
@@ -192,6 +200,22 @@ func matchingNames(ctx context.Context, kc *kube.Client, ns, kind string, select
 		}
 	case "machineset", "machinesets":
 		items, err := kc.ListMachineSetsNamespace(ctx, ns)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			names = appendIfMatch(names, it.Metadata.Name, it.Metadata.Labels, selector)
+		}
+	case "machinepool", "machinepools":
+		items, err := kc.ListMachinePoolsNamespace(ctx, ns)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			names = appendIfMatch(names, it.Metadata.Name, it.Metadata.Labels, selector)
+		}
+	case "machineclaim", "machineclaims", "claim", "claims":
+		items, err := kc.ListMachineClaimsNamespace(ctx, ns)
 		if err != nil {
 			return nil, err
 		}

@@ -107,6 +107,9 @@ type MachineSetStatus struct {
 	Replicas        int `json:"replicas,omitempty"`
 	ReadyReplicas   int `json:"readyReplicas,omitempty"`
 	UpdatedReplicas int `json:"updatedReplicas,omitempty"`
+	// Selector is the label selector of owned Machines, for the scale
+	// subresource.
+	Selector string `json:"selector,omitempty"`
 	// No omitempty -- this whole status is patched as one object
 	// (internal/kube.Client.PatchMachineSetStatus); under JSON merge-patch
 	// semantics an absent key never clears a previously-set value, so a

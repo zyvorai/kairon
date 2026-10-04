@@ -18,8 +18,12 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(fmt.Errorf("usage: kaironctl scale machineset NAME --replicas N | kaironctl scale machineset --selector k=v --replicas N [--dry-run]"))
 	}
 	kind := strings.ToLower(args[0])
+	if kind == "machinepool" || kind == "machinepools" {
+		cmdScaleMachinePool(ctx, kc, args[1:])
+		return
+	}
 	if kind != "machineset" && kind != "machinesets" {
-		fatal(fmt.Errorf("scale only supports machineset, got %q", kind))
+		fatal(fmt.Errorf("scale supports machineset and machinepool, got %q", kind))
 	}
 	rest := args[1:]
 	if hasFlag(rest, "selector") {
@@ -41,6 +45,25 @@ func cmdScale(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(err)
 	}
 	okf("machineset/%s scaled to %d replicas", name, *replicas)
+}
+
+// cmdScaleMachinePool sets a MachinePool's warm size.
+func cmdScaleMachinePool(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl scale machinepool NAME --replicas N"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("scale", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	replicas := fs.Int("replicas", -1, "warm Machines to keep (required)")
+	_ = fs.Parse(args[1:])
+	if *replicas < 0 {
+		fatal(fmt.Errorf("--replicas N is required"))
+	}
+	if err := kc.PatchMachinePool(ctx, *ns, name, map[string]any{"spec": map[string]any{"replicas": *replicas}}); err != nil {
+		fatal(err)
+	}
+	okf("machinepool/%s scaled to %d warm replicas", name, *replicas)
 }
 
 // cmdScaleSelector implements `scale machineset --selector k=v [--selector

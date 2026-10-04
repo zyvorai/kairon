@@ -54,10 +54,14 @@ nor callable.
 | `machine_edge_identity` | `name`, `namespace` | read |
 | `machine_volumes` | `name`, `namespace` | read |
 | `get_machine_snapshot` | `name` (snapshot), `namespace` | read |
+| `list_machine_pools` | `namespace` | read |
 | `set_power_state` | `name`, `namespace`, `state` (`Running`, `Stopped`, `Paused`, `Halted`) | write |
 | `create_snapshot` | `name`, `namespace`, `snapshotName`, `class` | write |
 | `snapshot_volume` | `name`, `namespace`, `volume`, `snapshotName`, `class` | write |
 | `network_capture` | `name`, `namespace`, `seconds` (1-30), `filter`, `output` | write |
+| `claim_machine` | `pool`, `namespace`, `name`, `labels`, `retain`, `ttlSeconds`, `waitSeconds` (0-120) | write |
+| `release_claim` | `name` (claim), `namespace` | write |
+| `delete_machine` | `name`, `namespace` | write |
 
 `machine_network` `kind` is one of `network-effective`, `network-stats`,
 `network-flows`, `network-drops`, `network-drop-reasons` or

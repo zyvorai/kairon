@@ -45,6 +45,8 @@ try:
         "machinequotas.kairon.zyvor.dev",
         "machinesnapshotrestores.kairon.zyvor.dev",
         "machinesets.kairon.zyvor.dev",
+        "machinepools.kairon.zyvor.dev",
+        "machineclaims.kairon.zyvor.dev",
         "machineinstancetypes.kairon.zyvor.dev",
         "migrationpolicies.kairon.zyvor.dev",
         "machinesnapshotschedules.kairon.zyvor.dev",

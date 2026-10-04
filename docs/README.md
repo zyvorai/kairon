@@ -52,6 +52,7 @@ The root [README](https://github.com/zyvorai/kairon/blob/main/README.md) is the 
 | [`guides/machine-storage-thirdparty-csi.md`](guides/machine-storage-thirdparty-csi.md) | `node.thirdPartyCSIDrivers`: `kairon-node` as a generic CSI client against an allowlisted third-party driver, including `attachRequired` drivers (VolumeAttachment) and namespace-allowlisted node secrets |
 | [`guides/machine-image-import.md`](guides/machine-image-import.md) | `spec.image.source`: downloading a remote image URL into `kairon-node`'s own digest-keyed cache |
 | [`guides/machine-sets.md`](guides/machine-sets.md) | `MachineSet`: replica reconciliation, `RollingUpdate`/`Recreate` rollout strategy |
+| [`guides/machine-pools.md`](guides/machine-pools.md) | `MachinePool` / `MachineClaim`: warm, pre-booted Machines claimed in one reconcile tick |
 | [`guides/machine-instance-types.md`](guides/machine-instance-types.md) | `MachineInstanceType`: a reusable named CPU/memory shape resolved into `spec.resources` once |
 | [`guides/machine-cpu-numa.md`](guides/machine-cpu-numa.md) | `spec.resources.numaNode`/`.cpuSet`/`.hugepages`: qemu-only NUMA/hugepage passthroughs, and what they don't guarantee (no real host-core pinning) |
 | [`guides/machine-cpu-pinning.md`](guides/machine-cpu-pinning.md) | `spec.resources.cpuPinning`: real exclusive host-core allocation, and the operator-asserted `pinnable-cpus` node label it depends on |

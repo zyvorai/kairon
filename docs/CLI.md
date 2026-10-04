@@ -51,17 +51,19 @@ kaironctl status [--namespace kairon-system] [--wait] [--timeout 5m] [--interact
 ## Resources & power
 
 ```text
-kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v]
+kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|machinepools|machineclaims|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v]
 kaironctl describe [RESOURCE] NAME
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
                  [--ssh-key KEY] [--package PKG] [--runcmd CMD] [--priority N]
-kaironctl create machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME …
+kaironctl create machineset|machinepool|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME …
 kaironctl delete [RESOURCE] NAME
 kaironctl delete RESOURCE --selector k=v [--dry-run]
 kaironctl edit [machine|machineset|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME …
 kaironctl scale machineset NAME --replicas N
 kaironctl scale machineset --selector k=v --replicas N
+kaironctl scale machinepool NAME --replicas N
+kaironctl claim POOL [NAME] [--label k=v] [--retain] [--ttl 1h] [--wait 60s | --no-wait]
 kaironctl start|stop|pause|resume|halt MACHINE
 kaironctl top [machines|nodes] [--selector k=v]
 kaironctl trigger snapshotschedule NAME
@@ -124,8 +126,9 @@ kaironctl mcp serve --allow-write   # also power, snapshot, capture
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) and other MCP
 clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
 `machine_network`, `machine_edge_identity`, `machine_volumes`,
-`get_machine_snapshot`. Write tools, only with `--allow-write`:
-`set_power_state`, `create_snapshot`, `snapshot_volume`, `network_capture`. It
+`get_machine_snapshot`, `list_machine_pools`. Write tools, only with `--allow-write`:
+`set_power_state`, `create_snapshot`, `snapshot_volume`, `network_capture`,
+`claim_machine`, `release_claim`, `delete_machine`. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
 other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.

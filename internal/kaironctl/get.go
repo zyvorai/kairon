@@ -107,6 +107,26 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 		for _, s := range items {
 			fmt.Printf("%s\t%s\t%d\t%d\t%d\n", s.Metadata.Name, dash(defaultStrategy(s.Spec.Strategy)), s.Spec.Replicas, s.Status.ReadyReplicas, s.Status.UpdatedReplicas)
 		}
+	case "machinepool", "machinepools":
+		items, err := kc.ListMachinePoolsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(p model.MachinePool) map[string]string { return p.Metadata.Labels })
+		fmt.Printf("NAME\tWARM\tREADY\tCLAIMED\n")
+		for _, p := range items {
+			fmt.Printf("%s\t%d\t%d\t%d\n", p.Metadata.Name, p.Spec.Replicas, p.Status.ReadyReplicas, p.Status.Claimed)
+		}
+	case "machineclaim", "machineclaims", "claim", "claims":
+		items, err := kc.ListMachineClaimsNamespace(ctx, ns)
+		if err != nil {
+			fatal(err)
+		}
+		items = selectorFilter(items, selector, func(c model.MachineClaim) map[string]string { return c.Metadata.Labels })
+		fmt.Printf("NAME\tPOOL\tPHASE\tMACHINE\tBIND-MS\n")
+		for _, c := range items {
+			fmt.Printf("%s\t%s\t%s\t%s\t%d\n", c.Metadata.Name, c.Spec.PoolName, style.Phase(os.Stdout, dash(c.Status.Phase)), dash(c.Status.MachineName), c.Status.BindMillis)
+		}
 	case "instancetype", "instancetypes", "machineinstancetypes":
 		items, err := kc.ListMachineInstanceTypesNamespace(ctx, ns)
 		if err != nil {

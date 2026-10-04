@@ -26,6 +26,7 @@ Read tools are always offered:
 | `machine_edge_identity` | The stable VM-edge identity | computed locally |
 | `machine_volumes` | Each `spec.volumes` entry: source (`pvc`, `atlas-pvc`, `atlas-rbd`), claim, size, Atlas phase, backend id, error | Kubernetes API |
 | `get_machine_snapshot` | A MachineSnapshot's phase and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id) | Kubernetes API |
+| `list_machine_pools` | MachinePools with warm size, ready and claimed counts | Kubernetes API |
 
 Write tools are offered only with `--allow-write`:
 
@@ -35,8 +36,11 @@ Write tools are offered only with `--allow-write`:
 | `create_snapshot` | Creates a MachineSnapshot (name generated unless `snapshotName` is set). |
 | `snapshot_volume` | Snapshots one named volume (MachineSnapshot with `spec.volumeNames`); Atlas volumes use Atlas snapshots. |
 | `network_capture` | Runs a 1-30 s tcpdump capture on the Machine's VM edge. With `output`, waits and writes the pcap to that path on the machine running kaironctl; otherwise returns the token. |
+| `claim_machine` | Creates a MachineClaim against `pool` and waits up to `waitSeconds` (default 30) for it to bind; returns the Machine name and bind time. Optional `labels`, `retain`, `ttlSeconds`. |
+| `release_claim` | Deletes a MachineClaim; its Machine is deleted too unless the claim was made with `retain`. |
+| `delete_machine` | Deletes a Machine. Refuses MachineSet replicas (the set would recreate them). |
 
-Delete, migrate, exec, and edge or policy changes are not exposed.
+Migrate, exec, and edge or policy changes are not exposed.
 
 Every tool takes `namespace` (default: `--namespace`, else `default`) and
 `name` where it acts on one Machine. Unknown arguments are rejected, so a
@@ -69,7 +73,7 @@ tools on the Hermes side as well:
 
 ```yaml
     tools:
-      exclude: [set_power_state, create_snapshot, snapshot_volume, network_capture]
+      exclude: [set_power_state, create_snapshot, snapshot_volume, network_capture, claim_machine, release_claim, delete_machine]
 ```
 
 ## Credentials

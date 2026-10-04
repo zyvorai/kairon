@@ -67,11 +67,14 @@ func machineSpecFromFlags(fs *flag.FlagSet) (spec func() model.MachineSpec, imag
 // create-a-Machine behavior below, byte-for-byte unchanged.
 func cmdCreate(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME [flags]"))
+		fatal(fmt.Errorf("usage: kaironctl create NAME --image PATH [flags] | create machineset|machinepool|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME [flags]"))
 	}
 	switch strings.ToLower(args[0]) {
 	case "machineset", "machinesets":
 		cmdCreateMachineSet(ctx, kc, args[1:])
+		return
+	case "machinepool", "machinepools":
+		cmdCreateMachinePool(ctx, kc, args[1:])
 		return
 	case "instancetype", "instancetypes", "machineinstancetypes":
 		cmdCreateInstanceType(ctx, kc, args[1:])
@@ -155,6 +158,42 @@ func cmdCreateMachineSet(ctx context.Context, kc *kube.Client, args []string) {
 		fatal(err)
 	}
 	okf("machineset/%s created", out.Metadata.Name)
+}
+
+// cmdCreateMachinePool handles `kaironctl create machinepool NAME --image
+// PATH [--replicas N] [flags]`; the template flags are the same as create.
+func cmdCreateMachinePool(ctx context.Context, kc *kube.Client, args []string) {
+	if len(args) < 1 {
+		fatal(fmt.Errorf("usage: kaironctl create machinepool NAME --image PATH [--replicas N] [flags]"))
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("create machinepool", flag.ExitOnError)
+	ns := fs.String("namespace", "default", "namespace")
+	replicas := fs.Int("replicas", 1, "warm (unclaimed) Machines to keep booted")
+	var labels stringSliceFlag
+	fs.Var(&labels, "label", "label key=value applied to every pool member (repeatable)")
+	specFn, image := machineSpecFromFlags(fs)
+	_ = fs.Parse(args[1:])
+	if *image == "" {
+		fatal(fmt.Errorf("--image PATH is required"))
+	}
+	labelMap, err := parseKeyValues(labels)
+	if err != nil {
+		fatal(err)
+	}
+	pool := model.MachinePool{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachinePool},
+		Metadata: model.ObjectMeta{Name: name, Namespace: *ns},
+		Spec: model.MachinePoolSpec{
+			Replicas: *replicas,
+			Template: model.MachineTemplate{Labels: labelMap, Spec: specFn()},
+		},
+	}
+	out, err := kc.CreateMachinePool(ctx, *ns, pool)
+	if err != nil {
+		fatal(err)
+	}
+	okf("machinepool/%s created", out.Metadata.Name)
 }
 
 // cmdCreateInstanceType handles `kaironctl create instancetype NAME --cpu N

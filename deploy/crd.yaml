@@ -5,6 +5,90 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  name: machineclaims.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machineclaims
+    singular: machineclaim
+    kind: MachineClaim
+    shortNames:
+    - mclaim
+  versions:
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources: &subresources
+      status: {}
+    additionalPrinterColumns: &columns
+    - name: Pool
+      type: string
+      jsonPath: .spec.poolName
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Machine
+      type: string
+      jsonPath: .status.machineName
+    - name: Bind-ms
+      type: integer
+      jsonPath: .status.bindMillis
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema: &schema
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - poolName
+            properties:
+              poolName:
+                type: string
+                minLength: 1
+                x-kubernetes-validations:
+                - rule: self == oldSelf
+                  message: poolName is immutable
+              labels:
+                type: object
+                additionalProperties:
+                  type: string
+              reclaimPolicy:
+                type: string
+                enum: ["Delete", "Retain"]
+              ttlSeconds:
+                type: integer
+                minimum: 1
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Bound", "Lost"]
+              machineName:
+                type: string
+              boundAt:
+                type: string
+                format: date-time
+              bindMillis:
+                type: integer
+              message:
+                type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
   name: machinedisruptionbudgets.kairon.zyvor.dev
 spec:
   group: kairon.zyvor.dev
@@ -518,6 +602,90 @@ spec:
               ciliumNetworkPolicyRef:
                 type: string
               ciliumSyncMessage:
+                type: string
+  - name: v1alpha1
+    served: true
+    storage: false
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: machinepools.kairon.zyvor.dev
+spec:
+  group: kairon.zyvor.dev
+  scope: Namespaced
+  names:
+    plural: machinepools
+    singular: machinepool
+    kind: MachinePool
+    shortNames:
+    - mpool
+  versions:
+  - name: v1beta1
+    served: true
+    storage: true
+    subresources: &subresources
+      status: {}
+      scale:
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+        labelSelectorPath: .status.selector
+    additionalPrinterColumns: &columns
+    - name: Warm
+      type: integer
+      jsonPath: .spec.replicas
+    - name: Ready
+      type: integer
+      jsonPath: .status.readyReplicas
+    - name: Claimed
+      type: integer
+      jsonPath: .status.claimed
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    schema: &schema
+      openAPIV3Schema:
+        type: object
+        required:
+        - spec
+        properties:
+          spec:
+            type: object
+            required:
+            - replicas
+            - template
+            properties:
+              replicas:
+                type: integer
+                minimum: 0
+              template:
+                type: object
+                required:
+                - spec
+                properties:
+                  labels:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  # Same shape as a Machine's spec; see machinesets.yaml.
+                  spec:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+          status:
+            type: object
+            properties:
+              replicas:
+                type: integer
+              readyReplicas:
+                type: integer
+              claimed:
+                type: integer
+              selector:
+                type: string
+              message:
                 type: string
   - name: v1alpha1
     served: true
@@ -1287,6 +1455,10 @@ spec:
     storage: true
     subresources: &subresources
       status: {}
+      scale:
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.replicas
+        labelSelectorPath: .status.selector
     additionalPrinterColumns: &columns
     - name: Replicas
       type: integer
@@ -1350,6 +1522,8 @@ spec:
                 type: integer
               updatedReplicas:
                 type: integer
+              selector:
+                type: string
               message:
                 type: string
   - name: v1alpha1

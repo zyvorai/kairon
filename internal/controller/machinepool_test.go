@@ -1,0 +1,289 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package controller
+
+import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/model"
+)
+
+const poolAPI = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/"
+
+type poolFake struct {
+	mu           sync.Mutex
+	created      []model.Machine
+	deleted      []string
+	machinePatch map[string]map[string]any
+	claimStatus  map[string]model.MachineClaimStatus
+	poolStatus   model.MachinePoolStatus
+	finalizers   map[string][]string
+	conflictOn   string
+}
+
+func newPoolTestController(t *testing.T) (*Controller, *poolFake) {
+	t.Helper()
+	fake := &poolFake{machinePatch: map[string]map[string]any{}, claimStatus: map[string]model.MachineClaimStatus{}, finalizers: map[string][]string{}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		path := strings.TrimPrefix(r.URL.Path, poolAPI)
+		var body map[string]json.RawMessage
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		switch {
+		case r.Method == http.MethodPost && path == "machines":
+			var m model.Machine
+			b, _ := json.Marshal(body)
+			_ = json.Unmarshal(b, &m)
+			fake.created = append(fake.created, m)
+			_, _ = w.Write(b)
+		case r.Method == http.MethodDelete && strings.HasPrefix(path, "machineclaims/"):
+			fake.deleted = append(fake.deleted, "claim/"+strings.TrimPrefix(path, "machineclaims/"))
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodDelete && strings.HasPrefix(path, "machines/"):
+			fake.deleted = append(fake.deleted, strings.TrimPrefix(path, "machines/"))
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodPatch && strings.HasPrefix(path, "machines/"):
+			name := strings.TrimPrefix(path, "machines/")
+			if name == fake.conflictOn {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"kind":"Status","reason":"Conflict","code":409}`)
+				return
+			}
+			var meta map[string]any
+			_ = json.Unmarshal(body["metadata"], &meta)
+			fake.machinePatch[name] = meta
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodPatch && strings.HasSuffix(path, "/status") && strings.HasPrefix(path, "machineclaims/"):
+			var st model.MachineClaimStatus
+			_ = json.Unmarshal(body["status"], &st)
+			fake.claimStatus[strings.TrimSuffix(strings.TrimPrefix(path, "machineclaims/"), "/status")] = st
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodPatch && path == "machinepools/p1/status":
+			_ = json.Unmarshal(body["status"], &fake.poolStatus)
+			_, _ = io.WriteString(w, `{}`)
+		case r.Method == http.MethodPatch && (strings.HasPrefix(path, "machineclaims/") || strings.HasPrefix(path, "machinepools/")):
+			var meta struct {
+				Finalizers []string `json:"finalizers"`
+			}
+			_ = json.Unmarshal(body["metadata"], &meta)
+			fake.finalizers[path] = meta.Finalizers
+			_, _ = io.WriteString(w, `{}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	kc, err := kube.New(srv.URL, "", "", false)
+	if err != nil {
+		t.Fatalf("kube.New: %v", err)
+	}
+	kc.HTTP = srv.Client()
+	return &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, fake
+}
+
+func testPool(replicas int) model.MachinePool {
+	return model.MachinePool{
+		Metadata: model.ObjectMeta{Name: "p1", Namespace: "prod", Finalizers: []string{model.FinalizerMachinePool}},
+		Spec: model.MachinePoolSpec{
+			Replicas: replicas,
+			Template: model.MachineTemplate{Labels: map[string]string{"app": "agent"}, Spec: model.MachineSpec{Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}}},
+		},
+	}
+}
+
+func poolMember(name, hash, state, phase string, age time.Duration) model.Machine {
+	return model.Machine{
+		Metadata: model.ObjectMeta{
+			Name: name, Namespace: "prod", ResourceVersion: "rv-" + name,
+			CreationTimestamp: time.Now().Add(-age),
+			Labels: map[string]string{
+				model.LabelMachinePool:         "p1",
+				model.LabelMachinePoolTemplate: hash,
+				model.LabelPoolState:           state,
+			},
+		},
+		Status: model.MachineStatus{Phase: phase},
+	}
+}
+
+func testClaim(name string, age time.Duration) model.MachineClaim {
+	return model.MachineClaim{
+		Metadata: model.ObjectMeta{Name: name, Namespace: "prod", CreationTimestamp: time.Now().Add(-age), Finalizers: []string{model.FinalizerMachineClaim}},
+		Spec:     model.MachineClaimSpec{PoolName: "p1", Labels: map[string]string{"team": "ml"}},
+	}
+}
+
+func TestMachinePoolFillsWarmMembersAndReplacesOutdated(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	pool := testPool(3)
+	hash := machineSetTemplateHash(pool.Spec.Template)
+	machines := []model.Machine{
+		poolMember("p1-a", hash, model.PoolStateWarm, "Running", time.Minute),
+		poolMember("p1-old", "stale", model.PoolStateWarm, "Running", time.Hour),
+		poolMember("p1-c", hash, model.PoolStateClaimed, "Running", time.Hour),
+	}
+	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines, map[string]bool{})
+
+	if len(fake.created) != 2 {
+		t.Fatalf("created %d warm machines, want 2", len(fake.created))
+	}
+	for _, m := range fake.created {
+		if m.Metadata.Labels[model.LabelPoolState] != model.PoolStateWarm || m.Metadata.Labels[model.LabelMachinePoolTemplate] != hash || m.Metadata.Labels["app"] != "agent" {
+			t.Fatalf("bad member labels: %v", m.Metadata.Labels)
+		}
+	}
+	if strings.Join(fake.deleted, ",") != "p1-old" {
+		t.Fatalf("deleted = %v, want the outdated warm member only", fake.deleted)
+	}
+	st := fake.poolStatus
+	if st.Replicas != 1 || st.ReadyReplicas != 1 || st.Claimed != 1 || !strings.Contains(st.Selector, "pool-state=warm") {
+		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestMachinePoolTrimsBootingMembersFirst(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	pool := testPool(1)
+	hash := machineSetTemplateHash(pool.Spec.Template)
+	machines := []model.Machine{
+		poolMember("p1-run", hash, model.PoolStateWarm, "Running", time.Minute),
+		poolMember("p1-boot", hash, model.PoolStateWarm, "Scheduling", time.Second),
+	}
+	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines, map[string]bool{})
+	if strings.Join(fake.deleted, ",") != "p1-boot" {
+		t.Fatalf("deleted = %v, want the booting member", fake.deleted)
+	}
+}
+
+func TestMachineClaimBindsOldestReadyMemberAndPoolRefills(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	pool := testPool(2)
+	hash := machineSetTemplateHash(pool.Spec.Template)
+	machines := []model.Machine{
+		poolMember("p1-new", hash, model.PoolStateWarm, "Running", time.Minute),
+		poolMember("p1-old", hash, model.PoolStateWarm, "Running", time.Hour),
+		poolMember("p1-boot", hash, model.PoolStateWarm, "Scheduling", time.Second),
+	}
+	claims := []model.MachineClaim{testClaim("second", time.Second), testClaim("first", time.Minute)}
+	fake.conflictOn = "p1-old"
+
+	bound := c.reconcileMachineClaims(t.Context(), claims, machines)
+
+	// first claim (older) hits a 409 on p1-old and falls through to p1-new;
+	// the second finds no ready member left and stays Pending.
+	if got := fake.claimStatus["first"]; got.Phase != model.ClaimBound || got.MachineName != "p1-new" || got.BoundAt == nil || got.BindMillis <= 0 {
+		t.Fatalf("first = %+v", got)
+	}
+	labels, _ := fake.machinePatch["p1-new"]["labels"].(map[string]any)
+	if labels[model.LabelPoolState] != model.PoolStateClaimed || labels[model.LabelMachineClaim] != "first" || labels["team"] != "ml" || fake.machinePatch["p1-new"]["resourceVersion"] != "rv-p1-new" {
+		t.Fatalf("bind patch = %v", fake.machinePatch["p1-new"])
+	}
+	if got := fake.claimStatus["second"]; got.Phase != model.ClaimPending || !strings.Contains(got.Message, "1 warming") {
+		t.Fatalf("second = %+v", got)
+	}
+	if !bound["prod/p1-new"] || len(bound) != 1 {
+		t.Fatalf("bound = %v", bound)
+	}
+
+	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines, bound)
+	if len(fake.created) != 0 {
+		t.Fatalf("pool has p1-old and p1-boot warm (2 = replicas); created %d", len(fake.created))
+	}
+	if fake.poolStatus.Claimed != 1 || fake.poolStatus.Replicas != 2 {
+		t.Fatalf("pool status = %+v", fake.poolStatus)
+	}
+}
+
+func TestMachineClaimLostWhenMachineGone(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	claim := testClaim("c1", time.Minute)
+	claim.Status = model.MachineClaimStatus{Phase: model.ClaimBound, MachineName: "gone"}
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, nil)
+	if got := fake.claimStatus["c1"]; got.Phase != model.ClaimLost {
+		t.Fatalf("status = %+v", got)
+	}
+}
+
+func TestMachineClaimTTLDeletesClaim(t *testing.T) {
+	for _, tc := range []struct {
+		age  time.Duration
+		want string
+	}{{2 * time.Minute, "claim/c1"}, {30 * time.Second, ""}} {
+		c, fake := newPoolTestController(t)
+		claim := testClaim("c1", time.Hour)
+		claim.Spec.TTLSeconds = 60
+		bound := time.Now().Add(-tc.age)
+		claim.Status = model.MachineClaimStatus{Phase: model.ClaimBound, MachineName: "m1", BoundAt: &bound}
+		m := poolMember("m1", "h", model.PoolStateClaimed, "Running", time.Hour)
+		c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, []model.Machine{m})
+		if strings.Join(fake.deleted, ",") != tc.want {
+			t.Fatalf("bound %s ago: deleted = %v, want %q", tc.age, fake.deleted, tc.want)
+		}
+	}
+}
+
+func TestMachineClaimReleaseDeletesOrRetains(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		policy     string
+		wantDelete bool
+	}{{"", true}, {model.ReclaimRetain, false}} {
+		c, fake := newPoolTestController(t)
+		claim := testClaim("c1", time.Minute)
+		claim.Spec.ReclaimPolicy = tc.policy
+		claim.Metadata.DeletionTimestamp = &now
+		claim.Status = model.MachineClaimStatus{Phase: model.ClaimBound, MachineName: "m1"}
+		m := poolMember("m1", "h", model.PoolStateClaimed, "Running", time.Hour)
+		m.Metadata.Labels[model.LabelMachineClaim] = "c1"
+
+		c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, []model.Machine{m})
+
+		if (len(fake.deleted) == 1) != tc.wantDelete {
+			t.Fatalf("policy %q: deleted = %v", tc.policy, fake.deleted)
+		}
+		if !tc.wantDelete {
+			labels, _ := fake.machinePatch["m1"]["labels"].(map[string]any)
+			if _, ok := labels[model.LabelMachineClaim]; !ok || labels[model.LabelMachineClaim] != nil {
+				t.Fatalf("retain must clear the claim label: %v", fake.machinePatch["m1"])
+			}
+		}
+		if f, ok := fake.finalizers["machineclaims/c1"]; !ok || len(f) != 0 {
+			t.Fatalf("policy %q: finalizer not removed: %v", tc.policy, fake.finalizers)
+		}
+	}
+}
+
+func TestMachinePoolDeletionLeavesClaimedMembers(t *testing.T) {
+	c, fake := newPoolTestController(t)
+	now := time.Now()
+	pool := testPool(2)
+	pool.Metadata.DeletionTimestamp = &now
+	machines := []model.Machine{
+		poolMember("w1", "h", model.PoolStateWarm, "Running", time.Hour),
+		poolMember("c1", "h", model.PoolStateClaimed, "Running", time.Hour),
+	}
+	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines, map[string]bool{})
+	if strings.Join(fake.deleted, ",") != "w1" {
+		t.Fatalf("deleted = %v", fake.deleted)
+	}
+	if _, ok := fake.finalizers["machinepools/p1"]; ok {
+		t.Fatal("finalizer removed while a warm member still exists")
+	}
+	c.reconcileMachinePools(t.Context(), []model.MachinePool{pool}, machines[1:], map[string]bool{})
+	if f, ok := fake.finalizers["machinepools/p1"]; !ok || len(f) != 0 {
+		t.Fatalf("finalizer not removed: %v", fake.finalizers)
+	}
+}

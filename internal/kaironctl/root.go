@@ -93,7 +93,8 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		legacyCmd(opts, "create", "Create a Machine or other Kairon resource", createExamples, cmdCreate),
 		legacyCmd(opts, "delete", "Delete a Kairon resource", deleteExamples, cmdDelete),
 		legacyCmd(opts, "edit", "Edit a Kairon resource (only flags you pass are patched)", editExamples, cmdEdit),
-		legacyCmd(opts, "scale", "Scale a MachineSet", scaleExamples, cmdScale),
+		legacyCmd(opts, "scale", "Scale a MachineSet or MachinePool", scaleExamples, cmdScale),
+		legacyCmd(opts, "claim", "Claim a warm Machine from a MachinePool", claimExamples, cmdClaim),
 		legacyCmd(opts, "top", "Show live Machine or node resource usage", topExamples, cmdTop),
 		legacyCmd(opts, "trigger", "Trigger a SnapshotSchedule run now", triggerExamples, cmdTrigger),
 		powerCmd(opts, "start", "Running"),
@@ -237,7 +238,13 @@ const deleteExamples = `  $ kaironctl delete machine demo
 const editExamples = `  $ kaironctl edit machine demo --priority 10
   $ kaironctl edit machineset web --replicas 5`
 
-const scaleExamples = `  $ kaironctl scale machineset web --replicas 5
+const claimExamples = `  $ kaironctl claim agents
+  $ kaironctl claim agents job-42 --label team=ml --wait 30s
+  $ kaironctl claim agents --ttl 1h
+  $ kaironctl claim agents --retain --no-wait`
+
+const scaleExamples = `  $ kaironctl scale machinepool agents --replicas 10
+  $ kaironctl scale machineset web --replicas 5
   $ kaironctl scale machineset --selector tier=web --replicas 2`
 
 const topExamples = `  $ kaironctl top machines

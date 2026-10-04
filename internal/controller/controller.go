@@ -210,6 +210,17 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.reconcileMachineSets(ctx, machineSets, machines)
 
+	claims, err := c.Kube.ListMachineClaims(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	bound := c.reconcileMachineClaims(ctx, claims, machines)
+	pools, err := c.Kube.ListMachinePools(ctx)
+	if err != nil && !kube.IsNotFound(err) {
+		return err
+	}
+	c.reconcileMachinePools(ctx, pools, machines, bound)
+
 	quotas, err := c.Kube.ListMachineQuotas(ctx)
 	if err != nil && !kube.IsNotFound(err) {
 		return err

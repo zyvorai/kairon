@@ -390,6 +390,133 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
+			Name:        "list_machine_pools",
+			Description: "List MachinePools (warm, pre-booted Machines) with warm size, ready and claimed counts.",
+			Schema:      mcp.Object(map[string]any{"namespace": nsProp}),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Namespace string `json:"namespace"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					pools, err := kc.ListMachinePoolsNamespace(ctx, machineRef{Namespace: a.Namespace}.ns(nsDefault))
+					if err != nil {
+						return "", err
+					}
+					out := make([]map[string]any, 0, len(pools))
+					for _, p := range pools {
+						out = append(out, map[string]any{"name": p.Metadata.Name, "warm": p.Spec.Replicas, "ready": p.Status.ReadyReplicas, "claimed": p.Status.Claimed, "message": p.Status.Message})
+					}
+					return mcp.JSON(map[string]any{"pools": out})
+				})
+			},
+		},
+		{
+			Name: "claim_machine",
+			Description: "Claim a booted Machine from a MachinePool (binds in one reconcile tick instead of a cold boot). " +
+				"Waits up to waitSeconds for the bind and returns the Machine name. Deleting the claim (release_claim) deletes the Machine unless retain is set.",
+			Write: true,
+			Schema: mcp.Object(map[string]any{
+				"namespace":   nsProp,
+				"pool":        mcp.String("MachinePool name"),
+				"name":        mcp.String("MachineClaim name (optional)"),
+				"labels":      map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "labels added to the claimed Machine"},
+				"retain":      map[string]any{"type": "boolean", "description": "keep the Machine when the claim is deleted"},
+				"ttlSeconds":  mcp.Integer("delete the claim this many seconds after it binds (optional)", 1, 7*24*3600),
+				"waitSeconds": mcp.Integer("seconds to wait for the bind, default 30; 0 returns at once", 0, 120),
+			}, "pool"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Namespace   string            `json:"namespace"`
+					Pool        string            `json:"pool"`
+					Name        string            `json:"name"`
+					Labels      map[string]string `json:"labels"`
+					Retain      bool              `json:"retain"`
+					TTLSeconds  int64             `json:"ttlSeconds"`
+					WaitSeconds *int              `json:"waitSeconds"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Pool == "" {
+					return "", fmt.Errorf("pool is required")
+				}
+				wait := 30
+				if a.WaitSeconds != nil {
+					wait = min(max(*a.WaitSeconds, 0), 120)
+				}
+				return withKube(ctx, time.Duration(wait)*time.Second+mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := machineRef{Namespace: a.Namespace}.ns(nsDefault)
+					name := a.Name
+					if name == "" {
+						name = resourceName(a.Pool + "-claim-" + time.Now().UTC().Format("150405.000"))
+					}
+					claim := newMachineClaim(ns, name, a.Pool, a.Labels, a.Retain)
+					claim.Spec.TTLSeconds = a.TTLSeconds
+					if _, err := kc.CreateMachineClaim(ctx, ns, claim); err != nil {
+						return "", err
+					}
+					if wait == 0 {
+						return mcp.JSON(map[string]any{"claim": name, "namespace": ns, "phase": model.ClaimPending})
+					}
+					got, err := waitForClaim(ctx, kc, ns, name, time.Duration(wait)*time.Second)
+					if err != nil {
+						return "", err
+					}
+					return mcp.JSON(map[string]any{"claim": name, "namespace": ns, "phase": got.Status.Phase, "machine": got.Status.MachineName, "bindMillis": got.Status.BindMillis})
+				})
+			},
+		},
+		{
+			Name:        "release_claim",
+			Description: "Delete a MachineClaim. With reclaimPolicy Delete (the default) its Machine is deleted too.",
+			Write:       true,
+			Schema: mcp.Object(map[string]any{
+				"namespace": nsProp,
+				"name":      mcp.String("MachineClaim name"),
+			}, "name"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a machineRef
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					if err := kc.DeleteMachineClaim(ctx, a.ns(nsDefault), a.Name); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("machineclaim %s/%s deleted", a.ns(nsDefault), a.Name), nil
+				})
+			},
+		},
+		{
+			Name:        "delete_machine",
+			Description: "Delete a Machine and its VM. Machines owned by a MachineSet are recreated by it; scale the set instead.",
+			Write:       true,
+			Schema:      refSchema(map[string]any{}),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a machineRef
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					ns := a.ns(nsDefault)
+					m, err := kc.GetMachine(ctx, ns, a.Name)
+					if err != nil {
+						return "", err
+					}
+					if set := m.Metadata.Labels[model.LabelMachineSet]; set != "" {
+						return "", fmt.Errorf("machine %s/%s is owned by MachineSet %s; scale the set instead", ns, a.Name, set)
+					}
+					if err := kc.DeleteMachine(ctx, ns, a.Name); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("machine %s/%s deleted", ns, a.Name), nil
+				})
+			},
+		},
+		{
 			Name: "network_capture",
 			Description: "Run a bounded tcpdump capture (1-30 s) on a Machine's VM edge via kairon-ui and FluxVM. " +
 				"With output, waits for it and writes the pcap to that local path; otherwise returns the session token " +

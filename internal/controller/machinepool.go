@@ -1,0 +1,314 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
+package controller
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/model"
+)
+
+// reconcileMachineClaims binds pending claims to Running warm members and
+// handles claim deletion. It returns the names of Machines bound this tick
+// (keyed namespace/name) so reconcileMachinePools, working from the same
+// Machine snapshot, stops counting them as warm and refills immediately.
+func (c *Controller) reconcileMachineClaims(ctx context.Context, claims []model.MachineClaim, machines []model.Machine) map[string]bool {
+	bound := map[string]bool{}
+	byName := map[string]model.Machine{}
+	for _, m := range machines {
+		byName[m.Namespace()+"/"+m.Metadata.Name] = m
+	}
+	// Oldest claim first, so a burst of claims against a short pool is
+	// served in arrival order.
+	sort.SliceStable(claims, func(i, j int) bool {
+		return claims[i].Metadata.CreationTimestamp.Before(claims[j].Metadata.CreationTimestamp)
+	})
+	for _, claim := range claims {
+		if claim.Metadata.DeletionTimestamp != nil {
+			c.releaseMachineClaim(ctx, claim, byName)
+			continue
+		}
+		status, err := c.reconcileMachineClaim(ctx, claim, machines, byName, bound)
+		if err != nil {
+			c.Log.Error("machineclaim reconcile failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+			status.Message = err.Error()
+		}
+		if status == claim.Status {
+			continue
+		}
+		if err := c.Kube.PatchMachineClaimStatus(ctx, claim.Namespace(), claim.Metadata.Name, status); err != nil {
+			c.Log.Error("machineclaim status patch failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+		}
+	}
+	return bound
+}
+
+func (c *Controller) reconcileMachineClaim(ctx context.Context, claim model.MachineClaim, machines []model.Machine, byName map[string]model.Machine, bound map[string]bool) (model.MachineClaimStatus, error) {
+	status := claim.Status
+	if status.MachineName != "" {
+		m, ok := byName[claim.Namespace()+"/"+status.MachineName]
+		if !ok || m.Metadata.DeletionTimestamp != nil {
+			status.Phase = model.ClaimLost
+			status.Message = fmt.Sprintf("machine %s no longer exists", status.MachineName)
+			return status, nil
+		}
+		status.Phase = model.ClaimBound
+		status.Message = ""
+		if claim.Spec.TTLSeconds > 0 && status.BoundAt != nil && time.Since(*status.BoundAt) >= time.Duration(claim.Spec.TTLSeconds)*time.Second {
+			if err := c.Kube.DeleteMachineClaim(ctx, claim.Namespace(), claim.Metadata.Name); err != nil && !kube.IsNotFound(err) {
+				return status, fmt.Errorf("delete expired claim: %w", err)
+			}
+			c.Log.Info("machineclaim expired", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "ttlSeconds", claim.Spec.TTLSeconds)
+		}
+		return status, nil
+	}
+	if claim.Spec.PoolName == "" {
+		status.Phase = model.ClaimPending
+		return status, fmt.Errorf("spec.poolName is required")
+	}
+	if !model.HasFinalizerList(claim.Metadata.Finalizers, model.FinalizerMachineClaim) {
+		finals := append(append([]string{}, claim.Metadata.Finalizers...), model.FinalizerMachineClaim)
+		if err := c.Kube.PatchMachineClaim(ctx, claim.Namespace(), claim.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+			status.Phase = model.ClaimPending
+			return status, fmt.Errorf("add machineclaim finalizer: %w", err)
+		}
+	}
+
+	candidates, warming := warmMembers(claim.Namespace(), claim.Spec.PoolName, machines, bound)
+	for _, m := range candidates {
+		err := c.bindMachine(ctx, claim, m)
+		if kube.IsConflict(err) {
+			continue // changed since this tick's listing; try the next one
+		}
+		if err != nil {
+			status.Phase = model.ClaimPending
+			return status, fmt.Errorf("bind machine %s: %w", m.Metadata.Name, err)
+		}
+		bound[m.Namespace()+"/"+m.Metadata.Name] = true
+		now := time.Now().UTC()
+		status.Phase = model.ClaimBound
+		status.MachineName = m.Metadata.Name
+		status.BoundAt = &now
+		if !claim.Metadata.CreationTimestamp.IsZero() {
+			status.BindMillis = now.Sub(claim.Metadata.CreationTimestamp).Milliseconds()
+		}
+		status.Message = ""
+		c.Log.Info("machineclaim bound", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "machine", m.Metadata.Name, "pool", claim.Spec.PoolName)
+		return status, nil
+	}
+	status.Phase = model.ClaimPending
+	status.Message = fmt.Sprintf("no Running warm machine in pool %q (%d warming)", claim.Spec.PoolName, warming)
+	return status, nil
+}
+
+// warmMembers returns the pool's Running, unclaimed members, oldest first,
+// and how many more are still booting.
+func warmMembers(ns, pool string, machines []model.Machine, bound map[string]bool) (ready []model.Machine, warming int) {
+	for _, m := range machines {
+		if m.Namespace() != ns || m.Metadata.Labels[model.LabelMachinePool] != pool ||
+			m.Metadata.Labels[model.LabelPoolState] != model.PoolStateWarm ||
+			m.Metadata.DeletionTimestamp != nil || bound[ns+"/"+m.Metadata.Name] {
+			continue
+		}
+		if m.Status.Phase == "Running" {
+			ready = append(ready, m)
+		} else {
+			warming++
+		}
+	}
+	sort.SliceStable(ready, func(i, j int) bool {
+		return ready[i].Metadata.CreationTimestamp.Before(ready[j].Metadata.CreationTimestamp)
+	})
+	return ready, warming
+}
+
+// bindMachine relabels m as claimed. The patch carries m's resourceVersion,
+// so a Machine another writer touched since the listing fails with 409
+// instead of being bound twice.
+func (c *Controller) bindMachine(ctx context.Context, claim model.MachineClaim, m model.Machine) error {
+	labels := map[string]any{}
+	for k, v := range claim.Spec.Labels {
+		labels[k] = v
+	}
+	labels[model.LabelPoolState] = model.PoolStateClaimed
+	labels[model.LabelMachineClaim] = claim.Metadata.Name
+	meta := map[string]any{"labels": labels}
+	if m.Metadata.ResourceVersion != "" {
+		meta["resourceVersion"] = m.Metadata.ResourceVersion
+	}
+	return c.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, map[string]any{"metadata": meta})
+}
+
+// releaseMachineClaim deletes (or, for Retain, unlabels) the claim's
+// Machine, then drops the finalizer.
+func (c *Controller) releaseMachineClaim(ctx context.Context, claim model.MachineClaim, byName map[string]model.Machine) {
+	if !model.HasFinalizerList(claim.Metadata.Finalizers, model.FinalizerMachineClaim) {
+		return
+	}
+	name := claim.Status.MachineName
+	if m, ok := byName[claim.Namespace()+"/"+name]; ok && name != "" && m.Metadata.Labels[model.LabelMachineClaim] == claim.Metadata.Name {
+		var err error
+		if claim.Spec.ReclaimPolicy == model.ReclaimRetain {
+			err = c.Kube.PatchMachine(ctx, m.Namespace(), name, map[string]any{"metadata": map[string]any{"labels": map[string]any{
+				model.LabelMachineClaim: nil,
+				model.LabelPoolState:    nil,
+				model.LabelMachinePool:  nil,
+			}}})
+		} else if m.Metadata.DeletionTimestamp == nil {
+			err = c.Kube.DeleteMachine(ctx, m.Namespace(), name)
+		}
+		if err != nil && !kube.IsNotFound(err) {
+			c.Log.Error("machineclaim release failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "machine", name, "error", err)
+			return
+		}
+	}
+	finals := model.RemoveFinalizer(claim.Metadata.Finalizers, model.FinalizerMachineClaim)
+	if err := c.Kube.PatchMachineClaim(ctx, claim.Namespace(), claim.Metadata.Name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+		c.Log.Error("machineclaim finalizer removal failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+	}
+}
+
+// reconcileMachinePools tops every pool up to spec.replicas warm members,
+// replaces warm members built from an older template, and trims extras.
+// Machines in bound were claimed earlier this tick.
+func (c *Controller) reconcileMachinePools(ctx context.Context, pools []model.MachinePool, machines []model.Machine, bound map[string]bool) {
+	for _, pool := range pools {
+		if pool.Metadata.DeletionTimestamp != nil {
+			c.reconcileMachinePoolDeletion(ctx, pool, machines, bound)
+			continue
+		}
+		status, err := c.reconcileMachinePool(ctx, pool, machines, bound)
+		if err != nil {
+			c.Log.Error("machinepool reconcile failed", "namespace", pool.Namespace(), "pool", pool.Metadata.Name, "error", err)
+			status.Message = err.Error()
+		}
+		if status == pool.Status {
+			continue
+		}
+		if err := c.Kube.PatchMachinePoolStatus(ctx, pool.Namespace(), pool.Metadata.Name, status); err != nil {
+			c.Log.Error("machinepool status patch failed", "namespace", pool.Namespace(), "pool", pool.Metadata.Name, "error", err)
+		}
+	}
+}
+
+func (c *Controller) reconcileMachinePool(ctx context.Context, pool model.MachinePool, machines []model.Machine, bound map[string]bool) (model.MachinePoolStatus, error) {
+	ns, name := pool.Namespace(), pool.Metadata.Name
+	desired := max(pool.Spec.Replicas, 0)
+	hash := machineSetTemplateHash(pool.Spec.Template)
+
+	var current, outdated []model.Machine
+	ready, claimed := 0, 0
+	for _, m := range machines {
+		if m.Namespace() != ns || m.Metadata.Labels[model.LabelMachinePool] != name || m.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if m.Metadata.Labels[model.LabelPoolState] != model.PoolStateWarm || bound[ns+"/"+m.Metadata.Name] {
+			claimed++
+			continue
+		}
+		if m.Metadata.Labels[model.LabelMachinePoolTemplate] != hash {
+			outdated = append(outdated, m)
+			continue
+		}
+		current = append(current, m)
+		if m.Status.Phase == "Running" {
+			ready++
+		}
+	}
+	status := model.MachinePoolStatus{
+		Replicas:      len(current),
+		ReadyReplicas: ready,
+		Claimed:       claimed,
+		Selector:      fmt.Sprintf("%s=%s,%s=%s", model.LabelMachinePool, name, model.LabelPoolState, model.PoolStateWarm),
+	}
+
+	if !model.HasFinalizerList(pool.Metadata.Finalizers, model.FinalizerMachinePool) {
+		finals := append(append([]string{}, pool.Metadata.Finalizers...), model.FinalizerMachinePool)
+		if err := c.Kube.PatchMachinePool(ctx, ns, name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+			return status, fmt.Errorf("add machinepool finalizer: %w", err)
+		}
+	}
+
+	// Warm members serve nobody yet, so outdated ones are replaced at once
+	// rather than rolled.
+	for _, m := range outdated {
+		if err := c.Kube.DeleteMachine(ctx, ns, m.Metadata.Name); err != nil && !kube.IsNotFound(err) {
+			return status, fmt.Errorf("delete outdated warm machine %s: %w", m.Metadata.Name, err)
+		}
+	}
+	switch {
+	case len(current) < desired:
+		for i := len(current); i < desired; i++ {
+			if err := c.createPoolMember(ctx, pool, hash); err != nil {
+				return status, err
+			}
+		}
+	case len(current) > desired:
+		// Trim booting members before Running ones.
+		sort.SliceStable(current, func(i, j int) bool {
+			return current[i].Status.Phase != "Running" && current[j].Status.Phase == "Running"
+		})
+		for _, m := range current[:len(current)-desired] {
+			if err := c.Kube.DeleteMachine(ctx, ns, m.Metadata.Name); err != nil && !kube.IsNotFound(err) {
+				return status, fmt.Errorf("delete surplus warm machine %s: %w", m.Metadata.Name, err)
+			}
+		}
+	}
+	return status, nil
+}
+
+func (c *Controller) createPoolMember(ctx context.Context, pool model.MachinePool, hash string) error {
+	labels := map[string]string{}
+	for k, v := range pool.Spec.Template.Labels {
+		labels[k] = v
+	}
+	labels[model.LabelMachinePool] = pool.Metadata.Name
+	labels[model.LabelMachinePoolTemplate] = hash
+	labels[model.LabelPoolState] = model.PoolStateWarm
+	machine := model.Machine{
+		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
+		Metadata: model.ObjectMeta{Name: generateMachineSetChildName(pool.Metadata.Name), Namespace: pool.Namespace(), Labels: labels},
+		Spec:     pool.Spec.Template.Spec,
+	}
+	if _, err := c.Kube.CreateMachine(ctx, pool.Namespace(), machine); err != nil {
+		return fmt.Errorf("create warm machine for pool %s/%s: %w", pool.Namespace(), pool.Metadata.Name, err)
+	}
+	c.Log.Info("machinepool created warm machine", "namespace", pool.Namespace(), "pool", pool.Metadata.Name, "machine", machine.Metadata.Name)
+	return nil
+}
+
+// reconcileMachinePoolDeletion deletes the pool's warm members and drops
+// the finalizer once none is left. Claimed members are untouched.
+func (c *Controller) reconcileMachinePoolDeletion(ctx context.Context, pool model.MachinePool, machines []model.Machine, bound map[string]bool) {
+	if !model.HasFinalizerList(pool.Metadata.Finalizers, model.FinalizerMachinePool) {
+		return
+	}
+	ns, name := pool.Namespace(), pool.Metadata.Name
+	remaining := 0
+	for _, m := range machines {
+		if m.Namespace() != ns || m.Metadata.Labels[model.LabelMachinePool] != name ||
+			m.Metadata.Labels[model.LabelPoolState] != model.PoolStateWarm || bound[ns+"/"+m.Metadata.Name] {
+			continue
+		}
+		remaining++
+		if m.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		if err := c.Kube.DeleteMachine(ctx, ns, m.Metadata.Name); err != nil && !kube.IsNotFound(err) {
+			c.Log.Error("machinepool deletion: delete warm machine failed", "namespace", ns, "pool", name, "machine", m.Metadata.Name, "error", err)
+			return
+		}
+	}
+	if remaining > 0 {
+		return
+	}
+	finals := model.RemoveFinalizer(pool.Metadata.Finalizers, model.FinalizerMachinePool)
+	if err := c.Kube.PatchMachinePool(ctx, ns, name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
+		c.Log.Error("machinepool deletion: finalizer removal failed", "namespace", ns, "pool", name, "error", err)
+	}
+}
