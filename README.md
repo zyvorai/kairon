@@ -15,10 +15,7 @@
 [![30-day PoC](https://img.shields.io/badge/30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
 [![Quickstart](https://img.shields.io/badge/Quickstart_in_one_command-ff5a15?style=for-the-badge)](#quickstart)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/social-preview-dark.png">
-  <img src="docs/assets/social-preview.png" alt="Kairon: real VMs on Kubernetes without KubeVirt" width="760">
-</picture>
+![Kairon: VMs that don't pretend to be Pods. Measured against KubeVirt v1.9.0: 14x lighter idle control plane, 7.4x faster to SSH for five VMs](docs/assets/readme-hero.jpg)
 
 ### VMs that don't pretend to be Pods.
 
@@ -26,7 +23,7 @@
 
 **Zero pods per VM** · **Four hypervisors, one CRD** · **eBPF on every VM edge** · **No silent split-brain** · **AI agents built in (MCP)**
 
-[Why](#why-kairon) · [vs KubeVirt](#kairon-vs-kubevirt) · [See it](#what-you-get) · [Architecture](#how-it-fits-together) · [Quickstart](#quickstart) · [Operate](#operate) · [Maturity](#maturity) · [Docs](#docs)
+[Why](#why-kairon) · [Numbers](#the-numbers) · [vs KubeVirt](#kairon-vs-kubevirt) · [See it](#what-you-get) · [Architecture](#how-it-fits-together) · [Quickstart](#quickstart) · [Operate](#operate) · [Maturity](#maturity) · [Docs](#docs)
 
 </div>
 
@@ -43,28 +40,28 @@
 | Debugging the control plane means reading a client-go codebase | **Stdlib-only controller and node** ([dependency policy](docs/DEPENDENCIES.md)). Small enough to read in an afternoon. |
 | Your AI agent needs to see and drive your fleet | **`kaironctl mcp serve`**: Machines, policies and live network data for Hermes Agent and any MCP client, writes gated behind `--allow-write`. |
 
+![Capabilities at a glance: Run, Move, Protect, Automate](docs/assets/readme-capabilities.jpg)
+
+---
+
+## The numbers
+
+![Kairon vs KubeVirt v1.9.0 on the same node: 14x less idle control-plane memory, 2.9x faster to SSH for one VM, 7.4x faster for five, the same memory per VM](docs/assets/readme-benchmark.jpg)
+
+| | **Kairon** | **KubeVirt v1.9.0** | |
+|---|---|---|---|
+| Idle control plane memory | **63 MiB** | 905 MiB | 14x less |
+| 1 VM to SSH | **23.7 s** | 67.6 s | 2.9x faster |
+| 5 VMs to SSH, median | **24.8 s** | 184.7 s | 7.4x faster |
+| Memory per VM (5 VMs) | 660 MiB | 661 MiB | Even: same QEMU, same guest |
+
+Same k3s node, same Ubuntu 24.04 image, same 1 vCPU / 512 MiB guest and cloud-init seed, one script driving both, ready meaning the guest's sshd answers. The VM costs the same either way; what you stop paying for is everything KubeVirt puts around it. Method, raw JSON and caveats (including the 10-VM run): [docs/benchmarks](docs/benchmarks/kairon-vs-kubevirt.md).
+
 ---
 
 ## Kairon vs KubeVirt
 
-<div align="center">
-<img src="docs/assets/kairon-vs-kubevirt.jpg" alt="Kairon vs KubeVirt" width="760">
-</div>
-
-### What sits between `kubectl` and KVM
-
-```text
- KubeVirt                                    Kairon
- ────────                                    ──────
- kubectl                                     kubectl
-   └─ virt-api / virt-controller               └─ kairon-controller   (places the Machine)
-       └─ Pod scheduler                            └─ kairon-node      (one per host)
-           └─ virt-handler (DaemonSet)                 └─ FluxVM REST
-               └─ virt-launcher Pod  ← per VM              └─ KVM      (QEMU · Cloud HV · Firecracker · FluxVM)
-                   └─ libvirt
-                       └─ QEMU
-                           └─ KVM
-```
+![Kairon vs KubeVirt: the same kubectl and KVM, half the stack in between](docs/assets/kairon-vs-kubevirt.jpg)
 
 Every layer you remove is one less thing to patch, one less log to read and one less process to crash at 2 a.m.
 
@@ -72,7 +69,7 @@ Every layer you remove is one less thing to patch, one less log to read and one 
 |---|---|---|
 | A VM is | A `Machine`: its own CRD, its own lifecycle | A Pod in disguise (`virt-launcher`) |
 | Pods per running VM | **0** | 1 `virt-launcher` pod each |
-| Measured on one node ([benchmark](docs/benchmarks/kairon-vs-kubevirt.md)) | **63 MiB** idle control plane; 5 VMs to SSH in **25 s** (p50) | 905 MiB; 185 s |
+| Idle control plane, 5 VMs to SSH ([measured](#the-numbers)) | **63 MiB**, **25 s** | 905 MiB, 185 s |
 | Path to KVM | `kairon-node` → FluxVM REST → KVM | `virt-handler` → `virt-launcher` → libvirt → QEMU |
 | Hypervisors | **QEMU, Cloud Hypervisor, Firecracker, FluxVM** | QEMU via libvirt |
 | MicroVMs and warm pools | Firecracker / FluxVM sandboxes, FluxVM warm pools ([24 ms claim measured](https://github.com/zyvorai/fluxvm/tree/main/docs/benchmarks)) | Not a target |
@@ -132,28 +129,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 
 ## How it fits together
 
-```text
-                  kubectl / GitOps / kaironctl / kairon-ui / MCP agents
-                                      │
-                                      ▼
-                 ┌────────────────────────────────────────┐
-                 │             Kubernetes API             │
-                 │ Machine · MachineMigration · Snapshot  │
-                 │ MachineQuota · MachineDisruptionBudget │
-                 │ MachineNetworkPolicy · NetworkSecurity │
-                 └────────────────────────────────────────┘
-                                      │
-                  ┌───────────────────┴────────────────────┐
-                  ▼                                        ▼
-┌───────────────────────────────────┐      ┌───────────────────────────────┐
-│         kairon-controller         │      │          kairon-node          │
-│ placement · migration FSM · fence │      │ FluxVM lifecycle · DRA → VFIO │
-│ CSI snapshots · admission webhook │      │ eBPF policy · mTLS peer :9443 │
-└───────────────────────────────────┘      └───────────────────────────────┘
-                                                           │
-                                                           ▼
-                              FluxVM local API · TC/eBPF edge · migration adapter · KVM
-```
+![Two Go binaries and your KVM hosts: kairon-controller, kairon-node, FluxVM and KVM under the Kubernetes API](docs/assets/readme-architecture.jpg)
 
 | Component | Port | Role |
 |---|---|---|
