@@ -1,6 +1,6 @@
 # Kairon docs site
 
-Built with [Docusaurus](https://docusaurus.io/). Serves the live docs at https://zyvorai.github.io/kairon/.
+Built with [Docusaurus](https://docusaurus.io/). Serves the live docs at https://zyvorai.github.io/zyvor-kairon/.
 
 This points directly at the repo's existing `docs/` folder (`docusaurus.config.ts`'s `docs.path: '../docs'`) rather than a hand-curated copy — every doc in `docs/` becomes a page automatically, sidebar auto-generated from the folder structure. Add/edit docs in `../docs/` as usual.
 

@@ -15,10 +15,10 @@ const config: Config = {
   },
 
   url: 'https://zyvorai.github.io',
-  baseUrl: '/kairon/',
+  baseUrl: '/zyvor-kairon/',
 
   organizationName: 'zyvorai',
-  projectName: 'kairon',
+  projectName: 'zyvor-kairon',
 
   onBrokenLinks: 'warn',
 
@@ -42,7 +42,7 @@ const config: Config = {
           path: '../docs',
           routeBasePath: 'docs',
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/zyvorai/kairon/tree/main/docs/',
+          editUrl: 'https://github.com/zyvorai/zyvor-kairon/tree/main/docs/',
           exclude: ['**/assets/**'],
         },
         blog: false,
@@ -56,7 +56,8 @@ const config: Config = {
   themeConfig: {
     image: 'img/social-preview.png',
     colorMode: {
-      respectPrefersColorScheme: true,
+      defaultMode: 'dark',
+      respectPrefersColorScheme: false,
     },
     navbar: {
       title: 'Kairon',
@@ -73,7 +74,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com/zyvorai/kairon',
+          href: 'https://github.com/zyvorai/zyvor-kairon',
           label: 'GitHub',
           position: 'right',
         },
@@ -96,9 +97,9 @@ const config: Config = {
         {
           title: 'Project',
           items: [
-            {label: 'GitHub', href: 'https://github.com/zyvorai/kairon'},
-            {label: 'Roadmap', href: 'https://github.com/zyvorai/kairon/blob/main/ROADMAP.md'},
-            {label: 'License (Apache-2.0)', href: 'https://github.com/zyvorai/kairon/blob/main/LICENSE'},
+            {label: 'GitHub', href: 'https://github.com/zyvorai/zyvor-kairon'},
+            {label: 'Roadmap', href: 'https://github.com/zyvorai/zyvor-kairon/blob/main/ROADMAP.md'},
+            {label: 'License (Apache-2.0)', href: 'https://github.com/zyvorai/zyvor-kairon/blob/main/LICENSE'},
           ],
         },
         {
