@@ -2,145 +2,192 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
-# Drives the v0.7 hardware migration matrix against a prepared multi-host
-# lab. Requires the environment documented in
+# Drives the hardware migration matrix against a prepared multi-host lab.
+# Requires the environment documented in
 # docs/runbook-multi-host-migration-test.md plus:
 #
-#   KAIRON_HW_LAB=1          # safety gate — refuses to run otherwise
-#   KAIRON_KUBE_URL / TOKEN  # cluster API
-#   KAIRON_HW_MACHINE        # existing Machine name to migrate
-#   KAIRON_HW_TARGET_NODE    # destination node name
-#   KAIRON_HW_SOURCE_NODE    # optional; defaults from Machine status
-#   KAIRON_HW_EBPF_MACHINE   # optional; Machine with dataplaneMode=ebpf for live-ebpf
+#   KAIRON_HW_LAB=1            # safety gate -- refuses to run otherwise
+#   KAIRON_KUBE_URL / TOKEN    # cluster API (KAIRON_KUBE_CA = CA file path)
+#   KAIRON_HW_MACHINE          # existing Machine to migrate back and forth
+#   KAIRON_HW_TARGET_NODE      # the other node
+#   KAIRON_HW_SOURCE_NODE      # optional; defaults to the Machine's node at start
+#   KAIRON_HW_EBPF_MACHINE     # optional; Machine with dataplaneMode=ebpf (live-ebpf)
+#   KAIRON_HW_IMAGE            # optional; image path for the create/stop/start/delete
+#                              # smoke (without it, smoke checks KAIRON_HW_MACHINE health)
+#   KAIRON_HW_SOURCE_SSH / KAIRON_HW_TARGET_SSH
+#                              # user@host for the drills that inject failures
+#   KAIRON_HW_CONTROLLER_SSH   # optional; restart a systemd controller instead of
+#                              # deleting controller Pods
+#   KAIRON_HW_REQUIRE_GUEST_IP # 1 (default): "healthy" also needs status.guestIP
 #
-# Individual cases can be selected with --case=NAME (repeatable). Default
-# is the v0.7 set including live-ebpf when KAIRON_HW_EBPF_MACHINE is set.
-# Results are printed as COMPATIBILITY.md rows.
+# Flags: --case=NAME (repeatable), --namespace=, --timeout=, --write-compat
+# (rewrite the matrix rows in docs/COMPATIBILITY.md). Exits 1 if any case
+# fails; cases that can't run here are reported "not run" and don't fail.
 set -euo pipefail
-
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KAIRONCTL="${KAIRONCTL:-$REPO_ROOT/bin/kaironctl}"
-[[ -x "$KAIRONCTL" ]] || KAIRONCTL="kaironctl"
 
 if [[ "${KAIRON_HW_LAB:-}" != "1" ]]; then
   echo "refusing: set KAIRON_HW_LAB=1 to acknowledge a real multi-host lab" >&2
   exit 2
 fi
+# shellcheck source-path=SCRIPTDIR source=lib/lab.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/lab.sh"
+REPO_ROOT="$LAB_REPO_ROOT"
 
 CASES=()
 NAMESPACE="${KAIRON_HW_NAMESPACE:-default}"
 TIMEOUT="${KAIRON_HW_TIMEOUT:-600}"
+WRITE_COMPAT=0
 for arg in "$@"; do
   case "$arg" in
     --case=*) CASES+=("${arg#*=}") ;;
     --namespace=*) NAMESPACE="${arg#*=}" ;;
     --timeout=*) TIMEOUT="${arg#*=}" ;;
+    --write-compat) WRITE_COMPAT=1 ;;
     *) echo "unknown flag $arg" >&2; exit 1 ;;
   esac
 done
 if [[ ${#CASES[@]} -eq 0 ]]; then
-  CASES=(smoke cold live needs-recovery)
-  if [[ -n "${KAIRON_HW_EBPF_MACHINE:-}" ]]; then
-    CASES+=(live-ebpf)
-  fi
+  CASES=(smoke cold live needs-recovery source-failure controller-failover)
+  [[ -n "${KAIRON_HW_EBPF_MACHINE:-}" ]] && CASES+=(live-ebpf)
 fi
 
 MACHINE="${KAIRON_HW_MACHINE:?set KAIRON_HW_MACHINE}"
 TARGET="${KAIRON_HW_TARGET_NODE:?set KAIRON_HW_TARGET_NODE}"
+SOURCE="${KAIRON_HW_SOURCE_NODE:-$(machine_node "$NAMESPACE" "$MACHINE")}"
+[[ -n "$SOURCE" && "$SOURCE" != "$TARGET" ]] || { echo "Machine $MACHINE is on '${SOURCE:-<none>}'; KAIRON_HW_TARGET_NODE must be the other node" >&2; exit 1; }
 DATE="$(date -u +%Y-%m-%d)"
 RESULTS=()
+FAILED=0
+
+# Titles must match the first column of the matrix table in docs/COMPATIBILITY.md.
+T_SMOKE="Create / restart / delete smoke"
+T_COLD="Cold migration"
+T_LIVE="Live pre-copy under load"
+T_EBPF="Live + eBPF dataplane"
+T_SRC="Source failure during transfer"
+T_RECOVERY="Ambiguous commit → NeedsRecovery"
+T_CTRL="Controller failover mid-migration"
 
 record() {
-  local case="$1" result="$2" notes="${3:-}"
-  RESULTS+=("| ${case} | ${result} | ${DATE} | ${notes} |")
-  echo "==> ${case}: ${result} ${notes}"
+  local title="$1" result="$2" notes="${3:-}"
+  RESULTS+=("${title}"$'\t'"${result}"$'\t'"${notes}")
+  [[ "$result" == "fail" ]] && FAILED=$((FAILED + 1))
+  echo "==> ${title}: ${result} ${notes}"
 }
 
-run_migrate() {
-  local machine="$1"
-  "$REPO_ROOT/scripts/multi-host-migration-test-run.sh" "$machine" "$TARGET" \
-    --namespace="$NAMESPACE" --timeout="$TIMEOUT"
+# Where the next migration of $1 should go: the node it isn't on.
+next_target() { other_node "$(machine_node "$NAMESPACE" "$1")" "$SOURCE" "$TARGET"; }
+
+# migrate_and_verify MACHINE STRATEGY -- migration Succeeded and the Machine
+# is healthy on the new node.
+migrate_and_verify() {
+  local machine="$1" strategy="$2" dest mig
+  dest="$(next_target "$machine")"
+  mig="$(start_migration "$NAMESPACE" "$machine" "$dest" "$strategy" "hw-$strategy")"
+  wait_until "$TIMEOUT" "$mig terminal" migration_in "$NAMESPACE" "$mig" Succeeded Failed Blocked Cancelled NeedsRecovery || return 1
+  local phase
+  phase="$(migration_phase "$NAMESPACE" "$mig")"
+  [[ "$phase" == "Succeeded" ]] || { lab_log "$mig ended $phase"; return 1; }
+  wait_until 300 "$machine healthy on $dest" machine_healthy "$NAMESPACE" "$machine" "$dest" || return 1
+  NOTE="$mig → $dest"
+}
+
+smoke() {
+  if [[ -z "${KAIRON_HW_IMAGE:-}" ]]; then
+    if machine_healthy "$NAMESPACE" "$MACHINE"; then
+      NOTE="KAIRON_HW_IMAGE unset: checked ${MACHINE} Running/Ready only"
+      return 0
+    fi
+    NOTE="${MACHINE} not healthy"
+    return 1
+  fi
+  local name path
+  name="hwsmoke-$(date -u +%H%M%S)"
+  path="$(machine_path "$NAMESPACE" "$name")"
+  "$KAIRONCTL" create "$name" --namespace "$NAMESPACE" --image="$KAIRON_HW_IMAGE" --cpu=1 --memory=1Gi >&2
+  local ok=0
+  {
+    wait_until "$TIMEOUT" "$name healthy" machine_healthy "$NAMESPACE" "$name" &&
+      "$KAIRONCTL" stop "$name" --namespace "$NAMESPACE" >&2 &&
+      wait_until "$TIMEOUT" "$name Stopped" machine_is "$NAMESPACE" "$name" '(o.get("status") or {}).get("phase") == "Stopped"' &&
+      "$KAIRONCTL" start "$name" --namespace "$NAMESPACE" >&2 &&
+      wait_until "$TIMEOUT" "$name healthy again" machine_healthy "$NAMESPACE" "$name"
+  } || ok=1
+  "$KAIRONCTL" delete machine "$name" --namespace "$NAMESPACE" >&2 || ok=1
+  wait_until "$TIMEOUT" "$name deleted" machine_gone "$path" || ok=1
+  NOTE="$name from ${KAIRON_HW_IMAGE}: create → healthy → stop → start → delete"
+  return "$ok"
+}
+
+machine_gone() {
+  local rc=0
+  kube_exists "$1" || rc=$?
+  [[ $rc -eq 1 ]]
 }
 
 require_dataplane_mode() {
-  local machine="$1" want="$2"
-  local mode
-  mode="$("$KAIRONCTL" get machine -n "$NAMESPACE" "$machine" -o json 2>/dev/null \
-    | python3 -c 'import json,sys; m=json.load(sys.stdin); print((m.get("spec") or {}).get("network",{}).get("dataplaneMode",""))' 2>/dev/null || true)"
-  if [[ "$mode" != "$want" ]]; then
-    echo "expected ${machine} spec.network.dataplaneMode=${want}, got ${mode:-empty}" >&2
-    return 1
+  [[ "$(machine_field "$NAMESPACE" "$1" '((o.get("spec") or {}).get("network") or {}).get("dataplaneMode") or ""')" == "$2" ]]
+}
+
+# drill TITLE SCRIPT ARGS... -- runs an injection script if present.
+drill() {
+  local title="$1" script="$2"; shift 2
+  if [[ ! -x "$REPO_ROOT/scripts/$script" ]]; then
+    record "$title" "not run" "scripts/$script missing"
+    return
   fi
-  return 0
+  local dest
+  dest="$(next_target "$MACHINE")"
+  if "$REPO_ROOT/scripts/$script" --namespace="$NAMESPACE" --machine="$MACHINE" --target="$dest" "$@"; then
+    record "$title" "pass" "$script → $dest"
+  else
+    record "$title" "fail" "$script → $dest"
+  fi
 }
 
 for case in "${CASES[@]}"; do
+  NOTE=""
   case "$case" in
     smoke)
-      if "$KAIRONCTL" get machine -n "$NAMESPACE" "$MACHINE" >/dev/null 2>&1; then
-        record "Create / restart / delete smoke" "pass" "Machine ${MACHINE} present"
-      else
-        record "Create / restart / delete smoke" "fail" "Machine ${MACHINE} missing"
-      fi
+      if smoke; then record "$T_SMOKE" pass "$NOTE"; else record "$T_SMOKE" fail "$NOTE"; fi
       ;;
     cold)
-      if KAIRON_MIGRATE_STRATEGY=cold run_migrate "$MACHINE"; then
-        record "Cold migration" "pass" ""
-      else
-        record "Cold migration" "fail" ""
-      fi
+      if migrate_and_verify "$MACHINE" cold; then record "$T_COLD" pass "$NOTE"; else record "$T_COLD" fail "$NOTE"; fi
       ;;
     live)
-      if run_migrate "$MACHINE"; then
-        record "Live pre-copy under load" "pass" "load injection optional"
-      else
-        record "Live pre-copy under load" "fail" ""
-      fi
+      if migrate_and_verify "$MACHINE" live; then record "$T_LIVE" pass "$NOTE"; else record "$T_LIVE" fail "$NOTE"; fi
       ;;
     live-ebpf)
       EBPF_MACHINE="${KAIRON_HW_EBPF_MACHINE:-$MACHINE}"
-      if ! require_dataplane_mode "$EBPF_MACHINE" "ebpf"; then
-        record "Live + eBPF dataplane" "fail" "Machine ${EBPF_MACHINE} missing dataplaneMode=ebpf"
-      elif run_migrate "$EBPF_MACHINE"; then
-        record "Live + eBPF dataplane" "pass" "Machine ${EBPF_MACHINE}; network quiesce/export/restore on TC/eBPF path"
+      if ! require_dataplane_mode "$EBPF_MACHINE" ebpf; then
+        record "$T_EBPF" fail "Machine ${EBPF_MACHINE} missing dataplaneMode=ebpf"
+      elif migrate_and_verify "$EBPF_MACHINE" live; then
+        record "$T_EBPF" pass "$NOTE"
       else
-        record "Live + eBPF dataplane" "fail" "Machine ${EBPF_MACHINE}"
+        record "$T_EBPF" fail "Machine ${EBPF_MACHINE} $NOTE"
       fi
       ;;
     needs-recovery)
-      if [[ -x "$REPO_ROOT/scripts/recovery-drill.sh" ]]; then
-        if "$REPO_ROOT/scripts/recovery-drill.sh" --namespace="$NAMESPACE" --machine="$MACHINE"; then
-          record "Ambiguous commit → NeedsRecovery" "pass" "recovery-drill.sh"
-        else
-          record "Ambiguous commit → NeedsRecovery" "fail" "recovery-drill.sh"
-        fi
-      elif [[ -f "$REPO_ROOT/docs/runbook-recovery-drill.md" ]]; then
-        record "Ambiguous commit → NeedsRecovery" "manual" "see runbook-recovery-drill.md"
+      if [[ -n "${KAIRON_HW_TARGET_SSH:-}${KAIRON_HW_SOURCE_SSH:-}" ]]; then
+        dest="$(next_target "$MACHINE")"
+        ssh_for_dest="$KAIRON_HW_TARGET_SSH"
+        [[ "$dest" == "$SOURCE" ]] && ssh_for_dest="${KAIRON_HW_SOURCE_SSH:-}"
+        drill "$T_RECOVERY" recovery-drill.sh --dest-ssh="$ssh_for_dest"
       else
-        record "Ambiguous commit → NeedsRecovery" "fail" "runbook missing"
+        record "$T_RECOVERY" "not run" "set KAIRON_HW_SOURCE_SSH/KAIRON_HW_TARGET_SSH"
       fi
       ;;
     source-failure)
-      if [[ -x "$REPO_ROOT/scripts/lab-inject-source-failure.sh" ]]; then
-        if "$REPO_ROOT/scripts/lab-inject-source-failure.sh" --namespace="$NAMESPACE" --machine="$MACHINE" --target="$TARGET"; then
-          record "Source failure during transfer" "pass" ""
-        else
-          record "Source failure during transfer" "fail" ""
-        fi
+      if [[ -n "${KAIRON_HW_SOURCE_SSH:-}" && -n "${KAIRON_HW_TARGET_SSH:-}" ]]; then
+        src_ssh="$KAIRON_HW_SOURCE_SSH"
+        [[ "$(machine_node "$NAMESPACE" "$MACHINE")" == "$TARGET" ]] && src_ssh="$KAIRON_HW_TARGET_SSH"
+        drill "$T_SRC" lab-inject-source-failure.sh --source-ssh="$src_ssh"
       else
-        record "Source failure during transfer" "manual" "add scripts/lab-inject-source-failure.sh or run by hand"
+        record "$T_SRC" "not run" "set KAIRON_HW_SOURCE_SSH and KAIRON_HW_TARGET_SSH"
       fi
       ;;
     controller-failover)
-      if [[ -x "$REPO_ROOT/scripts/lab-inject-controller-failover.sh" ]]; then
-        if "$REPO_ROOT/scripts/lab-inject-controller-failover.sh" --namespace="$NAMESPACE" --machine="$MACHINE" --target="$TARGET"; then
-          record "Controller failover mid-migration" "pass" ""
-        else
-          record "Controller failover mid-migration" "fail" ""
-        fi
-      else
-        record "Controller failover mid-migration" "manual" "add scripts/lab-inject-controller-failover.sh or run by hand"
-      fi
+      drill "$T_CTRL" lab-inject-controller-failover.sh
       ;;
     *)
       echo "unknown case $case" >&2
@@ -150,5 +197,18 @@ for case in "${CASES[@]}"; do
 done
 
 echo
-echo "## Matrix rows (paste into docs/COMPATIBILITY.md)"
-printf '%s\n' "${RESULTS[@]}"
+echo "## Matrix rows"
+for r in "${RESULTS[@]}"; do
+  IFS=$'\t' read -r title result notes <<<"$r"
+  echo "| ${title} | ${result} | ${DATE} | ${notes} |"
+done
+
+if [[ "$WRITE_COMPAT" == "1" ]]; then
+  printf '%s\n' "${RESULTS[@]}" | python3 "$REPO_ROOT/scripts/lib/write_compat.py" "$REPO_ROOT/docs/COMPATIBILITY.md" "$DATE"
+  echo "updated docs/COMPATIBILITY.md"
+fi
+
+if (( FAILED > 0 )); then
+  echo "FAILED: ${FAILED} case(s)" >&2
+  exit 1
+fi

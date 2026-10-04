@@ -22,12 +22,24 @@ Automation entry points:
 - Runbook: [`docs/runbook-multi-host-migration-test.md`](runbook-multi-host-migration-test.md)
 - Matrix driver: [`scripts/hardware-migration-matrix.sh`](../scripts/hardware-migration-matrix.sh)
 - Workflow: [`.github/workflows/hardware-migration.yml`](../.github/workflows/hardware-migration.yml) (`workflow_dispatch` + nightly)
+- Failure drills the matrix runs (each also works standalone):
+  [`scripts/recovery-drill.sh`](../scripts/recovery-drill.sh) (firewalls the
+  destination's control port mid-migration, then runs `kaironctl recover`),
+  [`scripts/lab-inject-source-failure.sh`](../scripts/lab-inject-source-failure.sh)
+  (stops `kairon-node` on the source during transfer), and
+  [`scripts/lab-inject-controller-failover.sh`](../scripts/lab-inject-controller-failover.sh)
+  (restarts the controller mid-migration)
 
 **Lab enablement (current blocker for the multi-host matrix):** the
 `matrix` job runs only on `runs-on: [self-hosted, kairon-lab]`. Bring that
 runner online and set repository secrets/vars `KAIRON_HW_LAB=1`,
-`KAIRON_KUBE_URL`, `KAIRON_KUBE_TOKEN`, `KAIRON_KUBE_CA` (plus optional
-`KAIRON_HW_EBPF_MACHINE` for the live-eBPF case). Until then,
+`KAIRON_KUBE_URL`, `KAIRON_KUBE_TOKEN`, `KAIRON_KUBE_CA` (PEM content;
+the workflow writes it to a file), `KAIRON_HW_MACHINE`,
+`KAIRON_HW_TARGET_NODE`, plus optional `KAIRON_HW_EBPF_MACHINE` (live-eBPF
+case), `KAIRON_HW_IMAGE` (real create/stop/start/delete smoke),
+`KAIRON_HW_SOURCE_SSH` / `KAIRON_HW_TARGET_SSH` (failure drills; the runner
+needs passwordless SSH and sudo for `iptables` / `systemctl`) and
+`KAIRON_HW_CONTROLLER_SSH` (systemd controller instead of Pods). Until then,
 push-triggered runs succeed on the `validate` job only and leave every
 **migration** row below as `not run`.
 
@@ -63,8 +75,11 @@ the multi-host matrix above.
 | Ambiguous commit → `NeedsRecovery` | not run | — | |
 | Controller failover mid-migration | not run | — | |
 
-Update this table when a matrix run completes (script prints a markdown
-row summary to stdout for copy/paste). For the eBPF live case, the lab
+`hardware-migration-matrix.sh --write-compat` rewrites these rows from a
+run (the workflow uploads the result as the `compatibility-md` artifact);
+without the flag it prints markdown rows for copy/paste. Every migration
+case checks that the Machine ends up Running and Ready on the expected node,
+and the script exits non-zero if any case fails. For the eBPF live case, the lab
 Machine must set `dataplaneMode: ebpf` and `dataplaneRequired: true` so
 migration network quiesce/export/restore exercises FluxVM's TC/eBPF path
 (see [`network-fabric.md`](network-fabric.md)).

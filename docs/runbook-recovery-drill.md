@@ -15,6 +15,23 @@ Prerequisites: the two-host deployment from
 `docs/runbook-multi-host-migration-test.md` (steps 1-3), already verified
 with at least one successful real migration.
 
+## Automated: Trigger A end to end
+
+`scripts/recovery-drill.sh` runs Trigger A and the recovery in one go, and
+is what the hardware matrix's `needs-recovery` case calls:
+
+```
+scripts/recovery-drill.sh --machine=MACHINE --target=vm-host-2 \
+  --dest-ssh=root@10.0.1.12 --action=confirm-not-committed   # or force-abort
+```
+
+It starts a live migration, drops traffic to the destination's control
+port (9443) once the migration is Running, waits for `NeedsRecovery`, lifts
+the block, runs `kaironctl recover`, and checks the outcome:
+`confirm-not-committed` must end `Succeeded` with the Machine healthy on the
+target; `force-abort` must end `Failed`/`Cancelled` with the Machine still
+healthy on the source. Trigger B stays manual (it races a sub-second window).
+
 ## Why this needs two different trigger mechanisms
 
 `reconcileNeedsRecovery`'s three actions map to three different *ground

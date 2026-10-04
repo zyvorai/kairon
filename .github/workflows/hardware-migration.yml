@@ -29,8 +29,12 @@ jobs:
         run: |
           set -euo pipefail
           test -f docs/COMPATIBILITY.md
-          test -x scripts/hardware-migration-matrix.sh || chmod +x scripts/hardware-migration-matrix.sh
-          bash -n scripts/hardware-migration-matrix.sh
+          for f in scripts/hardware-migration-matrix.sh scripts/recovery-drill.sh \
+                   scripts/lab-inject-source-failure.sh scripts/lab-inject-controller-failover.sh \
+                   scripts/lib/lab.sh; do
+            bash -n "$f"
+          done
+          python3 -m py_compile scripts/lib/write_compat.py
           if [[ -f scripts/multi-host-migration-test-run.sh ]]; then
             bash -n scripts/multi-host-migration-test-run.sh
           fi
@@ -57,18 +61,34 @@ jobs:
           KAIRON_HW_LAB: ${{ vars.KAIRON_HW_LAB }}
           KAIRON_KUBE_URL: ${{ secrets.KAIRON_KUBE_URL }}
           KAIRON_KUBE_TOKEN: ${{ secrets.KAIRON_KUBE_TOKEN }}
-          KAIRON_KUBE_CA: ${{ secrets.KAIRON_KUBE_CA }}
+          KAIRON_KUBE_CA_PEM: ${{ secrets.KAIRON_KUBE_CA }}
           KAIRON_HW_MACHINE: ${{ vars.KAIRON_HW_MACHINE }}
           KAIRON_HW_TARGET_NODE: ${{ vars.KAIRON_HW_TARGET_NODE }}
           KAIRON_HW_NAMESPACE: ${{ vars.KAIRON_HW_NAMESPACE }}
           KAIRON_HW_EBPF_MACHINE: ${{ vars.KAIRON_HW_EBPF_MACHINE }}
+          KAIRON_HW_IMAGE: ${{ vars.KAIRON_HW_IMAGE }}
+          KAIRON_HW_SOURCE_SSH: ${{ vars.KAIRON_HW_SOURCE_SSH }}
+          KAIRON_HW_TARGET_SSH: ${{ vars.KAIRON_HW_TARGET_SSH }}
+          KAIRON_HW_CONTROLLER_SSH: ${{ vars.KAIRON_HW_CONTROLLER_SSH }}
         run: |
           if [[ "${KAIRON_HW_LAB:-}" != "1" ]]; then
             echo "KAIRON_HW_LAB not set — skipping (configure lab vars/secrets to enable)."
             exit 0
           fi
-          chmod +x scripts/hardware-migration-matrix.sh
-          scripts/hardware-migration-matrix.sh | tee matrix-out.txt
+          if [[ -n "${KAIRON_KUBE_CA_PEM:-}" ]]; then
+            printf '%s\n' "$KAIRON_KUBE_CA_PEM" > "$RUNNER_TEMP/kube-ca.pem"
+            export KAIRON_KUBE_CA="$RUNNER_TEMP/kube-ca.pem"
+          fi
+          export PATH="$PWD/bin:$PATH"
+          set -o pipefail
+          scripts/hardware-migration-matrix.sh --write-compat | tee matrix-out.txt
+      - name: Upload COMPATIBILITY.md with results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: compatibility-md
+          path: docs/COMPATIBILITY.md
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         if: always()
         with:
