@@ -2,9 +2,9 @@
 
 # Kairon
 
-[![CI](https://github.com/zyvorai/kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/ci.yml)
-[![MCP](https://github.com/zyvorai/kairon/actions/workflows/mcp.yml/badge.svg)](https://github.com/zyvorai/kairon/actions/workflows/mcp.yml)
-[![Release](https://img.shields.io/github/v/release/zyvorai/kairon?display_name=tag&color=0071e3)](https://github.com/zyvorai/kairon/releases/latest)
+[![CI](https://github.com/zyvorai/zyvor-kairon/actions/workflows/ci.yml/badge.svg)](https://github.com/zyvorai/zyvor-kairon/actions/workflows/ci.yml)
+[![MCP](https://github.com/zyvorai/zyvor-kairon/actions/workflows/mcp.yml/badge.svg)](https://github.com/zyvorai/zyvor-kairon/actions/workflows/mcp.yml)
+[![Release](https://img.shields.io/github/v/release/zyvorai/zyvor-kairon?display_name=tag&color=0071e3)](https://github.com/zyvorai/zyvor-kairon/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/zyvorai/kairon)](https://goreportcard.com/report/github.com/zyvorai/kairon)
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/zyvorai/kairon?label=OpenSSF%20Scorecard)](https://scorecard.dev/viewer/?uri=github.com/zyvorai/kairon)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15141/badge)](https://www.bestpractices.dev/projects/15141)
@@ -19,7 +19,7 @@
 
 ### VMs that don't pretend to be Pods.
 
-**Real virtual machines, scheduled by Kubernetes, run straight on KVM.** No `virt-launcher` pod per VM, no libvirt in the hot path, no operator zoo. A `Machine` is desired state, `kairon-controller` places it, and `kairon-node` runs it on [FluxVM](https://github.com/zyvorai/fluxvm) with QEMU, Cloud Hypervisor, Firecracker or FluxVM's own hypervisor.
+**Real virtual machines, scheduled by Kubernetes, run straight on KVM.** No `virt-launcher` pod per VM, no libvirt in the hot path, no operator zoo. A `Machine` is desired state, `kairon-controller` places it, and `kairon-node` runs it on [FluxVM](https://github.com/zyvorai/zyvor-fluxvm) with QEMU, Cloud Hypervisor, Firecracker or FluxVM's own hypervisor.
 
 **Zero pods per VM** · **Four hypervisors, one CRD** · **eBPF on every VM edge** · **No silent split-brain** · **AI agents built in (MCP)**
 
@@ -72,7 +72,7 @@ Every layer you remove is one less thing to patch, one less log to read and one 
 | Idle control plane, 5 VMs to SSH ([measured](#the-numbers)) | **63 MiB**, **25 s** | 905 MiB, 185 s |
 | Path to KVM | `kairon-node` → FluxVM REST → KVM | `virt-handler` → `virt-launcher` → libvirt → QEMU |
 | Hypervisors | **QEMU, Cloud Hypervisor, Firecracker, FluxVM** | QEMU via libvirt |
-| MicroVMs and warm pools | Firecracker / FluxVM sandboxes, FluxVM warm pools ([24 ms claim measured](https://github.com/zyvorai/fluxvm/tree/main/docs/benchmarks)) | Not a target |
+| MicroVMs and warm pools | Firecracker / FluxVM sandboxes, FluxVM warm pools ([24 ms claim measured](https://github.com/zyvorai/zyvor-fluxvm/tree/main/docs/benchmarks)) | Not a target |
 | Scheduling | Capacity-aware Kairon placement on real allocatable | Pod scheduler plus virt extras |
 | Control plane code | **Go standard library only** (controller, node) | Large client-go / controller-runtime surface |
 | VM network | **eBPF VM edge**: anti-spoof, DNS/SNI policy, rate limit, flows, drop reasons, pcap | Pod CNI, masquerade/bridge binding, Multus |
@@ -145,7 +145,7 @@ Full write-up: [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs
 
 ## Quickstart
 
-On a Kubernetes cluster whose VM hosts run [FluxVM](https://github.com/zyvorai/fluxvm):
+On a Kubernetes cluster whose VM hosts run [FluxVM](https://github.com/zyvorai/zyvor-fluxvm):
 
 ```bash
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
@@ -154,7 +154,7 @@ helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
   --version 0.6.0 -n kairon-system --create-namespace \
   -f https://raw.githubusercontent.com/zyvorai/kairon/v0.6.0/charts/kairon/values-production.yaml
 
-curl -fsSL -o kaironctl https://github.com/zyvorai/kairon/releases/download/v0.6.0/kaironctl-linux-amd64
+curl -fsSL -o kaironctl https://github.com/zyvorai/zyvor-kairon/releases/download/v0.6.0/kaironctl-linux-amd64
 chmod +x kaironctl && sudo mv kaironctl /usr/local/bin/      # or: kubectl krew install kairon
 
 kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi
@@ -173,7 +173,7 @@ From your laptop to a bare-metal host (cross-compiled locally, shipped as static
 <summary><strong>From source, kind, or raw manifests</strong></summary>
 
 ```bash
-git clone https://github.com/zyvorai/kairon.git && cd kairon
+git clone https://github.com/zyvorai/zyvor-kairon.git && cd kairon
 make docker-build
 helm upgrade --install kairon ./charts/kairon -n kairon-system --create-namespace
 # or: kaironctl install   (embedded Helm SDK, no helm binary needed)
@@ -283,7 +283,7 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md); the dependency rules are in [docs
 
 **Apache-2.0**: use, modify and run in production at no charge ([LICENSE](LICENSE), [NOTICE](NOTICE)). Commercial subscriptions and support: [docs/SUBSCRIPTION-MODEL.md](docs/SUBSCRIPTION-MODEL.md) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
 
-Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/kairon/issues). Report vulnerabilities privately to **security@zyvor.dev** or via [GitHub private vulnerability reporting](https://github.com/zyvorai/kairon/security/advisories/new).
+Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-kairon/issues). Report vulnerabilities privately to **security@zyvor.dev** or via [GitHub private vulnerability reporting](https://github.com/zyvorai/zyvor-kairon/security/advisories/new).
 
 ---
 
@@ -293,6 +293,6 @@ Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/kairon/
 
 [![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
 [![30-day PoC](https://img.shields.io/badge/Start_a_30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
-[![Star on GitHub](https://img.shields.io/github/stars/zyvorai/kairon?style=for-the-badge&logo=github&label=Star&color=ff5a15)](https://github.com/zyvorai/kairon)
+[![Star on GitHub](https://img.shields.io/github/stars/zyvorai/zyvor-kairon?style=for-the-badge&logo=github&label=Star&color=ff5a15)](https://github.com/zyvorai/zyvor-kairon)
 
 </div>
