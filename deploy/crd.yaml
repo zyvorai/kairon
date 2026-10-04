@@ -1672,6 +1672,25 @@ spec:
                 type: array
                 items:
                   type: string
+              diskVolumes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    node:
+                      type: string
+                    driver:
+                      type: string
+                    volumeHandle:
+                      type: string
+                    stagingPath:
+                      type: string
+                    publishPath:
+                      type: string
+                    block:
+                      type: boolean
               attachedInterfaces:
                 type: array
                 items:

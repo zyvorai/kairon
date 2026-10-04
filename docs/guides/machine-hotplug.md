@@ -107,8 +107,20 @@ or `kaironctl disk attach db data --claim db-data` /
 
 - The PV must be hostPath- or local-backed. A **Block**-mode PV attaches its
   device path (e.g. `/dev/vg0/data`); a **Filesystem**-mode PV attaches the
-  `disk.img` inside its directory, as for boot volumes. CSI-backed PVs are
-  refused here (use `spec.volumes` for those).
+  `disk.img` inside its directory, as for boot volumes.
+- A **CSI**-backed PV works too, with Kairon's own driver
+  (`csi.kairon.zyvor.dev`, Filesystem mode) or any driver on the node's
+  third-party allowlist (Filesystem or Block mode, with a `VolumeAttachment`
+  when the driver needs one). kairon-node stages and publishes the volume
+  under `<publishDir>/disks/<driver>/<machine>/<disk>`, attaches it, and
+  records it in `status.diskVolumes`. Removing the disk detaches it and then
+  unpublishes and unstages the volume; deleting the Machine does the same.
+  The node needs the CSI setup from
+  [machine-storage-csi.md](machine-storage-csi.md).
+- To point a CSI disk at another claim, remove the entry first and add it
+  back under the new claim once `status.diskVolumes` has dropped it.
+- Detach CSI disks before migrating a Machine. The volume is published on
+  the source node only, and the destination does not take it over.
 - In the guest the disk shows up as
   `/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<name>`; device letters are not
   stable, the serial is.

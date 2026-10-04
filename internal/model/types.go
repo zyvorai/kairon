@@ -855,10 +855,27 @@ type MachineStatus struct {
 	// to the running VM. Only these are ever detached when removed from
 	// spec, so disks attached by other means are left alone.
 	AttachedDisks []string `json:"attachedDisks,omitempty"`
+	// DiskVolumes are the CSI volumes kairon-node has staged and published
+	// for CSI-backed spec.disks entries, kept so a removed disk or a
+	// deleted Machine can be unpublished even after its PV is gone.
+	DiskVolumes []DiskVolume `json:"diskVolumes,omitempty"`
 	// AttachedInterfaces are the spec.network.extraInterfaces kairon-node
 	// has hot-added, with the MAC it used (generated when spec left it
 	// empty), so removal can unplug the exact NIC.
 	AttachedInterfaces []AttachedInterface `json:"attachedInterfaces,omitempty"`
+}
+
+// DiskVolume is one CSI volume published for a spec.disks entry on Node.
+// Block volumes are published as a device at PublishPath; Filesystem ones
+// as a directory holding disk.img.
+type DiskVolume struct {
+	Name         string `json:"name"`
+	Node         string `json:"node"`
+	Driver       string `json:"driver"`
+	VolumeHandle string `json:"volumeHandle"`
+	StagingPath  string `json:"stagingPath"`
+	PublishPath  string `json:"publishPath"`
+	Block        bool   `json:"block,omitempty"`
 }
 
 // AttachedInterface is one hot-added extra NIC.

@@ -423,8 +423,9 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		a.Log.Error("hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", hotplugErr)
 		status.Message = hotplugErr.Error()
 	}
-	attachedDisks, attachedIfaces, devErr := a.reconcileDevices(ctx, m, rec)
+	attachedDisks, diskVolumes, attachedIfaces, devErr := a.reconcileDevices(ctx, m, rec)
 	status.AttachedDisks = attachedDisks
+	status.DiskVolumes = diskVolumes
 	status.AttachedInterfaces = attachedIfaces
 	if devErr != nil {
 		a.Log.Error("device hotplug reconcile failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", devErr)
@@ -679,6 +680,9 @@ func (a *Agent) cleanup(ctx context.Context, m model.Machine) error {
 	// spec.image.path, or a hostPath/local-backed volume.
 	if err := a.teardownCSIVolume(ctx, m); err != nil {
 		return fmt.Errorf("tear down CSI volume: %w", err)
+	}
+	if err := a.teardownDiskVolumes(ctx, m); err != nil {
+		return fmt.Errorf("tear down CSI disk volumes: %w", err)
 	}
 	// Same fail-closed posture as the FluxVM runtime delete and CSI
 	// teardown above: a real deregistration error leaves the finalizer in

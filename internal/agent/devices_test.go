@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/zyvorai/kairon/internal/csinode"
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
@@ -119,7 +121,7 @@ func TestReconcileDisksAttachesAndDetachesOnlyOwnedDisks(t *testing.T) {
 			{Name: "logs", ClaimName: "fs"},
 		}},
 	}
-	disks, _, err := a.reconcileDevices(context.Background(), m, f.record())
+	disks, _, _, err := a.reconcileDevices(context.Background(), m, f.record())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +135,13 @@ func TestReconcileDisksAttachesAndDetachesOnlyOwnedDisks(t *testing.T) {
 	// Steady state: nothing to do.
 	m.Status.AttachedDisks = disks
 	f.calls = nil
-	if _, _, err := a.reconcileDevices(context.Background(), m, f.record()); err != nil || len(f.calls) != 0 {
+	if _, _, _, err := a.reconcileDevices(context.Background(), m, f.record()); err != nil || len(f.calls) != 0 {
 		t.Fatalf("steady state made calls %v (err %v)", f.calls, err)
 	}
 
 	// Dropping "logs" detaches it; "manual" was never ours and stays.
 	m.Spec.Disks = m.Spec.Disks[:1]
-	disks, _, err = a.reconcileDevices(context.Background(), m, f.record())
+	disks, _, _, err = a.reconcileDevices(context.Background(), m, f.record())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +166,55 @@ func TestReconcileDisksReportsUnresolvableClaimsWithoutBlockingOthers(t *testing
 			{Name: "ok", ClaimName: "ok"},
 		}},
 	}
-	disks, _, err := a.reconcileDevices(context.Background(), m, f.record())
-	if err == nil || !strings.Contains(err.Error(), "CSI-backed") {
+	disks, _, _, err := a.reconcileDevices(context.Background(), m, f.record())
+	if err == nil || !strings.Contains(err.Error(), "staging/publish directory") {
 		t.Fatalf("want a CSI error, got %v", err)
 	}
 	if !slices.Equal(disks, []string{"ok"}) {
 		t.Fatalf("attached = %v", disks)
+	}
+}
+
+func TestReconcileDisksPublishesAndUnpublishesCSIVolumes(t *testing.T) {
+	f := &fakeDeviceFlux{disks: map[string]string{}, nics: map[string]string{}}
+	a := newDeviceAgent(t, f, map[string]model.PersistentVolume{"pv-vol": testCSIPV("pv-vol", "h1")})
+	node := &fakeCSINodeServer{}
+	a.CSISocketPath = startFakeCSINode(t, node)
+	a.CSIStagingDir, a.CSIPublishDir, a.NodeName = t.TempDir(), t.TempDir(), "n1"
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+		Spec:     model.MachineSpec{Disks: []model.MachineDisk{{Name: "vol", ClaimName: "vol"}}},
+	}
+	disks, vols, _, err := a.reconcileDevices(context.Background(), m, f.record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := filepath.Join(a.CSIPublishDir, "disks", csinode.DriverName, m.RuntimeName(), "vol")
+	if !slices.Equal(disks, []string{"vol"}) || len(vols) != 1 || vols[0].Node != "n1" || vols[0].VolumeHandle != "h1" ||
+		f.disks["vol"] != filepath.Join(publish, bootDiskFileName) || len(node.stageCalls) != 1 || len(node.publishCalls) != 1 {
+		t.Fatalf("disks=%v vols=%+v flux=%v stage=%d publish=%d", disks, vols, f.disks, len(node.stageCalls), len(node.publishCalls))
+	}
+
+	m.Status.AttachedDisks, m.Status.DiskVolumes = disks, vols
+	f.calls = nil
+	if _, again, _, err := a.reconcileDevices(context.Background(), m, f.record()); err != nil || len(f.calls) != 0 || len(node.stageCalls) != 1 || len(again) != 1 {
+		t.Fatalf("steady state: calls=%v stage=%d vols=%v err=%v", f.calls, len(node.stageCalls), again, err)
+	}
+
+	foreign := model.DiskVolume{Name: "old", Node: "n2", Driver: csinode.DriverName, VolumeHandle: "h0"}
+	m.Status.DiskVolumes = append(m.Status.DiskVolumes, foreign)
+	m.Spec.Disks = nil
+	disks, vols, _, err = a.reconcileDevices(context.Background(), m, f.record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != 0 || !slices.Equal(f.calls, []string{"detach vol"}) || len(node.unpublish) != 1 || len(node.unstage) != 1 ||
+		len(vols) != 1 || vols[0] != foreign {
+		t.Fatalf("disks=%v calls=%v unpublish=%d unstage=%d vols=%+v", disks, f.calls, len(node.unpublish), len(node.unstage), vols)
+	}
+	m.Status.DiskVolumes = vols
+	if err := a.teardownDiskVolumes(context.Background(), m); err != nil || len(node.unpublish) != 1 {
+		t.Fatalf("another node's volume must be left to that node: err=%v unpublish=%d", err, len(node.unpublish))
 	}
 }
 
@@ -183,7 +228,7 @@ func TestReconcileInterfacesHotplugsAndUnplugsByMAC(t *testing.T) {
 			{Name: "dmz", Bridge: "br-dmz", MAC: "02:AA:BB:CC:DD:EE"},
 		}}},
 	}
-	_, ifaces, err := a.reconcileDevices(context.Background(), m, f.record())
+	_, _, ifaces, err := a.reconcileDevices(context.Background(), m, f.record())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +243,7 @@ func TestReconcileInterfacesHotplugsAndUnplugsByMAC(t *testing.T) {
 	m.Status.AttachedInterfaces = ifaces
 	m.Spec.Network.ExtraInterfaces = m.Spec.Network.ExtraInterfaces[1:]
 	f.calls = nil
-	_, ifaces, err = a.reconcileDevices(context.Background(), m, f.record())
+	_, _, ifaces, err = a.reconcileDevices(context.Background(), m, f.record())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +258,7 @@ func TestReconcileDevicesWaitsForARunningVM(t *testing.T) {
 		Spec:   model.MachineSpec{Disks: []model.MachineDisk{{Name: "d", ClaimName: "c"}}},
 		Status: model.MachineStatus{AttachedDisks: []string{"d"}},
 	}
-	disks, _, err := a.reconcileDevices(context.Background(), m, &fluxvm.Record{Status: "paused"})
+	disks, _, _, err := a.reconcileDevices(context.Background(), m, &fluxvm.Record{Status: "paused"})
 	if err != nil || !slices.Equal(disks, []string{"d"}) {
 		t.Fatalf("disks = %v err = %v", disks, err)
 	}
