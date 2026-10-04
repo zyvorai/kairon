@@ -259,6 +259,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	usingSandboxTemplate := m.Spec.Sandbox != nil && m.Spec.Sandbox.TemplateName != ""
 	usingCatalogImage := m.Spec.Image.CatalogName != ""
 	var volStatus csiVolumeStatus
+	var dataDisks []fluxvm.DataDisk
 	if !usingSandboxTemplate && !usingCatalogImage {
 		if m.Spec.Image.Source != nil {
 			cachedPath, err := a.resolveImageSource(ctx, m)
@@ -266,9 +267,11 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 				return err
 			}
 			if m.Spec.Image.Source.NeedsImport() {
-				if cachedPath, err = a.resolveImportedImage(ctx, m, cachedPath); err != nil {
+				var imported importedImage
+				if imported, err = a.resolveImportedImage(ctx, m, cachedPath); err != nil {
 					return err
 				}
+				cachedPath, dataDisks = imported.Image, imported.dataDisks()
 			}
 			m.Spec.Image.Path = cachedPath
 		}
@@ -356,7 +359,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
-		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices, sharedFolders)
+		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices, sharedFolders, dataDisks)
 		if err != nil {
 			return err
 		}

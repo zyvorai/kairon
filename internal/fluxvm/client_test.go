@@ -626,3 +626,25 @@ func TestSetResourceLimitsPropagatesErrors(t *testing.T) {
 		t.Fatal("expected an error when the server rejects the request")
 	}
 }
+
+func TestCreateSendsDataDisks(t *testing.T) {
+	var body map[string]any
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"id":"vm-1","status":"Running"}`))
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	m := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "default"},
+		Spec:     model.MachineSpec{Image: model.ImageSpec{Path: "/i/disk0.raw"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}},
+	}
+	if _, err := c.CreateWithVFIO(context.Background(), m, "qemu", nil, nil, []DataDisk{{Name: "import-disk1", Backing: "/i/disk1.raw"}}); err != nil {
+		t.Fatal(err)
+	}
+	disks, _ := body["data_disks"].([]any)
+	if len(disks) != 1 || disks[0].(map[string]any)["backing"] != "/i/disk1.raw" {
+		t.Fatalf("data_disks = %v", body["data_disks"])
+	}
+}

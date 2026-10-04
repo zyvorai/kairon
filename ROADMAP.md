@@ -20,7 +20,7 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 **Migration from VMware**
 
 - [x] FluxVM OVA/OVF/VMDK import with guestkit repair (`POST /v1/images/import`: virtio initramfs, VMware tools off, `/dev/sdX` to `/dev/vdX`, DHCP fallback); Kairon `spec.image.source.format`/`repair` and `kaironctl import ova`
-- [ ] Offline virtio-win driver injection for Windows imports; attaching every disk of a multi-disk OVA
+- [x] Offline virtio-win driver injection for Windows imports (FluxVM `virtio_win_dir`); attaching every disk of a multi-disk OVA (`import-diskN` qcow2 overlays from the first boot)
 
 **AI-agent sandboxes**
 

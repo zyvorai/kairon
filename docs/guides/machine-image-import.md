@@ -82,9 +82,17 @@ downloads and verifies the file as above, then calls FluxVM's
 with `repair`, fixes the guest offline: VMware tools disabled, virtio modules
 added to the initramfs and the initramfs rebuilt, `/dev/sdX` moved to
 `/dev/vdX` in fstab and grub, persistent NIC rules dropped and a DHCP fallback
-added. The resulting disk path is recorded in
-`<imageCacheDir>/imported/kairon-<digest prefix>[-repaired].json`, so the
-import runs once per digest per node.
+added. A Windows guest gets the virtio-win drivers (viostor, vioscsi,
+NetKVM, vioserial) injected instead, when FluxVM has `virtio_win_dir` set
+(see FluxVM's `docs/import-vmware.md`). The resulting disk paths are
+recorded in `<imageCacheDir>/imported/kairon-<digest prefix>[-repaired].json`,
+so the import runs once per digest per node.
+
+Every disk of a multi-disk OVA is attached. The first is the boot disk; each
+further disk N becomes data disk `import-diskN` (SCSI serial `import-diskN`),
+created by FluxVM as a per-Machine qcow2 overlay on the imported file before
+the first boot. Machines booted from the same import never share writes.
+`spec.disks` names may not start with `import-disk`.
 
 FluxVM reads the file from the same path kairon-node downloaded it to, so
 `imageCacheDir` must be the same host directory for both. The chart mounts
@@ -171,8 +179,11 @@ image:
 
 ## Real limits today (v1 of this feature)
 
-- **Only the boot disk of a multi-disk OVA is attached.** The other
-  converted disks stay on the node (logged by kairon-node).
+- **Imported data disks live and die with the runtime.** Like the boot
+  overlay, `import-diskN` loses its changes when the Machine is stopped
+  (`spec.powerState: Stopped`) and started again, because the runtime and
+  its overlays are recreated. Use `spec.disks` with a PVC for data that must
+  survive that.
 - **No private sources.** No credentials-Secret mechanism for either
   `httpURL` or `oci` (a URL with embedded credentials works the same as any
   other `http.Client` request; private registries are refused).

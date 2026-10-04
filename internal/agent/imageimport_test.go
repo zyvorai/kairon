@@ -189,7 +189,7 @@ func TestResolveImportedImageCallsFluxVMOncePerDigest(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, `{"image":"/var/lib/fluxvm/images/imported/x/disk0.raw","extra_disks":[],"repair":{"os_type":"linux","distro":"ubuntu","actions":["disabled open-vm-tools.service"],"warnings":[]}}`)
+		_, _ = io.WriteString(w, `{"image":"/var/lib/fluxvm/images/imported/x/disk0.raw","extra_disks":["/var/lib/fluxvm/images/imported/x/disk1.raw"],"repair":{"os_type":"linux","distro":"ubuntu","actions":["disabled open-vm-tools.service"],"warnings":[]}}`)
 	}))
 	defer srv.Close()
 	a := &Agent{ImageCacheDir: t.TempDir(), Flux: fluxvm.New(srv.URL, ""), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -202,8 +202,10 @@ func TestResolveImportedImageCallsFluxVMOncePerDigest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != "/var/lib/fluxvm/images/imported/x/disk0.raw" {
-			t.Fatalf("image = %q", got)
+		disks := got.dataDisks()
+		if got.Image != "/var/lib/fluxvm/images/imported/x/disk0.raw" || len(disks) != 1 ||
+			disks[0] != (fluxvm.DataDisk{Name: "import-disk1", Backing: "/var/lib/fluxvm/images/imported/x/disk1.raw"}) {
+			t.Fatalf("import = %+v, data disks %+v", got, disks)
 		}
 	}
 	if calls.Load() != 1 {

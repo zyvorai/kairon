@@ -138,9 +138,17 @@ type CreateRequest struct {
 	SecureBoot bool `json:"secure_boot,omitempty"`
 	TPM        bool `json:"tpm,omitempty"`
 	// SharedFolders maps Machine spec.volumes[1+] (PVC host dirs) into
-	// FluxVM virtiofs shares — QEMU-only; FluxVM has no multi-block-disk
-	// create API yet. See docs/guides/machine-storage.md.
+	// FluxVM virtiofs shares — QEMU-only. See docs/guides/machine-storage.md.
 	SharedFolders []SharedFolder `json:"shared_folders,omitempty"`
+	// DataDisks are per-VM qcow2 overlays on shared images, present from
+	// the first boot (QEMU only): an imported OVA's extra disks.
+	DataDisks []DataDisk `json:"data_disks,omitempty"`
+}
+
+// DataDisk is one FluxVM CreateVmRequest.data_disks entry.
+type DataDisk struct {
+	Name    string `json:"name"`
+	Backing string `json:"backing"`
 }
 
 // SharedFolder mirrors FluxVM's CreateVmRequest.shared_folders entry.
@@ -507,14 +515,15 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 }
 
 func (c *Client) Create(ctx context.Context, m model.Machine, defaultBackend string) (*Record, error) {
-	return c.CreateWithVFIO(ctx, m, defaultBackend, nil, nil)
+	return c.CreateWithVFIO(ctx, m, defaultBackend, nil, nil, nil)
 }
 
-func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string, sharedFolders []SharedFolder) (*Record, error) {
+func (c *Client) CreateWithVFIO(ctx context.Context, m model.Machine, defaultBackend string, vfioDevices []string, sharedFolders []SharedFolder, dataDisks []DataDisk) (*Record, error) {
 	payload, err := buildCreateRequest(m, defaultBackend, vfioDevices, sharedFolders)
 	if err != nil {
 		return nil, err
 	}
+	payload.DataDisks = dataDisks
 	data, err := c.do(ctx, http.MethodPost, "/v1/vms", payload)
 	if err != nil {
 		return nil, err

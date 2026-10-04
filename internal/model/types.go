@@ -628,11 +628,21 @@ type MachineDisk struct {
 }
 
 // ValidateDisks checks spec.disks: unique FluxVM-safe names and a claim.
+// ImportDiskName is the data disk name kairon-node gives the n-th extra
+// disk (from 1) of an imported multi-disk image. spec.disks may not use the
+// prefix.
+func ImportDiskName(n int) string { return fmt.Sprintf("%s%d", importDiskPrefix, n) }
+
+const importDiskPrefix = "import-disk"
+
 func ValidateDisks(disks []MachineDisk) error {
 	seen := map[string]bool{}
 	for i, d := range disks {
 		if !diskNameRE.MatchString(d.Name) || d.Name == "root" {
 			return fmt.Errorf("spec.disks[%d].name %q: use 1-32 of [a-z0-9-], starting alphanumeric, not 'root'", i, d.Name)
+		}
+		if strings.HasPrefix(d.Name, importDiskPrefix) {
+			return fmt.Errorf("spec.disks[%d].name %q: the %s prefix is reserved for imported image disks", i, d.Name, importDiskPrefix)
 		}
 		if seen[d.Name] {
 			return fmt.Errorf("spec.disks[%d]: duplicate name %q", i, d.Name)

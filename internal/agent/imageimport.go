@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -111,9 +112,20 @@ func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string)
 // for a source that went through FluxVM's import, so later reconciles and
 // other Machines with the same digest reuse the converted disk.
 type importedImage struct {
-	Image    string   `json:"image"`
-	Actions  []string `json:"actions,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
+	Image      string   `json:"image"`
+	ExtraDisks []string `json:"extraDisks,omitempty"`
+	Actions    []string `json:"actions,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+}
+
+// dataDisks names the import's extra disks model.ImportDiskName(1..N) in
+// source order.
+func (r importedImage) dataDisks() []fluxvm.DataDisk {
+	var out []fluxvm.DataDisk
+	for i, p := range r.ExtraDisks {
+		out = append(out, fluxvm.DataDisk{Name: model.ImportDiskName(i + 1), Backing: p})
+	}
+	return out
 }
 
 // importName is the FluxVM import name for a digest and repair choice; it
@@ -131,39 +143,36 @@ func importName(img model.ImageSpec) string {
 // file at cachedPath through FluxVM's POST /v1/images/import and returns
 // the boot disk path. Content-addressed like the download cache: one
 // import per digest and repair choice per node.
-func (a *Agent) resolveImportedImage(ctx context.Context, m model.Machine, cachedPath string) (string, error) {
+func (a *Agent) resolveImportedImage(ctx context.Context, m model.Machine, cachedPath string) (importedImage, error) {
 	name := importName(m.Spec.Image)
 	recordPath := filepath.Join(a.ImageCacheDir, "imported", name+".json")
 	if b, err := os.ReadFile(recordPath); err == nil {
 		var rec importedImage
 		if err := json.Unmarshal(b, &rec); err == nil && rec.Image != "" {
-			return rec.Image, nil
+			return rec, nil
 		}
 	}
 	res, err := a.Flux.ImportImage(ctx, cachedPath, name, m.Spec.Image.Source.Repair)
 	if err != nil {
-		return "", fmt.Errorf("import %s (%s): %w", m.Spec.Image.Source.Location(), dash(m.Spec.Image.Source.Format), err)
+		return importedImage{}, fmt.Errorf("import %s (%s): %w", m.Spec.Image.Source.Location(), dash(m.Spec.Image.Source.Format), err)
 	}
-	rec := importedImage{Image: res.Image}
+	rec := importedImage{Image: res.Image, ExtraDisks: res.ExtraDisks}
 	if res.Repair != nil {
 		rec.Actions, rec.Warnings = res.Repair.Actions, res.Repair.Warnings
 		a.Log.Info("image repaired", "machine", m.Metadata.Name, "os", res.Repair.Distro, "actions", len(res.Repair.Actions), "warnings", strings.Join(res.Repair.Warnings, "; "))
 	}
-	if len(res.ExtraDisks) > 0 {
-		a.Log.Info("imported image has extra disks; only the boot disk is attached", "machine", m.Metadata.Name, "extraDisks", strings.Join(res.ExtraDisks, ","))
-	}
 	if err := os.MkdirAll(filepath.Dir(recordPath), 0o755); err != nil {
-		return "", err
+		return importedImage{}, err
 	}
 	b, _ := json.Marshal(rec)
 	tmp := recordPath + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return "", err
+		return importedImage{}, err
 	}
 	if err := os.Rename(tmp, recordPath); err != nil {
-		return "", err
+		return importedImage{}, err
 	}
-	return res.Image, nil
+	return rec, nil
 }
 
 func dash(s string) string {

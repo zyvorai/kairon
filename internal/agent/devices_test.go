@@ -245,4 +245,7 @@ func TestExtraInterfaceValidationAndMAC(t *testing.T) {
 	if err := model.ValidateDisks([]model.MachineDisk{{Name: "a", ClaimName: "c"}, {Name: "a", ClaimName: "d"}}); err == nil {
 		t.Error("duplicate disk accepted")
 	}
+	if err := model.ValidateDisks([]model.MachineDisk{{Name: "import-disk1", ClaimName: "c"}}); err == nil {
+		t.Error("disk using the reserved import-disk prefix accepted")
+	}
 }
