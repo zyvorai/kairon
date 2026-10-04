@@ -1,16 +1,20 @@
-# User guide: third-party CSI Machine storage (first cut)
+# User guide: third-party CSI Machine storage
 
-**Scope, stated plainly up front:** this is a first cut, not a blanket
-"works with any CSI driver" claim. It only works with drivers that (1) set
-`attachRequired: false` on their `CSIDriver` object (no controller-side
-`ControllerPublishVolume`/attach step -- Kairon runs no sidecar for that)
-and (2) don't require a secret to be resolved for `NodeStageVolume`/
-`NodePublishVolume` (Kairon never sends one -- see "Why no secrets" below).
-The only driver this has been validated against conceptually (its request
-shapes, not a live cluster) is Ceph-CSI/RBD, which is commonly deployed
-exactly this way. Cloud block-storage drivers (EBS-CSI, PD-CSI, Azure Disk
-CSI, etc.) require a controller-side attach step and **will not work**
-here -- see "Real limits" below.
+`kairon-node` can act as the CSI client for an allowlisted third-party
+driver, so a Machine boots from any `PersistentVolume` that driver serves:
+
+- **Attach:** drivers whose `CSIDriver` sets `attachRequired: true`
+  (EBS-CSI, PD-CSI, Azure Disk, most SAN drivers) get a `VolumeAttachment`,
+  exactly what kubelet's attach/detach controller creates for a Pod. The
+  driver's own external-attacher runs `ControllerPublishVolume`, and its
+  `attachmentMetadata` is passed as the `PublishContext` to
+  `NodeStageVolume`/`NodePublishVolume`.
+- **Secrets:** `nodeStageSecretRef` / `nodePublishSecretRef` are resolved,
+  but only from one operator-chosen namespace.
+
+Request shapes are covered by unit tests against a fake CSI server and a
+fake API server playing the external-attacher; no live third-party driver
+has been run end to end yet (see "Real limits").
 
 This is a separate mechanism from
 [Kairon's own iSCSI CSI driver](machine-storage-csi.md)
@@ -44,21 +48,54 @@ entirely: you name each driver and its socket path explicitly in
 the list is refused outright -- `kairon-node` never dials an
 unauthorized socket.
 
-## Why no secrets
+## Attach (`ControllerPublishVolume`)
 
-Kairon's own iSCSI driver already made this tradeoff
-([documented here](machine-storage-csi.md#real-limits-today-first-cut)):
-resolving a `nodeStageSecretRef`/`nodePublishSecretRef` would require
-granting `kairon-node` `get` RBAC on Secrets named by whatever a Machine's
-`PersistentVolume` happens to reference -- a real privilege-escalation
-risk, since any Machine author could point a PV's secret ref at an
-unrelated, sensitive Secret. This feature makes the identical choice for
-third-party drivers: `Secrets` is always sent empty. This is the single
-biggest compatibility limit -- Ceph-CSI/RBD supports secret-less
-`userID`/keyring-in-`volumeAttributes` configurations for exactly this
-kind of use case, which is why it's the validated reference driver; most
-cloud drivers require a secret and won't work here regardless of the
-attach-step limit below.
+Before staging, `kairon-node` reads the driver's `CSIDriver` object:
+
+- `attachRequired: true`: it creates (or reuses) a cluster-scoped
+  `VolumeAttachment` named `kairon-<sha256(volumeHandle+driver+node)>` with
+  `attacher` = driver, `nodeName` = this node and
+  `source.persistentVolumeName` = the PV. Until the external-attacher sets
+  `status.attached`, the Machine waits and the node retries each reconcile
+  tick; an `attachError` is reported as the reconcile error. The `kairon-`
+  prefix keeps it apart from kubelet's own `csi-` attachments, which the
+  attach/detach controller would delete because no Pod uses them.
+- `attachRequired: false`, or **no `CSIDriver` object**: no attach step.
+  (Kubernetes treats a missing `CSIDriver` as "attach required"; Kairon
+  doesn't, because without one nothing says an external-attacher exists to
+  act on the `VolumeAttachment`.)
+
+On teardown (Machine delete, or `spec.volumes[0]` pointing elsewhere) the
+node unpublishes and unstages, then deletes the `VolumeAttachment`; the
+external-attacher runs `ControllerUnpublishVolume`. For a live migration of
+a `ReadWriteOnce` volume, the destination's attach succeeds only once the
+driver allows it (multi-attach support varies by driver).
+
+The driver's controller deployment (with its `csi-attacher` sidecar) must
+be running, as it would be for Pods. Setting `node.thirdPartyCSIDrivers`
+grants `kairon-node` `get` on `csidrivers` and `get`/`create`/`delete` on
+`volumeattachments`.
+
+## Secrets
+
+Letting any Machine author point a PV's secret ref at an arbitrary Secret
+would be privilege escalation, so resolution is namespace-allowlisted, the
+same rule [Kairon's iSCSI CHAP](machine-storage-csi.md) uses:
+
+```yaml
+node:
+  thirdPartyCSISecrets:
+    enabled: true   # --third-party-csi-secret-namespace=<release namespace>
+```
+
+With this on, `kairon-node` gets `get` on Secrets in the release namespace
+only. A PV's `nodeStageSecretRef` / `nodePublishSecretRef` must name a
+Secret there (an empty `namespace` means that namespace); every key of the
+Secret is passed as the request's `secrets`, as kubelet does. A ref
+anywhere else, or any ref while this is off, fails before `NodeStageVolume`
+is called. Create PVs that carry secret refs with the same care as the
+Secrets themselves: whoever can create a PV can name any Secret in that
+namespace.
 
 ## Setup
 
@@ -106,10 +143,9 @@ spec:
       clusterID: "my-ceph-cluster"
       pool: "kubevirt-pool"
       imageFeatures: "layering"
-      # Any secret-requiring volumeAttributes (staticVolume with a
-      # userID/userKey pair embedded directly, rather than a secretRef)
-      # are the only way this reaches Ceph-CSI without RBAC escalation --
-      # see "Why no secrets" above.
+    # Needs node.thirdPartyCSISecrets.enabled; the Secret must live in
+    # the Kairon release namespace (see "Secrets" above).
+    nodeStageSecretRef: {name: csi-rbd-secret, namespace: kairon-system}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -159,14 +195,9 @@ in full for Kairon's own driver; it applies identically here.
 
 ## Real limits today (first cut)
 
-- **`attachRequired: false` drivers only.** No `ControllerPublishVolume`
-  plumbing exists -- a driver that requires a controller-side attach step
-  before `NodeStageVolume` will fail. This rules out EBS-CSI, PD-CSI,
-  Azure Disk CSI, and most other cloud block-storage drivers.
-- **No secrets, ever** (see "Why no secrets" above) -- a driver whose node
-  operations require a resolved Secret will fail `NodeStageVolume`/
-  `NodePublishVolume` outright. `volumeAttributes` (unauthenticated,
-  inline config) is the only way to pass driver-specific config through.
+- **Attach requires the driver's external-attacher.** Kairon creates the
+  `VolumeAttachment`; it never calls `ControllerPublishVolume` itself.
+- **Secrets only from one namespace** (see "Secrets" above).
 - **Explicit allowlist, not automatic discovery.** A driver not listed in
   `node.thirdPartyCSIDrivers` is refused with a clear error -- there is no
   fallback to kubelet's own `plugins_registry/` discovery.
@@ -176,11 +207,10 @@ in full for Kairon's own driver; it applies identically here.
   but a driver that specifically depends on kubelet's own path shape
   (some drivers key internal state off it) is a named, real compatibility
   risk here, not a hidden one.
-- **Only validated conceptually, not against a live driver.** The request
-  shapes (`NodeStageVolumeRequest`/`NodePublishVolumeRequest` fields, the
-  allowlist-fail-closed behavior, idempotency against existing status) have
-  real unit test coverage against a fake gRPC CSI server
-  (`internal/agent/csi_thirdparty_test.go`), but no live Ceph-CSI/RBD (or
+- **Only validated against fakes, not a live driver.** The request
+  shapes, attach flow, secret allowlist and idempotency have unit tests
+  against a fake gRPC CSI server and fake API server
+  (`internal/agent/csi_thirdparty_test.go`, `csi_attach_test.go`), but no live Ceph-CSI/RBD (or
   any other third-party driver) cluster exists in this project's test
   environment to validate end-to-end. Treat this as an opt-in, first-cut
   capability until validated against your own real driver deployment.

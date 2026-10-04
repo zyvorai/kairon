@@ -94,6 +94,54 @@ type CSIPersistentVolumeSource struct {
 	// CSIChapSecretNamespace is set and the ref's namespace matches that
 	// allowlist -- see docs/guides/machine-storage-csi.md.
 	NodeStageSecretRef *SecretReference `json:"nodeStageSecretRef,omitempty"`
+	// NodePublishSecretRef is sent to third-party drivers only, from the
+	// same namespace allowlist as NodeStageSecretRef (see
+	// docs/guides/machine-storage-thirdparty-csi.md).
+	NodePublishSecretRef *SecretReference `json:"nodePublishSecretRef,omitempty"`
+}
+
+// CSIDriver mirrors the storage.k8s.io/v1 fields kairon-node reads to
+// decide whether a third-party driver needs ControllerPublish before
+// NodeStage.
+type CSIDriver struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta    `json:"metadata"`
+	Spec     CSIDriverSpec `json:"spec"`
+}
+
+type CSIDriverSpec struct {
+	AttachRequired *bool `json:"attachRequired,omitempty"`
+}
+
+// VolumeAttachment mirrors storage.k8s.io/v1 VolumeAttachment. The
+// driver's external-attacher sidecar watches these, calls
+// ControllerPublishVolume, and reports the result in status.
+type VolumeAttachment struct {
+	TypeMeta `json:",inline"`
+	Metadata ObjectMeta             `json:"metadata"`
+	Spec     VolumeAttachmentSpec   `json:"spec"`
+	Status   VolumeAttachmentStatus `json:"status,omitempty"`
+}
+
+type VolumeAttachmentSpec struct {
+	Attacher string                 `json:"attacher"`
+	NodeName string                 `json:"nodeName"`
+	Source   VolumeAttachmentSource `json:"source"`
+}
+
+type VolumeAttachmentSource struct {
+	PersistentVolumeName *string `json:"persistentVolumeName,omitempty"`
+}
+
+type VolumeAttachmentStatus struct {
+	Attached           bool              `json:"attached"`
+	AttachmentMetadata map[string]string `json:"attachmentMetadata,omitempty"`
+	AttachError        *VolumeError      `json:"attachError,omitempty"`
+	DetachError        *VolumeError      `json:"detachError,omitempty"`
+}
+
+type VolumeError struct {
+	Message string `json:"message,omitempty"`
 }
 
 // SecretReference mirrors core/v1's SecretReference -- name plus optional

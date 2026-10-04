@@ -171,6 +171,17 @@ rules:
   - apiGroups: ["resource.k8s.io"]
     resources: ["resourceclaims"]
     verbs: ["get"]
+{{- if .Values.node.thirdPartyCSIDrivers }}
+  # attachRequired third-party drivers: kairon-node creates the
+  # VolumeAttachment kubelet would create for a Pod, and deletes it after
+  # NodeUnstage (internal/agent/csi_thirdparty.go).
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csidrivers"]
+    verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "create", "delete"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -194,6 +205,25 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: {name: kairon-node-csi-chap, namespace: {{ .Release.Namespace }}}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kairon-node-csi-chap}
+subjects:
+  - {kind: ServiceAccount, name: kairon-node, namespace: {{ .Release.Namespace }}}
+---
+{{ end }}
+{{ if and .Values.node.thirdPartyCSIDrivers .Values.node.thirdPartyCSISecrets.enabled }}
+# Third-party CSI node-stage/publish Secrets: get in the release namespace
+# only. Pairs with --third-party-csi-secret-namespace on kairon-node.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: kairon-node-csi-thirdparty-secrets, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: kairon-node-csi-thirdparty-secrets, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: kairon-node-csi-thirdparty-secrets}
 subjects:
   - {kind: ServiceAccount, name: kairon-node, namespace: {{ .Release.Namespace }}}
 ---
@@ -444,6 +474,9 @@ spec:
 {{ end }}
 {{ if .Values.node.thirdPartyCSIDrivers }}
             - "--third-party-csi-drivers={{ range $name, $socket := .Values.node.thirdPartyCSIDrivers }}{{ $name }}={{ $socket }},{{ end }}"
+{{ if .Values.node.thirdPartyCSISecrets.enabled }}
+            - "--third-party-csi-secret-namespace={{ .Release.Namespace }}"
+{{ end }}
 {{ end }}
 {{ if .Values.node.atlasRBDPools }}
             - "--atlas-rbd-pools={{ join "," .Values.node.atlasRBDPools }}"

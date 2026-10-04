@@ -116,11 +116,11 @@ posture DRA/VFIO's own allowlist already has, applied to CSI.
 `spec.csi.driver` is listed; requests are built directly from the PV's own
 fields, with staging/publish paths keyed by the Machine's own
 `RuntimeName()` in place of kubelet's Pod-UID convention (there is no Pod
-here for one to come from). `Secrets` is always sent empty, the same
-tradeoff Kairon's own driver already made to avoid granting `kairon-node`
-cluster-wide Secret-read RBAC -- this is why first-cut compatibility is
-scoped to `attachRequired: false`, no-secret drivers (Ceph-CSI/RBD is the
-validated reference case) rather than "any CSI driver." `status.volumeDriver`
+here for one to come from). Drivers whose `CSIDriver` says
+`attachRequired` get a `VolumeAttachment` the driver's external-attacher
+fulfils (its `attachmentMetadata` becomes the `PublishContext`); node-stage
+and node-publish secret refs resolve only from one allowlisted namespace
+(`--third-party-csi-secret-namespace`). `status.volumeDriver`
 records which driver staged a Machine's volume so teardown routes
 correctly later even after the PV/PVC is gone. See
 [guides/machine-storage-thirdparty-csi.md](guides/machine-storage-thirdparty-csi.md).

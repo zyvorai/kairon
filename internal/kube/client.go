@@ -675,6 +675,29 @@ func (c *Client) GetPersistentVolume(ctx context.Context, name string) (model.Pe
 	return pv, err
 }
 
+func (c *Client) GetCSIDriver(ctx context.Context, name string) (model.CSIDriver, error) {
+	var d model.CSIDriver
+	err := c.request(ctx, http.MethodGet, "/apis/storage.k8s.io/v1/csidrivers/"+url.PathEscape(name), nil, &d, "")
+	return d, err
+}
+
+func (c *Client) GetVolumeAttachment(ctx context.Context, name string) (model.VolumeAttachment, error) {
+	var va model.VolumeAttachment
+	err := c.request(ctx, http.MethodGet, "/apis/storage.k8s.io/v1/volumeattachments/"+url.PathEscape(name), nil, &va, "")
+	return va, err
+}
+
+func (c *Client) CreateVolumeAttachment(ctx context.Context, va model.VolumeAttachment) (model.VolumeAttachment, error) {
+	va.APIVersion, va.Kind = "storage.k8s.io/v1", "VolumeAttachment"
+	var out model.VolumeAttachment
+	err := c.request(ctx, http.MethodPost, "/apis/storage.k8s.io/v1/volumeattachments", va, &out, "")
+	return out, err
+}
+
+func (c *Client) DeleteVolumeAttachment(ctx context.Context, name string) error {
+	return c.request(ctx, http.MethodDelete, "/apis/storage.k8s.io/v1/volumeattachments/"+url.PathEscape(name), nil, nil, "")
+}
+
 // PatchSecretStringData merge-patches a core/v1 Secret's stringData field
 // -- the API server base64-encodes each value into .data itself, so
 // callers never handle encoding. Used by internal/uiapi to persist a

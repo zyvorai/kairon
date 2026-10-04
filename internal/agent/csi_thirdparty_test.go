@@ -87,7 +87,7 @@ func TestResolveCSIVolumeRoutesToThirdPartyDriverWhenAllowlisted(t *testing.T) {
 		t.Fatalf("expected volume_context to carry the PV's volumeAttributes, got %+v", fake.stageCalls[0].GetVolumeContext())
 	}
 	if len(fake.stageCalls[0].GetSecrets()) != 0 {
-		t.Fatal("expected no secrets to ever be sent to a third-party driver -- see resolveThirdPartyCSIVolume's own doc comment")
+		t.Fatal("expected no secrets when the PV has no secret refs")
 	}
 }
 

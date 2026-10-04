@@ -81,12 +81,15 @@ type Agent struct {
 	// as its own generic CSI client for a spec.volumes[0] PV naming that
 	// driver -- an explicit, operator-configured allowlist, never
 	// automatic /var/lib/kubelet/plugins_registry/ discovery. See
-	// docs/guides/machine-storage-thirdparty-csi.md for the real, narrow
-	// scope this covers (attachRequired: false drivers only, no
-	// secret-based auth) and why. Empty/nil (the default) means a PV
-	// naming any driver other than Kairon's own is still refused outright,
-	// exactly as before this existed.
+	// docs/guides/machine-storage-thirdparty-csi.md for the scope this
+	// covers. Empty/nil (the default) means a PV naming any driver other
+	// than Kairon's own is still refused outright, exactly as before this
+	// existed.
 	ThirdPartyCSIDrivers map[string]string
+	// ThirdPartyCSISecretNamespace is the only namespace a third-party PV's
+	// nodeStageSecretRef / nodePublishSecretRef may point into. Empty
+	// refuses any secret ref.
+	ThirdPartyCSISecretNamespace string
 	// LivenessLeaseNamespace, when set, makes Run renew this node's own
 	// coordination.k8s.io/v1 Lease (internal/nodeliveness) once per
 	// reconcile tick -- a real "I'm alive and reconciling" signal
