@@ -394,12 +394,9 @@ var vmNetworkPolicyL4Protocols = map[string]bool{
 // same syntax FluxVM's own ebpf::validate_policy enforces server-side
 // (crates/fluxvm-network/src/ebpf.rs, called from groups.rs's
 // UpsertNetworkGroup handler and dataplane.rs's SetVMNetworkPolicy
-// handler) -- deliberately reimplemented here rather than shared, the
-// same small-helper-duplication convention
-// internal/controller/webhook.go's validateImageSource already follows
-// for internal/agent's own validateImageSource: Kairon is a pure Go
-// module with no dependency on FluxVM's Rust crates, and this is a
-// small, stable contract.
+// handler) -- deliberately reimplemented here rather than shared:
+// Kairon is a pure Go module with no dependency on FluxVM's Rust crates,
+// and this is a small, stable contract.
 //
 // Until kairon-controller's admission webhook called this
 // (validateMachineNetworkPolicy/validateNetworkSecurityGroup in

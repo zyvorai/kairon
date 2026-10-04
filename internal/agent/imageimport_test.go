@@ -23,7 +23,7 @@ import (
 
 func digestOf(payload []byte) string {
 	sum := sha256.Sum256(payload)
-	return digestPrefix + hex.EncodeToString(sum[:])
+	return model.ImageDigestPrefix + hex.EncodeToString(sum[:])
 }
 
 func machineWithImageSource(url, digest string) model.Machine {
@@ -60,10 +60,15 @@ func TestValidateImageSourceRequiresURLAndDigest(t *testing.T) {
 		{"valid", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y"}, Digest: validDigest}, true},
 		{"ova format", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y.ova", Format: "ova", Repair: true}, Digest: validDigest}, true},
 		{"bad format", model.ImageSpec{Source: &model.ImageSource{HTTPURL: "http://x/y", Format: "iso"}, Digest: validDigest}, false},
+		{"oci", model.ImageSpec{Source: &model.ImageSource{OCI: "quay.io/containerdisks/fedora:40"}, Digest: validDigest}, true},
+		{"oci pinned", model.ImageSpec{Source: &model.ImageSource{OCI: "quay.io/containerdisks/fedora@" + validDigest}, Digest: validDigest}, true},
+		{"oci pin mismatch", model.ImageSpec{Source: &model.ImageSource{OCI: "quay.io/containerdisks/fedora@" + digestOf([]byte("other"))}, Digest: validDigest}, false},
+		{"oci and url", model.ImageSpec{Source: &model.ImageSource{OCI: "quay.io/x/y", HTTPURL: "http://x/y"}, Digest: validDigest}, false},
+		{"oci scheme", model.ImageSpec{Source: &model.ImageSource{OCI: "docker://quay.io/x/y"}, Digest: validDigest}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateImageSource(c.img)
+			err := model.ValidateImageSource(c.img)
 			if c.ok && err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
@@ -128,7 +133,7 @@ func TestResolveImageSourceRejectsDigestMismatch(t *testing.T) {
 	if _, err := a.resolveImageSource(context.Background(), m); err == nil {
 		t.Fatal("expected a digest mismatch error")
 	}
-	hexDigest := wrongDigest[len(digestPrefix):]
+	hexDigest := wrongDigest[len(model.ImageDigestPrefix):]
 	if _, err := os.Stat(filepath.Join(a.ImageCacheDir, "sha256", hexDigest)); !os.IsNotExist(err) {
 		t.Fatalf("expected no file left behind after a digest mismatch, stat error: %v", err)
 	}

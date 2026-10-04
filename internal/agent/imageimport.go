@@ -13,20 +13,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
 
-// digestPrefix is the only digest algorithm spec.image.digest supports for
-// a spec.image.source Machine -- matches the sha256:<hex> convention this
-// project already uses for CSI volume/OCI-style digests elsewhere.
-const digestPrefix = "sha256:"
-
 // resolveImageSource downloads m.Spec.Image.Source into a.ImageCacheDir if
 // not already cached under its digest, verifies it against
-// m.Spec.Image.Digest (required -- see validateImageSource), and returns
+// m.Spec.Image.Digest (required -- see model.ValidateImageSource), and returns
 // the cached file's absolute path. Idempotent: a second Machine (or a
 // later reconcile tick of the same Machine) naming the same digest never
 // re-downloads, it just stats the existing cache file -- this is the
@@ -37,46 +31,30 @@ func (a *Agent) resolveImageSource(ctx context.Context, m model.Machine) (string
 	if a.ImageCacheDir == "" {
 		return "", fmt.Errorf("this node has no image cache configured (-image-cache-dir / $KAIRON_IMAGE_CACHE_DIR) -- spec.image.source cannot be used without it; see docs/guides/machine-image-import.md")
 	}
-	if err := validateImageSource(m.Spec.Image); err != nil {
+	if err := model.ValidateImageSource(m.Spec.Image); err != nil {
 		return "", err
 	}
-	hexDigest := strings.TrimPrefix(m.Spec.Image.Digest, digestPrefix)
+	hexDigest := strings.TrimPrefix(m.Spec.Image.Digest, model.ImageDigestPrefix)
 	cachePath := filepath.Join(a.ImageCacheDir, "sha256", hexDigest)
+	if m.Spec.Image.Source.OCI != "" {
+		// Keyed by manifest digest, not disk bytes, so kept apart.
+		cachePath = filepath.Join(a.ImageCacheDir, "oci", "sha256", hexDigest)
+	}
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat image cache entry %s: %w", cachePath, err)
 	}
+	if m.Spec.Image.Source.OCI != "" {
+		if err := a.pullOCIDisk(ctx, m.Spec.Image, cachePath); err != nil {
+			return "", err
+		}
+		return cachePath, nil
+	}
 	if err := downloadToTemp(ctx, m.Spec.Image.Source.HTTPURL, cachePath, hexDigest); err != nil {
 		return "", err
 	}
 	return cachePath, nil
-}
-
-// validateImageSource enforces that Digest is set (and sha256-shaped)
-// whenever Source is -- it's the cache key resolveImageSource keys on, so
-// without it two Machines naming the same (mutable) HTTPURL would have no
-// way to know whether they mean the same bytes. Exported for
-// internal/controller's admission webhook to call too (defense in depth,
-// same convention other cross-package validation in this project follows).
-func validateImageSource(img model.ImageSpec) error {
-	if img.Source == nil {
-		return nil
-	}
-	if strings.TrimSpace(img.Source.HTTPURL) == "" {
-		return fmt.Errorf("spec.image.source.httpURL is required when spec.image.source is set")
-	}
-	if !strings.HasPrefix(img.Source.HTTPURL, "http://") && !strings.HasPrefix(img.Source.HTTPURL, "https://") {
-		return fmt.Errorf("spec.image.source.httpURL %q must be an http:// or https:// URL", img.Source.HTTPURL)
-	}
-	if !slices.Contains(model.ImageSourceFormats, img.Source.Format) {
-		return fmt.Errorf("spec.image.source.format %q must be one of qcow2, raw, ova, vmdk, vhd, vhdx", img.Source.Format)
-	}
-	hexDigest, ok := strings.CutPrefix(img.Digest, digestPrefix)
-	if !ok || len(hexDigest) != sha256.Size*2 {
-		return fmt.Errorf("spec.image.digest must be set as %q plus a 64-character hex digest when spec.image.source is set (it's the cache key -- see docs/guides/machine-image-import.md)", digestPrefix)
-	}
-	return nil
 }
 
 // downloadToTemp streams source into a temp file in the same directory as
@@ -141,7 +119,7 @@ type importedImage struct {
 // importName is the FluxVM import name for a digest and repair choice; it
 // is also the record's file name under <cache>/imported/.
 func importName(img model.ImageSpec) string {
-	hexDigest := strings.TrimPrefix(img.Digest, digestPrefix)
+	hexDigest := strings.TrimPrefix(img.Digest, model.ImageDigestPrefix)
 	name := "kairon-" + hexDigest[:24]
 	if img.Source.Repair {
 		name += "-repaired"
@@ -164,7 +142,7 @@ func (a *Agent) resolveImportedImage(ctx context.Context, m model.Machine, cache
 	}
 	res, err := a.Flux.ImportImage(ctx, cachedPath, name, m.Spec.Image.Source.Repair)
 	if err != nil {
-		return "", fmt.Errorf("import %s (%s): %w", m.Spec.Image.Source.HTTPURL, dash(m.Spec.Image.Source.Format), err)
+		return "", fmt.Errorf("import %s (%s): %w", m.Spec.Image.Source.Location(), dash(m.Spec.Image.Source.Format), err)
 	}
 	rec := importedImage{Image: res.Image}
 	if res.Repair != nil {

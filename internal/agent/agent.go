@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -76,6 +77,9 @@ type Agent struct {
 	// unaffected either way. Same fail-closed convention as
 	// CSISocketPath above.
 	ImageCacheDir string
+	// RegistryHTTP is the client spec.image.source.oci pulls use; nil
+	// means http.DefaultClient.
+	RegistryHTTP *http.Client
 	// ThirdPartyCSIDrivers maps a CSI driver name (e.g.
 	// "rbd.csi.ceph.com") to the Unix socket path kairon-node should dial
 	// as its own generic CSI client for a spec.volumes[0] PV naming that

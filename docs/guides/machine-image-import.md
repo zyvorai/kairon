@@ -9,6 +9,7 @@ operator already placed on the node, and what today's real limits are.
 |---|---|---|
 | `spec.image.path` (default) | A plain file path already present on the node the Machine is scheduled to | An operator/image pipeline has to put the file there first |
 | `spec.image.source.httpURL` | A plain `http(s)://` URL to a qcow2/raw image | `kairon-node` downloads it itself into a node-local, digest-keyed cache -- see below |
+| `spec.image.source.oci` | A containerDisk registry reference (`quay.io/containerdisks/fedora:40`) | `kairon-node` pulls it by manifest digest into the same cache -- see [OCI containerDisks](#oci-containerdisks) |
 | `spec.image.source.format` | `qcow2`/`raw` (default, booted as downloaded) or `ova`, `vmdk`, `vhd`, `vhdx` | Converted through FluxVM's image import before boot -- see [Converting and repairing](#converting-and-repairing) |
 | `spec.image.source.repair` | Offline virtio repair for VMs from VMware or another hypervisor | Same |
 
@@ -101,14 +102,43 @@ spec:
     digest: sha256:...
 ```
 
+## OCI containerDisks
+
+`spec.image.source.oci` boots the same containerDisk images KubeVirt uses:
+a container image whose layers hold the disk under `/disk/` (for example
+`quay.io/containerdisks/fedora`). No container runtime is involved;
+kairon-node speaks the registry v2 API directly.
+
+```yaml
+spec:
+  image:
+    source:
+      oci: quay.io/containerdisks/fedora:40
+    digest: sha256:<manifest or index digest>
+```
+
+- `spec.image.digest` is the **manifest (or multi-arch index) digest**,
+  for example from `crane digest quay.io/containerdisks/fedora:40` or
+  `skopeo inspect`. The pull is always by that digest; the tag is a label.
+  A reference that carries its own `@sha256:` must match it.
+- For an index, the `linux/<node arch>` manifest is used. Layers are
+  searched top-down for the first regular file under `disk/`. Every
+  manifest and layer is checked against its digest while streaming, and
+  nothing reaches the cache unless all checks pass.
+- The disk lands at `<imageCacheDir>/oci/sha256/<manifest digest>` and is
+  shared by every Machine on the node naming that digest. `format` and
+  `repair` work as for `httpURL`.
+- HTTPS only, anonymous pulls only (including the anonymous bearer-token
+  flow Docker Hub, quay.io and ghcr.io use for public images). gzip and
+  uncompressed layers; zstd layers are rejected.
+
 ## Real limits today (v1 of this feature)
 
 - **Only the boot disk of a multi-disk OVA is attached.** The other
   converted disks stay on the node (logged by kairon-node).
-- **`http(s)://` URLs only.** No OCI/container-registry references, no
-  authenticated/private URLs (a URL with embedded credentials works the same
-  as any other `http.Client` request, but there's no separate
-  credentials-Secret mechanism).
+- **No private sources.** No credentials-Secret mechanism for either
+  `httpURL` or `oci` (a URL with embedded credentials works the same as any
+  other `http.Client` request; private registries are refused).
 - **No cache eviction.** `<imageCacheDir>` only ever grows; freeing disk
   space is an operator concern (`du`/manual cleanup), not something Kairon
   automates.

@@ -1067,6 +1067,13 @@ spec:
                       httpURL:
                         type: string
                         minLength: 1
+                      oci:
+                        type: string
+                        minLength: 1
+                        description: containerDisk registry reference
+                          ([registry/]repository[:tag][@sha256:...]); pulled
+                          over HTTPS by the manifest digest in
+                          spec.image.digest. Mutually exclusive with httpURL.
                       format:
                         type: string
                         enum: ["qcow2", "raw", "ova", "vmdk", "vhd", "vhdx"]

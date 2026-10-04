@@ -346,9 +346,12 @@ type ImageSpec struct {
 // way to know whether they mean the same bytes.
 type ImageSource struct {
 	// HTTPURL is a plain http(s):// URL to a qcow2/raw image file.
-	// OCI/container-registry references are a deliberate non-goal --
-	// see docs/guides/machine-image-import.md.
 	HTTPURL string `json:"httpURL,omitempty"`
+	// OCI is a containerDisk registry reference
+	// ([registry/]repository[:tag][@sha256:...]). kairon-node pulls the
+	// manifest named by spec.image.digest over HTTPS and extracts the
+	// image's disk/ file. Mutually exclusive with HTTPURL.
+	OCI string `json:"oci,omitempty"`
 	// Format is the downloaded file's format: qcow2 or raw (default,
 	// booted as-is), or ova, vmdk, vhd, vhdx, which kairon-node converts
 	// through FluxVM's image import before boot.

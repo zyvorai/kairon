@@ -5,15 +5,12 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/admission"
@@ -159,32 +156,6 @@ func (c *Controller) validateMachine(r *http.Request, req *admission.Request) ad
 	}
 }
 
-// imageSourceDigestPrefix/validateImageSource duplicate
-// internal/agent's own digestPrefix/validateImageSource exactly -- see
-// this function's call site for why this is a deliberate duplication,
-// not a shared import.
-const imageSourceDigestPrefix = "sha256:"
-
-func validateImageSource(img model.ImageSpec) error {
-	if img.Source == nil {
-		return nil
-	}
-	if strings.TrimSpace(img.Source.HTTPURL) == "" {
-		return fmt.Errorf("spec.image.source.httpURL is required when spec.image.source is set")
-	}
-	if !strings.HasPrefix(img.Source.HTTPURL, "http://") && !strings.HasPrefix(img.Source.HTTPURL, "https://") {
-		return fmt.Errorf("spec.image.source.httpURL %q must be an http:// or https:// URL", img.Source.HTTPURL)
-	}
-	if !slices.Contains(model.ImageSourceFormats, img.Source.Format) {
-		return fmt.Errorf("spec.image.source.format %q must be one of qcow2, raw, ova, vmdk, vhd, vhdx", img.Source.Format)
-	}
-	hexDigest, ok := strings.CutPrefix(img.Digest, imageSourceDigestPrefix)
-	if !ok || len(hexDigest) != sha256.Size*2 {
-		return fmt.Errorf("spec.image.digest must be set as %q plus a 64-character hex digest when spec.image.source is set", imageSourceDigestPrefix)
-	}
-	return nil
-}
-
 // validateResourceQuantities checks the free-form CPU/memory quantity
 // strings on a Machine's spec.resources against the exact same grammar
 // model.ParseVCPUs/model.ParseMemoryMiB already enforce everywhere these
@@ -239,7 +210,7 @@ func validateResourceQuantities(res model.ResourceSpec) error {
 
 // validateNetworkMAC checks Machine.spec.network.mac, when set, is a
 // syntactically valid Ethernet hardware address. Unlike
-// validateResourceQuantities/validateImageSource above, this isn't
+// validateResourceQuantities above, this isn't
 // mirroring a grammar FluxVM re-parses server-side for its own business
 // rules -- MAC syntax is a fixed, universal standard (six colon- or
 // hyphen-separated hex octets, e.g. "52:54:00:12:34:56" per
@@ -282,15 +253,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 		return admission.Deny(fmt.Sprintf("decode Machine: %v", err))
 	}
 	// Defense in depth: kairon-node's own reconcile also rejects a
-	// malformed spec.image.source (internal/agent's own
-	// validateImageSource, the same logic duplicated here rather than
-	// cross-imported -- kairon-controller and kairon-node are separate
-	// binaries with deliberately separate dependency footprints, the
-	// same small-helper-duplication convention cmd/kairon-csi-node and
-	// cmd/kairon-csi-controller's own unixSocketPath already follows),
-	// but that only surfaces as a stuck Machine status, not an
-	// immediate, actionable API error.
-	if err := validateImageSource(m.Spec.Image); err != nil {
+	// malformed spec.image.source, but that only surfaces as a stuck
+	// Machine status, not an immediate, actionable API error.
+	if err := model.ValidateImageSource(m.Spec.Image); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if err := validateResourceQuantities(m.Spec.Resources); err != nil {
