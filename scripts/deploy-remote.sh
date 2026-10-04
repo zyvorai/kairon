@@ -379,9 +379,9 @@ ssh_exec_privileged() {
   local extra=()
   [[ "$NEEDS_TTY" == "1" ]] && extra=(-tt)
   if [[ -n "${SSHPASS:-}" ]] && command -v sshpass >/dev/null 2>&1; then
-    sshpass -e ssh "${extra[@]}" "${SSH_OPTS[@]}" "$@"
+    sshpass -e ssh ${extra[@]+"${extra[@]}"} "${SSH_OPTS[@]}" "$@"
   else
-    ssh "${extra[@]}" "${SSH_OPTS[@]}" "$@"
+    ssh ${extra[@]+"${extra[@]}"} "${SSH_OPTS[@]}" "$@"
   fi
 }
 scp_cmd() {
