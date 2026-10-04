@@ -1127,7 +1127,8 @@ INSTALL_EOF
       # kairon-ui.env above -- same sudo-required check, same reason.
       if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_NODE_CONSOLE_TOKEN=$RESOLVED_CONSOLE_TOKEN\$' /etc/kairon/kairon-node.env" >/dev/null 2>&1 \
         && ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_NODE_CONSOLE_TOKEN=$RESOLVED_CONSOLE_TOKEN\$' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
-        ok "VNC console: enabled (port $RESOLVED_CONSOLE_PORT, shared token applied to both kairon-node.env and kairon-ui.env)"
+        applied_console_port="$(ssh_exec_privileged "$REMOTE" "${SUDO} sed -n 's/^KAIRON_NODE_CONSOLE_PORT=//p' /etc/kairon/kairon-ui.env" 2>/dev/null | tr -d '\r')"
+        ok "VNC console: enabled (port ${applied_console_port:-$CONSOLE_PORT}, shared token applied to both kairon-node.env and kairon-ui.env)"
         tip "read SECURITY.md's \"VNC console\" section before relying on this on a shared/untrusted network -- FluxVM's own VNC socket has no auth of its own"
       else
         tip "--with-console was given but at least one of kairon-node.env/kairon-ui.env already existed -- the auto-generated token was NOT applied to both; ssh in and compare 'sudo cat /etc/kairon/kairon-node.env /etc/kairon/kairon-ui.env'"
