@@ -181,14 +181,15 @@ func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guest
 	}
 	var policy model.MachineNetworkPolicy
 	var selected bool
-	if edgeRequested(m) {
+	switch {
+	case edgeRequested(m):
 		policy, selected = a.selectingPolicy(ctx, m)
-	} else if m.Spec.Network.Mode == "tap" {
+	case m.Spec.Network.Mode == "tap":
 		policy, selected = a.edge.selecting(m)
 		if !selected || !policyNeedsEdge(policy) {
 			return nil, nil
 		}
-	} else {
+	default:
 		return nil, nil
 	}
 	spec := buildEdgeSpec(m, guestIP)
