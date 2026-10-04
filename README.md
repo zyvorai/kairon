@@ -12,10 +12,10 @@
 [![Go](https://img.shields.io/badge/Go-stdlib--only%20controller%20%C2%B7%20node-00ADD8?logo=go)](docs/DEPENDENCIES.md)
 
 [![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
-[![30-day PoC](https://img.shields.io/badge/30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
-[![Quickstart](https://img.shields.io/badge/Quickstart_in_one_command-ff5a15?style=for-the-badge)](#quickstart)
+[![30-day PoC](https://img.shields.io/badge/30--day_PoC-000000?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_hero)
+[![Quickstart](https://img.shields.io/badge/Quickstart_in_one_Helm_command-0a84ff?style=for-the-badge)](#quickstart)
 
-![Kairon: VMs that don't pretend to be Pods. Measured against KubeVirt v1.9.0: 14x lighter idle control plane, 7.4x faster to SSH for five VMs](docs/assets/readme-hero.jpg)
+![Kairon: real VMs on Kubernetes, no pods pretending](docs/social/kairon-hero-dark.jpg)
 
 ### VMs that don't pretend to be Pods.
 
@@ -23,9 +23,25 @@
 
 **Zero pods per VM** · **Four hypervisors, one CRD** · **eBPF on every VM edge** · **No silent split-brain** · **AI agents built in (MCP)**
 
-[Why](#why-kairon) · [Numbers](#the-numbers) · [vs KubeVirt](#kairon-vs-kubevirt) · [See it](#what-you-get) · [Architecture](#how-it-fits-together) · [Quickstart](#quickstart) · [Operate](#operate) · [Maturity](#maturity) · [Docs](#docs)
+![Kairon: VMs that don't pretend to be Pods. Measured against KubeVirt v1.9.0: 14x lighter idle control plane, 7.4x faster to SSH for five VMs](docs/assets/readme-hero.jpg)
 
 </div>
+
+---
+
+## What's new
+
+On `main` since v0.6.0, heading for v0.7:
+
+| | |
+|---|---|
+| **Kairon vs KubeVirt benchmark** | Same node, same guest, one script driving both; method and raw JSON in [docs/benchmarks](docs/benchmarks/kairon-vs-kubevirt.md). |
+| **Import from VMware** | `kaironctl import ova` streams an OVA once, reads vCPU, memory and firmware from the OVF, and FluxVM converts and repairs the disk. [Guide →](docs/guides/migrate-from-vmware.md) |
+| **Warm pools and claims** | `MachinePool` keeps booted Machines ready; a `MachineClaim` binds one in a single reconcile tick, with per-claim egress allowlists. [Guide →](docs/guides/machine-pools.md) |
+| **VM fork** | `kaironctl fork` and the MCP `fork_machine` tool fork a running Machine through FluxVM. [Guide →](docs/guides/machine-fork.md) |
+| **Backups** | `MachineBackup` and `MachineBackupRestore` with guest filesystem freeze, plus Atlas S3 backup jobs for Atlas volumes. [Guide →](docs/guides/machine-backup.md) |
+| **Live disks and NICs** | Hot-attach PVC disks and hot-add or remove extra NICs on running Machines (`kaironctl disk`, `kaironctl nic`). [Guide →](docs/guides/machine-hotplug.md) |
+| **OCI containerDisk** | `spec.image.source.oci` pulls a disk image by digest with streaming per-layer verification. [Guide →](docs/guides/machine-image-import.md) |
 
 ---
 
@@ -40,7 +56,7 @@
 | Debugging the control plane means reading a client-go codebase | **Stdlib-only controller and node** ([dependency policy](docs/DEPENDENCIES.md)). Small enough to read in an afternoon. |
 | Your AI agent needs to see and drive your fleet | **`kaironctl mcp serve`**: Machines, policies and live network data for Hermes Agent and any MCP client, writes gated behind `--allow-write`. |
 
-![Capabilities at a glance: Run, Move, Protect, Automate](docs/assets/readme-capabilities.jpg)
+![Capabilities at a glance: Run, Move, Protect, Automate](docs/ux/readme-capabilities.jpg)
 
 ---
 
@@ -61,7 +77,7 @@ Same k3s node, same Ubuntu 24.04 image, same 1 vCPU / 512 MiB guest and cloud-in
 
 ## Kairon vs KubeVirt
 
-![Kairon vs KubeVirt: the same kubectl and KVM, half the stack in between](docs/assets/kairon-vs-kubevirt.jpg)
+![Kairon vs KubeVirt: the same kubectl and KVM, half the stack in between](docs/ux/readme-vs.jpg)
 
 Every layer you remove is one less thing to patch, one less log to read and one less process to crash at 2 a.m.
 
@@ -85,6 +101,8 @@ Every layer you remove is one less thing to patch, one less log to read and one 
 | Source of truth | **The Kubernetes API, nothing else** | Kubernetes plus virt abstractions |
 | Install | One Helm chart from OCI, or `kaironctl install` | Operator plus CR, CDI for images |
 | **Choose KubeVirt when** | | You need its years of ecosystem integrations (OpenShift Virtualization, Harvester) today |
+
+The previous layer-stack illustration: [docs/assets/kairon-vs-kubevirt.jpg](docs/assets/kairon-vs-kubevirt.jpg).
 
 ---
 
@@ -129,7 +147,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 
 ## How it fits together
 
-![Two Go binaries and your KVM hosts: kairon-controller, kairon-node, FluxVM and KVM under the Kubernetes API](docs/assets/readme-architecture.jpg)
+![Two Go binaries and your KVM hosts: kairon-controller, kairon-node, FluxVM and KVM under the Kubernetes API](docs/ux/readme-how-it-works.jpg)
 
 | Component | Port | Role |
 |---|---|---|
@@ -139,7 +157,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 | `kaironctl` | — | CLI and `kubectl kairon` plugin, embedded Helm installer, MCP server |
 | FluxVM | `127.0.0.1:7788` | The VMM layer on each host: QEMU, Cloud Hypervisor, Firecracker, FluxVM |
 
-Full write-up: [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs/architecture.md)
+Full write-up: [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs/architecture.md) · architecture illustration: [docs/assets/readme-architecture.jpg](docs/assets/readme-architecture.jpg)
 
 ---
 
@@ -268,22 +286,25 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md); the dependency rules are in [docs
 
 ## Part of the Zyvor stack
 
-| Product | Role |
+| Product | Role next to Kairon |
 |---|---|
 | **Kairon** | VMs on Kubernetes without KubeVirt |
-| **FluxVM** | The VMM layer: QEMU, Cloud Hypervisor, Firecracker and its own hypervisor, eBPF VM edge, sandboxes |
-| **Machina** | Private cloud on KVM: fleet, HA/DRS, Fleet Cloud, native eBPF, Zyra AI |
-| **GuestKit** | In-guest agent, offline inspection and repair, per-container eBPF policy |
+| **[FluxVM](https://github.com/zyvorai/zyvor-fluxvm)** | The VMM layer Kairon runs on: QEMU, Cloud Hypervisor, Firecracker and its own hypervisor, eBPF VM edge, sandboxes, fork |
+| **[Atlas](https://github.com/zyvorai/zyvor-atlas)** | Storage: `kairon-controller` provisions Machine volumes, snapshots and S3 backups through Atlas |
+| **[Machina](https://github.com/zyvorai/zyvor-machina)** | Private cloud on plain Linux + KVM: fleet, HA/DRS, Fleet Cloud, native eBPF, Zyra AI |
+| **[GuestKit](https://github.com/zyvorai/zyvor-guestkit)** | Pairs with Kairon: in-guest agent, offline inspection and repair, per-container eBPF policy |
 
-→ [zyvor.dev](https://zyvor.dev/?utm_source=github&utm_medium=kairon&utm_campaign=readme_stack)
+→ [zyvor.dev](https://zyvor.dev)
 
 ---
 
 ## License
 
-**Apache-2.0**: use, modify and run in production at no charge ([LICENSE](LICENSE), [NOTICE](NOTICE)). Commercial subscriptions and support: [docs/SUBSCRIPTION-MODEL.md](docs/SUBSCRIPTION-MODEL.md) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
+Kairon is **free and open source** under the [Apache License 2.0](LICENSE) (see [NOTICE](NOTICE)): use, modify and run it in production at no charge. That does not change.
 
-Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-kairon/issues). Report vulnerabilities privately to **security@zyvor.dev** or via [GitHub private vulnerability reporting](https://github.com/zyvorai/zyvor-kairon/security/advisories/new).
+**Zyvor Enterprise** adds what production teams ask for: supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake. Plans and terms: [docs/SUBSCRIPTION-MODEL.md](docs/SUBSCRIPTION-MODEL.md) · [Pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=kairon&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
+
+Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-kairon/issues). Report vulnerabilities privately to **security@zyvor.dev** or via [GitHub private vulnerability reporting](https://github.com/zyvorai/zyvor-kairon/security/advisories/new); see [SECURITY.md](SECURITY.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -292,7 +313,9 @@ Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-k
 ### Ready to retire `virt-launcher`?
 
 [![Book a demo](https://img.shields.io/badge/Book_a_demo-0071e3?style=for-the-badge)](https://zyvor.dev/schedule?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
-[![30-day PoC](https://img.shields.io/badge/Start_a_30--day_PoC-1d1d1f?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
-[![Star on GitHub](https://img.shields.io/github/stars/zyvorai/zyvor-kairon?style=for-the-badge&logo=github&label=Star&color=ff5a15)](https://github.com/zyvorai/zyvor-kairon)
+[![30-day PoC](https://img.shields.io/badge/Start_a_30--day_PoC-000000?style=for-the-badge)](https://zyvor.dev/poc?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
+[![Pricing](https://img.shields.io/badge/Pricing-1d1d1f?style=for-the-badge)](https://zyvor.dev/pricing?utm_source=github&utm_medium=kairon&utm_campaign=readme_footer)
+[![Contact sales](https://img.shields.io/badge/Contact_sales-0a84ff?style=for-the-badge)](mailto:sales@zyvor.dev?subject=Kairon)
+[![Star on GitHub](https://img.shields.io/github/stars/zyvorai/zyvor-kairon?style=for-the-badge&logo=github&label=Star&color=2997ff)](https://github.com/zyvorai/zyvor-kairon)
 
 </div>
