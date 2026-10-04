@@ -117,6 +117,11 @@ node:
   #   thirdPartyCSIDrivers:
   #     rbd.csi.ceph.com: /var/lib/kubelet/plugins/rbd.csi.ceph.com/csi.sock
   thirdPartyCSIDrivers: {}
+  # atlasRBDPools: Ceph pools kairon-node may boot Atlas atlas.mode=rbd
+  # volumes from, opened in place by FluxVM (storage=ceph-rbd-in-place)
+  # with the Ceph credentials in FluxVM's own [storage] config. Empty
+  # refuses rbd mode. See docs/guides/machine-storage-atlas.md.
+  atlasRBDPools: []
   # livenessLease: opt-in, off by default -- when enabled, kairon-node
   # renews its own coordination.k8s.io/v1 Lease (kairon-node-<nodeName>,
   # namespaced Role/RoleBinding auto-created alongside this) once per

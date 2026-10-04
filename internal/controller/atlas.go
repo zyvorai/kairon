@@ -5,12 +5,9 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	atlas "github.com/zyvorai/atlas/clients/go"
@@ -35,35 +32,6 @@ func hasAtlasVolumes(m model.Machine) bool {
 		}
 	}
 	return false
-}
-
-// AtlasVolumeStates decodes the controller-owned volume state annotation.
-func AtlasVolumeStates(m model.Machine) map[string]model.AtlasVolumeState {
-	out := map[string]model.AtlasVolumeState{}
-	raw := m.Metadata.Annotations[model.AnnotationAtlasVolumes]
-	if raw == "" {
-		return out
-	}
-	_ = json.Unmarshal([]byte(raw), &out)
-	return out
-}
-
-var rfc1123Invalid = regexp.MustCompile(`[^a-z0-9-]+`)
-
-// atlasVolumeName derives a stable RFC 1123 name, unique per
-// namespace/machine/volume, that fits the 63-character PVC name limit.
-func atlasVolumeName(ns, machine, volume string) string {
-	full := strings.ToLower(fmt.Sprintf("kairon-%s-%s-%s", ns, machine, volume))
-	name := strings.Trim(rfc1123Invalid.ReplaceAllString(full, "-"), "-")
-	if len(name) <= 63 && name == full {
-		return name
-	}
-	sum := sha256.Sum256([]byte(ns + "/" + machine + "/" + volume))
-	suffix := hex.EncodeToString(sum[:])[:8]
-	if len(name) > 54 {
-		name = strings.TrimRight(name[:54], "-")
-	}
-	return name + "-" + suffix
 }
 
 // validateAtlasVolume checks the parts of an Atlas volume source the CRD
@@ -140,7 +108,7 @@ func (c *Controller) reconcileMachineAtlasVolumes(ctx context.Context, m *model.
 		m.Metadata.Finalizers = finals
 	}
 
-	states := AtlasVolumeStates(*m)
+	states := model.AtlasVolumeStates(*m)
 	before, _ := json.Marshal(states)
 	var reasons []string
 	var reconcileErr error
@@ -239,7 +207,7 @@ func (c *Controller) stepAtlasVolume(ctx context.Context, m model.Machine, index
 func (c *Controller) createAtlasVolume(ctx context.Context, m model.Machine, index int, v model.MachineVolume) (model.AtlasVolumeState, error) {
 	src := v.Atlas
 	size, _ := model.ParseBytes(src.Size)
-	name := atlasVolumeName(m.Namespace(), m.Metadata.Name, v.Name)
+	name := model.AtlasVolumeName(m.Namespace(), m.Metadata.Name, v.Name)
 	mode := src.EffectiveMode()
 	st := model.AtlasVolumeState{Mode: mode, Phase: model.AtlasPhaseProvisioning}
 
@@ -419,7 +387,7 @@ func (c *Controller) releaseAtlasVolumes(ctx context.Context, m *model.Machine) 
 			retain[v.Name] = true
 		}
 	}
-	states := AtlasVolumeStates(*m)
+	states := model.AtlasVolumeStates(*m)
 	before, _ := json.Marshal(states)
 	pending := 0
 	var stepErr error

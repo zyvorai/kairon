@@ -14,6 +14,29 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
+func TestBuildCreateRequestInPlaceRBD(t *testing.T) {
+	m := model.Machine{Spec: model.MachineSpec{
+		Image:     model.ImageSpec{Path: "rbd/img", Storage: StorageCephRBDInPlace},
+		Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"},
+	}}
+	req, err := buildCreateRequest(m, "qemu", nil, nil)
+	if err != nil || req.Storage != StorageCephRBDInPlace || req.Image != "rbd/img" {
+		t.Fatalf("req=%+v err=%v", req, err)
+	}
+	if _, err := buildCreateRequest(m, "cloud-hypervisor", nil, nil); err == nil || !strings.Contains(err.Error(), "qemu") {
+		t.Fatalf("non-qemu backend: err=%v", err)
+	}
+	m.Spec.GuestAgent.Console = true
+	if _, err := buildCreateRequest(m, "qemu", nil, nil); err == nil || !strings.Contains(err.Error(), "console") {
+		t.Fatalf("console agent: err=%v", err)
+	}
+	m.Spec.Image.Storage = ""
+	m.Spec.GuestAgent.Console = false
+	if req, _ := buildCreateRequest(m, "qemu", nil, nil); req.Storage != "" {
+		t.Fatalf("storage leaked: %+v", req)
+	}
+}
+
 func TestCreateMapping(t *testing.T) {
 	var got CreateRequest
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

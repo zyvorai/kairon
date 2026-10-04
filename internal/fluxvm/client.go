@@ -84,11 +84,16 @@ type CloudInitFile struct {
 	Permissions string `json:"permissions,omitempty"`
 }
 
+// StorageCephRBDInPlace makes FluxVM open an existing RBD image as the boot
+// disk (no clone, never deleted by FluxVM).
+const StorageCephRBDInPlace = "ceph-rbd-in-place"
+
 type CreateRequest struct {
 	Name      string `json:"name"`
 	Tenant    string `json:"tenant,omitempty"`
 	Backend   string `json:"backend"`
 	Image     string `json:"image"`
+	Storage   string `json:"storage,omitempty"`
 	Kernel    string `json:"kernel,omitempty"`
 	VCPUs     uint32 `json:"vcpus"`
 	MemoryMiB uint64 `json:"memory_mib"`
@@ -352,6 +357,15 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 	}
 	if m.Spec.GuestAgent.Console {
 		payload.Agent = &AgentSpec{Enabled: true}
+	}
+	if s := m.Spec.Image.Storage; s != "" {
+		if backend != "qemu" {
+			return CreateRequest{}, fmt.Errorf("storage %s requires the qemu backend; Machine resolves to backend %q", s, backend)
+		}
+		if payload.Agent != nil {
+			return CreateRequest{}, fmt.Errorf("spec.guestAgent.console needs FluxVM to inject an agent token into the disk, which storage %s does not support", s)
+		}
+		payload.Storage = s
 	}
 	ci := m.Spec.CloudInit
 	if m.Spec.Network.StaticNetwork || ci.Hostname != "" || ci.User != "" || len(ci.SSHAuthorizedKeys) > 0 || len(ci.Packages) > 0 || len(ci.RunCmd) > 0 || len(ci.WriteFiles) > 0 {

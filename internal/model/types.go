@@ -3,7 +3,14 @@
 
 package model
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"regexp"
+	"strings"
+	"time"
+)
 
 const (
 	APIVersion           = "kairon.zyvor.dev/v1alpha1"
@@ -318,6 +325,10 @@ type ImageSpec struct {
 	// FluxVM's own catalog integrity checks (mandatory SHA-256, optional
 	// Ed25519 signature) are the trust boundary here instead.
 	CatalogName string `json:"catalogName,omitempty"`
+	// Storage is the FluxVM storage backend kairon-node chose for this boot
+	// disk (e.g. ceph-rbd-in-place for an Atlas RBD volume). Never read
+	// from or written to the API, so a Machine author can't select it.
+	Storage string `json:"-"`
 }
 
 // ImageSource names a golden image kairon-node itself downloads into a
@@ -612,6 +623,42 @@ type AtlasVolumeSource struct {
 	Pool         string `json:"pool,omitempty"`
 	// Retain keeps the Atlas volume when the Machine is deleted.
 	Retain bool `json:"retain,omitempty"`
+}
+
+var atlasNameInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// AtlasVolumeName is the Atlas volume / PVC / RBD image name for one
+// Machine volume: RFC 1123, at most 63 characters, and always suffixed with
+// a hash of namespace/machine/volume so names never collide across
+// namespaces. kairon-node recomputes it to check that an RBD image recorded
+// in the (user-writable) annotation really belongs to this Machine.
+func AtlasVolumeName(ns, machine, volume string) string {
+	sum := sha256.Sum256([]byte(ns + "/" + machine + "/" + volume))
+	readable := atlasNameInvalid.ReplaceAllString(strings.ToLower(machine+"-"+volume), "-")
+	readable = strings.Trim(readable, "-")
+	if len(readable) > 52 {
+		readable = strings.TrimRight(readable[:52], "-")
+	}
+	return readable + "-" + hex.EncodeToString(sum[:])[:10]
+}
+
+// AtlasVolumeStates decodes the controller-owned volume state annotation.
+func AtlasVolumeStates(m Machine) map[string]AtlasVolumeState {
+	out := map[string]AtlasVolumeState{}
+	if raw := m.Metadata.Annotations[AnnotationAtlasVolumes]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &out)
+	}
+	return out
+}
+
+// ParseRBDNativeID splits an Atlas "rbd:pool/image" backend id.
+func ParseRBDNativeID(id string) (pool, image string, ok bool) {
+	rest, found := strings.CutPrefix(id, "rbd:")
+	if !found {
+		return "", "", false
+	}
+	pool, image, ok = strings.Cut(rest, "/")
+	return pool, image, ok && pool != "" && image != "" && !strings.Contains(image, "/")
 }
 
 func (s *AtlasVolumeSource) EffectiveMode() string {

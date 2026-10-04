@@ -122,6 +122,8 @@ func (f *fakeKubeMachines) handler(t *testing.T) http.HandlerFunc {
 	}
 }
 
+var rootName = model.AtlasVolumeName("default", "web", "root")
+
 func newAtlasTestController(t *testing.T, fa *fakeAtlas, fk *fakeKubeMachines) *Controller {
 	t.Helper()
 	ks := httptest.NewServer(fk.handler(t))
@@ -168,7 +170,7 @@ func TestAtlasPVCVolumeLifecycle(t *testing.T) {
 		t.Fatalf("creates=%v", fa.creates)
 	}
 	req := fa.creates[0]
-	if req["name"] != "kairon-default-web-root" || req["tenant_id"] != "kairon" || req["policy"] != "gold" || req["size_bytes"].(float64) != 10<<30 {
+	if req["name"] != rootName || req["tenant_id"] != "kairon" || req["policy"] != "gold" || req["size_bytes"].(float64) != 10<<30 {
 		t.Fatalf("create request=%v", req)
 	}
 	if owner := req["owner"].(map[string]any); owner["role"] != "root_disk" || owner["product"] != "kairon" {
@@ -177,7 +179,7 @@ func TestAtlasPVCVolumeLifecycle(t *testing.T) {
 	if !model.HasFinalizerList(machines[0].Metadata.Finalizers, model.FinalizerAtlasVolumes) {
 		t.Fatal("atlas finalizer not added")
 	}
-	if st := AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseProvisioning || st.JobID != "job-1" {
+	if st := model.AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseProvisioning || st.JobID != "job-1" {
 		t.Fatalf("state after create=%+v", st)
 	}
 	if len(fk.statuses) != 1 || fk.statuses[0].Phase != "Pending" {
@@ -193,10 +195,10 @@ func TestAtlasPVCVolumeLifecycle(t *testing.T) {
 	if reason := notReady["default/web"]; reason != "" {
 		t.Fatalf("still not ready: %s", reason)
 	}
-	if got := machines[0].Spec.Volumes[0].ClaimName; got != "kairon-default-web-root" {
+	if got := machines[0].Spec.Volumes[0].ClaimName; got != rootName {
 		t.Fatalf("claimName=%q", got)
 	}
-	if st := AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseReady || st.NativeID != "pvc:kairon-default-web-root" {
+	if st := model.AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseReady || st.NativeID != "pvc:"+rootName {
 		t.Fatalf("ready state=%+v", st)
 	}
 
@@ -210,7 +212,7 @@ func TestAtlasPVCVolumeLifecycle(t *testing.T) {
 
 	machines[0].Metadata.Finalizers = model.RemoveFinalizer(machines[0].Metadata.Finalizers, model.Finalizer)
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines)
-	if len(fa.deletes) != 1 || fa.deletes[0] != "/volumes/vol-kairon-default-web-root" {
+	if len(fa.deletes) != 1 || fa.deletes[0] != "/volumes/vol-"+rootName {
 		t.Fatalf("deletes=%v", fa.deletes)
 	}
 	if model.HasFinalizerList(machines[0].Metadata.Finalizers, model.FinalizerAtlasVolumes) {
@@ -232,8 +234,8 @@ func TestAtlasRBDVolumeAndRetain(t *testing.T) {
 	if reason := notReady["default/web"]; reason != "" {
 		t.Fatalf("not ready: %s", reason)
 	}
-	states := AtlasVolumeStates(machines[0])
-	if st := states["root"]; st.NativeID != "rbd:rbd/kairon-default-web-root" || st.Mode != model.AtlasModeRBD {
+	states := model.AtlasVolumeStates(machines[0])
+	if st := states["root"]; st.NativeID != "rbd:rbd/"+rootName || st.Mode != model.AtlasModeRBD {
 		t.Fatalf("rbd state=%+v", st)
 	}
 	if machines[0].Spec.Volumes[0].ClaimName != "" {
@@ -242,7 +244,7 @@ func TestAtlasRBDVolumeAndRetain(t *testing.T) {
 	now := time.Now()
 	machines[0].Metadata.DeletionTimestamp = &now
 	_, _ = ctl.reconcileAtlasVolumes(ctx, machines)
-	if len(fa.deletes) != 1 || fa.deletes[0] != "/rbd-images/rbd/kairon-default-web-root" {
+	if len(fa.deletes) != 1 || fa.deletes[0] != "/rbd-images/rbd/"+rootName {
 		t.Fatalf("deletes=%v (data volume is retained)", fa.deletes)
 	}
 }
@@ -254,7 +256,7 @@ func TestAtlasAsyncDeleteHoldsFinalizerUntilJobSucceeds(t *testing.T) {
 	machines := []model.Machine{atlasMachine(model.MachineVolume{Name: "root", Atlas: &model.AtlasVolumeSource{Size: "1Gi"}})}
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines)
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines)
-	if st := AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseReady {
+	if st := model.AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseReady {
 		t.Fatalf("state=%+v", st)
 	}
 
@@ -266,12 +268,12 @@ func TestAtlasAsyncDeleteHoldsFinalizerUntilJobSucceeds(t *testing.T) {
 	}
 
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines) // issue delete
-	if !held() || AtlasVolumeStates(machines[0])["root"].Phase != model.AtlasPhaseDeleting {
+	if !held() || model.AtlasVolumeStates(machines[0])["root"].Phase != model.AtlasPhaseDeleting {
 		t.Fatal("finalizer released before delete job finished")
 	}
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines) // job failed
-	if !held() || !strings.Contains(AtlasVolumeStates(machines[0])["root"].Message, "ceph busy") {
-		t.Fatalf("failed delete must keep finalizer and record error: %+v", AtlasVolumeStates(machines[0])["root"])
+	if !held() || !strings.Contains(model.AtlasVolumeStates(machines[0])["root"].Message, "ceph busy") {
+		t.Fatalf("failed delete must keep finalizer and record error: %+v", model.AtlasVolumeStates(machines[0])["root"])
 	}
 	machines, _ = ctl.reconcileAtlasVolumes(ctx, machines) // re-issue
 	if len(fa.deletes) != 2 {
@@ -295,7 +297,7 @@ func TestAtlasClientErrorMarksVolumeFailed(t *testing.T) {
 	if !strings.Contains(notReady["default/web"], "provisioning failed") {
 		t.Fatalf("reason=%q", notReady["default/web"])
 	}
-	if st := AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseFailed {
+	if st := model.AtlasVolumeStates(machines[0])["root"]; st.Phase != model.AtlasPhaseFailed {
 		t.Fatalf("state=%+v", st)
 	}
 }
@@ -370,21 +372,21 @@ func TestAtlasContract(t *testing.T) {
 		if notReady["default/"+m.Metadata.Name] == "" {
 			break
 		}
-		if st := AtlasVolumeStates(machines[0])["root"]; st.Phase == model.AtlasPhaseFailed || time.Now().After(deadline) {
+		if st := model.AtlasVolumeStates(machines[0])["root"]; st.Phase == model.AtlasPhaseFailed || time.Now().After(deadline) {
 			t.Fatalf("not ready: %s (state %+v)", notReady["default/"+m.Metadata.Name], st)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	st := AtlasVolumeStates(machines[0])["root"]
+	st := model.AtlasVolumeStates(machines[0])["root"]
 	pool, image, ok := atlas.ParseRBD(st.NativeID)
-	if !ok || image != atlasVolumeName("default", m.Metadata.Name, "root") {
+	if !ok || image != model.AtlasVolumeName("default", m.Metadata.Name, "root") {
 		t.Fatalf("state=%+v pool=%q image=%q", st, pool, image)
 	}
 	now := time.Now()
 	machines[0].Metadata.DeletionTimestamp = &now
 	for model.HasFinalizerList(machines[0].Metadata.Finalizers, model.FinalizerAtlasVolumes) {
 		if time.Now().After(deadline) {
-			t.Fatalf("finalizer not released; state %+v", AtlasVolumeStates(machines[0])["root"])
+			t.Fatalf("finalizer not released; state %+v", model.AtlasVolumeStates(machines[0])["root"])
 		}
 		machines, _ = ctl.reconcileAtlasVolumes(ctx, machines)
 		time.Sleep(200 * time.Millisecond)
@@ -395,14 +397,15 @@ func TestAtlasContract(t *testing.T) {
 }
 
 func TestAtlasVolumeName(t *testing.T) {
-	if got := atlasVolumeName("default", "web", "root"); got != "kairon-default-web-root" {
-		t.Fatalf("got %q", got)
+	n := model.AtlasVolumeName("default", "web", "root")
+	if !strings.HasPrefix(n, "web-root-") || len(n) != len("web-root-")+10 {
+		t.Fatalf("got %q", n)
 	}
-	long := atlasVolumeName("team-a", strings.Repeat("m", 60), "Data_1")
+	if model.AtlasVolumeName("a-b", "c", "root") == model.AtlasVolumeName("a", "b-c", "root") {
+		t.Fatal("namespace/machine split collided")
+	}
+	long := model.AtlasVolumeName("team-a", strings.Repeat("M", 80), "Data_1")
 	if len(long) > 63 || strings.ToLower(long) != long || strings.ContainsAny(long, "_") {
 		t.Fatalf("bad name %q", long)
-	}
-	if long == atlasVolumeName("team-a", strings.Repeat("m", 60), "data-1") {
-		t.Fatal("distinct volumes collided")
 	}
 }

@@ -111,6 +111,9 @@ type Agent struct {
 	// same disruptive-if-flipped-blind posture webhook.enabled already
 	// has, hence off by default. See docs/guides/network-policy.md.
 	NetworkDefaultDeny bool
+	// AtlasRBDPools lists the Ceph pools this node may boot Atlas rbd-mode
+	// volumes from. Empty refuses atlas.mode=rbd.
+	AtlasRBDPools []string
 	// csiConn caches the dialed connection to kairon-csi-node's local
 	// Unix socket -- see csiNodeClient in csi.go. Safe unguarded for the
 	// same reason guestIPCheckedAt below is: Reconcile only ever runs
@@ -245,8 +248,14 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			}
 			m.Spec.Image.Path = cachedPath
 		}
-		bootDisk, vs, err := a.resolveBootDiskPath(ctx, m)
+		bootDisk, rbdBoot, err := a.resolveAtlasRBDBoot(m)
 		if err != nil {
+			return err
+		}
+		var vs csiVolumeStatus
+		if rbdBoot {
+			m.Spec.Image.Storage = fluxvm.StorageCephRBDInPlace
+		} else if bootDisk, vs, err = a.resolveBootDiskPath(ctx, m); err != nil {
 			return err
 		}
 		if bootDisk == "" {

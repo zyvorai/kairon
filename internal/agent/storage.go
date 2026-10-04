@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
@@ -32,9 +33,6 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 		return m.Spec.Image.Path, csiVolumeStatus{}, nil
 	}
 	vol := m.Spec.Volumes[0]
-	if vol.Atlas.EffectiveMode() == model.AtlasModeRBD {
-		return "", csiVolumeStatus{}, fmt.Errorf("spec.volumes[0]: atlas.mode=rbd needs FluxVM in-place RBD boot, which this kairon-node does not support yet; use atlas.mode=pvc")
-	}
 	if strings.TrimSpace(vol.ClaimName) == "" {
 		return "", csiVolumeStatus{}, fmt.Errorf("spec.volumes[0] requires claimName")
 	}
@@ -64,6 +62,38 @@ func (a *Agent) resolveBootDiskPath(ctx context.Context, m model.Machine) (strin
 		return "", csiVolumeStatus{}, fmt.Errorf("volume %q (claim %s, PV %s): %w", vol.Name, vol.ClaimName, pvc.Spec.VolumeName, err)
 	}
 	return filepath.Join(dir, bootDiskFileName), csiVolumeStatus{}, nil
+}
+
+// resolveAtlasRBDBoot returns the FluxVM "pool/image" reference for an Atlas
+// rbd-mode boot volume. The annotation it reads is writable by anyone who can
+// edit the Machine, so the image name must be the one derived from this
+// Machine's own identity and the pool must be on this node's allowlist.
+func (a *Agent) resolveAtlasRBDBoot(m model.Machine) (string, bool, error) {
+	if len(m.Spec.Volumes) == 0 || m.Spec.Volumes[0].Atlas.EffectiveMode() != model.AtlasModeRBD {
+		return "", false, nil
+	}
+	vol := m.Spec.Volumes[0]
+	if len(a.AtlasRBDPools) == 0 {
+		return "", false, fmt.Errorf("spec.volumes[0]: atlas.mode=rbd is disabled on node %s (set --atlas-rbd-pools)", a.NodeName)
+	}
+	st := model.AtlasVolumeStates(m)[vol.Name]
+	if st.Phase != model.AtlasPhaseReady {
+		return "", false, fmt.Errorf("spec.volumes[0]: atlas volume %q is not Ready (phase %q)", vol.Name, st.Phase)
+	}
+	pool, image, ok := model.ParseRBDNativeID(st.NativeID)
+	if !ok {
+		return "", false, fmt.Errorf("spec.volumes[0]: atlas volume %q has no rbd native id", vol.Name)
+	}
+	if want := model.AtlasVolumeName(m.Namespace(), m.Metadata.Name, vol.Name); image != want {
+		return "", false, fmt.Errorf("spec.volumes[0]: rbd image %q does not belong to this Machine (want %q)", image, want)
+	}
+	if !slices.Contains(a.AtlasRBDPools, pool) {
+		return "", false, fmt.Errorf("spec.volumes[0]: rbd pool %q is not in this node's --atlas-rbd-pools", pool)
+	}
+	if vol.Atlas.Pool != "" && vol.Atlas.Pool != pool {
+		return "", false, fmt.Errorf("spec.volumes[0]: rbd pool %q does not match atlas.pool %q", pool, vol.Atlas.Pool)
+	}
+	return pool + "/" + image, true, nil
 }
 
 // resolveDataVolumes maps spec.volumes[1+] PVC host directories into FluxVM

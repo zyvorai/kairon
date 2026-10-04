@@ -72,6 +72,7 @@ func run() int {
 	livenessLeaseNamespace := flag.String("liveness-lease-namespace", env("KAIRON_NODE_NAMESPACE", ""), "namespace to hold this node's own coordination.k8s.io/v1 liveness Lease in (internal/nodeliveness), renewed once per reconcile tick; empty (the default) disables this entirely -- no Lease writes, no extra RBAC needed, exactly kairon-node's behavior before this existed. Requires the ServiceAccount to be granted 'leases' get/create/update in this namespace; the Helm chart's node.livenessLease.enabled turns both on together. kaironctl fence cross-checks this Lease against Node Ready before proceeding.")
 	livenessLeaseDuration := flag.Duration("liveness-lease-duration", 0, "override nodeliveness.DefaultLeaseDuration (60s) when non-zero")
 	networkDefaultDeny := flag.Bool("network-default-deny", env("KAIRON_NETWORK_DEFAULT_DENY", "false") == "true", "push DefaultAllow: false onto every Machine on this node not currently matched by any MachineNetworkPolicy/NetworkSecurityGroup-derived policy, instead of silently leaving it on FluxVM's native defaultAllow: true. False (the default) is today's unchanged behavior. Global, not per-namespace: enabling this with no policies written yet cuts all VM-to-VM connectivity on this node outright -- see docs/guides/network-policy.md.")
+	atlasRBDPools := flag.String("atlas-rbd-pools", env("KAIRON_ATLAS_RBD_POOLS", ""), "comma-separated Ceph pools this node may boot Atlas rbd-mode volumes from (FluxVM storage=ceph-rbd-in-place, credentials from FluxVM's own config); empty (the default) refuses atlas.mode=rbd -- see docs/guides/machine-storage-atlas.md")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -157,6 +158,7 @@ func run() int {
 		LivenessLeaseNamespace: *livenessLeaseNamespace,
 		LivenessLeaseDuration:  *livenessLeaseDuration,
 		NetworkDefaultDeny:     *networkDefaultDeny,
+		AtlasRBDPools:          splitList(*atlasRBDPools),
 		Log:                    log,
 		Metrics:                rec,
 		Tracer:                 oteltrace.FromEnv(),
@@ -313,6 +315,16 @@ func configureConsole(ctx context.Context, log *slog.Logger, fc *fluxvm.Client, 
 			log.Error("VNC console relay stopped", "error", serveErr)
 		}
 	}()
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func env(k, d string) string {

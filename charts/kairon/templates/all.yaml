@@ -445,6 +445,9 @@ spec:
 {{ if .Values.node.thirdPartyCSIDrivers }}
             - "--third-party-csi-drivers={{ range $name, $socket := .Values.node.thirdPartyCSIDrivers }}{{ $name }}={{ $socket }},{{ end }}"
 {{ end }}
+{{ if .Values.node.atlasRBDPools }}
+            - "--atlas-rbd-pools={{ join "," .Values.node.atlasRBDPools }}"
+{{ end }}
 {{ if .Values.node.livenessLease.enabled }}
             - "--liveness-lease-duration={{ .Values.node.livenessLease.duration }}"
 {{ end }}
