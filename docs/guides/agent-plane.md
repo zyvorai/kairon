@@ -127,6 +127,14 @@ The model answers with one JSON proposal: `policy` (a `PolicyIntent`), `claim` (
 
 Text passed as facts is labeled as data in the prompt, but it is still model input: review a proposal before applying it.
 
+## Diagnose
+
+`Diagnose` ranks likely causes for a stuck or failed Machine or MachineMigration without a model: phase first, then failing conditions (an `Unschedulable` condition gets `ExplainPending` hints), then Warning events grouped by reason and sorted by count, then edge drops and boot findings. Each cause carries evidence and proposed next steps. When a model is configured it adds `aiSummary`; the ranked causes never change and nothing is applied.
+
+- `kaironctl agent diagnose machine/job-7 --ns ml [--no-ai]`
+- MCP `diagnose` (read-only, `ref` is `machine/NAME` or `migration/NAME`), scoped by `KAIRON_MCP_TENANT` through the Machine's tenant label.
+- `GET /api/v1/agent/diagnose/{namespace}/{machine|migration}/{name}` on kairon-ui, namespace-checked like other namespaced routes (`?ai=false` skips the model), and the Diagnose card on the Assistant page.
+
 ## Image signatures
 
 With `kairon-controller -cosign-public-key cosign.pub` (or `KAIRON_COSIGN_PUBLIC_KEY`, set by the chart from `agentPlane.cosignPublicKeySecret`), the admission webhook verifies every agent-pool Machine's image:

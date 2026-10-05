@@ -201,6 +201,30 @@ func agentPlaneKubeTools(nsDefault string, withKube func(context.Context, time.D
 			},
 		},
 		{
+			Name:        "diagnose",
+			Description: "Rank likely causes for a stuck or failed Machine or MachineMigration from its phase, conditions and Warning events, with proposed next steps. Adds a model summary when KAIRON_LLM_URL is configured. Read-only.",
+			Schema: mcp.Object(map[string]any{
+				"namespace": nsProp,
+				"ref":       mcp.String("machine/NAME or migration/NAME (a bare name is a Machine)"),
+			}, "ref"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Namespace string `json:"namespace"`
+					Ref       string `json:"ref"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return withKube(ctx, 2*mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
+					d, err := diagnoseRef(ctx, kc, ns(a.Namespace), a.Ref, true)
+					if err != nil {
+						return "", err
+					}
+					return mcp.JSON(d)
+				})
+			},
+		},
+		{
 			Name:        "create_sealed_claim",
 			Description: "Create a sealed MachineClaim. Validated first: tenant, TTL 30-86400, hypervisor, and a non-empty strict egress allowlist. Requires --allow-write; audited.",
 			Write:       true,

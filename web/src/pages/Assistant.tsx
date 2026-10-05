@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { FormEvent, useState } from 'react';
-import { apiJSON } from '../api';
+import { api, apiJSON } from '../api';
+
+interface Diagnosis {
+  subject: string;
+  healthy: boolean;
+  summary: string;
+  causes?: { rank: number; title: string; evidence?: string; propose?: string[] }[];
+  aiSummary?: string;
+}
 
 interface AssistResult {
   kind: 'policy' | 'claim' | 'repair' | 'explain';
@@ -43,6 +51,26 @@ export default function Assistant() {
       setMsg(errorText(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  const [diag, setDiag] = useState({ kind: 'machine', namespace: 'default', name: '' });
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagMsg, setDiagMsg] = useState('');
+  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
+
+  async function diagnose(e: FormEvent) {
+    e.preventDefault();
+    setDiagBusy(true);
+    setDiagMsg('');
+    setDiagnosis(null);
+    try {
+      const path = [diag.namespace, diag.kind, diag.name].map(encodeURIComponent).join('/');
+      setDiagnosis(await api<Diagnosis>(`/api/v1/agent/diagnose/${path}`));
+    } catch (err) {
+      setDiagMsg(errorText(err));
+    } finally {
+      setDiagBusy(false);
     }
   }
 
@@ -99,6 +127,60 @@ export default function Assistant() {
           {proposal && <pre className="execStream">{JSON.stringify(proposal, null, 2)}</pre>}
         </div>
       )}
+      <div className="card span4">
+        <span className="eyebrow">AGENT PLANE · DIAGNOSE</span>
+        <h3>Why is it stuck?</h3>
+        <p>
+          Ranks likely causes from phase, conditions and Warning events, with proposed next steps. When a model is configured it adds a summary; the ranked
+          causes are always deterministic.
+        </p>
+        <form onSubmit={diagnose}>
+          <div className="formgrid">
+            <label>
+              Kind
+              <select value={diag.kind} onChange={(e) => setDiag({ ...diag, kind: e.target.value })}>
+                <option value="machine">Machine</option>
+                <option value="migration">Migration</option>
+              </select>
+            </label>
+            <label>
+              Namespace
+              <input required value={diag.namespace} onChange={(e) => setDiag({ ...diag, namespace: e.target.value })} />
+            </label>
+            <label className="full">
+              Name
+              <input required value={diag.name} onChange={(e) => setDiag({ ...diag, name: e.target.value })} placeholder="job-7" />
+            </label>
+          </div>
+          <div className="formactions">
+            <button className="primary" type="submit" disabled={diagBusy}>
+              {diagBusy ? 'Diagnosing...' : 'Diagnose'}
+            </button>
+          </div>
+        </form>
+        {diagMsg && <p className="msg error">{diagMsg}</p>}
+        {diagnosis && (
+          <>
+            <h3>{diagnosis.summary}</h3>
+            {diagnosis.aiSummary && <p>{diagnosis.aiSummary}</p>}
+            {(diagnosis.causes || []).map((c) => (
+              <div key={c.rank}>
+                <strong>
+                  {c.rank}. {c.title}
+                </strong>
+                {c.evidence && <pre className="execStream">{c.evidence}</pre>}
+                {c.propose && c.propose.length > 0 && (
+                  <ul>
+                    {c.propose.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
     </div>
   );
 }

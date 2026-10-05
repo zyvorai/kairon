@@ -33,6 +33,12 @@ func TestAgentPlaneKubeTools(t *testing.T) {
 			_, _ = io.WriteString(w, `{"metadata":{"name":"theirs","namespace":"default"},"spec":{"poolName":"agents","labels":{"kairon.zyvor.dev/tenant":"other"}}}`)
 		case r.Method == http.MethodGet && path == "machines":
 			_, _ = io.WriteString(w, `{"items":[]}`)
+		case r.Method == http.MethodGet && path == "machines/m1":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"m1","namespace":"default","labels":{"kairon.zyvor.dev/tenant":"acme"}},"status":{"phase":"Failed","message":"image digest mismatch"}}`)
+		case r.Method == http.MethodGet && path == "machines/m2":
+			_, _ = io.WriteString(w, `{"metadata":{"name":"m2","namespace":"default","labels":{"kairon.zyvor.dev/tenant":"other"}},"status":{"phase":"Failed"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/default/events":
+			_, _ = io.WriteString(w, `{"items":[{"type":"Warning","reason":"BackOff","message":"boot retry","count":3}]}`)
 		case r.Method == http.MethodPost && path == "machineclaims":
 			b, _ := io.ReadAll(r.Body)
 			created = append(created, string(b))
@@ -54,6 +60,7 @@ func TestAgentPlaneKubeTools(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("KAIRON_MCP_TENANT", "acme")
+	t.Setenv("KAIRON_LLM_URL", "")
 
 	got := callMCP(t, true, srv.URL,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_claims","arguments":{"namespace":"default"}}}`,
@@ -63,7 +70,15 @@ func TestAgentPlaneKubeTools(t *testing.T) {
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"apply_network_policy","arguments":{"intent":{"name":"web","tenant":"acme","allowFqdns":["registry.internal"]}}}}`,
 		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"apply_claim_step","arguments":{"name":"mine"}}}`,
 		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"apply_network_policy","arguments":{"intent":{"name":"open","allowFqdns":["*"]}}}}`,
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"diagnose","arguments":{"ref":"machine/m1"}}}`,
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"diagnose","arguments":{"ref":"m2"}}}`,
 	)
+	if !strings.Contains(got["8"], "image digest mismatch") || !strings.Contains(got["8"], "BackOff (x3)") {
+		t.Fatalf("diagnose: %s", got["8"])
+	}
+	if !strings.HasPrefix(got["9"], "tool-error:") {
+		t.Fatalf("diagnose of another tenant's machine must fail: %s", got["9"])
+	}
 	if !strings.Contains(got["1"], `"mine"`) || strings.Contains(got["1"], `"theirs"`) {
 		t.Fatalf("list_claims must hide other tenants: %s", got["1"])
 	}

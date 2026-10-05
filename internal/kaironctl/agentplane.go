@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zyvorai/kairon/internal/agentplane"
+	"github.com/zyvorai/kairon/internal/agentplane/facts"
+	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/llm"
 	"github.com/zyvorai/kairon/internal/mcp"
 	"github.com/zyvorai/kairon/internal/model"
@@ -325,7 +327,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Agent-plane helpers (compile, explain, claim check). Nothing here applies.",
 	}
-	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd(), newAgentAuditVerifyCmd(), newAgentAskCmd())
+	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd(), newAgentAuditVerifyCmd(), newAgentAskCmd(), newAgentDiagnoseCmd())
 	return cmd
 }
 
@@ -530,6 +532,60 @@ retried once with the validator error, then refused. Nothing is applied.`,
 	c.Flags().StringVar(&namespace, "ns", "", "force this namespace onto the proposal")
 	c.Flags().StringVar(&factsFile, "facts", "", "file with context for the model (drops, status, events)")
 	return c
+}
+
+func newAgentDiagnoseCmd() *cobra.Command {
+	var namespace string
+	var noAI bool
+	c := &cobra.Command{
+		Use:   "diagnose machine/NAME|migration/NAME",
+		Short: "Rank likely causes for a stuck or failed Machine or migration from its status, conditions and events",
+		Long: `The diagnosis is deterministic: causes are ranked from phase, conditions,
+Warning events, edge drops and boot findings, each with proposed next steps.
+When KAIRON_LLM_URL/KAIRON_LLM_MODEL are set, the model adds a plain-English
+summary on top; it never changes the ranked causes and nothing is applied.`,
+		Example: `  kaironctl agent diagnose machine/job-7 --ns ml
+  kaironctl agent diagnose migration/web-0-move --no-ai`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kc, err := kube.FromEnvironment()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
+			defer cancel()
+			d, err := diagnoseRef(ctx, kc, namespace, args[0], !noAI)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(d)
+		},
+	}
+	c.Flags().StringVar(&namespace, "ns", "default", "namespace of the Machine or migration")
+	c.Flags().BoolVar(&noAI, "no-ai", false, "skip the model summary even when one is configured")
+	return c
+}
+
+// diagnoseRef gathers facts and diagnoses; a model failure only drops the
+// summary.
+func diagnoseRef(ctx context.Context, kc *kube.Client, namespace, ref string, withAI bool) (agentplane.Diagnosis, error) {
+	kind, name := facts.ParseRef(ref)
+	s, err := facts.Gather(ctx, kc, kind, namespace, name)
+	if err != nil {
+		return agentplane.Diagnosis{}, err
+	}
+	if !mcpTenantVisible(s.Tenant) {
+		return agentplane.Diagnosis{}, fmt.Errorf("%s %s/%s not found", kind, namespace, name)
+	}
+	d := agentplane.Diagnose(s.Facts)
+	if client := llm.FromEnv(); withAI && client != nil && !d.Healthy {
+		if out, err := agentplane.Summarize(ctx, client, d); err == nil {
+			d = out
+		}
+	}
+	return d, nil
 }
 
 func newAgentAuditVerifyCmd() *cobra.Command {

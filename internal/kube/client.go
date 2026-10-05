@@ -973,6 +973,18 @@ func (c *Client) RecordEvent(ctx context.Context, namespace, involvedObjectKind,
 	return c.request(ctx, http.MethodPost, path, ev, nil, "")
 }
 
+// ListEventsFor returns core/v1 Events whose involvedObject is kind/name
+// in namespace, oldest first as the apiserver returns them.
+func (c *Client) ListEventsFor(ctx context.Context, namespace, kind, name string) ([]model.Event, error) {
+	var list struct {
+		Items []model.Event `json:"items"`
+	}
+	selector := "involvedObject.kind=" + kind + ",involvedObject.name=" + name
+	path := fmt.Sprintf("/api/v1/namespaces/%s/events?fieldSelector=%s", url.PathEscape(namespace), url.QueryEscape(selector))
+	err := c.request(ctx, http.MethodGet, path, nil, &list, "")
+	return list.Items, err
+}
+
 // SubjectAccessReview posts a built-in authorization.k8s.io/v1
 // SubjectAccessReview and returns its Status -- the caller's own
 // ServiceAccount (this Client's Token) must hold "create" on
