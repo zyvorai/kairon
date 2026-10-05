@@ -103,7 +103,7 @@ func (v *Verifier) Verify(ctx context.Context, ref, digest string) error {
 	if err := json.Unmarshal(body, &man); err != nil {
 		return fmt.Errorf("cosign: signature manifest: %w", err)
 	}
-	var lastErr error = errors.New("signature manifest has no simple-signing layer")
+	lastErr := errors.New("signature manifest has no simple-signing layer")
 	for _, l := range man.Layers {
 		if l.MediaType != mediaSimpleSigning || l.Annotations[annSignature] == "" {
 			continue

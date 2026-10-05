@@ -5,6 +5,7 @@ package kaironctl
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"regexp"
@@ -16,7 +17,7 @@ import (
 
 func cmdSnapshot(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS] [--volume NAME]..."))
+		fatal(errors.New("usage: kaironctl snapshot MACHINE [--name NAME] [--class CSI_CLASS] [--volume NAME ...]"))
 	}
 	machine := args[0]
 	fs := flag.NewFlagSet("snapshot", flag.ExitOnError)

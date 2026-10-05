@@ -90,9 +90,9 @@ func writeVolumes(w io.Writer, vols []volumeInfo, output string) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tSOURCE\tCLAIM\tSIZE\tPHASE\tBACKEND\tMESSAGE")
+	_, _ = fmt.Fprintln(tw, "NAME\tSOURCE\tCLAIM\tSIZE\tPHASE\tBACKEND\tMESSAGE")
 	for _, v := range vols {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Name, v.Source, dash(v.ClaimName), dash(v.Size), dash(v.Phase), dash(v.NativeID), v.Message)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Name, v.Source, dash(v.ClaimName), dash(v.Size), dash(v.Phase), dash(v.NativeID), v.Message)
 	}
 	return tw.Flush()
 }

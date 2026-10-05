@@ -100,7 +100,7 @@ func (r *fakeRegistry) put(body []byte, mediaType string) string {
 func (r *fakeRegistry) host() string { return strings.TrimPrefix(r.srv.URL, "https://") }
 
 func (r *fakeRegistry) putManifest(t *testing.T, layers ...[]byte) string {
-	var descs []ociDescriptor
+	descs := make([]ociDescriptor, 0, len(layers))
 	for _, l := range layers {
 		descs = append(descs, ociDescriptor{MediaType: "application/vnd.oci.image.layer.v1.tar+gzip", Digest: r.put(l, ""), Size: int64(len(l))})
 	}

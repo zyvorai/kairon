@@ -57,13 +57,13 @@ func (f *backupKube) handler(t *testing.T) http.HandlerFunc {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		switch {
 		case r.Method == http.MethodGet && p == "machinebackups":
-			var items []model.MachineBackup
+			items := make([]model.MachineBackup, 0, len(f.backups))
 			for _, b := range f.backups {
 				items = append(items, *b)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineBackupList{Items: items})
 		case r.Method == http.MethodGet && p == "machinebackuprestores":
-			var items []model.MachineBackupRestore
+			items := make([]model.MachineBackupRestore, 0, len(f.restores))
 			for _, x := range f.restores {
 				items = append(items, *x)
 			}

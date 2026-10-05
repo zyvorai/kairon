@@ -389,7 +389,7 @@ func newAgentMatrixCmd() *cobra.Command {
 			if err := agentplane.MigrationClaim(in); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "migration claim green")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "migration claim green")
 			return nil
 		},
 	}
@@ -407,7 +407,7 @@ func readJSON(file string, v any) error {
 		if err != nil {
 			return err
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 	}
 	dec := json.NewDecoder(r)
 	dec.DisallowUnknownFields()
@@ -459,7 +459,7 @@ func newAgentCPUCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), up.Key+"="+up.Value)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), up.Key+"="+up.Value)
 			return nil
 		},
 	}
@@ -601,7 +601,7 @@ func newAgentAuditVerifyCmd() *cobra.Command {
 				return err
 			}
 			if !show && claim == "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "audit log ok: %d records\n", n)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "audit log ok: %d records\n", n)
 				return nil
 			}
 			log, err := agentplane.OpenFileLog(file)

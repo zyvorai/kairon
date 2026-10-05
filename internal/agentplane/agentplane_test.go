@@ -156,7 +156,7 @@ func TestAuditRepairMatrixAdmit(t *testing.T) {
 	if err := MigrationClaim([]MatrixCase{{Name: "cold", Passed: true}}); err == nil {
 		t.Fatal("partial matrix should not be green")
 	}
-	var all []MatrixCase
+	all := make([]MatrixCase, 0, len(RequiredMigrationCases))
 	for _, name := range RequiredMigrationCases {
 		all = append(all, MatrixCase{Name: name, Passed: true})
 	}

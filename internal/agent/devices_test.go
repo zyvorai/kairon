@@ -36,7 +36,8 @@ func (f *fakeDeviceFlux) handler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/disks":
-		items := []map[string]string{{"name": "root", "path": "/w/root.qcow2"}}
+		items := make([]map[string]string, 0, 1+len(f.disks))
+		items = append(items, map[string]string{"name": "root", "path": "/w/root.qcow2"})
 		for n, p := range f.disks {
 			items = append(items, map[string]string{"name": n, "path": p})
 		}

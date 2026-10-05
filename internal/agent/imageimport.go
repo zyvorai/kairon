@@ -121,7 +121,7 @@ type importedImage struct {
 // dataDisks names the import's extra disks model.ImportDiskName(1..N) in
 // source order.
 func (r importedImage) dataDisks() []fluxvm.DataDisk {
-	var out []fluxvm.DataDisk
+	out := make([]fluxvm.DataDisk, 0, len(r.ExtraDisks))
 	for i, p := range r.ExtraDisks {
 		out = append(out, fluxvm.DataDisk{Name: model.ImportDiskName(i + 1), Backing: p})
 	}
