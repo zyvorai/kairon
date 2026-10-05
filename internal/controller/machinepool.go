@@ -214,9 +214,13 @@ func (c *Controller) releaseMachineClaim(ctx context.Context, claim model.Machin
 		}
 	}
 	name := claim.Status.MachineName
-	if agentplane.WantsSnapshot(claim) && name != "" {
-		if err := c.ensureReleaseSnapshot(ctx, claim, name); err != nil {
+	if _, ok := byName[claim.Namespace()+"/"+name]; ok && name != "" && agentplane.WantsSnapshot(claim) {
+		done, err := c.ensureReleaseSnapshot(ctx, claim, name)
+		if err != nil {
 			c.Log.Error("machineclaim release snapshot failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+			return
+		}
+		if !done {
 			return
 		}
 	}
@@ -382,21 +386,30 @@ func (c *Controller) reconcileMachinePoolDeletion(ctx context.Context, pool mode
 	}
 }
 
-func (c *Controller) ensureReleaseSnapshot(ctx context.Context, claim model.MachineClaim, machine string) error {
+// ensureReleaseSnapshot reports done only once the release snapshot has
+// Succeeded. The snapshot controller needs the source Machine, so the
+// caller must not delete or unlabel it before then.
+func (c *Controller) ensureReleaseSnapshot(ctx context.Context, claim model.MachineClaim, machine string) (bool, error) {
 	name := agentplane.ReleaseSnapshotName(claim.Metadata.Name)
-	_, err := c.Kube.GetMachineSnapshot(ctx, claim.Namespace(), name)
+	snap, err := c.Kube.GetMachineSnapshot(ctx, claim.Namespace(), name)
 	if err == nil {
-		return nil
+		switch snap.Status.Phase {
+		case "Succeeded":
+			return true, nil
+		case "Failed":
+			return false, fmt.Errorf("snapshot %s failed: %s; delete it to retry", name, snap.Status.Message)
+		}
+		return false, nil
 	}
 	if !kube.IsNotFound(err) {
-		return err
+		return false, err
 	}
 	_, err = c.Kube.CreateMachineSnapshot(ctx, claim.Namespace(), model.MachineSnapshot{
 		Metadata: model.ObjectMeta{Name: name, Namespace: claim.Namespace()},
 		Spec:     model.MachineSnapshotSpec{MachineName: machine},
 	})
 	if err != nil && !kube.IsConflict(err) {
-		return err
+		return false, err
 	}
-	return nil
+	return false, nil
 }

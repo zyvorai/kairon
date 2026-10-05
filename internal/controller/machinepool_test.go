@@ -31,11 +31,12 @@ type poolFake struct {
 	conflictOn   string
 	policies     map[string]model.MachineNetworkPolicy
 	policyOps    []string
+	snapshots    map[string]model.MachineSnapshot
 }
 
 func newPoolTestController(t *testing.T) (*Controller, *poolFake) {
 	t.Helper()
-	fake := &poolFake{machinePatch: map[string]map[string]any{}, claimStatus: map[string]model.MachineClaimStatus{}, finalizers: map[string][]string{}, policies: map[string]model.MachineNetworkPolicy{}}
+	fake := &poolFake{machinePatch: map[string]map[string]any{}, claimStatus: map[string]model.MachineClaimStatus{}, finalizers: map[string][]string{}, policies: map[string]model.MachineNetworkPolicy{}, snapshots: map[string]model.MachineSnapshot{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
@@ -45,6 +46,24 @@ func newPoolTestController(t *testing.T) (*Controller, *poolFake) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
 		switch {
+		case strings.HasPrefix(path, "machinesnapshots"):
+			name := strings.TrimPrefix(strings.TrimPrefix(path, "machinesnapshots"), "/")
+			switch r.Method {
+			case http.MethodGet:
+				s, ok := fake.snapshots[name]
+				if !ok {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"kind":"Status","reason":"NotFound","code":404}`)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(s)
+			case http.MethodPost:
+				var s model.MachineSnapshot
+				b, _ := json.Marshal(body)
+				_ = json.Unmarshal(b, &s)
+				fake.snapshots[s.Metadata.Name] = s
+				_, _ = w.Write(b)
+			}
 		case strings.HasPrefix(path, "machinenetworkpolicies"):
 			name := strings.TrimPrefix(strings.TrimPrefix(path, "machinenetworkpolicies"), "/")
 			b, _ := json.Marshal(body)
@@ -298,6 +317,39 @@ func TestMachineClaimReleaseDeletesOrRetains(t *testing.T) {
 		if f, ok := fake.finalizers["machineclaims/c1"]; !ok || len(f) != 0 {
 			t.Fatalf("policy %q: finalizer not removed: %v", tc.policy, fake.finalizers)
 		}
+	}
+}
+
+func TestMachineClaimReleaseWaitsForSnapshot(t *testing.T) {
+	now := time.Now()
+	c, fake := newPoolTestController(t)
+	claim := testClaim("c1", time.Minute)
+	claim.Metadata.Annotations = map[string]string{"kairon.zyvor.dev/snapshot-on-release": "true"}
+	claim.Metadata.DeletionTimestamp = &now
+	claim.Status = model.MachineClaimStatus{Phase: model.ClaimBound, MachineName: "m1"}
+	m := poolMember("m1", "h", model.PoolStateClaimed, "Running", time.Hour)
+	m.Metadata.Labels[model.LabelMachineClaim] = "c1"
+
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, []model.Machine{m})
+	snap, ok := fake.snapshots["c1-release"]
+	if !ok || snap.Spec.MachineName != "m1" {
+		t.Fatalf("snapshots = %v", fake.snapshots)
+	}
+	if len(fake.deleted) != 0 {
+		t.Fatalf("machine deleted before snapshot finished: %v", fake.deleted)
+	}
+	if _, ok := fake.finalizers["machineclaims/c1"]; ok {
+		t.Fatalf("finalizer removed before snapshot finished: %v", fake.finalizers)
+	}
+
+	snap.Status.Phase = "Succeeded"
+	fake.snapshots["c1-release"] = snap
+	c.reconcileMachineClaims(t.Context(), []model.MachineClaim{claim}, []model.Machine{m})
+	if strings.Join(fake.deleted, ",") != "m1" {
+		t.Fatalf("deleted = %v, want m1", fake.deleted)
+	}
+	if f, ok := fake.finalizers["machineclaims/c1"]; !ok || len(f) != 0 {
+		t.Fatalf("finalizer not removed: %v", fake.finalizers)
 	}
 }
 
