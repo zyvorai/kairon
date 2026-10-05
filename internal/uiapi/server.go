@@ -214,6 +214,7 @@ func (s *Server) Handler() http.Handler {
 	// comment in overview.go) regardless of NamespaceScopingEnabled, one
 	// of this feature's documented honest limits.
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
+	s.mountAgentPlane(api)
 
 	api.HandleFunc("GET /api/v1/machines", s.requireNamespace(namespaceParam, s.handleListMachines))
 	api.HandleFunc("POST /api/v1/machines", s.requireNamespace(namespaceParam, s.handleCreateMachine))

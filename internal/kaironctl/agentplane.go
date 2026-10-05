@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/mcp"
+	"github.com/zyvorai/kairon/internal/model"
 )
 
 // agentPlaneTools are pure. They do not call the apiserver and they
@@ -135,6 +137,46 @@ func agentPlaneTools() []mcp.Tool {
 			},
 		},
 		{
+			Name:        "step_agent_claim",
+			Description: "Decide bind, hold, wait or expire for one MachineClaim against warm Machines. Does not write.",
+			Schema:      mcp.Object(map[string]any{"claim": map[string]any{"type": "object"}, "warm": map[string]any{"type": "array"}}, "claim"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Now   time.Time                `json:"now"`
+					Claim model.MachineClaim       `json:"claim"`
+					Warm  []agentplane.WarmMachine `json:"warm"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				if a.Now.IsZero() {
+					a.Now = time.Now().UTC()
+				}
+				decision, err := agentplane.StepClaim(a.Now, a.Claim, a.Warm)
+				if err != nil {
+					return "", err
+				}
+				return mcp.JSON(decision)
+			},
+		},
+		{
+			Name:        "anomaly_events",
+			Description: "Turn edge findings into Warning events. Does not emit them.",
+			Schema:      mcp.Object(map[string]any{"machine": mcp.String("Machine name"), "flows": map[string]any{"type": "array"}, "drops": map[string]any{"type": "array"}}, "machine"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Machine string            `json:"machine"`
+					Flows   []agentplane.Flow `json:"flows"`
+					Drops   []agentplane.Drop `json:"drops"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				findings := agentplane.Detect(a.Flows, a.Drops)
+				return mcp.JSON(map[string]any{"findings": findings, "events": agentplane.EventsFromFindings(a.Machine, findings), "apply": false})
+			},
+		},
+		{
 			Name:        "audit_record",
 			Description: "Record one MCP write as a replayable audit event. Requires --allow-write.",
 			Write:       true,
@@ -173,7 +215,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Agent-plane helpers (compile, explain, claim check). Nothing here applies.",
 	}
-	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd())
+	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd())
 	return cmd
 }
 
@@ -261,4 +303,35 @@ func readJSON(file string, v any) error {
 		return fmt.Errorf("read json: %w", err)
 	}
 	return nil
+}
+
+func newAgentStepCmd() *cobra.Command {
+	var file string
+	c := &cobra.Command{
+		Use:   "step-claim",
+		Short: "Decide bind, hold, wait or expire for a MachineClaim JSON file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var in struct {
+				Now   time.Time                `json:"now"`
+				Claim model.MachineClaim       `json:"claim"`
+				Warm  []agentplane.WarmMachine `json:"warm"`
+			}
+			if err := readJSON(file, &in); err != nil {
+				return err
+			}
+			if in.Now.IsZero() {
+				in.Now = time.Now().UTC()
+			}
+			decision, err := agentplane.StepClaim(in.Now, in.Claim, in.Warm)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(decision)
+		},
+	}
+	c.Flags().StringVar(&file, "file", "", "JSON with claim and warm, or - for stdin")
+	return c
 }

@@ -41,3 +41,29 @@ kaironctl agent migration-claim --file matrix.json
 ```
 
 Nothing in these commands writes to the apiserver.
+
+## Claim step
+
+`StepClaim` decides the next tick for an existing `MachineClaim`. It does not bind the Machine itself.
+
+| Action | When |
+| --- | --- |
+| `bind` | Pending, and a Running warm member matches tenant and hypervisor. |
+| `wait` | Pending, nothing eligible. |
+| `hold` | Bound, TTL still open. |
+| `expire` | Bound, TTL elapsed. `snapshot` is set when `kairon.zyvor.dev/snapshot-on-release=true`. Reclaim is Delete or Retain. |
+
+Empty claim egress is refused. A compiled policy name is returned when egress is set.
+
+`kaironctl agent step-claim --file claim.json` and MCP `step_agent_claim` return the decision. MCP `anomaly_events` returns Warning events and does not emit them.
+
+## Dashboard
+
+Read-only routes on kairon-ui, no namespace param, no apiserver write:
+
+- `POST /api/v1/agent/compile-policy`
+- `POST /api/v1/agent/explain-drops`
+- `POST /api/v1/agent/anomalies`
+- `POST /api/v1/agent/cpu-label`
+
+CPU label projection uses `kairon.zyvor.dev/pinnable-cpus` and only reports `changed` when the projected list differs. Confidential status is sealed only when the node report kind matches.
