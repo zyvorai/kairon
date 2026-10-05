@@ -32,6 +32,17 @@ Write tool, `--allow-write` only:
 
 - `audit_record` — hashes principal, tool, tenant, claim and diff into an id for replay.
 
+### Audit log
+
+With `--allow-write`, every write tool call is recorded twice in an append-only JSONL file: once before it runs (`outcome: intent`) and once after (`ok` or the error). If the intent record cannot be written, the call is refused. Each record carries `prevHash` and `hash`, so an edited, reordered or removed line fails verification, and every append is fsynced.
+
+```
+kaironctl mcp serve --allow-write --audit-log ~/.kairon/audit.jsonl [--audit-configmap kairon-system/kairon-audit]
+kaironctl agent audit-verify [--claim job-1]
+```
+
+The principal is `KAIRON_MCP_PRINCIPAL`, else the OS user. `replay_audit` without `events` reads the verified file. `--audit-configmap` mirrors each record into an existing ConfigMap, keyed by record id.
+
 ## CLI
 
 ```

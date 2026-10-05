@@ -43,6 +43,10 @@ type Server struct {
 	Name       string
 	Version    string
 	AllowWrite bool
+	// Audit, when set, is called before every Write tool runs (outcome
+	// "intent") and after it returns ("ok" or the error text). An error
+	// on the intent call refuses the write.
+	Audit func(ctx context.Context, tool string, args json.RawMessage, outcome string) error
 
 	tools map[string]Tool
 }
@@ -180,7 +184,19 @@ func (s *Server) handle(ctx context.Context, req request) (any, *rpcError) {
 		if len(args) == 0 || string(args) == "null" {
 			args = json.RawMessage("{}")
 		}
+		if t.Write && s.Audit != nil {
+			if err := s.Audit(ctx, t.Name, args, "intent"); err != nil {
+				return toolResult("audit log unavailable; write refused: "+err.Error(), true), nil
+			}
+		}
 		out, err := t.Call(ctx, args)
+		if t.Write && s.Audit != nil {
+			outcome := "ok"
+			if err != nil {
+				outcome = err.Error()
+			}
+			_ = s.Audit(ctx, t.Name, args, outcome)
+		}
 		if err != nil {
 			return toolResult(err.Error(), true), nil
 		}

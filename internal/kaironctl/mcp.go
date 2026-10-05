@@ -28,6 +28,7 @@ func newMCPCmd(opts *Options) *cobra.Command {
 		Short: "Model Context Protocol server for AI agents",
 	}
 	var allowWrite bool
+	var auditLog, auditConfigMap string
 	serve := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve Kairon tools over MCP stdio (for Hermes Agent and other MCP clients)",
@@ -45,11 +46,21 @@ capture. Logs go to stderr; stdout carries only protocol messages.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			style.SetQuiet(true)
 			s := mcp.NewServer("kairon", opts.Version, allowWrite)
+			if allowWrite {
+				log, err := openMCPAudit(auditLog, auditConfigMap)
+				if err != nil {
+					return fmt.Errorf("audit log: %w", err)
+				}
+				mcpAudit = log
+				s.Audit = mcpAuditHook(log)
+			}
 			s.Add(kaironTools(opts, kube.FromEnvironment)...)
 			return s.Serve(cmd.Context(), os.Stdin, os.Stdout)
 		},
 	}
 	serve.Flags().BoolVar(&allowWrite, "allow-write", false, "offer tools that change state (power, snapshot, capture)")
+	serve.Flags().StringVar(&auditLog, "audit-log", defaultAuditLogPath(), "hash-chained JSONL audit log for write tools (used with --allow-write)")
+	serve.Flags().StringVar(&auditConfigMap, "audit-configmap", "", "also mirror audit records into this existing ConfigMap, as namespace/name")
 	cmd.AddCommand(serve)
 	return cmd
 }

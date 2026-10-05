@@ -21,6 +21,11 @@ type Event struct {
 	Tenant    string    `json:"tenant,omitempty"`
 	Claim     string    `json:"claim,omitempty"`
 	Diff      string    `json:"diff,omitempty"`
+	// Outcome is "intent" before a write runs, then "ok" or the error.
+	Outcome string `json:"outcome,omitempty"`
+	// PrevHash and Hash chain FileLog records; empty for in-memory events.
+	PrevHash string `json:"prevHash,omitempty"`
+	Hash     string `json:"hash,omitempty"`
 }
 
 func Record(e Event) (Event, error) {
@@ -30,7 +35,11 @@ func Record(e Event) (Event, error) {
 	if e.At.IsZero() {
 		e.At = time.Unix(0, 0).UTC()
 	}
-	sum := sha256.Sum256([]byte(e.Principal + "|" + e.Tool + "|" + e.Tenant + "|" + e.Claim + "|" + e.Diff + "|" + e.At.UTC().Format(time.RFC3339Nano)))
+	key := e.Principal + "|" + e.Tool + "|" + e.Tenant + "|" + e.Claim + "|" + e.Diff + "|" + e.At.UTC().Format(time.RFC3339Nano)
+	if e.Outcome != "" {
+		key += "|" + e.Outcome
+	}
+	sum := sha256.Sum256([]byte(key))
 	e.ID = hex.EncodeToString(sum[:8])
 	return e, nil
 }

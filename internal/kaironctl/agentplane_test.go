@@ -43,3 +43,26 @@ func TestAgentPlaneCompileTool(t *testing.T) {
 		t.Fatal("cross-tenant compile should fail")
 	}
 }
+
+func TestMCPAuditHookRecordsClaimAndReplay(t *testing.T) {
+	log, err := openMCPAudit(t.TempDir()+"/audit.jsonl", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KAIRON_MCP_PRINCIPAL", "hermes")
+	t.Setenv("KAIRON_MCP_TENANT", "acme")
+	hook := mcpAuditHook(log)
+	if err := hook(context.Background(), "create_claim", json.RawMessage(`{"claim":{"x":1},"name":"job-1"}`), "intent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := hook(context.Background(), "create_claim", json.RawMessage(`{"name":"job-1"}`), "ok"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := log.Replay("job-1")
+	if err != nil || len(events) != 2 || events[0].Principal != "hermes" || events[0].Tenant != "acme" || events[1].Outcome != "ok" {
+		t.Fatalf("%+v %v", events, err)
+	}
+	if _, err := openMCPAudit(t.TempDir()+"/a.jsonl", "bad"); err == nil {
+		t.Fatal("configmap without namespace/name should fail")
+	}
+}

@@ -228,8 +228,8 @@ func agentPlaneTools() []mcp.Tool {
 		},
 		{
 			Name:        "replay_audit",
-			Description: "Replay audit events for one claim. Pass the event list; this tool has no server-side store.",
-			Schema:      mcp.Object(map[string]any{"claim": mcp.String("claim name"), "events": map[string]any{"type": "array"}}, "events"),
+			Description: "Replay audit events for one claim (all when claim is empty). Reads the server's verified audit log under --allow-write; otherwise pass events.",
+			Schema:      mcp.Object(map[string]any{"claim": mcp.String("claim name"), "events": map[string]any{"type": "array"}}),
 			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				var a struct {
 					Claim  string             `json:"claim"`
@@ -237,6 +237,13 @@ func agentPlaneTools() []mcp.Tool {
 				}
 				if err := decodeArgs(raw, &a); err != nil {
 					return "", err
+				}
+				if a.Events == nil && mcpAudit != nil {
+					events, err := mcpAudit.Replay(a.Claim)
+					if err != nil {
+						return "", err
+					}
+					return mcp.JSON(map[string]any{"events": events, "verified": true})
 				}
 				return mcp.JSON(map[string]any{"events": agentplane.Replay(a.Events, a.Claim)})
 			},
@@ -253,7 +260,13 @@ func agentPlaneTools() []mcp.Tool {
 				if err := decodeArgs(raw, &a); err != nil {
 					return "", err
 				}
-				ev, err := agentplane.Record(a.Event)
+				var ev agentplane.Event
+				var err error
+				if mcpAudit != nil {
+					ev, err = mcpAudit.Append(a.Event)
+				} else {
+					ev, err = agentplane.Record(a.Event)
+				}
 				if err != nil {
 					return "", err
 				}
@@ -280,7 +293,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Agent-plane helpers (compile, explain, claim check). Nothing here applies.",
 	}
-	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd())
+	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd(), newAgentAuditVerifyCmd())
 	return cmd
 }
 
@@ -442,5 +455,40 @@ func newAgentGatewayCmd() *cobra.Command {
 	c.Flags().StringVar(&name, "name", "", "gateway name")
 	c.Flags().IntVar(&guest, "guest-port", 0, "guest port")
 	c.Flags().IntVar(&host, "host-port", 0, "host port")
+	return c
+}
+
+func newAgentAuditVerifyCmd() *cobra.Command {
+	var file, claim string
+	var show bool
+	c := &cobra.Command{
+		Use:   "audit-verify",
+		Short: "Verify the MCP audit log hash chain and optionally replay one claim",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := agentplane.VerifyFile(file)
+			if err != nil {
+				return err
+			}
+			if !show && claim == "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "audit log ok: %d records\n", n)
+				return nil
+			}
+			log, err := agentplane.OpenFileLog(file)
+			if err != nil {
+				return err
+			}
+			events, err := log.Replay(claim)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(events)
+		},
+	}
+	c.Flags().StringVar(&file, "file", defaultAuditLogPath(), "audit log path")
+	c.Flags().StringVar(&claim, "claim", "", "replay records for this claim")
+	c.Flags().BoolVar(&show, "show", false, "print every record")
 	return c
 }

@@ -140,3 +140,31 @@ func TestProtocolErrors(t *testing.T) {
 		t.Fatalf("method error %v", e)
 	}
 }
+
+func TestAuditWrapsWriteToolsAndRefusesWhenUnavailable(t *testing.T) {
+	s := testServer(true)
+	var calls []string
+	s.Audit = func(_ context.Context, tool string, _ json.RawMessage, outcome string) error {
+		calls = append(calls, tool+":"+outcome)
+		return nil
+	}
+	got := run(t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"stop"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"msg":"hi"}}}`,
+	)
+	if txt, isErr := resultText(t, got["1"]); txt != "stopped" || isErr {
+		t.Fatalf("stop %q %v", txt, isErr)
+	}
+	if strings.Join(calls, ",") != "stop:intent,stop:ok" {
+		t.Fatalf("audit calls = %v; read tools must not be audited", calls)
+	}
+
+	ran := false
+	s = NewServer("test", "v0", true)
+	s.Add(Tool{Name: "stop", Write: true, Call: func(context.Context, json.RawMessage) (string, error) { ran = true; return "", nil }})
+	s.Audit = func(context.Context, string, json.RawMessage, string) error { return errors.New("disk full") }
+	got = run(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"stop"}}`)
+	if txt, isErr := resultText(t, got["1"]); !isErr || !strings.Contains(txt, "write refused") || ran {
+		t.Fatalf("refusal %q %v ran=%v", txt, isErr, ran)
+	}
+}
