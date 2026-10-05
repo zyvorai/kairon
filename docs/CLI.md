@@ -152,13 +152,38 @@ kaironctl mcp serve --allow-write   # also power, snapshot, capture
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) and other MCP
 clients. Read tools: `list_machines`, `get_machine`, `list_network_policies`,
 `machine_network`, `machine_edge_identity`, `machine_volumes`,
-`get_machine_snapshot`, `list_machine_pools`, `list_backups`. Write tools, only with `--allow-write`:
+`get_machine_snapshot`, `list_machine_pools`, `list_backups`, `list_claims`,
+`describe_claim`, `diagnose`, `ask`, `replay_audit`, and the agent-plane
+compilers (`compile_network_policy`, `validate_agent_claim`, `explain_drops`
+and others; they never apply). Write tools, only with `--allow-write`:
 `set_power_state`, `create_snapshot`, `snapshot_volume`, `network_capture`,
 `claim_machine`, `release_claim`, `fork_machine`, `delete_machine`, `machine_disk`, `machine_nic`,
-`machine_backup`. It
+`machine_backup`, `create_sealed_claim`, `apply_network_policy`,
+`apply_claim_step`, `audit_record`. Write calls go to a hash-chained audit
+log (`--audit-log`, default `~/.kairon/audit.jsonl`; `--audit-configmap
+ns/name` mirrors it) and are refused if it cannot be written. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
 other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.
+
+## Agent plane
+
+```bash
+kaironctl agent compile-policy --file intent.json   # strict egress allowlist -> MachineNetworkPolicy
+kaironctl agent explain-drops --file drops.json     # explain attributed eBPF drops
+kaironctl agent step-claim --file claim.json        # bind / hold / wait / expire decision
+kaironctl agent ask "let job-7 reach pypi for 2h" --tenant acme --ns ml
+kaironctl agent diagnose machine/job-7 --ns ml [--no-ai]
+kaironctl agent audit-verify [--file F] [--claim NAME] [--show]
+```
+
+Every `agent` command prints a proposal or a decision; none of them writes
+to the cluster. `ask` and the summary in `diagnose` use any
+OpenAI-compatible endpoint set by `KAIRON_LLM_URL`, `KAIRON_LLM_MODEL` and
+optionally `KAIRON_LLM_API_KEY`; the model's answer is validated by the
+same compilers before it is printed. `kaironctl agent --help` lists the
+rest (`migration-claim`, `cpu-label`, `gateway`). See
+[guides/agent-plane.md](guides/agent-plane.md).
 
 ## Meta
 

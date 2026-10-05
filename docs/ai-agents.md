@@ -67,6 +67,16 @@ nor callable.
 | `machine_nic` | `name`, `namespace`, `action` (`add`, `remove`), `nic`, `bridge`, `mac` | write |
 | `list_backups` | `namespace` | read |
 | `machine_backup` | `name`, `namespace`, `action` (`create`, `restore`, `delete`), `backup`, `quiesce`, `atlas`, `storageClass` | write |
+| `list_claims` | `namespace` | read |
+| `describe_claim` | `name`, `namespace` | read |
+| `diagnose` | `ref` (`machine/NAME` or `migration/NAME`), `namespace` | read |
+| `ask` | `question`, `namespace`, `facts` | read (proposal only; needs `KAIRON_LLM_URL`) |
+| `compile_network_policy`, `validate_agent_claim`, `step_agent_claim`, `explain_drops`, `detect_edge_anomalies`, `anomaly_events`, `explain_pending`, `propose_boot_repair`, `project_cpu_label`, `project_confidential`, `bind_gateway`, `migration_claim` | see [agent-plane guide](guides/agent-plane.md) | read (pure compilers, `apply: false`) |
+| `replay_audit` | `claim`, `events` | read |
+| `create_sealed_claim` | `name`, `pool`, `tenant`, `ttlSeconds`, `egress`, `namespace`, `hypervisor`, `reclaimPolicy`, `snapshotOnRelease` | write |
+| `apply_network_policy` | `intent` (compiled by the strict compiler first) | write |
+| `apply_claim_step` | `name`, `namespace` (applies only `expire`) | write |
+| `audit_record` | `event` | write |
 
 `machine_network` `kind` is one of `network-effective`, `network-stats`,
 `network-flows`, `network-drops`, `network-drop-reasons` or
@@ -87,8 +97,12 @@ nor callable.
 `learned-ip`, `conntrack` or `capture`. A Kairon Machine's FluxVM VM is
 named `kairon-<namespace>-<name>`.
 
-Not exposed by either server: create, delete, migrate, guest exec, and
-edge or policy changes.
+Not exposed by either server: Machine create, migrate, guest exec, and
+edge changes other than `apply_network_policy`, which only applies what
+the strict compiler produced.
+
+With `KAIRON_MCP_TENANT` set, the claim tools and `diagnose` see only that
+tenant's objects, and `ask` forces the tenant onto every proposal.
 
 ## Setup with Hermes
 
@@ -215,6 +229,14 @@ A sensible split is a read-only agent for chat and triage, and a separate
 Hermes profile or server entry with `--allow-write` for an operator who
 approves actions.
 
+With `--allow-write`, every write tool call is recorded in a hash-chained
+audit log, `~/.kairon/audit.jsonl` by default (`--audit-log PATH`). The
+intent is written and synced before the call runs, and the outcome after
+it; if the log cannot be written, the call is refused. `--audit-configmap
+ns/name` mirrors each event into a ConfigMap. The principal is
+`KAIRON_MCP_PRINCIPAL`, or the OS user. Check the chain with
+`kaironctl agent audit-verify [--claim NAME] [--show]`.
+
 ## Other MCP clients
 
 Any client that launches stdio servers works. The command, arguments and
@@ -257,6 +279,13 @@ prompts or sampling).
 ## Example workflows
 
 These are prompts that work well and the tool calls they lead to.
+
+**"Why is job-7 stuck?"**
+
+1. `diagnose` with `ref: machine/job-7` returns ranked causes from the
+   phase, failing conditions and Warning events, each with next steps.
+   With a model configured it adds a short summary; the causes are the
+   same either way.
 
 **"Why can't web reach api.example.com?"**
 
@@ -352,7 +381,7 @@ Logs go to stderr; stdout carries only protocol messages.
 | | Kairon | FluxVM |
 | --- | --- | --- |
 | Protocol | `internal/mcp` (stdlib only) | `crates/fluxctl/src/mcp.rs` |
-| Tools | `internal/kaironctl/mcp.go` | `tools()` in `mcp.rs` |
+| Tools | `internal/kaironctl/mcp.go`, `agentplane.go`, `agentplanekube.go` | `tools()` in `mcp.rs` |
 | Tests | `internal/mcp/server_test.go`, `internal/kaironctl/mcp_test.go` | `mcp::tests` |
 
 To add a tool, append an entry with a name, a one-line description written

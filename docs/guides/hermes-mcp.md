@@ -28,6 +28,11 @@ Read tools are always offered:
 | `get_machine_snapshot` | A MachineSnapshot's phase and per-volume snapshots (CSI VolumeSnapshot or Atlas snapshot id) | Kubernetes API |
 | `list_machine_pools` | MachinePools with warm size, ready and claimed counts | Kubernetes API |
 | `list_backups` | MachineBackups and MachineBackupRestores with phase, node, size, quiesce result and Atlas backup ids | Kubernetes API |
+| `list_claims`, `describe_claim` | MachineClaims with pool, tenant, phase and TTL; `describe_claim` adds the live bind/hold/wait/expire decision | Kubernetes API |
+| `diagnose` | Ranked causes for a stuck or failed `machine/NAME` or `migration/NAME` from phase, conditions and Warning events, with next steps; plus a model summary when `KAIRON_LLM_URL` is set | Kubernetes API (+ model) |
+| `ask` | One validated proposal (egress policy, sealed claim, boot repair or explanation) from the configured model; never applied | `KAIRON_LLM_URL` |
+| `replay_audit` | Audit events for a claim, read from the server's verified audit log | local file |
+| Agent-plane compilers | `compile_network_policy`, `validate_agent_claim`, `step_agent_claim`, `explain_drops`, `detect_edge_anomalies`, `anomaly_events`, `explain_pending`, `propose_boot_repair`, `project_cpu_label`, `project_confidential`, `bind_gateway`, `migration_claim`: pure functions over the arguments, `apply: false` | computed locally |
 
 Write tools are offered only with `--allow-write`:
 
@@ -44,8 +49,19 @@ Write tools are offered only with `--allow-write`:
 | `machine_nic` | Adds (`add`, with `bridge`) or removes (`remove`) a `spec.network.extraInterfaces` entry; kairon-node hot-adds or unplugs the NIC. |
 | `machine_backup` | Creates a `MachineBackup` (`create`), a `MachineBackupRestore` into the halted Machine (`restore`, with `backup`), or deletes a backup (`delete`). |
 | `delete_machine` | Deletes a Machine. Refuses MachineSet replicas (the set would recreate them). |
+| `create_sealed_claim` | Creates a sealed MachineClaim after validation: tenant, TTL 30-86400, hypervisor, non-empty strict egress allowlist. |
+| `apply_network_policy` | Compiles a PolicyIntent with the strict compiler, then creates or patches the MachineNetworkPolicy. Wildcards and empty allowlists are refused. |
+| `apply_claim_step` | Runs the claim step against live pool members; only `expire` is applied (the claim is deleted). |
+| `audit_record` | Appends one event to the audit log. |
 
-Migrate, exec, and edge or policy changes are not exposed.
+Every write call is recorded in a hash-chained audit log before and after
+it runs (`--audit-log`, default `~/.kairon/audit.jsonl`; `--audit-configmap
+ns/name` mirrors it). If the log cannot be written, the call is refused.
+`kaironctl agent audit-verify` checks the chain.
+
+`KAIRON_MCP_TENANT` scopes the claim tools and `diagnose` to one tenant.
+
+Migrate, exec, and edge changes other than `apply_network_policy` are not exposed.
 
 Every tool takes `namespace` (default: `--namespace`, else `default`) and
 `name` where it acts on one Machine. Unknown arguments are rejected, so a
@@ -78,7 +94,7 @@ tools on the Hermes side as well:
 
 ```yaml
     tools:
-      exclude: [set_power_state, create_snapshot, snapshot_volume, network_capture, claim_machine, release_claim, delete_machine]
+      exclude: [set_power_state, create_snapshot, snapshot_volume, network_capture, claim_machine, release_claim, delete_machine, fork_machine, machine_disk, machine_nic, machine_backup, create_sealed_claim, apply_network_policy, apply_claim_step, audit_record]
 ```
 
 ## Credentials
@@ -87,6 +103,8 @@ tools on the Hermes side as well:
 | --- | --- |
 | `KAIRON_KUBE_URL`, `KAIRON_KUBE_TOKEN`, `KAIRON_KUBE_CA` / `KAIRON_KUBE_INSECURE` | Machine, policy, power and snapshot tools. In a Pod, the service account is used instead. |
 | `KAIRON_UI_URL`, `KAIRON_UI_TOKEN` | `machine_network` and `network_capture`. kairon-ui needs diagnostics enabled (`KAIRON_NODE_CONSOLE_TOKEN` on kairon-ui and kairon-node). |
+| `KAIRON_LLM_URL`, `KAIRON_LLM_MODEL`, `KAIRON_LLM_API_KEY` | `ask`, and the summary in `diagnose`. Any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, LiteLLM). |
+| `KAIRON_MCP_TENANT`, `KAIRON_MCP_PRINCIPAL` | Tenant scoping for the claim tools, `diagnose` and `ask`; the principal recorded in the audit log (default: OS user). |
 
 The agent can do whatever these credentials allow. Give it a Kubernetes
 token bound to a Role that only has the verbs you want (for example `get`
@@ -122,4 +140,6 @@ Logs go to stderr; stdout carries only protocol messages.
 | `set KAIRON_UI_URL to reach uiapi …` | Set `KAIRON_UI_URL` (and `KAIRON_UI_TOKEN`). |
 | `HTTP 501: diagnostics are not enabled` | Set `KAIRON_NODE_CONSOLE_TOKEN` on kairon-node and kairon-ui. |
 | A write tool says to start with `--allow-write` | Add `--allow-write` to `args`, then `/reload-mcp`. |
+| `audit log unavailable; write refused` | The audit log path is not writable or its chain is broken; fix `--audit-log` or run `kaironctl agent audit-verify`. |
+| `no LLM configured` from `ask` | Set `KAIRON_LLM_URL` and `KAIRON_LLM_MODEL` in the server's `env`. |
 | Hermes shows no `mcp_kairon_*` tools | Check that `kaironctl` is on Hermes' `PATH` (or use an absolute `command`), and run the pipe test above. |

@@ -114,9 +114,12 @@ same subresource.
 
 ## AI agents
 
-`kaironctl mcp serve --allow-write` exposes `claim_machine`, `release_claim`
-and `delete_machine`; `list_machine_pools` is read-only. See
-[hermes-mcp.md](hermes-mcp.md).
+`kaironctl mcp serve --allow-write` exposes `claim_machine`, `release_claim`,
+`create_sealed_claim` (validated tenant, TTL and egress allowlist),
+`apply_claim_step` (expires a claim past its TTL) and `delete_machine`, each
+recorded in the audit log. `list_machine_pools`, `list_claims` and
+`describe_claim` are read-only. See [hermes-mcp.md](hermes-mcp.md) and
+[agent-plane.md](agent-plane.md).
 
 ## Limits
 

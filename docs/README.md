@@ -41,6 +41,7 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`runbook-migration-failures.md`](runbook-migration-failures.md) | Diagnosing and resolving `NeedsRecovery`, alert-to-runbook cross-references |
 | [`guides/machine-fencing.md`](guides/machine-fencing.md) | `NodeUnreachable`/`Fenced` conditions, `kaironctl fence`'s safety model, storage/network migration preflight labels |
 | [`ai-agents.md`](ai-agents.md) · [`guides/hermes-mcp.md`](guides/hermes-mcp.md) | AI agent integration over MCP (Hermes Agent, Claude Code, Cursor): Kairon and FluxVM servers, scoped credentials, workflows; `kaironctl mcp serve` reference |
+| [`guides/agent-plane.md`](guides/agent-plane.md) | Agent plane: sealed claims, strict egress compiler, edge Warning events and per-Machine traffic baselines, cosign image verification, SEV-SNP/TDX attestation, the audited MCP write path, and the proposal-only AI assistant (`ask`) and `diagnose` |
 | [`guides/kairon-ui-ha.md`](guides/kairon-ui-ha.md) | Running `ui.replicaCount > 1`: what's shared, how, and its real limits |
 | [`guides/kairon-controller-ha.md`](guides/kairon-controller-ha.md) | Running `controller.replicaCount > 1`: Lease-based leader election, RBAC, bare-metal setup |
 | [`guides/observability.md`](guides/observability.md) | What each component's `/metrics` exposes, the `kairon-health` alert group, and the renamed `PrometheusRule` |
