@@ -1,7 +1,7 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Network, RotateCcw, Route, Server, Shield, ShieldCheck, UserCog } from 'lucide-react';
+import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, LogOut, Network, RotateCcw, Route, Server, Shield, ShieldCheck, Sparkles, UserCog } from 'lucide-react';
 
 export type Page =
   | 'overview'
@@ -18,6 +18,7 @@ export type Page =
   | 'network-policies'
   | 'security-groups'
   | 'nodes'
+  | 'assistant'
   | 'account';
 
 const ITEMS: [Page, React.ReactNode, string][] = [
@@ -35,6 +36,7 @@ const ITEMS: [Page, React.ReactNode, string][] = [
   ['network-policies', <Network size={17} key="i" />, 'Network policies'],
   ['security-groups', <ShieldCheck size={17} key="i" />, 'Security groups'],
   ['nodes', <Server size={17} key="i" />, 'Nodes'],
+  ['assistant', <Sparkles size={17} key="i" />, 'Assistant'],
 ];
 
 export default function Nav({

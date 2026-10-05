@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zyvorai/kairon/internal/agentplane"
+	"github.com/zyvorai/kairon/internal/llm"
 	"github.com/zyvorai/kairon/internal/mcp"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -227,6 +228,37 @@ func agentPlaneTools() []mcp.Tool {
 			},
 		},
 		{
+			Name:        "ask",
+			Description: "Ask Kairon's configured model (KAIRON_LLM_URL/KAIRON_LLM_MODEL) for one proposal: an egress policy, a sealed claim, boot repair steps or an explanation. The answer is compiled and validated before it is returned; it is never applied.",
+			Schema: mcp.Object(map[string]any{
+				"question":  mcp.String("plain-English request"),
+				"namespace": mcp.String("namespace forced onto the proposal"),
+				"facts":     mcp.String("optional context: drops, status, events"),
+			}, "question"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Question  string `json:"question"`
+					Namespace string `json:"namespace"`
+					Facts     string `json:"facts"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				client := llm.FromEnv()
+				if client == nil {
+					return "", llm.ErrNotConfigured
+				}
+				res, err := agentplane.Assist(ctx, client, agentplane.AssistRequest{
+					Question: a.Question, Namespace: a.Namespace, Facts: a.Facts,
+					Tenant: strings.TrimSpace(os.Getenv("KAIRON_MCP_TENANT")),
+				})
+				if err != nil {
+					return "", err
+				}
+				return mcp.JSON(res)
+			},
+		},
+		{
 			Name:        "replay_audit",
 			Description: "Replay audit events for one claim (all when claim is empty). Reads the server's verified audit log under --allow-write; otherwise pass events.",
 			Schema:      mcp.Object(map[string]any{"claim": mcp.String("claim name"), "events": map[string]any{"type": "array"}}),
@@ -293,7 +325,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Agent-plane helpers (compile, explain, claim check). Nothing here applies.",
 	}
-	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd(), newAgentAuditVerifyCmd())
+	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd(), newAgentAuditVerifyCmd(), newAgentAskCmd())
 	return cmd
 }
 
@@ -455,6 +487,48 @@ func newAgentGatewayCmd() *cobra.Command {
 	c.Flags().StringVar(&name, "name", "", "gateway name")
 	c.Flags().IntVar(&guest, "guest-port", 0, "guest port")
 	c.Flags().IntVar(&host, "host-port", 0, "host port")
+	return c
+}
+
+func newAgentAskCmd() *cobra.Command {
+	var tenant, namespace, factsFile string
+	c := &cobra.Command{
+		Use:   "ask QUESTION",
+		Short: "Ask the configured model for a validated proposal (policy, sealed claim, boot repair or explanation). Never applies.",
+		Long: `Sends the question to an OpenAI-compatible endpoint (KAIRON_LLM_URL,
+KAIRON_LLM_MODEL, optional KAIRON_LLM_API_KEY). The answer is compiled and
+validated by the agent plane before it is printed; an invalid answer is
+retried once with the validator error, then refused. Nothing is applied.`,
+		Example: `  KAIRON_LLM_URL=http://localhost:11434/v1 KAIRON_LLM_MODEL=qwen2.5 \
+    kaironctl agent ask "let job-7 reach pypi and our registry for 2h" --tenant acme --ns ml`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := agentplane.AssistRequest{Question: strings.Join(args, " "), Tenant: tenant, Namespace: namespace}
+			if factsFile != "" {
+				b, err := os.ReadFile(factsFile)
+				if err != nil {
+					return err
+				}
+				req.Facts = string(b)
+			}
+			client := llm.FromEnv()
+			if client == nil {
+				return llm.ErrNotConfigured
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
+			defer cancel()
+			res, err := agentplane.Assist(ctx, client, req)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(res)
+		},
+	}
+	c.Flags().StringVar(&tenant, "tenant", os.Getenv("KAIRON_MCP_TENANT"), "force this tenant onto the proposal")
+	c.Flags().StringVar(&namespace, "ns", "", "force this namespace onto the proposal")
+	c.Flags().StringVar(&factsFile, "facts", "", "file with context for the model (drops, status, events)")
 	return c
 }
 

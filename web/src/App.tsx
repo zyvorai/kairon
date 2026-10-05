@@ -18,6 +18,7 @@ import NetworkPolicies from './pages/NetworkPolicies';
 import SecurityGroups from './pages/SecurityGroups';
 import Nodes from './pages/Nodes';
 import Account from './pages/Account';
+import Assistant from './pages/Assistant';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
 import { logout, token, UNAUTHORIZED_EVENT, username } from './api';
@@ -97,6 +98,7 @@ export default function App() {
     'network-policies': <NetworkPolicies />,
     'security-groups': <SecurityGroups />,
     nodes: <Nodes />,
+    assistant: <Assistant />,
     account: <Account />,
   }[page];
 

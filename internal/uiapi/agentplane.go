@@ -19,6 +19,11 @@ func (s *Server) mountAgentPlane(api *http.ServeMux) {
 	api.HandleFunc("POST /api/v1/agent/claims/step", s.handleAgentStep)
 	api.HandleFunc("POST /api/v1/agent/confidential", s.handleAgentConfidential)
 	api.HandleFunc("POST /api/v1/agent/gateway", s.handleAgentGateway)
+	api.HandleFunc("POST /api/v1/agent/ask", s.handleAgentAsk)
+}
+
+func (s *Server) handleAgentAsk(w http.ResponseWriter, r *http.Request) {
+	agentplane.Handler().ServeHTTP(w, r)
 }
 
 func (s *Server) handleAgentCompile(w http.ResponseWriter, r *http.Request) {

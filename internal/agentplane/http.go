@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/llm"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -21,7 +22,28 @@ func Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/cpu-label", handleCPU)
 	mux.HandleFunc("POST /api/v1/agent/confidential", handleConfidential)
 	mux.HandleFunc("POST /api/v1/agent/gateway", handleGateway)
+	mux.HandleFunc("POST /api/v1/agent/ask", handleAsk)
 	return mux
+}
+
+// handleAsk returns a validated proposal from the configured model. 503
+// when no model is configured; the proposal is never applied.
+func handleAsk(w http.ResponseWriter, r *http.Request) {
+	var in AssistRequest
+	if err := decodeBody(w, r, &in); err != nil {
+		return
+	}
+	client := llm.FromEnv()
+	if client == nil {
+		writeErr(w, http.StatusServiceUnavailable, llm.ErrNotConfigured)
+		return
+	}
+	res, err := Assist(r.Context(), client, in)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	writeOK(w, res)
 }
 
 func handleCompile(w http.ResponseWriter, r *http.Request) {

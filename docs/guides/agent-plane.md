@@ -109,6 +109,24 @@ CLI: `kaironctl agent cpu-label --effective 0-7 --reserved 0-1` and `kaironctl a
 
 Dashboard adds `POST /api/v1/agent/claims/step`, `/confidential`, `/gateway`.
 
+## Assistant
+
+Any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, LiteLLM) can propose agent-plane objects. Configure it with environment variables on whatever runs the request (kaironctl, `mcp serve`, or kairon-ui):
+
+```
+KAIRON_LLM_URL=http://localhost:11434/v1   # API base; /chat/completions is appended
+KAIRON_LLM_MODEL=qwen2.5
+KAIRON_LLM_API_KEY=...                      # optional
+```
+
+The model answers with one JSON proposal: `policy` (a `PolicyIntent`), `claim` (a `ClaimRequest`), `repair` (boot findings), or `explain`. The proposal goes through `CompilePolicy`, `ValidateClaim` or `ProposeRepair`. An invalid answer is sent back once with the validator error, and a second invalid answer is refused. The caller's tenant and namespace are forced onto the proposal, and a proposal naming another tenant is refused. `apply` is always `false`. Applying it is a separate step through an audited MCP write tool or an operator.
+
+- `kaironctl agent ask "let job-7 reach pypi for 2h" --tenant acme --ns ml [--facts drops.json]`
+- MCP `ask`, scoped by `KAIRON_MCP_TENANT`.
+- `POST /api/v1/agent/ask` on kairon-ui (503 without a model), and the dashboard's Assistant page.
+
+Text passed as facts is labeled as data in the prompt, but it is still model input: review a proposal before applying it.
+
 ## Image signatures
 
 With `kairon-controller -cosign-public-key cosign.pub` (or `KAIRON_COSIGN_PUBLIC_KEY`, set by the chart from `agentPlane.cosignPublicKeySecret`), the admission webhook verifies every agent-pool Machine's image:
