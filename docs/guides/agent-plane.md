@@ -32,6 +32,21 @@ Write tool, `--allow-write` only:
 
 - `audit_record` — hashes principal, tool, tenant, claim and diff into an id for replay.
 
+### Cluster tools
+
+Read, scoped to `KAIRON_MCP_TENANT` when set:
+
+- `list_claims` — claims with pool, tenant, phase, bound Machine and TTL.
+- `describe_claim` — one claim plus the `StepClaim` decision against live pool members.
+
+Write, `--allow-write` only and audited:
+
+- `create_sealed_claim` — runs `ValidateClaim` (tenant, TTL 30–86400, hypervisor, non-empty strict egress) before creating the MachineClaim. `snapshotOnRelease` sets the release snapshot annotation.
+- `apply_network_policy` — compiles a `PolicyIntent` and creates or updates the MachineNetworkPolicy. A raw policy is never accepted.
+- `apply_claim_step` — applies `expire` by deleting the claim. `bind`, `hold` and `wait` stay with kairon-controller.
+
+The existing `list_machine_pools`, `claim_machine` and `release_claim` tools are unchanged.
+
 ### Audit log
 
 With `--allow-write`, every write tool call is recorded twice in an append-only JSONL file: once before it runs (`outcome: intent`) and once after (`ok` or the error). If the intent record cannot be written, the call is refused. Each record carries `prevHash` and `hash`, so an edited, reordered or removed line fails verification, and every append is fsynced.
