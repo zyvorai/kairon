@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/zyvorai/kairon/internal/admission"
+	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/conversion"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/tlsreload"
@@ -274,6 +275,13 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 		return admission.Deny(err.Error())
 	}
 	if err := model.ValidateCiliumAttach(m.Spec.Network); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := agentplane.AdmitMachine(agentplane.MachineAdmission{
+		Namespace: req.Namespace, Name: m.Metadata.Name, Tenant: m.Spec.Tenant,
+		Annotations: m.Metadata.Annotations, ImageDigest: m.Spec.Image.Digest,
+		DataplaneMode: m.Spec.Network.DataplaneMode, DeviceClaims: len(m.Spec.DeviceClaims),
+	}); err != nil {
 		return admission.Deny(err.Error())
 	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)

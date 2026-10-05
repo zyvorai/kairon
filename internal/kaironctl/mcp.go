@@ -128,7 +128,7 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 		return fn(ctx, kc)
 	}
 
-	return []mcp.Tool{
+	tools := []mcp.Tool{
 		{
 			Name:        "list_machines",
 			Description: "List Kairon Machines (VMs) with phase, power state, node, guest IP and size. Omit namespace to list all namespaces.",
@@ -813,6 +813,7 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 	}
+	return append(tools, agentPlaneTools()...)
 }
 
 func nsOrDefault(ns string) string {
