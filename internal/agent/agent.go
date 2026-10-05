@@ -59,6 +59,14 @@ type Agent struct {
 	// EdgeBaselinePath persists edgeBaseline across restarts; empty keeps
 	// it in memory only.
 	EdgeBaselinePath string
+	// attest rate-limits capability labeling and guest report fetches.
+	attest attestState
+	// SysRoot is where confidential capability is read; empty is /sys.
+	SysRoot string
+	// AttestCommand is the in-guest command that prints a base64 report
+	// for {kind} and hex {data}; empty uses the go-sev-guest/go-tdx-guest
+	// attest tool.
+	AttestCommand string
 	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans.
 	Tracer *oteltrace.Tracer
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block
@@ -187,10 +195,12 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	if err := a.reconcileNetworkResources(ctx); err != nil {
 		return err
 	}
+	a.publishConfidentialCapability(ctx)
 	local := make(map[string]model.Machine, len(machines))
 	for _, m := range machines {
 		if m.Spec.NodeName == a.NodeName {
 			local[m.Namespace()+"/"+m.Metadata.Name] = m
+			a.serveAttestation(ctx, m)
 		}
 	}
 	if err := a.reconcileBackups(ctx, local); err != nil {

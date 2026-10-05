@@ -287,6 +287,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := c.verifyAgentImage(r.Context(), m); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := c.checkAttestationWrite(req.UserInfo.Username, nil, m.Metadata.Annotations); err != nil {
+		return admission.Deny(err.Error())
+	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
@@ -330,6 +333,9 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	// the same validateMachineResize call that handles every Machine
 	// UPDATE, not just a resource resize.
 	if err := validateResourceQuantities(newM.Spec.Resources); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := c.checkAttestationWrite(req.UserInfo.Username, oldM.Metadata.Annotations, newM.Metadata.Annotations); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if err := validateNetworkMAC(newM.Spec.Network); err != nil {

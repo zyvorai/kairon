@@ -153,6 +153,17 @@ kairon-node turns each tick's attributed drop increments and recent flows into `
 
 kairon-controller writes `kairon.zyvor.dev/confidential-sealed` and `kairon.zyvor.dev/confidential-reason` on Machines that request confidential compute. Sealed is `true` only when the node carries `kairon.zyvor.dev/confidential-capable=<kind>` and the attestation verifier has set `kairon.zyvor.dev/attestation-verified=<kind>` on the Machine. Only changed keys are patched.
 
+## Confidential attestation
+
+A Machine asking for `kairon.zyvor.dev/confidential: sev-snp|tdx` is sealed only after its report verifies:
+
+1. kairon-node reads `/sys/module/kvm_amd/parameters/sev_snp` and `/sys/module/kvm_intel/parameters/tdx` every 10 minutes and sets or removes the node label `kairon.zyvor.dev/confidential-capable` (this needs `patch` on `nodes`, granted in the chart and `deploy/rbac.yaml`).
+2. kairon-controller writes a random `kairon.zyvor.dev/attestation-nonce` on the Machine. The guest must put `SHA-512("kairon-attestation\0" + machine UID + "\0" + nonce)` in REPORT_DATA, so a report can neither seal another Machine nor be replayed.
+3. kairon-node runs the attest tool in the guest through the guest agent (`spec.guestAgent.console: true`) and puts the base64 report on `kairon.zyvor.dev/attestation-report`. The default command is the `attest` tool from go-sev-guest or go-tdx-guest; `--attest-guest-command` (`KAIRON_ATTEST_GUEST_COMMAND`) replaces it, with `{kind}` and `{data}` (hex REPORT_DATA) filled in. Anyone may write the report annotation; it is only data until verified.
+4. kairon-controller verifies with go-sev-guest (VCEK, ASK and ARK chain; missing certificates come from AMD KDS and are cached for a day) or go-tdx-guest (PCK chain in the quote against Intel's root), checks REPORT_DATA, and refuses debug-enabled guests. Success sets `kairon.zyvor.dev/attestation-verified=<kind>` and clears the nonce and report. Failure writes `kairon.zyvor.dev/attestation-error` and rotates the nonce. If the node loses the capability label, `attestation-verified` is removed.
+
+Flags on kairon-controller: `-attestation-verify` (default true), `-attestation-allow-debug` (lab only), `-attestation-writers`. With the webhook enabled, only the kairon-controller service account (or the listed writers) may set `attestation-verified` or `attestation-nonce`; without the webhook, anyone who can patch the Machine can forge them, so enable it where sealing matters. TDX collateral (TCB info, QE identity) and CRLs are not fetched.
+
 ## Still outside this repo
 
-A green live-migration claim still needs the Zyvor lab matrix. Cosign verification and a real SEV-SNP/TDX report are node facts. This code checks shape and refuses a mismatch; it does not talk to the AMD or Intel firmware.
+A green live-migration claim still needs the Zyvor lab matrix. The attestation path is tested against the sample SEV-SNP report and TDX quote shipped with go-sev-guest and go-tdx-guest; a live run needs SNP or TDX hardware and a guest image with the attest tool.

@@ -46,6 +46,13 @@ type Request struct {
 	// request, so a Validator can diff against what's actually changing
 	// rather than only ever seeing the incoming write in isolation.
 	OldObject json.RawMessage `json:"oldObject,omitempty"`
+	UserInfo  UserInfo        `json:"userInfo,omitempty"`
+}
+
+// UserInfo is who made the request, as authenticated by the API server.
+type UserInfo struct {
+	Username string   `json:"username,omitempty"`
+	Groups   []string `json:"groups,omitempty"`
 }
 
 // Response is the subset of AdmissionResponse this package writes back.

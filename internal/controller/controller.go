@@ -22,9 +22,16 @@ type Controller struct {
 	Kube *kube.Client
 	// Cosign, when set, makes the webhook verify the image signature of
 	// every agent-pool Machine. Nil keeps the annotation shape check only.
-	Cosign    ImageVerifier
-	Scheduler scheduler.Scheduler
-	Log       *slog.Logger
+	Cosign ImageVerifier
+	// Attest verifies confidential-compute reports. Nil leaves every
+	// confidential Machine unsealed.
+	Attest AttestationVerifier
+	// AttestationWriters may change attestation-verified and
+	// attestation-nonce through the webhook. Empty allows any
+	// kairon-controller service account.
+	AttestationWriters []string
+	Scheduler          scheduler.Scheduler
+	Log                *slog.Logger
 	// Metrics, when set, observes every MachineMigration once per
 	// reconcile tick. Optional -- nil-checked, same convention as
 	// Agent.MigrationPeer.
@@ -373,6 +380,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Log.Error("machine snapshot schedule reconciliation failed", "error", err)
 	}
 
+	c.reconcileAttestation(ctx, machines, nodes)
 	c.reconcileAgentStatus(ctx, machines, nodes)
 	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)

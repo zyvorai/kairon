@@ -19,6 +19,7 @@ import (
 	atlas "github.com/zyvorai/atlas/clients/go"
 
 	"github.com/zyvorai/kairon/internal/agentplane/cosign"
+	"github.com/zyvorai/kairon/internal/attest"
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -65,6 +66,9 @@ func run() int {
 	atlasPolicy := flag.String("atlas-default-policy", os.Getenv("KAIRON_ATLAS_DEFAULT_POLICY"), "Atlas policy intent used when spec.volumes[].atlas.policy is empty")
 	atlasBackupBucket := flag.String("atlas-backup-bucket", os.Getenv("KAIRON_ATLAS_BACKUP_BUCKET"), "Atlas S3 bucket id a MachineBackup uses when spec.atlas.bucketID is empty")
 	cosignKeyFile := flag.String("cosign-public-key", os.Getenv("KAIRON_COSIGN_PUBLIC_KEY_FILE"), "PEM public key (cosign.pub); when set, the webhook verifies the cosign signature of every kairon.zyvor.dev/agent-pool Machine's OCI image against it (falls back to the PEM in KAIRON_COSIGN_PUBLIC_KEY)")
+	attestVerify := flag.Bool("attestation-verify", envDefault("KAIRON_ATTESTATION_VERIFY", "true") == "true", "verify SEV-SNP reports (AMD KDS chain) and TDX quotes for Machines requesting confidential compute; false leaves them unsealed")
+	attestAllowDebug := flag.Bool("attestation-allow-debug", false, "accept debug-enabled confidential guests (lab only: the host can read their memory)")
+	attestWriters := flag.String("attestation-writers", os.Getenv("KAIRON_ATTESTATION_WRITERS"), "comma-separated usernames the webhook lets set attestation-verified/attestation-nonce; empty allows any kairon-controller service account")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -138,6 +142,14 @@ func run() int {
 		ctl.Cosign = cosignVerifier
 	} else {
 		log.Warn("no cosign public key; agent-pool image signatures are shape-checked only")
+	}
+	if *attestVerify {
+		ctl.Attest = &attest.Verifier{AllowDebug: *attestAllowDebug}
+	}
+	for _, w := range strings.Split(*attestWriters, ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			ctl.AttestationWriters = append(ctl.AttestationWriters, w)
+		}
 	}
 	if webhookTLSConfig != nil {
 		go func() {

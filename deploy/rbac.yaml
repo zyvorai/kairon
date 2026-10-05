@@ -119,7 +119,8 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["nodes"]
-    verbs: ["get", "list"]
+    # patch: the confidential-capable label (internal/agent/attest.go).
+    verbs: ["get", "list", "patch"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims", "persistentvolumes"]
     verbs: ["get"]

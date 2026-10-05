@@ -24,6 +24,13 @@ const (
 	// AnnAttestationVerified is written by the attestation verifier with
 	// the kind (sev-snp or tdx) whose report it accepted for this Machine.
 	AnnAttestationVerified = "kairon.zyvor.dev/attestation-verified"
+	// AnnAttestationNonce is the controller's per-round nonce; the guest
+	// binds it into REPORT_DATA (see internal/attest.ReportData).
+	AnnAttestationNonce = "kairon.zyvor.dev/attestation-nonce"
+	// AnnAttestationReport is the base64 report or quote for the current
+	// nonce. Anyone may write it: it is trusted only after verification.
+	AnnAttestationReport = "kairon.zyvor.dev/attestation-report"
+	AnnAttestationError  = "kairon.zyvor.dev/attestation-error"
 	// LabelConfidentialCapable is the node label kairon-node publishes
 	// with the confidential kind its host kernel can run.
 	LabelConfidentialCapable = "kairon.zyvor.dev/confidential-capable"

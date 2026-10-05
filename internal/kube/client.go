@@ -900,6 +900,12 @@ func (c *Client) GetNode(ctx context.Context, name string) (model.Node, error) {
 	return n, err
 }
 
+// PatchNode merge-patches a Node, e.g. kairon-node publishing its own
+// capability labels.
+func (c *Client) PatchNode(ctx context.Context, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%s", url.PathEscape(name)), patch, nil, "application/merge-patch+json")
+}
+
 func leasePath(ns, name string) string {
 	return fmt.Sprintf("/apis/coordination.k8s.io/v1/namespaces/%s/leases/%s", url.PathEscape(ns), url.PathEscape(name))
 }
