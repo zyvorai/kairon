@@ -122,7 +122,7 @@ Flags:
   --node-name=NAME        Seed NODE_NAME (default: the remote's own hostname).
                           Must match the Node object name in your cluster.
   --interval=DURATION     Reconciliation interval baked into the unit (default 3s).
-  --node-port=N           kairon-node health port (default 8081). If busy on
+  --node-port=N           kairon-node health port (default 32302). If busy on
                           the remote host and not explicitly set, a random
                           free port is chosen automatically and reported.
   --controller-port=N     kairon-controller health port (default 8080), same
@@ -204,7 +204,7 @@ BACKEND_OVERRIDE=""
 IMAGE_ROOT_OVERRIDE=""
 NODE_NAME_OVERRIDE=""
 INTERVAL="3s"
-NODE_PORT="8081"
+NODE_PORT="32302"
 NODE_PORT_EXPLICIT=0
 CONTROLLER_PORT="8080"
 CONTROLLER_PORT_EXPLICIT=0
@@ -477,8 +477,8 @@ run_status() {
       systemctl status kairon-node.service --no-pager -l || true
       p=$(port_of /etc/systemd/system/kairon-node.service)
       echo "---"
-      curl -s -o /dev/null -w "healthz=%{http_code}\n" "http://127.0.0.1:${p:-8081}/healthz" 2>/dev/null
-      curl -s -o /dev/null -w "readyz=%{http_code}\n" "http://127.0.0.1:${p:-8081}/readyz" 2>/dev/null
+      curl -s -o /dev/null -w "healthz=%{http_code}\n" "http://127.0.0.1:${p:-32302}/healthz" 2>/dev/null
+      curl -s -o /dev/null -w "readyz=%{http_code}\n" "http://127.0.0.1:${p:-32302}/readyz" 2>/dev/null
     else
       echo "kairon-node.service is not installed on this host"
     fi
@@ -1050,9 +1050,9 @@ INSTALL_EOF
 
   info "verifying kairon-node..."
   local node_port
-  node_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-node.service | cut -d: -f2" || echo 8081)"
+  node_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-node.service | cut -d: -f2" || echo 32302)"
   local node_report node_active node_healthz node_readyz
-  node_report="$(verify_remote kairon-node.service "${node_port:-8081}")"
+  node_report="$(verify_remote kairon-node.service "${node_port:-32302}")"
   node_active="$(sed -n '1p' <<< "$node_report")"
   node_healthz="$(sed -n '2p' <<< "$node_report")"
   node_readyz="$(sed -n '3p' <<< "$node_report")"

@@ -29,7 +29,7 @@ spec:
             - name: KAIRON_VFIO_ALLOWLIST
               value: ""
           ports:
-            - {name: health, containerPort: 8081}
+            - {name: health, containerPort: 32302}
           readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 10}
           securityContext:

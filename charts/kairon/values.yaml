@@ -72,7 +72,7 @@ node:
   # this shares the node's real port space, not just this container's.
   # Confirmed against a real host: the default console.port (8090)
   # collided with an unrelated Docker container already using it there.
-  healthPort: 8081
+  healthPort: 32302
   # One kairon-node per capable node (DaemonSet); same lightweight,
   # cache-free reconcile design as the controller.
   resources:

@@ -45,7 +45,7 @@ func main() {
 // so every deferred cleanup (e.g. cancel()) actually runs before exit.
 func run() int {
 	interval := flag.Duration("interval", 5*time.Minute, "safety resync interval (hot-path reconcile is watch-driven)")
-	healthAddr := flag.String("health-addr", ":8081", "health server address")
+	healthAddr := flag.String("health-addr", ":32302", "health server address")
 	fluxURL := flag.String("fluxvm-url", env("FLUXVM_URL", "http://127.0.0.1:7788"), "node-local FluxVM URL")
 	backend := flag.String("default-backend", env("KAIRON_DEFAULT_BACKEND", "qemu"), "backend used when Machine runtime.backend is auto")
 	imageRoot := flag.String("image-root", env("KAIRON_IMAGE_ROOT", "/var/lib/fluxvm/images"), "allowed root for Machine image paths")

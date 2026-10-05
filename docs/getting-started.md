@@ -170,7 +170,7 @@ Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-contro
 **Redeploy caveats (confirmed on `80.79.5.173`):**
 
 - Existing `/etc/kairon/kairon-node.env` and `kairon-ui.env` are **left untouched**. `--with-console` / `--ui-token` / `--kube-*` do not rewrite them — add matching `KAIRON_NODE_CONSOLE_TOKEN` (and `KAIRON_NODE_CONSOLE_PORT=8090` on the UI side) by hand, then `systemctl restart kairon-node kairon-ui`. Without that shared token, dashboard **Network** / diagnostics / VNC return `501 diagnostics are not enabled`.
-- Default controller health port `:8080` may already be taken (on this host, by `krytond`). The script then picks a random free port, or you can pin `--controller-port=N` / edit the unit's `--health-addr`. Node health defaults to `:8081`, UI to `:8082`.
+- Default controller health port `:8080` may already be taken (on this host, by `krytond`). The script then picks a random free port, or you can pin `--controller-port=N` / edit the unit's `--health-addr`. Node health defaults to `:32302`, UI to `:8082`.
 - The port check counts ports held by the kairon services already running on the host as busy. On a redeploy it either picks new random ports, or fails with `--controller-port=N is already in use` after installing the binaries but before restarting the services. Stop the services first and pin both ports, for example (as used on `175.110.122.71`):
 
   ```bash

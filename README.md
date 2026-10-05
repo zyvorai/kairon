@@ -133,6 +133,8 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 
 ### AI agents, safely
 
+![Agent plane: AI proposes, Kairon validates. ask and diagnose feed strict compilers and validators, then a hash-chained audit log, then the cluster. Sealed claims, edge Warning events, per-Machine baseline anomaly scoring, cosign image verification, SEV-SNP/TDX attestation and audited MCP write tools](docs/ux/readme-agent-plane.jpg)
+
 `kaironctl mcp serve` speaks the Model Context Protocol over stdio. Hermes Agent, Claude, Cursor or any MCP client can list Machines, read policies and pull flows, drops and captures. Power, snapshot, capture, sealed-claim and policy-apply tools only appear with `--allow-write`, and every write is recorded in a hash-chained audit log first. `kaironctl agent ask` turns a plain-English request into a validated proposal using any OpenAI-compatible model, and `kaironctl agent diagnose` ranks why a Machine or migration is stuck; neither applies anything, and no model runs in the reconcile loop. Covered end to end in CI with the official MCP SDK. [AI agents →](docs/ai-agents.md) · [Agent plane →](docs/guides/agent-plane.md)
 
 ### Snapshots and recovery
@@ -152,7 +154,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 | Component | Port | Role |
 |---|---|---|
 | `kairon-controller` | `:8080` health, `:8443` webhook | Placement, migration state machine, fencing, snapshots, quotas and budgets |
-| `kairon-node` | `:8081` health, `:9443` mTLS peer, `:8090` console | Per-host agent: FluxVM lifecycle, eBPF policy, live-migration peer, edge Warning events, confidential-capability label |
+| `kairon-node` | `:32302` health, `:9443` mTLS peer, `:8090` console | Per-host agent: FluxVM lifecycle, eBPF policy, live-migration peer, edge Warning events, confidential-capability label |
 | `kairon-ui` | `:8082` | Optional dashboard: Machines, migrations, snapshots, Network panel, VNC console |
 | `kaironctl` | — | CLI and `kubectl kairon` plugin, embedded Helm installer, MCP server |
 | FluxVM | `127.0.0.1:7788` | The VMM layer on each host: QEMU, Cloud Hypervisor, Firecracker, FluxVM |
