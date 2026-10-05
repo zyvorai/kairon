@@ -18,7 +18,7 @@ import (
 // diagnosis or a model prompt.
 const maxEvents = 50
 
-const labelTenant = "kairon.zyvor.dev/tenant"
+const labelTenant = agentplane.LabelTenant
 
 // Subject is what Gather read: the facts plus the owning tenant (the
 // Machine's tenant label, also for a migration) for scoping callers.

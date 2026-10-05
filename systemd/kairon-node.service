@@ -9,13 +9,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kairon-node --interval=3s --health-addr=:8081
+ExecStart=/usr/bin/kairon-node --interval=3s --health-addr=:8081 --edge-baseline-file=/var/lib/kairon-node/edge-baseline.json
 Restart=on-failure
 RestartSec=5s
 EnvironmentFile=/etc/kairon/kairon-node.env
 
 User=kairon
 Group=kairon
+StateDirectory=kairon-node
+StateDirectoryMode=0700
 
 NoNewPrivileges=yes
 ProtectSystem=strict

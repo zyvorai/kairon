@@ -19,6 +19,55 @@ const edgeEventWindow = 10 * time.Minute
 
 const edgeFlowLimit = 256
 
+// baselineSaveEvery bounds how much warm-up a crash loses; baselineIdle
+// drops Machines that stopped reporting (deleted or moved away).
+const (
+	baselineSaveEvery = 5 * time.Minute
+	baselineIdle      = time.Hour
+)
+
+type edgeBaselineState struct {
+	once  sync.Once
+	b     *agentplane.Baseline
+	mu    sync.Mutex
+	saved time.Time
+}
+
+// baseline returns the node's per-Machine traffic baseline, loading the
+// snapshot at EdgeBaselinePath on first use.
+func (a *Agent) baseline() *agentplane.Baseline {
+	s := &a.edgeBaseline
+	s.once.Do(func() {
+		s.b = agentplane.NewBaseline()
+		if a.EdgeBaselinePath == "" {
+			return
+		}
+		if err := s.b.Load(a.EdgeBaselinePath); err != nil {
+			a.log().Warn("edge baseline load failed; starting cold", "path", a.EdgeBaselinePath, "error", err)
+		}
+		s.saved = time.Now()
+	})
+	return s.b
+}
+
+func (a *Agent) saveBaseline(b *agentplane.Baseline) {
+	s := &a.edgeBaseline
+	if a.EdgeBaselinePath == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if now.Sub(s.saved) < baselineSaveEvery {
+		return
+	}
+	s.saved = now
+	b.Prune(now.Add(-baselineIdle))
+	if err := b.Save(a.EdgeBaselinePath); err != nil {
+		a.log().Warn("edge baseline save failed", "path", a.EdgeBaselinePath, "error", err)
+	}
+}
+
 type edgeEventDedup struct {
 	mu   sync.Mutex
 	last map[string]time.Time
@@ -89,8 +138,14 @@ func (a *Agent) emitEdgeEvents(ctx context.Context, m model.Machine, drops []age
 	if a.Kube == nil {
 		return
 	}
+	findings := agentplane.Detect(flows, drops)
+	if b := a.baseline(); b != nil {
+		key := agentplane.BaselineKey(m.Metadata.Labels[agentplane.LabelTenant], m.Namespace(), m.Metadata.Name)
+		findings = append(findings, b.Observe(key, agentplane.SampleFrom(flows, drops))...)
+		a.saveBaseline(b)
+	}
 	events := agentplane.EventsFromDrops(m.Metadata.Name, drops)
-	events = append(events, agentplane.EventsFromFindings(m.Metadata.Name, agentplane.Detect(flows, drops))...)
+	events = append(events, agentplane.EventsFromFindings(m.Metadata.Name, findings)...)
 	now := time.Now()
 	for _, ev := range events {
 		key := m.Namespace() + "/" + m.Metadata.Name + "|" + ev.Reason + "|" + ev.Message

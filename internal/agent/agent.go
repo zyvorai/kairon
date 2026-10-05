@@ -54,6 +54,11 @@ type Agent struct {
 	edge edgeCache
 	// edgeEvents suppresses repeated edge Warning Events per Machine.
 	edgeEvents edgeEventDedup
+	// edgeBaseline scores each Machine's traffic against its own history.
+	edgeBaseline edgeBaselineState
+	// EdgeBaselinePath persists edgeBaseline across restarts; empty keeps
+	// it in memory only.
+	EdgeBaselinePath string
 	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans.
 	Tracer *oteltrace.Tracer
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block

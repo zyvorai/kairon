@@ -934,7 +934,7 @@ if [[ "$WITH_MIGRATION_ADAPTER_STUB" == "1" ]]; then
 fi
 
 RESOLVED_NODE_PORT="$(resolve_port "$NODE_PORT" "$NODE_PORT_EXPLICIT" "node")" || exit 1
-NODE_EXEC_ARGS="--interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT"
+NODE_EXEC_ARGS="--interval=$INTERVAL --health-addr=:$RESOLVED_NODE_PORT --edge-baseline-file=/var/lib/kairon-node/edge-baseline.json"
 if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
   RESOLVED_MIGRATION_PORT="$(resolve_port "$MIGRATION_PORT" "$MIGRATION_PORT_EXPLICIT" "migration")" || exit 1
   NODE_EXEC_ARGS="$NODE_EXEC_ARGS --migration-addr=:$RESOLVED_MIGRATION_PORT"

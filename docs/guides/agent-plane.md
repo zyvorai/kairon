@@ -149,6 +149,8 @@ Without a key the webhook keeps the `cosign:sha256:<hex>` shape check and the co
 
 kairon-node turns each tick's attributed drop increments and recent flows into `Warning` Events on the Machine: `EdgeDrop` for spoof, DNS and SNI denies, and `EdgeAnomaly` for findings from `Detect`. An identical Event for the same Machine is suppressed for 10 minutes. kairon-node needs `create` on `events` for this; the chart and `deploy/rbac.yaml` grant it.
 
+`EdgeAnomaly` also carries `baseline_deviation` findings. kairon-node keeps an exponentially weighted mean and variance per Machine (keyed by tenant, so tenants never share a baseline) of bytes, flow count, distinct destinations, distinct SNI and deny rate. After 30 samples, a metric more than 4 standard deviations above its mean is flagged; a flagged sample is folded in at a quarter weight so sustained exfiltration does not quickly become normal. This is statistics, not a model. `--edge-baseline-file` (`KAIRON_EDGE_BASELINE_FILE`) snapshots the state every 5 minutes so a restart keeps the warm-up; the systemd unit uses `/var/lib/kairon-node/edge-baseline.json`, and the default is memory only. Machines silent for an hour are dropped.
+
 kairon-controller writes `kairon.zyvor.dev/confidential-sealed` and `kairon.zyvor.dev/confidential-reason` on Machines that request confidential compute. Sealed is `true` only when the node carries `kairon.zyvor.dev/confidential-capable=<kind>` and the attestation verifier has set `kairon.zyvor.dev/attestation-verified=<kind>` on the Machine. Only changed keys are patched.
 
 ## Still outside this repo

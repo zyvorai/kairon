@@ -27,6 +27,7 @@ const (
 	// LabelConfidentialCapable is the node label kairon-node publishes
 	// with the confidential kind its host kernel can run.
 	LabelConfidentialCapable = "kairon.zyvor.dev/confidential-capable"
+	LabelTenant              = "kairon.zyvor.dev/tenant"
 )
 
 var tenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
