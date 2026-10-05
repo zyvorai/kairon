@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -86,6 +87,13 @@ func (c *Controller) reconcileMachineClaim(ctx context.Context, claim model.Mach
 	}
 
 	candidates, warming := warmMembers(claim.Namespace(), claim.Spec.PoolName, machines, bound)
+	filtered := candidates[:0]
+	for _, m := range candidates {
+		if agentplane.EligibleWarm(claim, m) {
+			filtered = append(filtered, m)
+		}
+	}
+	candidates = filtered
 	for _, m := range candidates {
 		err := c.bindMachine(ctx, claim, m)
 		if kube.IsConflict(err) {
@@ -206,6 +214,12 @@ func (c *Controller) releaseMachineClaim(ctx context.Context, claim model.Machin
 		}
 	}
 	name := claim.Status.MachineName
+	if agentplane.WantsSnapshot(claim) && name != "" {
+		if err := c.ensureReleaseSnapshot(ctx, claim, name); err != nil {
+			c.Log.Error("machineclaim release snapshot failed", "namespace", claim.Namespace(), "claim", claim.Metadata.Name, "error", err)
+			return
+		}
+	}
 	if m, ok := byName[claim.Namespace()+"/"+name]; ok && name != "" && m.Metadata.Labels[model.LabelMachineClaim] == claim.Metadata.Name {
 		var err error
 		if claim.Spec.ReclaimPolicy == model.ReclaimRetain {
@@ -366,4 +380,23 @@ func (c *Controller) reconcileMachinePoolDeletion(ctx context.Context, pool mode
 	if err := c.Kube.PatchMachinePool(ctx, ns, name, map[string]any{"metadata": map[string]any{"finalizers": finals}}); err != nil {
 		c.Log.Error("machinepool deletion: finalizer removal failed", "namespace", ns, "pool", name, "error", err)
 	}
+}
+
+func (c *Controller) ensureReleaseSnapshot(ctx context.Context, claim model.MachineClaim, machine string) error {
+	name := agentplane.ReleaseSnapshotName(claim.Metadata.Name)
+	_, err := c.Kube.GetMachineSnapshot(ctx, claim.Namespace(), name)
+	if err == nil {
+		return nil
+	}
+	if !kube.IsNotFound(err) {
+		return err
+	}
+	_, err = c.Kube.CreateMachineSnapshot(ctx, claim.Namespace(), model.MachineSnapshot{
+		Metadata: model.ObjectMeta{Name: name, Namespace: claim.Namespace()},
+		Spec:     model.MachineSnapshotSpec{MachineName: machine},
+	})
+	if err != nil && !kube.IsConflict(err) {
+		return err
+	}
+	return nil
 }

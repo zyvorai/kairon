@@ -67,3 +67,22 @@ Read-only routes on kairon-ui, no namespace param, no apiserver write:
 - `POST /api/v1/agent/cpu-label`
 
 CPU label projection uses `kairon.zyvor.dev/pinnable-cpus` and only reports `changed` when the projected list differs. Confidential status is sealed only when the node report kind matches.
+
+## Apply path
+
+The controller now uses this package on the claim path:
+
+- A warm Machine is bound only if `EligibleWarm` matches tenant and hypervisor.
+- Release creates `MachineSnapshot/<claim>-release` when `kairon.zyvor.dev/snapshot-on-release=true`, then deletes or retains the Machine. A 409 on create is treated as already done.
+
+Status without a CRD change is annotations from `StatusAnnotations`: confidential sealed/reason, gateway name, gpu count.
+
+MCP tools that still do not write: `project_cpu_label`, `project_confidential`, `bind_gateway`, `replay_audit`.
+
+CLI: `kaironctl agent cpu-label --effective 0-7 --reserved 0-1` and `kaironctl agent gateway --name agents --guest-port 22 --host-port 2201`.
+
+Dashboard adds `POST /api/v1/agent/claims/step`, `/confidential`, `/gateway`.
+
+## Still outside this repo
+
+A green live-migration claim still needs the Zyvor lab matrix. Cosign verification and a real SEV-SNP/TDX report are node facts. This code checks shape and refuses a mismatch; it does not talk to the AMD or Intel firmware.

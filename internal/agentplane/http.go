@@ -20,6 +20,7 @@ func Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent/claims/step", handleStep)
 	mux.HandleFunc("POST /api/v1/agent/cpu-label", handleCPU)
 	mux.HandleFunc("POST /api/v1/agent/confidential", handleConfidential)
+	mux.HandleFunc("POST /api/v1/agent/gateway", handleGateway)
 	return mux
 }
 
@@ -123,4 +124,20 @@ func writeErr(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+func handleGateway(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name     string        `json:"name"`
+		Forwards []PortForward `json:"forwards"`
+	}
+	if err := decodeBody(w, r, &in); err != nil {
+		return
+	}
+	b, err := BindGateway(in.Name, in.Forwards)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeOK(w, map[string]any{"apply": false, "binding": b})
 }

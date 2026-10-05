@@ -177,6 +177,71 @@ func agentPlaneTools() []mcp.Tool {
 			},
 		},
 		{
+			Name:        "project_cpu_label",
+			Description: "Project kairon.zyvor.dev/pinnable-cpus from cpuset text. Does not label the node.",
+			Schema:      mcp.Object(map[string]any{"node": mcp.String("node name"), "effective": mcp.String("cpuset.cpus.effective"), "reserved": mcp.String("reserved cpus")}, "effective"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a agentplane.NodeCPUReport
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				up, err := agentplane.CPULabelUpdate(a)
+				if err != nil {
+					return "", err
+				}
+				return mcp.JSON(up)
+			},
+		},
+		{
+			Name:        "project_confidential",
+			Description: "Project sealed/not-sealed from a node attestation report. Does not schedule.",
+			Schema:      mcp.Object(map[string]any{"requested": mcp.String("sev-snp or tdx"), "node": map[string]any{"type": "object"}}, "requested"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Requested string                 `json:"requested"`
+					Node      agentplane.Attestation `json:"node"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return mcp.JSON(agentplane.ProjectConfidential(a.Requested, a.Node))
+			},
+		},
+		{
+			Name:        "bind_gateway",
+			Description: "Build a Gateway binding from port forwards. Does not create the Gateway.",
+			Schema:      mcp.Object(map[string]any{"name": mcp.String("gateway name"), "forwards": map[string]any{"type": "array"}}, "name", "forwards"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Name     string                   `json:"name"`
+					Forwards []agentplane.PortForward `json:"forwards"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				b, err := agentplane.BindGateway(a.Name, a.Forwards)
+				if err != nil {
+					return "", err
+				}
+				return mcp.JSON(map[string]any{"apply": false, "binding": b})
+			},
+		},
+		{
+			Name:        "replay_audit",
+			Description: "Replay audit events for one claim. Pass the event list; this tool has no server-side store.",
+			Schema:      mcp.Object(map[string]any{"claim": mcp.String("claim name"), "events": map[string]any{"type": "array"}}, "events"),
+			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var a struct {
+					Claim  string             `json:"claim"`
+					Events []agentplane.Event `json:"events"`
+				}
+				if err := decodeArgs(raw, &a); err != nil {
+					return "", err
+				}
+				return mcp.JSON(map[string]any{"events": agentplane.Replay(a.Events, a.Claim)})
+			},
+		},
+		{
 			Name:        "audit_record",
 			Description: "Record one MCP write as a replayable audit event. Requires --allow-write.",
 			Write:       true,
@@ -215,7 +280,7 @@ func newAgentCmd() *cobra.Command {
 		Use:   "agent",
 		Short: "Agent-plane helpers (compile, explain, claim check). Nothing here applies.",
 	}
-	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd())
+	cmd.AddCommand(newAgentCompileCmd(), newAgentDropsCmd(), newAgentMatrixCmd(), newAgentStepCmd(), newAgentCPUCmd(), newAgentGatewayCmd())
 	return cmd
 }
 
@@ -333,5 +398,49 @@ func newAgentStepCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&file, "file", "", "JSON with claim and warm, or - for stdin")
+	return c
+}
+
+func newAgentCPUCmd() *cobra.Command {
+	var effective, reserved, node string
+	c := &cobra.Command{
+		Use:   "cpu-label",
+		Short: "Project pinnable-cpus from a cpuset list",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			up, err := agentplane.CPULabelUpdate(agentplane.NodeCPUReport{Node: node, Effective: effective, Reserved: reserved})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), up.Key+"="+up.Value)
+			return nil
+		},
+	}
+	c.Flags().StringVar(&effective, "effective", "", "cpuset.cpus.effective text")
+	c.Flags().StringVar(&reserved, "reserved", "", "cpus to keep for the host")
+	c.Flags().StringVar(&node, "node", "", "node name")
+	return c
+}
+
+func newAgentGatewayCmd() *cobra.Command {
+	var name string
+	var guest, host int
+	c := &cobra.Command{
+		Use:   "gateway",
+		Short: "Build a Gateway binding for one guest port",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, err := agentplane.BindGateway(name, []agentplane.PortForward{{GuestPort: guest, HostPort: host}})
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(b)
+		},
+	}
+	c.Flags().StringVar(&name, "name", "", "gateway name")
+	c.Flags().IntVar(&guest, "guest-port", 0, "guest port")
+	c.Flags().IntVar(&host, "host-port", 0, "host port")
 	return c
 }
