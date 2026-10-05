@@ -166,6 +166,10 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims", "persistentvolumes"]
     verbs: ["get"]
+  - apiGroups: [""]
+    # Edge drop and anomaly Warning Events (internal/agent/edgeevents.go).
+    resources: ["events"]
+    verbs: ["create"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machines", "machines/status", "machinemigrations", "machinemigrations/status", "machinenetworkpolicies", "machinenetworkpolicies/status", "networksecuritygroups", "networksecuritygroups/status", "machinebackups", "machinebackups/status", "machinebackuprestores", "machinebackuprestores/status"]
     verbs: ["get", "list", "watch", "patch"]

@@ -20,6 +20,13 @@ const (
 	AnnEgress        = "kairon.zyvor.dev/egress-allowlist"
 	AnnGateway       = "kairon.zyvor.dev/gateway"
 	AnnHypervisor    = "kairon.zyvor.dev/hypervisor"
+
+	// AnnAttestationVerified is written by the attestation verifier with
+	// the kind (sev-snp or tdx) whose report it accepted for this Machine.
+	AnnAttestationVerified = "kairon.zyvor.dev/attestation-verified"
+	// LabelConfidentialCapable is the node label kairon-node publishes
+	// with the confidential kind its host kernel can run.
+	LabelConfidentialCapable = "kairon.zyvor.dev/confidential-capable"
 )
 
 var tenantName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

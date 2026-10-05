@@ -52,6 +52,8 @@ type Agent struct {
 	Metrics *metrics.Recorder
 	// edge caches the last policy list and drop counts for the VM edge.
 	edge edgeCache
+	// edgeEvents suppresses repeated edge Warning Events per Machine.
+	edgeEvents edgeEventDedup
 	// Tracer, when Endpoint is set, emits opt-in OTLP/HTTP reconcile spans.
 	Tracer *oteltrace.Tracer
 	// CSISocketPath/CSIStagingDir/CSIPublishDir configure network-block

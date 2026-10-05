@@ -370,6 +370,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		c.Log.Error("machine snapshot schedule reconciliation failed", "error", err)
 	}
 
+	c.reconcileAgentStatus(ctx, machines, nodes)
 	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)
 	return nil

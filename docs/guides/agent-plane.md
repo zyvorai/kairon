@@ -83,6 +83,12 @@ CLI: `kaironctl agent cpu-label --effective 0-7 --reserved 0-1` and `kaironctl a
 
 Dashboard adds `POST /api/v1/agent/claims/step`, `/confidential`, `/gateway`.
 
+## Events and status
+
+kairon-node turns each tick's attributed drop increments and recent flows into `Warning` Events on the Machine: `EdgeDrop` for spoof, DNS and SNI denies, and `EdgeAnomaly` for findings from `Detect`. An identical Event for the same Machine is suppressed for 10 minutes. kairon-node needs `create` on `events` for this; the chart and `deploy/rbac.yaml` grant it.
+
+kairon-controller writes `kairon.zyvor.dev/confidential-sealed` and `kairon.zyvor.dev/confidential-reason` on Machines that request confidential compute. Sealed is `true` only when the node carries `kairon.zyvor.dev/confidential-capable=<kind>` and the attestation verifier has set `kairon.zyvor.dev/attestation-verified=<kind>` on the Machine. Only changed keys are patched.
+
 ## Still outside this repo
 
 A green live-migration claim still needs the Zyvor lab matrix. Cosign verification and a real SEV-SNP/TDX report are node facts. This code checks shape and refuses a mismatch; it does not talk to the AMD or Intel firmware.

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/ebpfedge"
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -241,10 +242,11 @@ func (a *Agent) applyEdge(ctx context.Context, m model.Machine, runtimeID, guest
 }
 
 // observeEdgeDrops feeds kairon_net_drops_total from FluxVM's attributed
-// drops. Best effort: a failed read only skips this tick's increment.
+// drops and emits edge Warning Events from this tick's increments. Best
+// effort: a failed read only skips this tick.
 func (a *Agent) observeEdgeDrops(ctx context.Context, m model.Machine, runtimeID string) {
 	rec := a.Metrics.Edge()
-	if rec == nil {
+	if rec == nil && a.Kube == nil {
 		return
 	}
 	raw, err := a.Flux.AttributedDrops(ctx, runtimeID, edgeDropLimit)
@@ -267,19 +269,24 @@ func (a *Agent) observeEdgeDrops(ctx context.Context, m model.Machine, runtimeID
 	if err := json.Unmarshal(raw, &body); err != nil {
 		return
 	}
-	type series struct{ reason, policy string }
+	type series struct{ reason, policy, dst string }
 	totals := map[string]uint64{}
 	labels := map[string]series{}
 	prefix := m.Namespace() + "/" + m.Metadata.Name + "/"
 	for _, it := range body.Items {
 		key := fmt.Sprintf("%s%s|%s|%s|%s|%s|%s|%d", prefix, it.Reason, it.PolicyName, it.Direction, it.SrcIP, it.DstIP, it.Proto, it.DstPort)
 		totals[key] = it.Packets
-		labels[key] = series{it.Reason, it.PolicyName}
+		labels[key] = series{it.Reason, it.PolicyName, it.DstIP}
 	}
+	var drops []agentplane.Drop
 	for key, delta := range a.edge.dropDeltas(prefix, totals) {
 		l := labels[key]
-		rec.ObserveDrops(m.Namespace(), m.Metadata.Name, l.reason, l.policy, delta)
+		if rec != nil {
+			rec.ObserveDrops(m.Namespace(), m.Metadata.Name, l.reason, l.policy, delta)
+		}
+		drops = append(drops, agentplane.Drop{Reason: strings.ToLower(l.reason), Dst: l.dst, Count: int(delta)})
 	}
+	a.emitEdgeEvents(ctx, m, drops, a.edgeFlows(ctx, runtimeID))
 }
 
 func (a *Agent) log() *slog.Logger {
