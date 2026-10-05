@@ -45,8 +45,15 @@ func TestDiagnoseFailedMigrationAndHealthy(t *testing.T) {
 	if len(d.Causes) != 1 || !strings.Contains(strings.Join(d.Causes[0].Propose, " "), "status.recovery") {
 		t.Fatalf("%+v", d)
 	}
-	if h := Diagnose(DiagnoseFacts{Kind: "Machine", Name: "ok", Phase: "Running"}); !h.Healthy || len(h.Causes) != 0 {
-		t.Fatalf("%+v", h)
+	if h := Diagnose(DiagnoseFacts{Kind: "Machine", Name: "ok", Phase: "Running", Conditions: []FactCondition{
+		{Type: "Ready", Status: "True"}, {Type: "NodeUnreachable", Status: "False", Reason: "NodeReady"},
+		{Type: "Paused", Status: "True"}, {Type: "MemoryPressure", Status: "False"},
+	}}); !h.Healthy || len(h.Causes) != 0 {
+		t.Fatalf("healthy Machine flagged: %+v", h)
+	}
+	d = Diagnose(DiagnoseFacts{Kind: "Machine", Name: "cut", Phase: "Unknown", Conditions: []FactCondition{{Type: "NodeUnreachable", Status: "True", Reason: "NodeNotReady"}}})
+	if len(d.Causes) != 1 || d.Causes[0].Title != "condition NodeUnreachable is True (NodeNotReady)" {
+		t.Fatalf("%+v", d)
 	}
 }
 

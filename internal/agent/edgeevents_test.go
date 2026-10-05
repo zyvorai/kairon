@@ -132,4 +132,8 @@ func TestParseEdgeFlowsAcceptsSnakeCase(t *testing.T) {
 	if len(flows) != 1 || flows[0].DstIP != "1.2.3.4" || flows[0].DNS != "x.example" {
 		t.Fatalf("%+v", flows)
 	}
+	flows = parseEdgeFlows(json.RawMessage(`{"items":[{"identity":3451097839,"family":6,"source":"fe80::1","destination":"ff02::2","protocol":58,"verdict":"allow","packets":1,"bytes":70}]}`))
+	if len(flows) != 1 || flows[0].DstIP != "ff02::2" || flows[0].Bytes != 70 {
+		t.Fatalf("FluxVM flow shape: %+v", flows)
+	}
 }

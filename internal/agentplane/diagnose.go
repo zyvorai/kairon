@@ -88,11 +88,11 @@ func Diagnose(f DiagnoseFacts) Diagnosis {
 		ws = append(ws, weighted{w: weightPhase, c: Cause{Title: fmt.Sprintf("%s is %s", f.Kind, f.Phase), Evidence: f.Message, Propose: phaseProposals(f.Kind, f.Phase)}})
 	}
 	for _, c := range f.Conditions {
-		if !strings.EqualFold(c.Status, "False") || conditionOK(c.Type) {
+		if !conditionBad(c) {
 			continue
 		}
 		ws = append(ws, weighted{w: weightCondition, c: Cause{
-			Title:    fmt.Sprintf("condition %s is False (%s)", c.Type, c.Reason),
+			Title:    fmt.Sprintf("condition %s is %s (%s)", c.Type, c.Status, c.Reason),
 			Evidence: c.Message,
 			Propose:  conditionProposals(c, f),
 		}})
@@ -146,13 +146,23 @@ func evidenceSuffix(e string) string {
 	return " (" + e + ")"
 }
 
-func conditionOK(t string) bool {
-	// Conditions whose False value is the normal resting state.
-	switch t {
-	case "Paused", "Migrating", "Degraded":
-		return true
+// conditionBad reads polarity from the type: Ready-style conditions are
+// bad when False, problem-style ones (NodeUnreachable, Fenced,
+// MemoryPressure) when True. Paused and Migrating are states, not
+// problems.
+func conditionBad(c FactCondition) bool {
+	switch c.Type {
+	case "Paused", "Migrating":
+		return false
+	case "NodeUnreachable", "Fenced", "Degraded", "Unschedulable":
+		return strings.EqualFold(c.Status, "True")
 	}
-	return false
+	for _, suffix := range []string{"Pressure", "Unreachable", "Unavailable", "Failed", "Failure"} {
+		if strings.HasSuffix(c.Type, suffix) {
+			return strings.EqualFold(c.Status, "True")
+		}
+	}
+	return strings.EqualFold(c.Status, "False")
 }
 
 func phaseProposals(kind, phase string) []string {

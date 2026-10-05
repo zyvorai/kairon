@@ -107,6 +107,7 @@ func parseEdgeFlows(raw json.RawMessage) []agentplane.Flow {
 		Items []struct {
 			DstIP       string `json:"dstIP"`
 			DstIPSnake  string `json:"dst_ip"`
+			Destination string `json:"destination"`
 			SNI         string `json:"sni"`
 			DNS         string `json:"dns"`
 			QName       string `json:"qname"`
@@ -122,6 +123,9 @@ func parseEdgeFlows(raw json.RawMessage) []agentplane.Flow {
 		f := agentplane.Flow{DstIP: it.DstIP, SNI: it.SNI, DNS: it.DNS, Bytes: it.Bytes, IntervalSec: it.IntervalSec}
 		if f.DstIP == "" {
 			f.DstIP = it.DstIPSnake
+		}
+		if f.DstIP == "" {
+			f.DstIP = it.Destination
 		}
 		if f.DNS == "" {
 			f.DNS = it.QName
