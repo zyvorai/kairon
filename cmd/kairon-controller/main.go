@@ -18,6 +18,7 @@ import (
 
 	atlas "github.com/zyvorai/atlas/clients/go"
 
+	"github.com/zyvorai/kairon/internal/agentplane/cosign"
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
@@ -63,6 +64,7 @@ func run() int {
 	atlasTenant := flag.String("atlas-tenant", envDefault("KAIRON_ATLAS_TENANT", "kairon"), "Atlas tenant_id for volumes Kairon creates")
 	atlasPolicy := flag.String("atlas-default-policy", os.Getenv("KAIRON_ATLAS_DEFAULT_POLICY"), "Atlas policy intent used when spec.volumes[].atlas.policy is empty")
 	atlasBackupBucket := flag.String("atlas-backup-bucket", os.Getenv("KAIRON_ATLAS_BACKUP_BUCKET"), "Atlas S3 bucket id a MachineBackup uses when spec.atlas.bucketID is empty")
+	cosignKeyFile := flag.String("cosign-public-key", os.Getenv("KAIRON_COSIGN_PUBLIC_KEY_FILE"), "PEM public key (cosign.pub); when set, the webhook verifies the cosign signature of every kairon.zyvor.dev/agent-pool Machine's OCI image against it (falls back to the PEM in KAIRON_COSIGN_PUBLIC_KEY)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -94,6 +96,11 @@ func run() int {
 		return 1
 	}
 	atlasCfg.BackupBucketID = *atlasBackupBucket
+	cosignVerifier, err := cosignConfig(*cosignKeyFile)
+	if err != nil {
+		log.Error("cosign public key", "error", err)
+		return 1
+	}
 	kc, err := kube.FromEnvironment()
 	if err != nil {
 		log.Error("kubernetes client", "error", err)
@@ -127,6 +134,11 @@ func run() int {
 		Tracer:                     oteltrace.FromEnv(),
 		Atlas:                      atlasCfg,
 	}
+	if cosignVerifier != nil {
+		ctl.Cosign = cosignVerifier
+	} else {
+		log.Warn("no cosign public key; agent-pool image signatures are shape-checked only")
+	}
 	if webhookTLSConfig != nil {
 		go func() {
 			if err := ctl.RunWebhook(ctx, *webhookAddr, webhookTLSConfig, webhookCertWatcher, tlsReloadInterval); err != nil && ctx.Err() == nil {
@@ -158,6 +170,29 @@ func run() int {
 	}
 	elector.Run(ctx, runReconcile)
 	return 0
+}
+
+// cosignConfig returns nil when no key is configured, which keeps the
+// webhook's annotation shape check as the only image rule.
+func cosignConfig(keyFile string) (*cosign.Verifier, error) {
+	var pemData []byte
+	switch {
+	case keyFile != "":
+		b, err := os.ReadFile(keyFile)
+		if err != nil {
+			return nil, err
+		}
+		pemData = b
+	case strings.TrimSpace(os.Getenv("KAIRON_COSIGN_PUBLIC_KEY")) != "":
+		pemData = []byte(os.Getenv("KAIRON_COSIGN_PUBLIC_KEY"))
+	default:
+		return nil, nil
+	}
+	key, err := cosign.LoadPublicKey(pemData)
+	if err != nil {
+		return nil, err
+	}
+	return &cosign.Verifier{Key: key}, nil
 }
 
 func atlasConfig(baseURL, tokenFile, tenant, policy string) (controller.AtlasConfig, error) {

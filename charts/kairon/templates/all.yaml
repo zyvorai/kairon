@@ -341,6 +341,10 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ .Values.atlas.tokenSecret.name | quote }}, key: {{ .Values.atlas.tokenSecret.key | quote }}}}
 {{ end }}
 {{ end }}
+{{ if .Values.agentPlane.cosignPublicKeySecret.name }}
+            - name: KAIRON_COSIGN_PUBLIC_KEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.agentPlane.cosignPublicKeySecret.name | quote }}, key: {{ .Values.agentPlane.cosignPublicKeySecret.key | quote }}}}
+{{ end }}
           ports:
             - {name: health, containerPort: {{ .Values.controller.healthPort }}}
 {{ if .Values.webhook.enabled }}

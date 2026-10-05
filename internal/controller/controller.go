@@ -19,7 +19,10 @@ import (
 )
 
 type Controller struct {
-	Kube      *kube.Client
+	Kube *kube.Client
+	// Cosign, when set, makes the webhook verify the image signature of
+	// every agent-pool Machine. Nil keeps the annotation shape check only.
+	Cosign    ImageVerifier
 	Scheduler scheduler.Scheduler
 	Log       *slog.Logger
 	// Metrics, when set, observes every MachineMigration once per

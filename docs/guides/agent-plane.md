@@ -109,6 +109,16 @@ CLI: `kaironctl agent cpu-label --effective 0-7 --reserved 0-1` and `kaironctl a
 
 Dashboard adds `POST /api/v1/agent/claims/step`, `/confidential`, `/gateway`.
 
+## Image signatures
+
+With `kairon-controller -cosign-public-key cosign.pub` (or `KAIRON_COSIGN_PUBLIC_KEY`, set by the chart from `agentPlane.cosignPublicKeySecret`), the admission webhook verifies every agent-pool Machine's image:
+
+- The image must be `spec.image.source.oci` with `spec.image.digest`.
+- The webhook reads the `sha256-<hex>.sig` tag from the same repository and checks each simple-signing layer's signature against the key (ECDSA, Ed25519 or RSA). The signed payload must name the exact digest.
+- Anonymous registry pulls only, an 8 second budget, and verified digests are cached for 10 minutes.
+
+Without a key the webhook keeps the `cosign:sha256:<hex>` shape check and the controller logs a warning at startup. Keyless signatures (Fulcio and Rekor) are not verified.
+
 ## Events and status
 
 kairon-node turns each tick's attributed drop increments and recent flows into `Warning` Events on the Machine: `EdgeDrop` for spoof, DNS and SNI denies, and `EdgeAnomaly` for findings from `Detect`. An identical Event for the same Machine is suppressed for 10 minutes. kairon-node needs `create` on `events` for this; the chart and `deploy/rbac.yaml` grant it.

@@ -192,6 +192,13 @@ atlas:
   tokenSecret:
     name: ""
     key: token
+agentPlane:
+  # Existing Secret holding the cosign public key (cosign.pub PEM). When
+  # set, the admission webhook verifies the image signature of every
+  # kairon.zyvor.dev/agent-pool Machine (docs/guides/agent-plane.md).
+  cosignPublicKeySecret:
+    name: ""
+    key: cosign.pub
 csiNode:
   # Kairon's own first-cut CSI node plugin (see internal/csinode,
   # docs/guides/machine-storage-csi.md): one backend (iSCSI), no dynamic

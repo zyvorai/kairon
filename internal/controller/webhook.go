@@ -284,6 +284,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	}); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := c.verifyAgentImage(r.Context(), m); err != nil {
+		return admission.Deny(err.Error())
+	}
 	trackers, ok, err := QuotaTrackersForNamespace(r.Context(), c.Kube, req.Namespace)
 	if err != nil {
 		return admission.Deny(err.Error())
