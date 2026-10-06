@@ -39,6 +39,15 @@ controller:
     enabled: false
     strategy: cold # cold|auto -- never live, see CordonEvacuation's own doc comment
     minRetryInterval: 2m
+  staleEvacuation:
+    # Fences Machines annotated kairon.zyvor.dev/evacuate=true off a
+    # NotReady Node an operator attested dead with
+    # `kaironctl node fence NODE --reason ...` (the
+    # kairon.zyvor.dev/node-fenced annotation), so the scheduler places
+    # them again -- kaironctl fence, automatically. Never migrates. Off by
+    # default; see docs/guides/machine-fencing.md.
+    enabled: false
+    maxPerTick: 10
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 250m, memory: 128Mi}

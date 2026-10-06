@@ -319,6 +319,8 @@ spec:
             - "--cordon-evacuate={{ .Values.controller.cordonEvacuation.enabled }}"
             - "--cordon-evacuate-strategy={{ .Values.controller.cordonEvacuation.strategy }}"
             - "--cordon-evacuate-min-retry-interval={{ .Values.controller.cordonEvacuation.minRetryInterval }}"
+            - "--stale-evacuation={{ .Values.controller.staleEvacuation.enabled }}"
+            - "--stale-evacuation-max-per-tick={{ .Values.controller.staleEvacuation.maxPerTick }}"
             - "--cilium-attach={{ .Values.network.ciliumAttach.enabled }}"
             - "--cilium-policy-sync={{ .Values.network.ciliumPolicySync.enabled }}"
 {{ if .Values.node.livenessLease.enabled }}

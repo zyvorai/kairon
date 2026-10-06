@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/zyvorai/kairon/internal/fencing"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 	"github.com/zyvorai/kairon/internal/nodeliveness"
@@ -66,27 +67,8 @@ func cmdFence(ctx context.Context, kc *kube.Client, args []string) {
 	}
 	okf("fencing machine/%s off node %q (kairon-controller's last-observed reason: %s)", name, fencedNode, cond.Message)
 
-	if err := kc.PatchMachine(ctx, *ns, name, map[string]any{
-		"spec":     map[string]any{"nodeName": ""},
-		"metadata": map[string]any{"labels": map[string]any{model.AssignedNodeLabel: nil}},
-	}); err != nil {
-		fatal(fmt.Errorf("clear spec.nodeName on %s/%s: %w", *ns, name, err))
-	}
-	status := m.Status
-	status.Phase = ""
-	status.NodeName = ""
-	status.RuntimeID = ""
-	status.GuestIP = ""
-	status.GuestIPs = nil
-	status.Network = nil
-	status.AppliedVCPUs = 0
-	status.AppliedMemoryMiB = 0
-	status.Conditions = model.SetCondition(status.Conditions, model.Condition{
-		Type: model.ConditionFenced, Status: "True", Reason: "OperatorAttested",
-		Message: fmt.Sprintf("fenced off node %q by an operator: %s", fencedNode, *reason),
-	})
-	if err := kc.PatchMachineStatus(ctx, *ns, name, status); err != nil {
-		fatal(fmt.Errorf("clear runtime status on %s/%s: %w", *ns, name, err))
+	if err := fencing.Fence(ctx, kc, m, "OperatorAttested", fmt.Sprintf("fenced off node %q by an operator: %s", fencedNode, *reason)); err != nil {
+		fatal(err)
 	}
 	okf("machine/%s: spec.nodeName cleared; will be rescheduled onto a different node on kairon-controller's next reconcile tick", name)
 }

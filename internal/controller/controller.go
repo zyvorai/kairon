@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
@@ -53,6 +54,11 @@ type Controller struct {
 	// today's unchanged behavior: cordoning a node does nothing to
 	// already-running Machines.
 	CordonEvacuation CordonEvacuation
+	// StaleEvacuation, when Enabled, fences opted-in Machines off nodes
+	// attested dead -- see internal/controller/staleevac.go.
+	StaleEvacuation StaleEvacuation
+	staleEvacMu     sync.Mutex
+	staleEvacNoted  map[string]bool
 	// CiliumAttach enables reconcile of CiliumExternalWorkload for Machines
 	// with spec.network.ciliumAttach. Off by default (Helm network.ciliumAttach).
 	CiliumAttach bool
@@ -390,6 +396,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.reconcileAgentStatus(ctx, machines, nodes)
 	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)
+	c.reconcileStaleEvacuation(ctx, machines, nodes, migrations)
 	return nil
 }
 

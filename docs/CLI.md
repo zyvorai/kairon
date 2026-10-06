@@ -116,6 +116,7 @@ kaironctl evacuate NODE [--strategy cold|auto] [--wait] [--timeout 15m] [--poll-
 kaironctl recover MIGRATION --action ACTION --diagnosis DIAGNOSIS --reason REASON
 kaironctl cancel-migration MIGRATION
 kaironctl fence MACHINE --reason REASON
+kaironctl node fence NODE --reason REASON | --clear   # attestation for --stale-evacuation
 kaironctl snapshot MACHINE [--name NAME] [--class CLASS] [--volume NAME]...
 kaironctl restore SNAPSHOT --target-claim NAME
 kaironctl volumes MACHINE [-n NS] [-o table|json]

@@ -51,6 +51,8 @@ func run() int {
 	cordonEvacuate := flag.Bool("cordon-evacuate", false, "automatically create a MachineMigration for every Machine on a Node whose spec.unschedulable transitions to true (see internal/controller/cordon.go) -- off by default, since unlike -leader-elect this is never a no-op: enabling it means a cordoned node's Machines start migrating on their own")
 	cordonEvacuateStrategy := flag.String("cordon-evacuate-strategy", "cold", "migration strategy used by -cordon-evacuate: cold|auto (never live -- see CordonEvacuation's own doc comment)")
 	cordonEvacuateMinRetryInterval := flag.Duration("cordon-evacuate-min-retry-interval", controller.DefaultCordonEvacuateMinRetryInterval, "minimum time between -cordon-evacuate retry attempts for a Machine currently blocked by a MachineDisruptionBudget")
+	staleEvacuation := flag.Bool("stale-evacuation", envBool("KAIRON_STALE_EVACUATION", false), "fence Machines annotated kairon.zyvor.dev/evacuate=true off NotReady nodes annotated kairon.zyvor.dev/node-fenced, so the scheduler places them again (see internal/controller/staleevac.go); off by default")
+	staleEvacuationMaxPerTick := flag.Int("stale-evacuation-max-per-tick", controller.DefaultStaleEvacuationMaxPerTick, "most Machines -stale-evacuation fences per reconcile tick")
 	ciliumAttach := flag.Bool("cilium-attach", envBool("KAIRON_CILIUM_ATTACH", false), "reconcile CiliumExternalWorkload for Machines with spec.network.ciliumAttach (requires Cilium CNI; off by default)")
 	ciliumPolicySync := flag.Bool("cilium-policy-sync", envBool("KAIRON_CILIUM_POLICY_SYNC", false), "sync MachineNetworkPolicy with spec.cilium.sync onto CiliumNetworkPolicy CRs (off by default)")
 	nodeLivenessLeaseNamespace := flag.String("node-liveness-lease-namespace", os.Getenv("KAIRON_NODE_LIVENESS_LEASE_NAMESPACE"), "when set, feed kairon-node liveness Leases in this namespace into NodeUnreachable detection (Ready + stale lease → unreachable); empty keeps Node-Ready-only detection. Pair with node.livenessLease.enabled on kairon-node")
@@ -131,6 +133,10 @@ func run() int {
 			Enabled:          *cordonEvacuate,
 			Strategy:         *cordonEvacuateStrategy,
 			MinRetryInterval: *cordonEvacuateMinRetryInterval,
+		},
+		StaleEvacuation: controller.StaleEvacuation{
+			Enabled:    *staleEvacuation,
+			MaxPerTick: *staleEvacuationMaxPerTick,
 		},
 		CiliumAttach:               *ciliumAttach,
 		CiliumPolicySync:           *ciliumPolicySync,

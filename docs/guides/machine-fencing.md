@@ -80,7 +80,10 @@ On success it clears `spec.nodeName` and every status field tied to the old
 runtime (`status.phase`, `status.nodeName`, `status.runtimeID`,
 `status.guestIP(s)`, `status.network`, applied CPU/memory) so the next
 reconcile tick treats this exactly like a brand-new, unscheduled Machine --
-not an adoption of a runtime that may not exist anymore.
+not an adoption of a runtime that may not exist anymore. It also drops the
+`kairon.zyvor.dev/runtime-cleanup` finalizer, which only the dead node's
+`kairon-node` could have removed; otherwise deleting a fenced Machine that
+hasn't been placed again would hang. The next node adds it back.
 
 **If the old node comes back with the FluxVM instance still actually
 running after you've fenced and rescheduled**, you now have two runtimes
@@ -133,6 +136,55 @@ depends on. `--force-ignore-liveness` overrides a refusal when you've
 independently confirmed the Lease is stale/irrelevant (e.g. you know
 `kairon-node` was already down before the Lease's own
 `node.livenessLease.duration` elapsed).
+
+## Automatic, still attested: `--stale-evacuation`
+
+For fleets with an out-of-band power-fencing tool (IPMI/iDRAC/BMC, a
+cloud API) the second step above can be automated without giving up the
+attestation. The node gets an annotation as proof that it is dead, and Machines
+opt in one by one:
+
+```bash
+# Once per dead node: by an operator, or by your power-fencing tool
+# after it has confirmed the node is off.
+kaironctl node fence worker-3 --reason "ipmi power-off confirmed, OPS-412"
+
+# Once per Machine that may be moved without a human:
+kubectl annotate machine web-1 kairon.zyvor.dev/evacuate=true
+```
+
+With `kairon-controller --stale-evacuation` (Helm
+`controller.staleEvacuation.enabled`, off by default), every tick fences
+a Machine -- the same transition `kaironctl fence` applies, through the
+shared `internal/fencing` package -- only if **all** of these hold:
+
+- the Machine's node exists and carries a non-empty
+  `kairon.zyvor.dev/node-fenced` annotation;
+- the node is not `Ready`, or (with `-node-liveness-lease-namespace` set)
+  its `kairon-node` liveness Lease is stale. A fresh Lease always refuses,
+  and unlike `kaironctl fence` so does a Lease read error; a missing Lease
+  falls back to the `Ready` check;
+- the Machine has `NodeUnreachable=True`, is not being deleted, and has no
+  unfinished MachineMigration;
+- the Machine has `kairon.zyvor.dev/evacuate=true`;
+- every MachineDisruptionBudget selecting it still allows a disruption;
+- fewer than `--stale-evacuation-max-per-tick` (default 10) Machines have
+  been fenced this tick.
+
+The `Fenced` condition records reason `StaleEvacuation` and the message
+`stale-evacuation: node "worker-3" attested dead: <annotation>`. The
+Machine is then placed by the normal scheduler on its next tick. Machines
+on a fenced node without the opt-in are logged once and left for
+`kaironctl fence`. A fenced annotation on a `Ready` node with no stale
+Lease is ignored (and logged once), so a node that came back is never
+evacuated.
+
+Nothing is migrated: the VM died with its node. Remove the attestation
+once the node is repaired or retired:
+
+```bash
+kaironctl node fence worker-3 --clear
+```
 
 ## Migration preflight: storage/network domain labels
 
@@ -211,6 +263,11 @@ kubectl label node worker-2 kairon.zyvor.dev/vfio-devices=0000:65:00.0
   wouldn't) -- it never makes `NodeUnreachable` fire in a case it
   wouldn't have otherwise (e.g. a wedged `kairon-node` process on an
   otherwise-`Ready` node still isn't detected by anything in this guide).
+- `--stale-evacuation` trusts the `node-fenced` annotation as much as
+  `kaironctl fence` trusts `--reason`: whoever can annotate Nodes can make
+  opted-in Machines restart elsewhere. Restrict `patch` on nodes
+  accordingly. The controller emits no Kubernetes Events; the action is
+  visible in the `Fenced` condition and the controller log.
 - `kaironctl fence` trusts the operator's `--reason`; Kairon has no way to
   verify a node is actually gone. The liveness-Lease check is a real,
   independent cross-check, but it's still a heuristic (a stale Lease could
