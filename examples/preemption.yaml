@@ -9,7 +9,7 @@ spec:
   priority: 10
   powerState: Running
   image:
-    source: oci://ghcr.io/example/gpu-job:1.0
+    path: /var/lib/fluxvm/images/gpu-job.qcow2
   resources:
     cpu: "4"
     memory: 8Gi
@@ -25,7 +25,7 @@ spec:
   priority: 0
   powerState: Running
   image:
-    source: oci://ghcr.io/example/dev-box:1.0
+    path: /var/lib/fluxvm/images/dev-box.qcow2
   resources:
     cpu: "4"
     memory: 8Gi
