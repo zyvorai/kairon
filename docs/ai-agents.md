@@ -237,6 +237,12 @@ ns/name` mirrors each event into a ConfigMap. The principal is
 `KAIRON_MCP_PRINCIPAL`, or the OS user. Check the chain with
 `kaironctl agent audit-verify [--claim NAME] [--show]`.
 
+Destructive tools (`delete_machine`, `fork_machine`, `machine_backup`
+restore and delete) also need a human to approve each call: the refused
+call prints a `kaironctl approve KIND/NAMESPACE/NAME ID` command, and the
+agent retries with the same arguments once it has run. See
+[guides/hermes-mcp.md](guides/hermes-mcp.md#human-approval-for-destructive-tools).
+
 ## Other MCP clients
 
 Any client that launches stdio servers works. The command, arguments and

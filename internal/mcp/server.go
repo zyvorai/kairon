@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -35,8 +36,20 @@ type Tool struct {
 	Description string
 	Schema      map[string]any
 	Write       bool
-	Call        func(ctx context.Context, args json.RawMessage) (string, error)
+	// Approval marks a Write tool that also needs a human's per-call
+	// approval when the server has an Approve hook.
+	Approval bool
+	Call     func(ctx context.Context, args json.RawMessage) (string, error)
 }
+
+// ApprovalError refuses a call pending (or after a failed) approval.
+// Outcome is what the audit log records, e.g. "approval-required".
+type ApprovalError struct {
+	Outcome string
+	Message string
+}
+
+func (e *ApprovalError) Error() string { return e.Message }
 
 // Server dispatches JSON-RPC requests to registered tools.
 type Server struct {
@@ -47,6 +60,10 @@ type Server struct {
 	// "intent") and after it returns ("ok" or the error text). An error
 	// on the intent call refuses the write.
 	Audit func(ctx context.Context, tool string, args json.RawMessage, outcome string) error
+	// Approve, when set, runs before every Approval tool. It returns who
+	// approved this exact call ("" when this call needs no approval), or an
+	// error (an *ApprovalError names the audit outcome) that refuses it.
+	Approve func(ctx context.Context, tool string, args json.RawMessage) (approver string, err error)
 
 	tools map[string]Tool
 }
@@ -184,6 +201,25 @@ func (s *Server) handle(ctx context.Context, req request) (any, *rpcError) {
 		if len(args) == 0 || string(args) == "null" {
 			args = json.RawMessage("{}")
 		}
+		if t.Write && t.Approval && s.Approve != nil {
+			approver, err := s.Approve(ctx, t.Name, args)
+			if err != nil {
+				outcome := "approval-error"
+				var ae *ApprovalError
+				if errors.As(err, &ae) {
+					outcome = ae.Outcome
+				}
+				if s.Audit != nil {
+					_ = s.Audit(ctx, t.Name, args, outcome)
+				}
+				return toolResult(err.Error(), true), nil
+			}
+			if s.Audit != nil && approver != "" {
+				if err := s.Audit(ctx, t.Name, args, "approved:"+approver); err != nil {
+					return toolResult("audit log unavailable; write refused: "+err.Error(), true), nil
+				}
+			}
+		}
 		if t.Write && s.Audit != nil {
 			if err := s.Audit(ctx, t.Name, args, "intent"); err != nil {
 				return toolResult("audit log unavailable; write refused: "+err.Error(), true), nil
@@ -223,8 +259,11 @@ func (s *Server) listed() []map[string]any {
 			schema = Object(nil)
 		}
 		entry := map[string]any{"name": t.Name, "description": t.Description, "inputSchema": schema}
-		if !t.Write {
+		switch {
+		case !t.Write:
 			entry["annotations"] = map[string]any{"readOnlyHint": true}
+		case t.Approval:
+			entry["annotations"] = map[string]any{"destructiveHint": true}
 		}
 		out = append(out, entry)
 	}

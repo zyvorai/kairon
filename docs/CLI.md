@@ -161,7 +161,10 @@ and others; they never apply). Write tools, only with `--allow-write`:
 `machine_backup`, `create_sealed_claim`, `apply_network_policy`,
 `apply_claim_step`, `audit_record`. Write calls go to a hash-chained audit
 log (`--audit-log`, default `~/.kairon/audit.jsonl`; `--audit-configmap
-ns/name` mirrors it) and are refused if it cannot be written. It
+ns/name` mirrors it) and are refused if it cannot be written.
+`delete_machine`, `fork_machine` and `machine_backup` restore/delete also need
+a human's `kaironctl approve KIND/NAMESPACE/NAME ID` per call (off with
+`--require-approval=false`). It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
 other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.

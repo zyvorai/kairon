@@ -67,6 +67,34 @@ Every tool takes `namespace` (default: `--namespace`, else `default`) and
 `name` where it acts on one Machine. Unknown arguments are rejected, so a
 mistyped field comes back as an error instead of being ignored.
 
+## Human approval for destructive tools
+
+With `--allow-write`, `delete_machine`, `fork_machine` and `machine_backup`
+with `action: restore` or `delete` also need a human to approve each call
+(turn this off with `--require-approval=false`). The first call is refused
+with an approval id and the exact command to run:
+
+```text
+delete_machine needs a human's approval (id 3f9a1c0b7d2e). Ask them to run:
+  kaironctl approve machine/prod/web-1 3f9a1c0b7d2e
+then call delete_machine again with exactly the same arguments.
+```
+
+`kaironctl approve` writes the `kairon.zyvor.dev/mcp-approval` annotation
+on the target Machine (or MachineBackup), valid for `--ttl` (default 10m);
+the approver needs `patch` on that resource.
+The agent's next identical call consumes it with an atomic test-and-remove
+patch, so one approval allows exactly one call. The id is a hash of the
+tool, its arguments and `KAIRON_MCP_PRINCIPAL`: different arguments need a
+new approval. The audit log records `approval-required`,
+`approval-expired` and `approved:<approver>` (`$KAIRON_APPROVER`, else the
+approver's local user name).
+
+This only holds while the agent's way in is MCP: the approval is an
+annotation, so anything with `patch` on Machines or MachineBackups can
+write one. Give the agent's own token no access beyond what the MCP server
+needs, and keep shell access to that token away from the agent.
+
 ## Configure Hermes
 
 Add the server to `~/.hermes/config.yaml` (or run `hermes mcp add`):
@@ -140,6 +168,7 @@ Logs go to stderr; stdout carries only protocol messages.
 | `set KAIRON_UI_URL to reach uiapi …` | Set `KAIRON_UI_URL` (and `KAIRON_UI_TOKEN`). |
 | `HTTP 501: diagnostics are not enabled` | Set `KAIRON_NODE_CONSOLE_TOKEN` on kairon-node and kairon-ui. |
 | A write tool says to start with `--allow-write` | Add `--allow-write` to `args`, then `/reload-mcp`. |
+| A destructive tool says it needs a human's approval | Run the `kaironctl approve ...` command it prints, then repeat the call with the same arguments. |
 | `audit log unavailable; write refused` | The audit log path is not writable or its chain is broken; fix `--audit-log` or run `kaironctl agent audit-verify`. |
 | `no LLM configured` from `ask` | Set `KAIRON_LLM_URL` and `KAIRON_LLM_MODEL` in the server's `env`. |
 | Hermes shows no `mcp_kairon_*` tools | Check that `kaironctl` is on Hermes' `PATH` (or use an absolute `command`), and run the pipe test above. |

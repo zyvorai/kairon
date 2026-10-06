@@ -27,7 +27,7 @@ func newMCPCmd(opts *Options) *cobra.Command {
 		Use:   "mcp",
 		Short: "Model Context Protocol server for AI agents",
 	}
-	var allowWrite bool
+	var allowWrite, requireApproval bool
 	var auditLog, auditConfigMap string
 	serve := &cobra.Command{
 		Use:   "serve",
@@ -35,7 +35,9 @@ func newMCPCmd(opts *Options) *cobra.Command {
 		Long: `Speaks MCP (JSON-RPC 2.0) on stdin/stdout. Read tools list and inspect
 Machines, network policies and VM-edge observability. With --allow-write,
 tools that set power state, create snapshots and run packet captures are
-also offered.
+also offered. Destructive tools (delete_machine, fork_machine,
+machine_backup restore/delete) then also need a human to approve each call
+with 'kaironctl approve', unless --require-approval=false.
 
 Needs KAIRON_KUBE_URL/KAIRON_KUBE_TOKEN (or in-cluster credentials) for
 Machines, and KAIRON_UI_URL/KAIRON_UI_TOKEN for network observability and
@@ -53,12 +55,16 @@ capture. Logs go to stderr; stdout carries only protocol messages.`,
 				}
 				mcpAudit = log
 				s.Audit = mcpAuditHook(log)
+				if requireApproval {
+					s.Approve = mcpApproveHook(opts.Namespace, func() (approvalStore, error) { return kube.FromEnvironment() }, time.Now)
+				}
 			}
 			s.Add(kaironTools(opts, kube.FromEnvironment)...)
 			return s.Serve(cmd.Context(), os.Stdin, os.Stdout)
 		},
 	}
 	serve.Flags().BoolVar(&allowWrite, "allow-write", false, "offer tools that change state (power, snapshot, capture)")
+	serve.Flags().BoolVar(&requireApproval, "require-approval", true, "with --allow-write, delete_machine, fork_machine and machine_backup restore/delete each need `kaironctl approve` by a human first")
 	serve.Flags().StringVar(&auditLog, "audit-log", defaultAuditLogPath(), "hash-chained JSONL audit log for write tools (used with --allow-write)")
 	serve.Flags().StringVar(&auditConfigMap, "audit-configmap", "", "also mirror audit records into this existing ConfigMap, as namespace/name")
 	cmd.AddCommand(serve)
@@ -514,8 +520,10 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			Description: "Back up a Machine (action create): FluxVM copies the disks of an image-booted Machine on its node, " +
 				"freezing guest filesystems through the guest agent; atlas=true also backs up Atlas volumes to S3. " +
 				"action restore copies MachineBackup `backup` back into Machine `name`, which must be halted first " +
-				"(Atlas volumes restore into new volumes). action delete removes MachineBackup `backup` and its FluxVM copy.",
-			Write: true,
+				"(Atlas volumes restore into new volumes). action delete removes MachineBackup `backup` and its FluxVM copy. " +
+				"restore and delete may need a human's approval: a refused call says what to ask for; retry with the same arguments.",
+			Write:    true,
+			Approval: true,
 			Schema: refSchema(map[string]any{
 				"action":       mcp.String("create, restore or delete", "create", "restore", "delete"),
 				"backup":       mcp.String("MachineBackup name: optional for create, required for restore and delete"),
@@ -683,8 +691,10 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			Name: "fork_machine",
 			Description: "Fork a Running Machine into count live copies on the same node: memory, CPU state and disk are copied from one snapshot, " +
 				"so children start where the parent is, in milliseconds. Needs a flux-vm backend Machine with user or no networking. " +
-				"Children are normal Machines (labelled kairon.zyvor.dev/forked-from); delete them with delete_machine.",
-			Write: true,
+				"Children are normal Machines (labelled kairon.zyvor.dev/forked-from); delete them with delete_machine. " +
+				"May need a human's approval: a refused call says what to ask for; retry with the same arguments.",
+			Write:    true,
+			Approval: true,
 			Schema: mcp.Object(map[string]any{
 				"namespace":   nsProp,
 				"name":        mcp.String("Machine to fork"),
@@ -750,10 +760,12 @@ func kaironTools(opts *Options, newKube func() (*kube.Client, error)) []mcp.Tool
 			},
 		},
 		{
-			Name:        "delete_machine",
-			Description: "Delete a Machine and its VM. Machines owned by a MachineSet are recreated by it; scale the set instead.",
-			Write:       true,
-			Schema:      refSchema(map[string]any{}),
+			Name: "delete_machine",
+			Description: "Delete a Machine and its VM. Machines owned by a MachineSet are recreated by it; scale the set instead. " +
+				"May need a human's approval: a refused call says what to ask for; retry with the same arguments.",
+			Write:    true,
+			Approval: true,
+			Schema:   refSchema(map[string]any{}),
 			Call: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				var a machineRef
 				if err := decodeArgs(raw, &a); err != nil {

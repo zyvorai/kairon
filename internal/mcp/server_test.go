@@ -168,3 +168,50 @@ func TestAuditWrapsWriteToolsAndRefusesWhenUnavailable(t *testing.T) {
 		t.Fatalf("refusal %q %v ran=%v", txt, isErr, ran)
 	}
 }
+
+func TestApprovalGateRefusesThenAllows(t *testing.T) {
+	s := NewServer("test", "v0", true)
+	ran := 0
+	s.Add(Tool{Name: "rm", Write: true, Approval: true, Call: func(context.Context, json.RawMessage) (string, error) {
+		ran++
+		return "removed", nil
+	}})
+	var outcomes []string
+	s.Audit = func(_ context.Context, _ string, _ json.RawMessage, outcome string) error {
+		outcomes = append(outcomes, outcome)
+		return nil
+	}
+	approved := false
+	s.Approve = func(context.Context, string, json.RawMessage) (string, error) {
+		if !approved {
+			return "", &ApprovalError{Outcome: "approval-required", Message: "ask a human (id abc)"}
+		}
+		return "alice", nil
+	}
+	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rm","arguments":{}}}`
+	text, isErr := resultText(t, run(t, s, call)["1"])
+	if !isErr || !strings.Contains(text, "id abc") || ran != 0 {
+		t.Fatalf("expected a refusal naming the id without running the tool, got %q err=%v ran=%d", text, isErr, ran)
+	}
+	approved = true
+	text, isErr = resultText(t, run(t, s, call)["1"])
+	if isErr || text != "removed" || ran != 1 {
+		t.Fatalf("expected the approved call to run, got %q err=%v ran=%d", text, isErr, ran)
+	}
+	want := []string{"approval-required", "approved:alice", "intent", "ok"}
+	if strings.Join(outcomes, ",") != strings.Join(want, ",") {
+		t.Fatalf("audit outcomes = %v, want %v", outcomes, want)
+	}
+}
+
+func TestApprovalGateSkipsToolsWithoutApproval(t *testing.T) {
+	s := testServer(true)
+	s.Approve = func(context.Context, string, json.RawMessage) (string, error) {
+		t.Fatal("Approve must not run for a tool without Approval")
+		return "", nil
+	}
+	text, isErr := resultText(t, run(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"stop"}}`)["1"])
+	if isErr || text != "stopped" {
+		t.Fatalf("got %q err=%v", text, isErr)
+	}
+}
