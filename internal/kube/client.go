@@ -762,6 +762,11 @@ func (c *Client) PatchMachineSnapshotScheduleStatus(ctx context.Context, ns, nam
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotschedules", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+// SetMachineSnapshotScheduleError merge-patches only status.lastRunError.
+func (c *Client) SetMachineSnapshotScheduleError(ctx context.Context, ns, name, msg string) error {
+	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinesnapshotschedules", name)+"/status", map[string]any{"status": map[string]any{"lastRunError": msg}}, nil, "application/merge-patch+json")
+}
+
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")

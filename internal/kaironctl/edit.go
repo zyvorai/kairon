@@ -146,14 +146,27 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 	intervalSeconds := fs.Int("interval-seconds", 0, "new minimum seconds between runs (minimum 60)")
 	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine (0 disables pruning again)")
 	startingDeadlineSeconds := fs.Int("starting-deadline-seconds", 0, "skip (rather than immediately fire) a run found more than this many seconds late (0 disables the deadline again -- an overdue run always fires)")
+	dailyAt := fs.String("daily-at", "", "switch to once a day at HH:MM UTC (clears intervalSeconds)")
+	jitterSeconds := fs.Int("jitter-seconds", 0, "stable per-schedule offset in [0, N) seconds (0 disables)")
+	maxAgeSeconds := fs.Int("max-age-seconds", 0, "prune this schedule's snapshots older than N seconds (0 disables)")
 	_ = fs.Parse(args)
 	spec := map[string]any{}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "daily-at":
+			spec["dailyAt"] = *dailyAt
+			spec["intervalSeconds"] = nil
+		case "jitter-seconds":
+			spec["jitterSeconds"] = *jitterSeconds
+		case "max-age-seconds":
+			spec["maxAgeSeconds"] = *maxAgeSeconds
 		case "suspend":
 			spec["suspend"] = *suspend
 		case "interval-seconds":
 			spec["intervalSeconds"] = *intervalSeconds
+			if _, ok := spec["dailyAt"]; !ok {
+				spec["dailyAt"] = nil
+			}
 		case "keep-last":
 			spec["keepLast"] = *keepLast
 		case "starting-deadline-seconds":
@@ -161,7 +174,7 @@ func cmdEditSnapshotSchedule(ctx context.Context, kc *kube.Client, name string, 
 		}
 	})
 	if len(spec) == 0 {
-		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend, --interval-seconds, --keep-last, or --starting-deadline-seconds"))
+		fatal(fmt.Errorf("nothing to edit: pass at least one of --suspend, --interval-seconds, --daily-at, --jitter-seconds, --keep-last, --max-age-seconds, or --starting-deadline-seconds"))
 	}
 	if err := kc.PatchMachineSnapshotSchedule(ctx, *ns, name, map[string]any{"spec": spec}); err != nil {
 		fatal(err)

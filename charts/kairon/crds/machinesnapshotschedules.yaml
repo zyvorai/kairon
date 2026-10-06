@@ -24,6 +24,9 @@ spec:
     - name: IntervalSeconds
       type: integer
       jsonPath: .spec.intervalSeconds
+    - name: DailyAt
+      type: string
+      jsonPath: .spec.dailyAt
     - name: Suspend
       type: boolean
       jsonPath: .spec.suspend
@@ -49,7 +52,9 @@ spec:
             type: object
             required:
             - selector
-            - intervalSeconds
+            x-kubernetes-validations:
+            - rule: "has(self.intervalSeconds) != has(self.dailyAt)"
+              message: "set exactly one of intervalSeconds or dailyAt"
             properties:
               selector:
                 type: object
@@ -58,6 +63,15 @@ spec:
               intervalSeconds:
                 type: integer
                 minimum: 60
+              dailyAt:
+                type: string
+                pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              jitterSeconds:
+                type: integer
+                minimum: 0
+              maxAgeSeconds:
+                type: integer
+                minimum: 1
               volumeSnapshotClassName:
                 type: string
               suspend:
@@ -81,6 +95,8 @@ spec:
               nextRunTime:
                 type: string
                 format: date-time
+              lastHandledTriggerTime:
+                type: string
   - name: v1alpha1
     served: true
     storage: false

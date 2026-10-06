@@ -625,7 +625,7 @@ func TestPruneScheduledSnapshotsNoOpBelowKeepLast(t *testing.T) {
 	kc.HTTP = srv.Client()
 	ctl := &Controller{Kube: kc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	ctl.pruneScheduledSnapshots(context.Background(), "prod", "hourly", "web-1", 1)
+	ctl.pruneScheduledSnapshots(context.Background(), "prod", "hourly", "web-1", 1, 0, time.Now())
 	if deleteCalled {
 		t.Fatal("expected no delete when the count of owned, ready snapshots is already at or below KeepLast")
 	}

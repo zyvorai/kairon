@@ -275,14 +275,17 @@ func cmdCreateMigrationPolicy(ctx context.Context, kc *kube.Client, args []strin
 // --selector k=v --interval-seconds N [flags]`, dispatched from cmdCreate.
 func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []string) {
 	if len(args) < 1 {
-		fatal(fmt.Errorf("usage: kaironctl create snapshotschedule NAME --selector k=v --interval-seconds N [flags]"))
+		fatal(fmt.Errorf("usage: kaironctl create snapshotschedule NAME --selector k=v (--interval-seconds N | --daily-at HH:MM) [flags]"))
 	}
 	name := args[0]
 	fs := flag.NewFlagSet("create snapshotschedule", flag.ExitOnError)
 	ns := fs.String("namespace", "default", "namespace")
 	var selector stringSliceFlag
 	fs.Var(&selector, "selector", "label key=value a Machine must match to be snapshotted (repeatable, required)")
-	intervalSeconds := fs.Int("interval-seconds", 0, "minimum seconds between runs (required, minimum 60)")
+	intervalSeconds := fs.Int("interval-seconds", 0, "minimum seconds between runs (minimum 60; this or --daily-at is required)")
+	dailyAt := fs.String("daily-at", "", "fire once a day at HH:MM UTC instead of every --interval-seconds")
+	jitterSeconds := fs.Int("jitter-seconds", 0, "spread runs by a stable per-schedule offset in [0, N) seconds")
+	maxAgeSeconds := fs.Int("max-age-seconds", 0, "also prune this schedule's snapshots older than N seconds (the newest is always kept)")
 	volumeSnapshotClassName := fs.String("volume-snapshot-class", "", "VolumeSnapshotClassName passed through to every MachineSnapshot this schedule creates")
 	suspend := fs.Bool("suspend", false, "create the schedule already suspended")
 	keepLast := fs.Int("keep-last", 0, "retain only the N most recent ready-to-use snapshots this schedule created per Machine, deleting older ones (0, the default, never prunes)")
@@ -290,9 +293,6 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 	_ = fs.Parse(args[1:])
 	if len(selector) == 0 {
 		fatal(fmt.Errorf("--selector k=v is required (repeatable)"))
-	}
-	if *intervalSeconds < 60 {
-		fatal(fmt.Errorf("--interval-seconds N is required and must be at least 60"))
 	}
 	selectorMap, err := parseKeyValues(selector)
 	if err != nil {
@@ -308,7 +308,13 @@ func cmdCreateSnapshotSchedule(ctx context.Context, kc *kube.Client, args []stri
 			Suspend:                 *suspend,
 			KeepLast:                *keepLast,
 			StartingDeadlineSeconds: *startingDeadlineSeconds,
+			DailyAt:                 *dailyAt,
+			JitterSeconds:           *jitterSeconds,
+			MaxAgeSeconds:           *maxAgeSeconds,
 		},
+	}
+	if err := s.Spec.Validate(); err != nil {
+		fatal(err)
 	}
 	out, err := kc.CreateMachineSnapshotSchedule(ctx, *ns, s)
 	if err != nil {

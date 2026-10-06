@@ -6,7 +6,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/zyvorai/kairon/internal/kube"
@@ -58,16 +57,26 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 	for _, sched := range schedules {
 		triggerRequest := sched.Metadata.Annotations[model.AnnotationSnapshotScheduleTriggerNow]
 		manual := model.TriggerNowRequested(triggerRequest, sched.Status.LastHandledTriggerTime)
-		if !manual && !sched.Spec.Due(sched.Status.LastRunTime, now) {
+		if err := sched.Spec.Validate(); err != nil {
+			msg := "invalid spec: " + err.Error()
+			if sched.Status.LastRunError != msg {
+				c.Log.Warn("machine snapshot schedule skipped", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", err)
+				if statusErr := c.Kube.SetMachineSnapshotScheduleError(ctx, sched.Namespace(), sched.Metadata.Name, msg); statusErr != nil {
+					c.Log.Error("machine snapshot schedule status patch failed", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", statusErr)
+				}
+			}
 			continue
 		}
-		if !manual && sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now) {
+		if !manual && !sched.Due(sched.Status.LastRunTime, now) {
+			continue
+		}
+		if !manual && sched.DeadlineExceeded(sched.Status.LastRunTime, now) {
 			c.Log.Warn("scheduled snapshot run skipped: starting deadline exceeded", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "startingDeadlineSeconds", sched.Spec.StartingDeadlineSeconds)
 			status := model.MachineSnapshotScheduleStatus{
 				LastRunTime:          now,
 				LastRunSnapshotCount: 0,
 				LastRunError:         fmt.Sprintf("skipped: this run was more than startingDeadlineSeconds (%ds) late", sched.Spec.StartingDeadlineSeconds),
-				NextRunTime:          sched.Spec.NextRunAfter(now),
+				NextRunTime:          sched.NextRunAfter(now),
 			}
 			if statusErr := c.Kube.PatchMachineSnapshotScheduleStatus(ctx, sched.Namespace(), sched.Metadata.Name, status); statusErr != nil {
 				c.Log.Error("machine snapshot schedule status patch failed", "namespace", sched.Namespace(), "schedule", sched.Metadata.Name, "error", statusErr)
@@ -122,11 +131,11 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 				continue
 			}
 			count++
-			if sched.Spec.KeepLast > 0 {
-				c.pruneScheduledSnapshots(ctx, sched.Namespace(), sched.Metadata.Name, m.Metadata.Name, sched.Spec.KeepLast)
+			if sched.Spec.KeepLast > 0 || sched.Spec.MaxAgeSeconds > 0 {
+				c.pruneScheduledSnapshots(ctx, sched.Namespace(), sched.Metadata.Name, m.Metadata.Name, sched.Spec.KeepLast, sched.Spec.MaxAgeSeconds, now)
 			}
 		}
-		status := model.MachineSnapshotScheduleStatus{LastRunTime: now, LastRunSnapshotCount: count, NextRunTime: sched.Spec.NextRunAfter(now)}
+		status := model.MachineSnapshotScheduleStatus{LastRunTime: now, LastRunSnapshotCount: count, NextRunTime: sched.NextRunAfter(now)}
 		if firstErr != nil {
 			status.LastRunError = firstErr.Error()
 		}
@@ -149,7 +158,8 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 // this exact schedule created for this exact Machine (identified by
 // model.SnapshotScheduleLabel, never a manually-created or
 // different-schedule-created one) once there are more than keepLast of
-// them. Only status.readyToUse snapshots are counted or deleted -- a
+// them, or (maxAgeSeconds) older than that -- see
+// model.ScheduledSnapshotsToPrune; the newest is always kept. Only status.readyToUse snapshots are counted or deleted -- a
 // snapshot still Freezing/Thawing/Pending never counts toward the limit and
 // is never itself a deletion candidate, so a still-in-progress snapshot can
 // never be the thing that gets pruned, and an old-but-still-only-ready
@@ -157,7 +167,7 @@ func (c *Controller) reconcileMachineSnapshotSchedules(ctx context.Context, mach
 // Best-effort: a list or delete failure is logged, counted against the
 // existing snapshotschedule reconcile-item-error metric, and left for the
 // next due tick to retry -- never fails the schedule's own status patch.
-func (c *Controller) pruneScheduledSnapshots(ctx context.Context, ns, scheduleName, machineName string, keepLast int) {
+func (c *Controller) pruneScheduledSnapshots(ctx context.Context, ns, scheduleName, machineName string, keepLast, maxAgeSeconds int, now time.Time) {
 	all, err := c.Kube.ListMachineSnapshotsNamespace(ctx, ns)
 	if err != nil {
 		c.Log.Error("listing snapshots for schedule pruning failed", "namespace", ns, "schedule", scheduleName, "machine", machineName, "error", err)
@@ -172,13 +182,7 @@ func (c *Controller) pruneScheduledSnapshots(ctx context.Context, ns, scheduleNa
 			mine = append(mine, s)
 		}
 	}
-	if len(mine) <= keepLast {
-		return
-	}
-	sort.Slice(mine, func(i, j int) bool {
-		return mine[i].Metadata.CreationTimestamp.After(mine[j].Metadata.CreationTimestamp)
-	})
-	for _, old := range mine[keepLast:] {
+	for _, old := range model.ScheduledSnapshotsToPrune(mine, keepLast, maxAgeSeconds, now) {
 		if err := c.Kube.DeleteMachineSnapshot(ctx, ns, old.Metadata.Name); err != nil {
 			c.Log.Error("scheduled snapshot prune delete failed", "namespace", ns, "schedule", scheduleName, "machine", machineName, "snapshot", old.Metadata.Name, "error", err)
 			if c.Metrics != nil {

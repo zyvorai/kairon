@@ -2,9 +2,10 @@
 
 Periodically creates a `MachineSnapshot` for every `Machine` matching a
 label selector -- Kairon's first-cut backup-automation primitive, roughly
-analogous to a Kubernetes `CronJob`, but for VM snapshots and on a plain
-wall-clock interval rather than real cron syntax (see "Real limits today"
-below for exactly what that means).
+analogous to a Kubernetes `CronJob`, but for VM snapshots: either every
+`intervalSeconds` or once a day at a fixed UTC time (`dailyAt`), rather
+than full cron syntax (see "Real limits today" below for exactly what that
+means).
 
 ## Example
 
@@ -142,6 +143,41 @@ against an existing schedule with pre-existing snapshots:
 Retention is per-Machine, not per-schedule-in-total: a schedule matching 5
 Machines with `keepLast: 3` keeps up to 3 snapshots *for each* of those 5
 Machines, not 3 total across all of them.
+
+## Daily runs, jitter and age-based retention
+
+```yaml
+spec:
+  selector: {tier: web}
+  dailyAt: "02:30"       # UTC; set this OR intervalSeconds, never both
+  jitterSeconds: 1800    # this schedule fires at a fixed point in 02:30-03:00
+  keepLast: 14
+  maxAgeSeconds: 604800  # also drop this schedule's snapshots older than 7 days
+```
+
+- **`dailyAt: "HH:MM"`** (UTC, 24h) fires once a day at that time. A
+  brand-new daily schedule waits for the first slot after its creation
+  instead of firing immediately. `startingDeadlineSeconds` counts from the
+  slot, so a controller that was down at 02:30 can still skip a run it
+  found too late.
+- **`jitterSeconds: N`** gives each schedule a fixed offset in `[0, N)`,
+  derived from a hash of its namespace/name, so it is the same after every
+  controller restart and different schedules spread out. With
+  `intervalSeconds`, jitter also aligns runs to a fixed grid (Unix epoch +
+  offset + k x interval), so late runs never drift schedules back into each
+  other; the first run then waits for the next grid slot too. Must be below
+  `intervalSeconds`, or below 86400 with `dailyAt`. Without jitter, interval
+  schedules behave exactly as before.
+- **`maxAgeSeconds: N`** prunes this schedule's ready snapshots older than
+  N seconds, alongside `keepLast` (a snapshot goes if either rule says so).
+  The newest ready snapshot per Machine is always kept, however old, so a
+  stalled schedule never prunes a Machine down to zero backups.
+
+An invalid combination the CRD schema can't catch (for example
+`jitterSeconds` not below `intervalSeconds`) never fires; it shows up as
+`status.lastRunError: invalid spec: ...`. `kaironctl create/edit
+snapshotschedule` take `--daily-at`, `--jitter-seconds` and
+`--max-age-seconds`.
 
 ## Running one right now (`kaironctl trigger`)
 
@@ -354,23 +390,22 @@ Each reconcile tick:
 
 ## Real limits today (first cut)
 
-- **`intervalSeconds`, not real cron syntax.** There's no day-of-week/
-  time-of-day expression support -- a schedule fires roughly every
-  `intervalSeconds`, starting from whenever it was created or last ran,
-  not at a fixed wall-clock time. This is a deliberate simplification
+- **`intervalSeconds` or `dailyAt`, not real cron syntax.** There's no
+  day-of-week, multiple-times-a-day or month expression support -- a
+  schedule fires every `intervalSeconds` or once a day at `dailyAt` (UTC
+  only, no time zones). This is a deliberate simplification
   matching this project's Go-stdlib-only bias (no new cron-parsing
   dependency) and its established pattern of shipping a simpler mechanism
   honestly labeled as such (see `MigrationPolicy`'s own plain
   `bandwidthMbps`/`maxConcurrent` scalars for the same precedent).
-- **No jitter or stagger.** Several schedules sharing the same interval
-  (or created around the same time) can all become due on the same
-  reconcile tick and fire together.
-- **`spec.keepLast` retention is per-Machine and count-only, not
-  time-based.** There's no "keep one per day for 7 days, one per week for
-  4 weeks"-style tiered retention (the kind a dedicated backup tool would
-  offer) -- just a flat "keep the N most recent ready ones per Machine."
-  Leaving `keepLast` unset (the default) still accumulates snapshots
-  forever, exactly as before this field existed.
+- **Stagger is opt-in.** Without `jitterSeconds`, several schedules
+  sharing the same interval (or created around the same time) can all
+  become due on the same reconcile tick and fire together.
+- **Retention is per-Machine and flat (`keepLast`, `maxAgeSeconds`), not
+  tiered.** There's no "keep one per day for 7 days, one per week for 4
+  weeks"-style retention (the kind a dedicated backup tool would offer).
+  Leaving both unset (the default) still accumulates snapshots forever,
+  exactly as before these fields existed.
 - **Namespace-scoped only** -- a `MachineSnapshotSchedule` only ever
   matches Machines in its own namespace, same as `MigrationPolicy`/
   `MachineDisruptionBudget`.

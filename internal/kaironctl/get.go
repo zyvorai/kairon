@@ -184,7 +184,11 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 			if s.Spec.StartingDeadlineSeconds > 0 {
 				deadline = strconv.Itoa(s.Spec.StartingDeadlineSeconds)
 			}
-			fmt.Printf("%s\t%d\t%s\t%t\t%s\t%d\t%s\n", s.Metadata.Name, s.Spec.IntervalSeconds, deadline, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
+			interval := strconv.Itoa(s.Spec.IntervalSeconds)
+			if s.Spec.DailyAt != "" {
+				interval = "daily@" + s.Spec.DailyAt
+			}
+			fmt.Printf("%s\t%s\t%s\t%t\t%s\t%d\t%s\n", s.Metadata.Name, interval, deadline, s.Spec.Suspend, lastRun, s.Status.LastRunSnapshotCount, formatNextRun(s))
 		}
 	// networkpolicy/securitygroup: MachineNetworkPolicy and
 	// NetworkSecurityGroup drive FluxVM's real eBPF/TC enforcement (see

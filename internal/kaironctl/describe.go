@@ -153,9 +153,9 @@ func describeSnapshotSchedule(ctx context.Context, kc *kube.Client, ns, name str
 	switch {
 	case model.TriggerNowRequested(sched.Metadata.Annotations[model.AnnotationSnapshotScheduleTriggerNow], sched.Status.LastHandledTriggerTime):
 		fmt.Printf("Matching machines (%d) -- manual run requested (kaironctl trigger snapshotschedule), the next reconcile tick will snapshot these regardless of spec.suspend or the normal interval:\n", len(matches))
-	case sched.Spec.Due(sched.Status.LastRunTime, now) && sched.Spec.DeadlineExceeded(sched.Status.LastRunTime, now):
+	case sched.Due(sched.Status.LastRunTime, now) && sched.DeadlineExceeded(sched.Status.LastRunTime, now):
 		fmt.Printf("Matching machines (%d) -- due, but will be SKIPPED: this run is more than startingDeadlineSeconds (%ds) late:\n", len(matches), sched.Spec.StartingDeadlineSeconds)
-	case sched.Spec.Due(sched.Status.LastRunTime, now):
+	case sched.Due(sched.Status.LastRunTime, now):
 		fmt.Printf("Matching machines (%d) -- due now, the next reconcile tick will snapshot these:\n", len(matches))
 	default:
 		fmt.Printf("Matching machines (%d) -- not due yet (next projected run: %s):\n", len(matches), formatNextRun(sched))
