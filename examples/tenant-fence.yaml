@@ -9,7 +9,7 @@ metadata:
 spec:
   tenant: acme
   image:
-    source: oci://ghcr.io/example/acme-web:1.0
+    path: /var/lib/fluxvm/images/acme-web.qcow2
   resources:
     cpu: "2"
     memory: 2Gi
@@ -26,7 +26,7 @@ metadata:
 spec:
   tenant: globex
   image:
-    source: oci://ghcr.io/example/globex-web:1.0
+    path: /var/lib/fluxvm/images/globex-web.qcow2
   resources:
     cpu: "2"
     memory: 2Gi
