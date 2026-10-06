@@ -111,6 +111,33 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 	return appliedVCPUs, appliedMemoryMiB, nil
 }
 
+// reconcileHotplugAfterRestart handles a runtime FluxVM just restarted from
+// Stopped (the Halted -> Running resume). FluxVM boots it from its kept
+// create-time config, so every CPU and DIMM hotplugged before the halt is
+// gone while status.applied still reports them. Take the record's boot size
+// as the real baseline and hotplug back up to max(spec, prior applied); if
+// that fails, the returned applied values are the boot size, so status
+// tells the truth instead of the pre-halt size.
+func (a *Agent) reconcileHotplugAfterRestart(ctx context.Context, m model.Machine, rec *fluxvm.Record) (uint32, uint64, error) {
+	bootVCPUs, bootMemoryMiB := rec.Request.VCPUs, rec.Request.MemoryMiB
+	if bootVCPUs == 0 || bootMemoryMiB == 0 {
+		return a.reconcileHotplug(ctx, m, rec, false)
+	}
+	size, err := hotplugpersist.Boot(m.Spec.Resources, m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB)
+	if err != nil {
+		return a.reconcileHotplug(ctx, m, rec, false)
+	}
+	if bootVCPUs >= size.VCPUs && bootMemoryMiB >= size.MemoryMiB {
+		return bootVCPUs, bootMemoryMiB, nil
+	}
+	a.Log.Info("restarted runtime came up at its boot size; re-applying hotplugged resources",
+		"machine", m.Metadata.Name, "namespace", m.Namespace(),
+		"bootVCPUs", bootVCPUs, "bootMemoryMiB", bootMemoryMiB, "targetVCPUs", size.VCPUs, "targetMemoryMiB", size.MemoryMiB)
+	m.Spec.Resources.CPU, m.Spec.Resources.Memory = size.CPU, size.Memory
+	m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB = bootVCPUs, bootMemoryMiB
+	return a.reconcileHotplug(ctx, m, rec, false)
+}
+
 // quotaBlocksResize reports whether m's namespace's MachineQuota (if any)
 // is already exceeded once m's own footprint is counted at
 // (targetVCPUs, targetMemoryMiB) -- i.e. whether kairon-node should refuse

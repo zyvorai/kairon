@@ -357,6 +357,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		return a.patchMachineStatusIfChanged(ctx, m, status)
 	}
 	freshlyCreated := rec == nil
+	restarted := false
 	switch {
 	case freshlyCreated && m.Metadata.Annotations[model.AnnotationForkFrom] != "":
 		rec, err = a.forkRuntime(ctx, m)
@@ -425,6 +426,7 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
+		restarted = true
 	}
 	// Prune whatever CSI volume this Machine had staged/published *before*
 	// this tick -- using m.Status, not the not-yet-committed status below
@@ -447,7 +449,16 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	status.VolumePublishPath = volStatus.PublishPath
 	status.VolumeHandle = volStatus.VolumeID
 	status.VolumeDriver = volStatus.Driver
-	appliedVCPUs, appliedMemoryMiB, hotplugErr := a.reconcileHotplug(ctx, m, rec, freshlyCreated)
+	var (
+		appliedVCPUs     uint32
+		appliedMemoryMiB uint64
+		hotplugErr       error
+	)
+	if restarted {
+		appliedVCPUs, appliedMemoryMiB, hotplugErr = a.reconcileHotplugAfterRestart(ctx, m, rec)
+	} else {
+		appliedVCPUs, appliedMemoryMiB, hotplugErr = a.reconcileHotplug(ctx, m, rec, freshlyCreated)
+	}
 	status.AppliedVCPUs = appliedVCPUs
 	status.AppliedMemoryMiB = appliedMemoryMiB
 	if hotplugErr != nil {

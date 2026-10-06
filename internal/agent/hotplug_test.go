@@ -336,3 +336,77 @@ func TestReconcileMachineEndToEndTracksAppliedResourcesAndHotplugs(t *testing.T)
 		t.Fatalf("expected status to record the new hotplugged totals, got %+v", patchedStatus)
 	}
 }
+
+func restartedRecord(vcpus uint32, memMiB uint64) *fluxvm.Record {
+	rec := &fluxvm.Record{UUID: "vm-1"}
+	rec.Request.VCPUs, rec.Request.MemoryMiB = vcpus, memMiB
+	return rec
+}
+
+func TestReconcileHotplugAfterRestartReappliesPriorSize(t *testing.T) {
+	var cpuBody, memBody map[string]any
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/hotplug/cpu":
+			_ = json.NewDecoder(r.Body).Decode(&cpuBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"vcpus": 4})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/hotplug/memory":
+			_ = json.NewDecoder(r.Body).Decode(&memBody)
+			_ = json.NewEncoder(w).Encode(map[string]any{"memory_mib": 4096})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// spec was never persisted (no annotation): prior applied 4/4096 is larger.
+	m := hotplugMachine("2", "2Gi", 4, 4096)
+	vcpus, memMiB, err := a.reconcileHotplugAfterRestart(context.Background(), m, restartedRecord(2, 2048))
+	if err != nil {
+		t.Fatalf("reconcileHotplugAfterRestart: %v", err)
+	}
+	if vcpus != 4 || memMiB != 4096 {
+		t.Fatalf("got vcpus=%d memMiB=%d, want 4/4096", vcpus, memMiB)
+	}
+	if cpuBody["add_vcpus"] != float64(2) || memBody["add_memory_mib"] != float64(2048) {
+		t.Fatalf("expected deltas from the boot size, got cpu=%v mem=%v", cpuBody, memBody)
+	}
+}
+
+func TestReconcileHotplugAfterRestartReportsBootSizeOnFailure(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"not enough hotplug headroom"}`, http.StatusBadRequest)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := hotplugMachine("4", "4Gi", 4, 4096)
+	vcpus, memMiB, err := a.reconcileHotplugAfterRestart(context.Background(), m, restartedRecord(2, 2048))
+	if err == nil {
+		t.Fatal("expected a hotplug error")
+	}
+	if vcpus != 2 || memMiB != 2048 {
+		t.Fatalf("status must report the real boot size after a failed re-hotplug, got vcpus=%d memMiB=%d", vcpus, memMiB)
+	}
+}
+
+func TestReconcileHotplugAfterRestartAtFullSizeDoesNothing(t *testing.T) {
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("FluxVM should not be called, got %s %s", r.Method, r.URL.Path)
+	}))
+	defer fs.Close()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	m := hotplugMachine("4", "4Gi", 4, 4096)
+	vcpus, memMiB, err := a.reconcileHotplugAfterRestart(context.Background(), m, restartedRecord(4, 4096))
+	if err != nil || vcpus != 4 || memMiB != 4096 {
+		t.Fatalf("got vcpus=%d memMiB=%d err=%v, want 4/4096", vcpus, memMiB, err)
+	}
+}
