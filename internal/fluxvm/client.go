@@ -417,7 +417,11 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 		if err != nil {
 			return CreateRequest{}, fmt.Errorf("spec.resources.maxMemory: %w", err)
 		}
-		maxMemoryMiB = &v
+		// QEMU refuses maxmem equal to the boot size once DIMM slots are
+		// configured. At or below Memory, let FluxVM pick its default.
+		if v > mem {
+			maxMemoryMiB = &v
+		}
 	}
 	backend := m.Spec.Runtime.Backend
 	if backend == "" || backend == "auto" {

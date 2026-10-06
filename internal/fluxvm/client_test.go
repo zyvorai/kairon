@@ -145,6 +145,37 @@ func TestCreateOmitsMaxCPUMaxMemoryWhenUnset(t *testing.T) {
 	}
 }
 
+func TestCreateOmitsMaxMemoryAtOrBelowBootMemory(t *testing.T) {
+	var got CreateRequest
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(Record{UUID: "u1", Status: "Running"})
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	for _, maxMem := range []string{"2Gi", "1Gi"} {
+		got = CreateRequest{}
+		m := model.Machine{
+			Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
+			Spec: model.MachineSpec{
+				Image:     model.ImageSpec{Path: "/images/db.qcow2"},
+				Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi", MaxCPU: "2", MaxMemory: maxMem},
+				Runtime:   model.RuntimeSpec{Backend: "qemu"},
+			},
+		}
+		if _, err := c.Create(context.Background(), m, "qemu"); err != nil {
+			t.Fatal(err)
+		}
+		if got.MaxMemoryMiB != nil {
+			t.Fatalf("maxMemory=%s: expected max_memory_mib unset, got %d", maxMem, *got.MaxMemoryMiB)
+		}
+		if got.MaxVCPUs == nil || *got.MaxVCPUs != 2 {
+			t.Fatalf("maxMemory=%s: expected max_vcpus=2, got %+v", maxMem, got.MaxVCPUs)
+		}
+	}
+}
+
 func TestCreateRejectsInvalidMaxCPUMaxMemory(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("expected the request to be rejected before it ever reached FluxVM")

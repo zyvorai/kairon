@@ -395,9 +395,8 @@ type ResourceSpec struct {
 	// into the VM's boot-time -smp/-m arguments (maxcpus=/maxmem=) and
 	// can't be changed on an already-running Machine at all. Same string
 	// quantity format as CPU/Memory. FluxVM silently clamps MaxCPU up to
-	// at least CPU if set too low (never an error); setting MaxMemory
-	// below Memory is FluxVM/QEMU's own error to raise, not something
-	// Kairon validates first.
+	// at least CPU if set too low (never an error). A MaxMemory at or
+	// below Memory is not sent, so FluxVM uses its default headroom.
 	MaxCPU    string `json:"maxCpu,omitempty"`
 	MaxMemory string `json:"maxMemory,omitempty"`
 	// Hugepages, NUMANode, and CPUSet are direct, opt-in passthroughs to
