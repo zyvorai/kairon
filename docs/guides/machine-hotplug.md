@@ -81,12 +81,13 @@ by the amount FluxVM reports actually landed.
   retried automatically next tick (it won't succeed until the request is
   lowered back within headroom, or the Machine is stopped and recreated
   with a larger `maxCpu`/`maxMemory`).
-- **Every hotplugged resource is lost across a stop/start cycle.** Neither
-  hotplugged vCPUs nor hotplugged memory are part of the VM's boot-time
-  `-smp`/`-m` arguments, so a cold migration, a manual stop/start, or any
-  other Machine re-realization resets `status.applied*` back down to plain
-  `spec.resources` -- this is expected, not a bug, and mirrors real QEMU
-  behavior (see FluxVM's own hotplug docs).
+- **A stop/start keeps the hotplugged size; a Halted resume does not.**
+  `Stopped` -> `Running` and cold migration recreate the VM at the realized
+  size (see [Stop/start keeps the realized size](#stopstart-keeps-the-realized-size)).
+  `Halted` -> `Running` reuses FluxVM's kept boot config from the last
+  create, so CPU and memory hotplugged after that create are lost, and
+  `status.applied*` can overstate the real size until the next full
+  stop/start. Machines halted by [preemption](preemption.md) hit this.
 - QEMU-only, since that's the only FluxVM backend with hotplug support.
 
 ## Disk hotplug: `spec.disks`
@@ -176,3 +177,11 @@ Set `kairon.zyvor.dev/hotplug-persist: "true"` to also write that size
 back into `spec.resources`. The write only raises CPU or memory. Without
 the annotation, spec stays at the GitOps value and only the next boot
 uses the realized size.
+
+Lowering `spec.resources` does not shrink the next boot either: it is
+still max(spec, applied). When the boot memory reaches `maxMemory`,
+kairon-node omits `max_memory_mib` and FluxVM picks its default headroom,
+because QEMU refuses to start with DIMM slots and `maxmem` equal to the
+boot size. Verified live on 2026-10-06: a 1 vCPU / 1Gi Machine hotplugged
+to 2 / 2Gi (`maxCpu: "2"`, `maxMemory: 2Gi`) restarted with
+`-smp cpus=2` and `-m 2048M`.

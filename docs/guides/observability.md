@@ -15,8 +15,8 @@ not a duplicate of it.
 
 | Component | Port | New in this pass | Already existed |
 |---|---|---|---|
-| `kairon-controller` | `controller.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_webhook_decisions_total` (only if `webhook.enabled`), `kairon_apiserver_request_duration_seconds` | `kairon_migration_phase_count`, `kairon_migration_phase_age_seconds`, `kairon_migration_completed_total`, `kairon_migration_transfer_duration_seconds`, `kairon_migration_cutover_downtime_seconds`, `kairon_migration_dataplane_encrypted` |
-| `kairon-node` | `node.healthPort` (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_apiserver_request_duration_seconds` | (none -- `internal/health.Server.Metrics` existed but was never wired to anything, so `/metrics` 404'd) |
+| `kairon-controller` | `controller.healthPort`, default 32301 (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_webhook_decisions_total` (only if `webhook.enabled`), `kairon_apiserver_request_duration_seconds` | `kairon_migration_phase_count`, `kairon_migration_phase_age_seconds`, `kairon_migration_completed_total`, `kairon_migration_transfer_duration_seconds`, `kairon_migration_cutover_downtime_seconds`, `kairon_migration_dataplane_encrypted` |
+| `kairon-node` | `node.healthPort` , default 32302 (`/metrics`) | `kairon_reconcile_duration_seconds`, `kairon_reconcile_errors_total`, `kairon_reconcile_item_errors_total`, `kairon_apiserver_request_duration_seconds` | (none -- `internal/health.Server.Metrics` existed but was never wired to anything, so `/metrics` 404'd) |
 | `kairon-ui` | its own listen port (`GET /metrics`, unauthenticated -- see `SECURITY.md`) | `kairon_ui_request_duration_seconds`, `kairon_apiserver_request_duration_seconds` | (none -- no health/metrics endpoint of any kind existed) |
 
 `kairon_apiserver_request_duration_seconds` is the one metric all three

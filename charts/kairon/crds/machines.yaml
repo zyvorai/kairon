@@ -331,12 +331,13 @@ spec:
               tenant:
                 type: string
                 description: >-
-                  Not read or enforced anywhere in kairon -- no admission
-                  check, no controller logic, no kaironctl flag, no
-                  dashboard display. Purely free-form metadata. Kubernetes
-                  Namespace is kairon's one real multi-tenancy boundary
-                  today; see docs/guides/machine-quotas.md's "Real limits
-                  today" section.
+                  Optional tenant name (DNS-1123 label). With the admission
+                  webhook on, a set tenant cannot be renamed or cleared.
+                  Annotation kairon.zyvor.dev/tenant-fence=true makes it an
+                  east-west deny against other tenants' observed guest
+                  addresses in the same namespace; see
+                  docs/guides/tenant-fence.md. It is not a quota or RBAC
+                  boundary: Kubernetes Namespace still is.
               ttlSeconds:
                 type: integer
                 format: int64

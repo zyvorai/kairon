@@ -288,19 +288,19 @@ issues, reusing the `patch` verb the ClusterRole already grants kairon-ui
 on `machines` for power actions (no new RBAC). Any whole number is
 accepted, including negative, same as the CLI.
 
-**This is not preemption.** A high-`priority` Machine created after a
-lower-`priority` one is already running never evicts, migrates, or
-otherwise disturbs it — `priority` only ever orders Machines that are
-*already* competing to be scheduled in the same tick, not Machines that
-already won a previous tick. It also never changes *which* eligible node a
-Machine lands on — that's still this page's own load/affinity/topology-spread
-scoring, untouched. If you need a busy fleet to actively make room for a
-new high-priority Machine by evicting a running lower-priority one, that's
-real preemption — a materially riskier mechanism (choosing what to kill,
-draining it cleanly, handling the case where nothing suitable exists to
-evict) this project doesn't implement yet; this is a smaller, safer first
-cut that solves the much more common "a burst of new Machines exceeds
-capacity, who goes first" problem without it.
+**By default this is not preemption.** A high-`priority` Machine created
+after a lower-`priority` one is already running never evicts, migrates, or
+otherwise disturbs it — `priority` only orders Machines that are *already*
+competing to be scheduled in the same tick. It also never changes *which*
+eligible node a Machine lands on — that's still this page's own
+load/affinity/topology-spread scoring, untouched.
+
+Preemption is opt-in on both sides: a pending Machine with
+`kairon.zyvor.dev/preempt=true` that cannot be placed may halt one
+same-namespace, lower-priority Machine annotated
+`kairon.zyvor.dev/preemption-policy=Halt`, and the victim resumes once the
+preemptor is gone. Nothing is evicted or migrated. See
+[`preemption.md`](preemption.md).
 
 ## Real limits today
 

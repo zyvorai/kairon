@@ -16,13 +16,13 @@ Machine competing for them on one node is a real capacity-allocation
 problem, and Kairon's scheduler used to do pure Machine-*count*
 bin-packing with no notion of CPU capacity at all. This closes that gap.
 
-## Prerequisites: assert which CPUs are pinnable
+## Prerequisites: which CPUs are pinnable
 
-Kairon has no way to independently discover which host CPUs are safe to
-exclusively hand to a Machine -- an operator must assert this via a node
-label, the same "operator asserts a fact Kairon can't otherwise know"
-pattern `kairon.zyvor.dev/storage-domain`/`network-domain`/`vfio-devices`
-already use:
+The node label `kairon.zyvor.dev/pinnable-cpus` names the host CPUs a
+Machine may own. Either an operator sets it, or kairon-node discovers it
+(see [Discovered set](#discovered-set) below). An operator label always
+wins; discovery never overwrites it. To set it by hand, the same pattern
+`kairon.zyvor.dev/storage-domain`/`network-domain`/`vfio-devices` use:
 
 ```bash
 kubectl label node worker-1 kairon.zyvor.dev/pinnable-cpus="2-15"
@@ -34,15 +34,13 @@ is limited to 63 characters. Start from
 `cat /sys/fs/cgroup/cpuset.cpus.effective`, replace `,` with `_`, after excluding
 whatever cores you want reserved for the OS, `kairon-node` itself, and any
 kubelet-managed (Guaranteed-QoS) Pods already running real workloads on
-that node. **This is a real, deliberate design choice**: rather than
-Kairon reading kubelet's own internal, undocumented, version-dependent
-`cpu_manager_state` file (a known but fragile, unsupported community
-pattern with no stability guarantee), the operator is the one source of
-truth for which cores are actually safe to hand out -- the same posture
-already established for storage/network domain compatibility and VFIO
-allowlisting. **A node with no `pinnable-cpus` label has zero pinnable
-CPUs -- fail-closed**, the same posture an empty `KAIRON_VFIO_ALLOWLIST`
-already has.
+that node. A hand-set label is not checked against kubelet: if it includes
+a core kubelet later grants exclusively to a Pod, nothing detects the
+collision. Discovery reads kubelet's `cpu_manager_state`, which is
+kubelet-internal and not a stable API, so it refuses rather than guesses
+when the file is missing or unexpected. **A node with no `pinnable-cpus`
+label has zero pinnable CPUs -- fail-closed**, the same posture an empty
+`KAIRON_VFIO_ALLOWLIST` already has.
 
 ## Requesting real pinning
 
@@ -118,5 +116,22 @@ Discovery refuses, and publishes no label, when:
 - `--reserved-cpus` (`KAIRON_RESERVED_CPUS`) is empty. kubelet's own reserved CPUs are not in `cpu_manager_state`, so kairon-node cannot infer them. Set it to at least kubelet's `reservedSystemCPUs`.
 - `cpu_manager_state` cannot be read or parsed (`--cpu-manager-state`, default `/var/lib/kubelet/cpu_manager_state`). kubelet writes it `0600 root`; the systemd unit runs kairon-node as `kairon`, so grant read access or point the flag at a readable copy.
 - The online set or any cpuset does not parse.
+- The result does not fit the 63-character label limit.
 
 A refusal is logged once per change, not every reconcile.
+
+Under kubelet's `none` policy there are no exclusive pod CPUs, so every
+online CPU outside `--reserved-cpus` is published, including cores that
+ordinary Pods also run on. Reserve generously on nodes that also run Pods.
+
+To enable it on a systemd host (`scripts/deploy-remote.sh` layout), add to
+`/etc/kairon/kairon-node.env` and restart `kairon-node`:
+
+```bash
+KAIRON_RESERVED_CPUS=0-1
+# only if the default path is not readable by the kairon user:
+KAIRON_CPU_MANAGER_STATE=/path/readable/by/kairon/cpu_manager_state
+```
+
+Check the result with
+`kubectl get node NODE -L kairon.zyvor.dev/pinnable-cpus`.

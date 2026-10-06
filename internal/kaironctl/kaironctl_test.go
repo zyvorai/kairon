@@ -2301,9 +2301,9 @@ func TestDescribeMachineWithTenantSetShowsNonEnforcementNote(t *testing.T) {
 	if !strings.Contains(out, `"tenant": "acme-corp"`) {
 		t.Errorf("expected raw JSON dump to include spec.tenant, got:\n%s", out)
 	}
-	want := `note: spec.tenant is set but not enforced by kairon anywhere -- Kubernetes Namespace ("team-a") is kairon's only real multi-tenancy boundary; see docs/guides/machine-quotas.md`
+	want := `note: spec.tenant is an east-west network fence only with kairon.zyvor.dev/tenant-fence=true (off here) -- Kubernetes Namespace ("team-a") is still the quota and RBAC boundary; see docs/guides/tenant-fence.md`
 	if !strings.Contains(out, want) {
-		t.Errorf("expected non-enforcement note, got:\n%s", out)
+		t.Errorf("expected tenant note, got:\n%s", out)
 	}
 }
 

@@ -62,6 +62,11 @@ the multi-host matrix above.
 | VM edge packet capture via kairon-ui | pass | 2026-10-04 | `kaironctl network capture edge-demo --filter icmp -o icmp.pcap` through kairon-ui, the node relay (`KAIRON_NODE_CONSOLE_ADDR=:8092`) and FluxVM: pcap with ICMP echo request and reply; `captures` lists `done` with packet counts; unknown token 404 |
 | VM edge metrics | pass | 2026-10-04 | kairon-node `/metrics` exports `kairon_net_conntrack_restored_total` and `kairon_net_migration_blackhole_ms`; `kairon_net_drops_total` appears on the first drop (unit-tested) |
 | Policy-only edge, netns MAC default | unit tests | 2026-10-04 | Not yet run against a live Machine |
+| Redeploy node+controller keeps ports (`v0.6.0-116-g1b928b9`) | pass | 2026-10-06 | Host `80.79.5.173`. Health: node `:32302`, controller `:32301`, ui `:8082`, console `:8090`; nothing on `:8080` (`krytond`). Needed `kubectl apply -f deploy/rbac.yaml` first: the cluster's ClusterRoles predated `machinebackups` |
+| Tenant fence | pass | 2026-10-06 | Two fenced tenants in one namespace: labels projected, `tenant-fence-<tenant>` groups `Applied` by kairon-node, each denying only the other tenant's IPs (`/32`, `/128`); opt-out deleted the group. Guest IPs were patched into status (no booted guests). Admission checks not run: no webhook on this host |
+| Preemption by Halt | pass | 2026-10-06 | Pending priority-10 Machine halted an opted-in priority-0 Machine (annotations recorded); deleting the preemptor resumed it; no `preemption-policy` meant no halt. Victim was pinned with `spec.nodeName`; node lacks `kairon.zyvor.dev/capable` so the preemptor stayed unschedulable |
+| Hotplug persist across stop/start | pass | 2026-10-06 | Real qemu guest (`node22-agent.qcow2`) 1 vCPU/1Gi, max 2/2Gi: hotplugged to 2/2048, spec lowered to 1/1Gi, Stopped → Running booted `-smp cpus=2` `-m 2048M`; `hotplug-persist=true` raised spec to 2/2048Mi. Found and fixed the `maxmem == memory` boot failure. Halted → Running not covered |
+| Discovered pinnable CPUs | pass | 2026-10-06 | 12 CPUs, kubelet `none` policy, `KAIRON_RESERVED_CPUS=0-1`: refused without reserved CPUs and on the root-only state file; with a readable copy published `2-11`; simulated static entry `4-5` gave `2-3_6-11`; removing the file cleared the label; an operator label was kept. Host restored to discovery off |
 
 ## Migration matrix
 

@@ -238,6 +238,14 @@ always.
 4. If `Machine.spec.network.dataplaneRequired` and attach is unhealthy, Machine
    reconcile errors (policy may still attempt apply independently).
 
+## Tenant fence (`kairon.zyvor.dev/tenant-fence`)
+
+A Machine with `spec.tenant` and `kairon.zyvor.dev/tenant-fence: "true"`
+gets a controller-owned `NetworkSecurityGroup/tenant-fence-<tenant>` that
+denies other tenants' observed guest addresses in the same namespace.
+kairon-node merges that deny list into the policy it posts, without
+replacing user policies. See [`tenant-fence.md`](tenant-fence.md).
+
 ## Opt-in default-deny for unmatched Machines (`node.networkDefaultDeny`)
 
 A Machine matched by zero `MachineNetworkPolicy`/`NetworkSecurityGroup`

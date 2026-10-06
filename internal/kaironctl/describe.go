@@ -473,7 +473,11 @@ func describeMachine(ctx context.Context, kc *kube.Client, ns, name string) {
 	fmt.Println(string(b))
 
 	if m.Spec.Tenant != "" {
-		fmt.Printf("note: spec.tenant is set but not enforced by kairon anywhere -- Kubernetes Namespace (%q) is kairon's only real multi-tenancy boundary; see docs/guides/machine-quotas.md\n", m.Namespace())
+		fence := "off"
+		if m.Metadata.Annotations["kairon.zyvor.dev/tenant-fence"] == "true" {
+			fence = "on"
+		}
+		fmt.Printf("note: spec.tenant is an east-west network fence only with kairon.zyvor.dev/tenant-fence=true (%s here) -- Kubernetes Namespace (%q) is still the quota and RBAC boundary; see docs/guides/tenant-fence.md\n", fence, m.Namespace())
 	}
 }
 

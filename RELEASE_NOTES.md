@@ -9,14 +9,30 @@
 
 - **MCP server for AI agents.** `kaironctl mcp serve` speaks the Model Context Protocol over stdio, so Hermes Agent and other MCP clients can list and inspect Machines, network policies and VM-edge data (effective policy, stats, flows, drops, captures). `--allow-write` adds `set_power_state`, `create_snapshot` and `network_capture`; without it those tools are neither listed nor callable. No new dependencies. See `docs/guides/hermes-mcp.md` and `.hermes/config.example.yaml`.
 
+- **Tenant fence.** `spec.tenant` plus `kairon.zyvor.dev/tenant-fence=true` makes the controller own `NetworkSecurityGroup/tenant-fence-<tenant>`, denying other tenants' observed guest addresses (`/32`, `/128`) in the same namespace; kairon-node merges the deny list into the policy it posts without replacing user policies. Admission rejects a malformed, renamed or cleared tenant. Not a VRF. The controller now needs `create`/`delete` on `networksecuritygroups`: re-apply `deploy/rbac.yaml` on upgrade. See `docs/guides/tenant-fence.md`.
+- **Preemption by Halt.** A pending `kairon.zyvor.dev/preempt=true` Machine that cannot be placed halts one same-namespace, strictly lower-priority Machine annotated `kairon.zyvor.dev/preemption-policy=Halt` per tick, honoring MachineDisruptionBudgets and in-flight migrations, and resumes it when the preemptor is gone. `Pause` is rejected as a policy. See `docs/guides/preemption.md`.
+- **Hotplug survives stop/start.** The next FluxVM create uses max(`spec.resources`, `status.applied*`), clamped to `maxCpu`/`maxMemory`. `kairon.zyvor.dev/hotplug-persist=true` also writes the realized size back into spec (raise only). A Halted resume still loses hotplugged resources.
+- **Discovered pinnable CPUs.** kairon-node can publish `kairon.zyvor.dev/pinnable-cpus` as online CPUs minus `--reserved-cpus` minus kubelet's exclusive pod CPUs, marked `pinnable-cpus-source=discovered`. Off until `--reserved-cpus` (`KAIRON_RESERVED_CPUS`) is set; `--cpu-manager-state` (`KAIRON_CPU_MANAGER_STATE`) picks the state file. Any unreadable or unparseable input refuses and clears only a discovered label; an operator label is never overwritten.
+
 ## Changed
 
 - **Netns Machines no longer need `spec.network.mac`.** One is generated (`52:54:00:` plus an FNV-1a hash of namespace/name), stable across restarts and migrations.
+- **kairon-controller health port is `:32301`, not `:8080`.** Changed in the binary default, systemd unit, `deploy/controller.yaml`, Helm `controller.healthPort` and `deploy-remote.sh`. Update probes or scrape configs that hard-code `:8080`.
+- **`pinnable-cpus` label value joins entries with `_`** (`2-3_6-11`). A comma is illegal in a label value, so the old documented `2,3,4-8` form was rejected by the API server. Parsing accepts both; values over 63 characters are refused. `kaironctl`'s agent-plane projection emits the same form.
+- **`maxMemory` at or below the boot memory is not sent to FluxVM**, which then uses its default headroom. QEMU refuses `maxmem` equal to the boot size when DIMM slots are configured.
+
+## Fixed
+
+- **A Machine hotplugged to `maxMemory` then restarted never booted** (QEMU: `maximum memory size ... is equal to the initial memory size`). Fixed by the `maxMemory` change above.
+- **`deploy-remote.sh` treated a port held by the kairon service it was about to restart as busy**, so a redeploy moved ports to random values, or failed with `--node-port=N is already in use` after installing binaries but before restarting services. A port held by the same kairon binary now counts as free.
+- **`examples/tenant-fence.yaml`, `preemption.yaml` and `hotplug-persist.yaml` used a string `spec.image.source`**, which the Machine CRD rejects; they now use `spec.image.path`.
+- **`spec.tenant` descriptions** in the CRD and `kaironctl describe` no longer claim the field is never read.
 
 ## Docs
 
 - `docs/ebpf-edge.md` rewritten as the full VM-edge reference: example, fields, name matching, reconcile, status, drop reasons, migration, troubleshooting and limits.
 - Machine networking and network-policy guides, CLI reference and compatibility matrix updated for the VM edge. Netns Machines get a generated MAC when `spec.network.mac` is omitted.
+- New guides `docs/guides/tenant-fence.md` and `docs/guides/preemption.md`; hotplug, halt, placement, CPU-pinning, quotas, getting-started, `STATUS.md` and `WHAT_SHIPS.md` updated for the features above and the new controller port.
 
 # Kairon v0.6.0
 

@@ -51,7 +51,13 @@ same way they already treat `Stopped`).
   `spec.cloudInit`/`spec.network.forwards` already carry for an
   already-running Machine (see
   [`docs/architecture.md`](../architecture.md#day-2-operations-on-a-running-machine)),
-  not a new kind of gap.
+  not a new kind of gap. The same applies to hotplugged CPU and memory:
+  they are lost on resume, and `status.applied*` can overstate them until
+  a full stop/start (see [`machine-hotplug.md`](machine-hotplug.md)).
+- **Preemption uses Halt.** A Machine annotated
+  `kairon.zyvor.dev/preemption-policy=Halt` can be halted by a
+  higher-priority pending Machine and is set back to `Running` when the
+  preemptor goes away (see [`preemption.md`](preemption.md)).
 - **Only a single-hop resume back to `Running` is supported.** Going
   straight from `Halted` to `Paused` isn't handled directly -- FluxVM's
   own `Pause` requires the VM to already be running, so set

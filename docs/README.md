@@ -58,14 +58,16 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`guides/machine-pools.md`](guides/machine-pools.md) | `MachinePool` / `MachineClaim`: warm, pre-booted Machines claimed in one reconcile tick |
 | [`guides/machine-instance-types.md`](guides/machine-instance-types.md) | `MachineInstanceType`: a reusable named CPU/memory shape resolved into `spec.resources` once |
 | [`guides/machine-cpu-numa.md`](guides/machine-cpu-numa.md) | `spec.resources.numaNode`/`.cpuSet`/`.hugepages`: qemu-only NUMA/hugepage passthroughs, and what they don't guarantee (no real host-core pinning) |
-| [`guides/machine-cpu-pinning.md`](guides/machine-cpu-pinning.md) | `spec.resources.cpuPinning`: real exclusive host-core allocation, and the operator-asserted `pinnable-cpus` node label it depends on |
+| [`guides/machine-cpu-pinning.md`](guides/machine-cpu-pinning.md) | `spec.resources.cpuPinning`: real exclusive host-core allocation, and the `pinnable-cpus` node label it depends on (operator-set or discovered by kairon-node) |
 | [`guides/machine-windows-guests.md`](guides/machine-windows-guests.md) | What Windows guest support covers today (legacy-BIOS + cloudbase-init, and now UEFI Secure Boot/vTPM for Windows 11 given a node-configured OVMF vars template) |
 | [`guides/migration-policies.md`](guides/migration-policies.md) | `MigrationPolicy`: selector-scoped migration bandwidth defaulting and concurrency caps |
 | [`guides/machine-snapshot-quiesce.md`](guides/machine-snapshot-quiesce.md) | Real guest `fsfreeze`/`fsthaw` around `MachineSnapshot`, and the controller↔node coordination protocol behind it |
 | [`guides/machine-backup.md`](guides/machine-backup.md) | Full disk backups with guest fsfreeze (`MachineBackup`) through FluxVM or Atlas S3, and in-place restore (`MachineBackupRestore`) |
 | [`guides/machine-snapshot-restore.md`](guides/machine-snapshot-restore.md) | Restoring a `MachineSnapshot` volume into a new `PersistentVolumeClaim` via the standard CSI `dataSource` flow |
 | [`guides/machine-pause-resume.md`](guides/machine-pause-resume.md) · [`guides/machine-halt.md`](guides/machine-halt.md) | `spec.powerState: Paused`/`Halted`: suspending guest CPUs vs. powering off the VMM process while FluxVM keeps its record |
-| [`guides/machine-hotplug.md`](guides/machine-hotplug.md) | Growing `spec.resources.cpu`/`.memory`, and hot-attaching PVC disks (`spec.disks`) and extra NICs (`spec.network.extraInterfaces`) on a `Running` Machine |
+| [`guides/machine-hotplug.md`](guides/machine-hotplug.md) | Growing `spec.resources.cpu`/`.memory` (kept across stop/start, `hotplug-persist`), and hot-attaching PVC disks (`spec.disks`) and extra NICs (`spec.network.extraInterfaces`) on a `Running` Machine |
+| [`guides/preemption.md`](guides/preemption.md) | Opt-in preemption: a pending higher-priority Machine halts an opted-in lower-priority one, which resumes when the preemptor is gone |
+| [`guides/tenant-fence.md`](guides/tenant-fence.md) | `spec.tenant` + `tenant-fence`: east-west deny of other tenants' observed guest addresses in a namespace |
 | [`guides/machine-resource-limits.md`](guides/machine-resource-limits.md) | `spec.resources.limits`: real, kernel-enforced cgroup v2 caps, and `status.resourceUsage` live usage |
 | [`guides/machine-placement.md`](guides/machine-placement.md) | Scheduler internals: affinity/anti-affinity, weighted soft scoring, `topologySpreadConstraints`, DRA topology hints |
 | [`guides/machine-sriov.md`](guides/machine-sriov.md) | SR-IOV NIC passthrough by reusing the existing GPU/VFIO DRA mechanism — why Multus doesn't apply to Kairon Machines at all |

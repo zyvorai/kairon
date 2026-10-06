@@ -193,9 +193,9 @@ resource-quantity admission" section for the full detail.
 
 ## Real limits today (v1 of this feature)
 
-- Scoped by Kubernetes namespace, not `Machine.spec.tenant` (that field
-  exists in the CRD but isn't read anywhere -- namespace is the only real
-  multi-tenancy boundary Kairon uses today).
+- Scoped by Kubernetes namespace, not `Machine.spec.tenant`. That field
+  only drives the opt-in east-west [tenant fence](tenant-fence.md);
+  namespace is still the quota and RBAC boundary.
 - The admission webhook above is opt-in; with it off (the default),
   nothing stops a namespace from having far more `Machine` objects created,
   or an existing one hotplugged further, than its quota allows -- creates

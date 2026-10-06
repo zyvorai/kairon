@@ -27,3 +27,21 @@ spec:
 ```
 
 See `examples/tenant-fence.yaml`.
+
+## Requirements
+
+- kairon-controller and kairon-node from this release. The controller builds the group; kairon-node merges it.
+- Controller RBAC with `create` and `delete` on `networksecuritygroups`. On an upgrade, re-apply `deploy/rbac.yaml` (or upgrade the Helm chart) before the new controller starts, or group creation fails with 403.
+- The admission webhook (`webhook.enabled`) for the tenant-name, rename, clear and selector checks. Without it the fence still works, but nothing stops a tenant from being renamed.
+
+## Inspect
+
+```bash
+kubectl -n NS get machines -L kairon.zyvor.dev/tenant
+kubectl -n NS get networksecuritygroups -l kairon.zyvor.dev/tenant-fence=managed \
+  -o custom-columns=NAME:.metadata.name,DENY:.spec.policy.denyCidrs,PHASE:.status.phase
+```
+
+`PHASE: Applied` with `status.appliedOn` set means kairon-node pushed the group to FluxVM. An empty `denyCidrs` is normal until the other tenants' Machines report a guest IP.
+
+Verified on a live k3s host on 2026-10-06: two fenced tenants each got a group that denied only the other tenant's addresses (`/32` and `/128`), and removing the annotation from the last opted-in Machine deleted that tenant's group.
