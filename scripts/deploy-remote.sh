@@ -734,8 +734,22 @@ info() { printf '[*] %s\n' "$*"; }
 ok()   { printf '[+] %s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 
+# A port held only by OWNER (the binary this deploy is about to restart) is
+# not in use. ss reports the kernel comm name, truncated to 15 characters.
 port_in_use() {
-  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE ":$1\$"
+  local port="$1" owner="${2:-}" listeners
+  listeners="$(ss -ltnp 2>/dev/null | awk -v p=":$port" 'substr($4, length($4) - length(p) + 1) == p')"
+  [[ -n "$listeners" ]] || return 1
+  [[ -n "$owner" ]] || return 0
+  grep -qvF "((\"${owner:0:15}\"," <<<"$listeners"
+}
+
+port_owner() {
+  case "$1" in
+    node|console|migration) echo kairon-node ;;
+    controller) echo kairon-controller ;;
+    ui) echo kairon-ui ;;
+  esac
 }
 
 # Resolves the port to actually use for a health/relay server: if the
@@ -745,7 +759,7 @@ port_in_use() {
 # random free port in the ephemeral range is picked automatically.
 resolve_port() {
   local desired="$1" explicit="$2" name="$3"
-  if ! port_in_use "$desired"; then
+  if ! port_in_use "$desired" "$(port_owner "$name")"; then
     echo "$desired"
     return 0
   fi
