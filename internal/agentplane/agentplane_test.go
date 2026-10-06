@@ -132,7 +132,7 @@ func TestConfidentialGPUImageCPUGateway(t *testing.T) {
 		t.Fatal("unsigned agent image should fail")
 	}
 	label, err := ProjectPinnable("0-3", "0-1")
-	if err != nil || label != "2,3" {
+	if err != nil || label != "2-3" {
 		t.Fatalf("pinnable %q err %v", label, err)
 	}
 	gw, err := BindGateway("agents", []PortForward{{GuestPort: 22, HostPort: 2201}})

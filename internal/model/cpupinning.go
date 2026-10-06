@@ -20,23 +20,23 @@ import (
 // KAIRON_VFIO_ALLOWLIST already has for VFIO passthrough, not "assume
 // every core is free."
 //
-// Value syntax deliberately matches Linux's own cpuset.cpus list format
-// (e.g. "2-15" or "2,3,4-8,20") -- an operator can often paste the output
-// of `cat /sys/fs/cgroup/cpuset.cpus.effective` (minus whatever they want
-// reserved for the OS/kairon-node itself) directly.
+// Value syntax is Linux's cpuset.cpus list format with "_" between
+// entries (e.g. "2-15" or "2-3_6-11"): a label value cannot contain ",".
+// It must also fit the 63-character label limit; see FormatCPULabel.
 const PinnableCPUsLabel = "kairon.zyvor.dev/pinnable-cpus"
 
-// ParseCPUList parses a Linux cpuset.cpus-style list ("2-15" or
-// "2,3,4-8,20") into an explicit, deduplicated, ascending slice of CPU
-// numbers. An empty string returns an empty (not nil) slice, matching
-// "asserted, but pins nothing" rather than an error.
+// ParseCPUList parses a Linux cpuset.cpus-style list ("2-15",
+// "2,3,4-8,20", or the label form "2_3_4-8_20") into an explicit,
+// deduplicated, ascending slice of CPU numbers. An empty string returns
+// an empty (not nil) slice, matching "asserted, but pins nothing" rather
+// than an error.
 func ParseCPUList(raw string) ([]uint32, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return []uint32{}, nil
 	}
 	seen := map[uint32]struct{}{}
-	for _, part := range strings.Split(raw, ",") {
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '_' }) {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -69,5 +69,37 @@ func ParseCPUList(raw string) ([]uint32, error) {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// FormatCPULabel renders an ascending CPU list as a PinnableCPUsLabel
+// value: ranges joined by "_". It errors when the result exceeds the
+// 63-character label limit.
+func FormatCPULabel(cpus []uint32) (string, error) {
+	if len(cpus) == 0 {
+		return "", nil
+	}
+	var parts []string
+	start, prev := cpus[0], cpus[0]
+	flush := func() {
+		if start == prev {
+			parts = append(parts, strconv.FormatUint(uint64(start), 10))
+			return
+		}
+		parts = append(parts, strconv.FormatUint(uint64(start), 10)+"-"+strconv.FormatUint(uint64(prev), 10))
+	}
+	for _, cpu := range cpus[1:] {
+		if cpu == prev+1 {
+			prev = cpu
+			continue
+		}
+		flush()
+		start, prev = cpu, cpu
+	}
+	flush()
+	out := strings.Join(parts, "_")
+	if len(out) > 63 {
+		return "", fmt.Errorf("cpu list %q exceeds the 63-character label limit", out)
+	}
 	return out, nil
 }

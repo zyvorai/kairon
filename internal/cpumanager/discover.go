@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
@@ -93,7 +92,11 @@ func Discover(in Input) (Result, error) {
 		free = append(free, cpu)
 	}
 	sort.Slice(free, func(i, j int) bool { return free[i] < free[j] })
-	return Result{CPUs: free, List: format(free)}, nil
+	list, err := model.FormatCPULabel(free)
+	if err != nil {
+		return Result{Refused: err.Error()}, nil
+	}
+	return Result{CPUs: free, List: list}, nil
 }
 
 // LabelPatch publishes or clears the pinnable label. owned is true when
@@ -134,34 +137,4 @@ func add(dst map[uint32]struct{}, raw string) error {
 		dst[c] = struct{}{}
 	}
 	return nil
-}
-
-func format(cpus []uint32) string {
-	if len(cpus) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	start, prev := cpus[0], cpus[0]
-	flush := func(end uint32) {
-		if b.Len() > 0 {
-			b.WriteByte(',')
-		}
-		if start == end {
-			b.WriteString(strconv.FormatUint(uint64(start), 10))
-			return
-		}
-		b.WriteString(strconv.FormatUint(uint64(start), 10))
-		b.WriteByte('-')
-		b.WriteString(strconv.FormatUint(uint64(end), 10))
-	}
-	for _, cpu := range cpus[1:] {
-		if cpu == prev+1 {
-			prev = cpu
-			continue
-		}
-		flush(prev)
-		start, prev = cpu, cpu
-	}
-	flush(prev)
-	return b.String()
 }

@@ -37,6 +37,18 @@ func TestDiscoverStaticSubtractsExclusiveAndReservedNotDefault(t *testing.T) {
 	}
 }
 
+func TestDiscoverNonContiguousIsLabelSafe(t *testing.T) {
+	in := writeInputs(t, "0-11\n", `{"policyName":"static","defaultCpuSet":"0-3,6-11","entries":{"p":{"c":"4-5"}}}`)
+	in.Reserved = "0-1"
+	got, err := Discover(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Refused != "" || got.List != "2-3_6-11" {
+		t.Fatalf("got %+v, want 2-3_6-11", got)
+	}
+}
+
 func TestDiscoverNonePolicyKeepsReservedOff(t *testing.T) {
 	in := writeInputs(t, "0-11\n", `{"policyName":"none","defaultCpuSet":"","checksum":1}`)
 	in.Reserved = "0-1"

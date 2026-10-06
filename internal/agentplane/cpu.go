@@ -5,8 +5,6 @@ package agentplane
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	"github.com/zyvorai/kairon/internal/model"
 )
@@ -27,12 +25,12 @@ func ProjectPinnable(effective, reserved string) (string, error) {
 	for _, c := range hold {
 		drop[c] = struct{}{}
 	}
-	var keep []string
+	var keep []uint32
 	for _, c := range all {
 		if _, ok := drop[c]; ok {
 			continue
 		}
-		keep = append(keep, strconv.FormatUint(uint64(c), 10))
+		keep = append(keep, c)
 	}
-	return strings.Join(keep, ","), nil
+	return model.FormatCPULabel(keep)
 }

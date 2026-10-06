@@ -28,9 +28,10 @@ already use:
 kubectl label node worker-1 kairon.zyvor.dev/pinnable-cpus="2-15"
 ```
 
-The value uses Linux's own `cpuset.cpus` list syntax (`"2-15"` or
-`"2,3,4-8,20"`) -- you can often paste the output of
-`cat /sys/fs/cgroup/cpuset.cpus.effective` directly, after excluding
+The value uses Linux's `cpuset.cpus` list syntax with `_` between entries
+(`"2-15"` or `"2_3_4-8_20"`), because a label value cannot contain `,` and
+is limited to 63 characters. Start from
+`cat /sys/fs/cgroup/cpuset.cpus.effective`, replace `,` with `_`, after excluding
 whatever cores you want reserved for the OS, `kairon-node` itself, and any
 kubelet-managed (Guaranteed-QoS) Pods already running real workloads on
 that node. **This is a real, deliberate design choice**: rather than

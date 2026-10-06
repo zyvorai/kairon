@@ -53,7 +53,7 @@ func TestAuditLogAndEvents(t *testing.T) {
 	if events[0].Type != "Warning" || events[0].Involved != "job-1" {
 		t.Fatalf("%#v", events)
 	}
-	up, err := CPULabelUpdate(NodeCPUReport{Node: "n1", Effective: "0-3", Reserved: "0", CurrentLabel: "1,2,3"})
+	up, err := CPULabelUpdate(NodeCPUReport{Node: "n1", Effective: "0-3", Reserved: "0", CurrentLabel: "1-3"})
 	if err != nil || up.Changed {
 		t.Fatalf("%#v %v", up, err)
 	}
