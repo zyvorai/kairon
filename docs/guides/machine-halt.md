@@ -51,9 +51,9 @@ same way they already treat `Stopped`).
   `spec.cloudInit`/`spec.network.forwards` already carry for an
   already-running Machine (see
   [`docs/architecture.md`](../architecture.md#day-2-operations-on-a-running-machine)),
-  not a new kind of gap. The same applies to hotplugged CPU and memory:
-  they are lost on resume, and `status.applied*` can overstate them until
-  a full stop/start (see [`machine-hotplug.md`](machine-hotplug.md)).
+  not a new kind of gap. Hotplugged CPU and memory are the exception:
+  kairon-node hotplugs them back right after the resume (see
+  [`machine-hotplug.md`](machine-hotplug.md)).
 - **Preemption uses Halt.** A Machine annotated
   `kairon.zyvor.dev/preemption-policy=Halt` can be halted by a
   higher-priority pending Machine and is set back to `Running` when the

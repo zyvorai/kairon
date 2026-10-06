@@ -44,6 +44,12 @@ On `main` since v0.6.0, heading for v0.7:
 | **Tenant fence** | `kairon.zyvor.dev/tenant-fence` turns `spec.tenant` into an east-west deny of other tenants' guest addresses in the namespace. [Guide →](docs/guides/tenant-fence.md) |
 | **Preemption by Halt** | An opted-in high-priority Machine that can't be placed halts an opted-in lower-priority one, and it resumes when the preemptor leaves. [Guide →](docs/guides/preemption.md) |
 | **Hotplug survives restart** | A stop/start boots at the hotplugged CPU and memory; `hotplug-persist` writes it back into spec. [Guide →](docs/guides/machine-hotplug.md#stopstart-keeps-the-realized-size) |
+| **Halted resume keeps hotplug** | Resuming a Halted Machine hotplugs its CPU and memory back to the pre-halt size. [Guide →](docs/guides/machine-hotplug.md) |
+| **Claims carry the template** | A `createMachine` pool claim gets the template's resources, kernel, cloud-init, NUMA, security, guest agents, TTL and forwards; anything not carried is listed in `machineWarnings`. [Guide →](docs/guides/machine-sandboxes.md#warm-pools) |
+| **Daily snapshot schedules** | `dailyAt: "02:30"`, stable jitter and `maxAgeSeconds` retention on `MachineSnapshotSchedule`. [Guide →](docs/guides/machine-snapshot-schedules.md) |
+| **CPU-pinning discovery, deployed** | `deploy-remote.sh --reserved-cpus=0-1` or Helm `node.cpuPinning` gives kairon-node kubelet's CPU state, so `pinnable-cpus` is discovered. [Guide →](docs/guides/machine-cpu-pinning.md) |
+| **Approval for agent actions** | Destructive MCP tools wait for a single-use `kaironctl approve`. [Guide →](docs/guides/hermes-mcp.md) |
+| **Stale evacuation** | Opt-in: Machines marked `evacuate=true` are fenced off a node attested dead with `kaironctl node fence`. [Guide →](docs/guides/machine-fencing.md) |
 | **OCI containerDisk** | `spec.image.source.oci` pulls a disk image by digest with streaming per-layer verification. [Guide →](docs/guides/machine-image-import.md) |
 
 ---

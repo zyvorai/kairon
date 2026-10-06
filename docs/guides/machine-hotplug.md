@@ -81,13 +81,15 @@ by the amount FluxVM reports actually landed.
   retried automatically next tick (it won't succeed until the request is
   lowered back within headroom, or the Machine is stopped and recreated
   with a larger `maxCpu`/`maxMemory`).
-- **A stop/start keeps the hotplugged size; a Halted resume does not.**
+- **Stop/start and Halted resume both keep the hotplugged size.**
   `Stopped` -> `Running` and cold migration recreate the VM at the realized
   size (see [Stop/start keeps the realized size](#stopstart-keeps-the-realized-size)).
-  `Halted` -> `Running` reuses FluxVM's kept boot config from the last
-  create, so CPU and memory hotplugged after that create are lost, and
-  `status.applied*` can overstate the real size until the next full
-  stop/start. Machines halted by [preemption](preemption.md) hit this.
+  `Halted` -> `Running` boots from FluxVM's kept create-time config, so
+  kairon-node takes that boot size as the baseline and hotplugs back up to
+  max(`spec.resources`, the pre-halt `status.applied*`) right after the
+  start. If that hotplug fails, `status.applied*` reports the boot size
+  rather than the pre-halt one. Machines halted by
+  [preemption](preemption.md) get their size back the same way.
 - QEMU-only, since that's the only FluxVM backend with hotplug support.
 
 ## Disk hotplug: `spec.disks`
