@@ -1,0 +1,15 @@
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: db
+  annotations:
+    kairon.zyvor.dev/hotplug-persist: "true"
+spec:
+  resources:
+    cpu: "2"
+    memory: 2Gi
+    maxCpu: "8"
+    maxMemory: 16Gi
+  powerState: Running
+  image:
+    source: oci://ghcr.io/example/db:1.0

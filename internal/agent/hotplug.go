@@ -9,6 +9,7 @@ import (
 
 	"github.com/zyvorai/kairon/internal/controller"
 	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/hotplugpersist"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -31,13 +32,15 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 		return m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB, fmt.Errorf("parse spec.resources.memory: %w", err)
 	}
 	if freshlyCreated {
-		// Just realized against FluxVM with exactly these values -- this is
-		// the fresh baseline, not a hotplug event. A VM stop/start cycle
-		// (which also lands here, rec having been nil) loses every
-		// previously hotplugged resource, since none of it is part of the
-		// boot-time -smp/-m args -- so resetting to the plain spec here is
-		// correct, not just convenient.
-		return targetVCPUs, targetMemoryMiB, nil
+		// Create used hotplugpersist.Boot, so the new runtime is already
+		// at max(spec, last applied) rather than the pre-hotplug spec.
+		// Record that boot size. Do not hotplug on a runtime that just
+		// came up at it.
+		size, err := hotplugpersist.Boot(m.Spec.Resources, m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB)
+		if err != nil {
+			return targetVCPUs, targetMemoryMiB, nil
+		}
+		return size.VCPUs, size.MemoryMiB, nil
 	}
 	appliedVCPUs, appliedMemoryMiB = m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB
 	if appliedVCPUs == 0 && appliedMemoryMiB == 0 {
@@ -99,6 +102,11 @@ func (a *Agent) reconcileHotplug(ctx context.Context, m model.Machine, rec *flux
 	} else if targetMemoryMiB < appliedMemoryMiB {
 		a.Log.Warn("spec.resources.memory requests less memory than already hotplugged; shrinking a running Machine is not supported, ignoring",
 			"machine", m.Metadata.Name, "applied", appliedMemoryMiB, "requested", targetMemoryMiB)
+	}
+	if patch := hotplugpersist.SpecPatch(m, appliedVCPUs, appliedMemoryMiB); patch != nil {
+		if err := a.Kube.PatchMachine(ctx, m.Namespace(), m.Metadata.Name, patch); err != nil {
+			return appliedVCPUs, appliedMemoryMiB, fmt.Errorf("persist hotplug into spec.resources: %w", err)
+		}
 	}
 	return appliedVCPUs, appliedMemoryMiB, nil
 }

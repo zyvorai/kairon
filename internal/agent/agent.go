@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/hotplugpersist"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
@@ -357,7 +358,8 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		}
 		a.Log.Info("forked runtime", "machine", m.Metadata.Name, "parent", m.Metadata.Annotations[model.AnnotationForkFrom], "runtimeID", rec.ID())
 	case freshlyCreated && m.Spec.Sandbox != nil:
-		rec, err = a.Flux.CreateSandboxForMachine(ctx, m)
+		boot := withBootResources(m)
+		rec, err = a.Flux.CreateSandboxForMachine(ctx, boot)
 		if err != nil {
 			return err
 		}
@@ -380,7 +382,8 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if err != nil {
 			return err
 		}
-		rec, err = a.Flux.CreateWithVFIO(ctx, m, a.DefaultBackend, vfioDevices, sharedFolders, dataDisks)
+		boot := withBootResources(m)
+		rec, err = a.Flux.CreateWithVFIO(ctx, boot, a.DefaultBackend, vfioDevices, sharedFolders, dataDisks)
 		if err != nil {
 			return err
 		}
@@ -1373,4 +1376,14 @@ func (a *Agent) watchAssigned(ctx context.Context, kick func()) {
 			// brief backoff before re-opening watches
 		}
 	}
+}
+
+func withBootResources(m model.Machine) model.Machine {
+	size, err := hotplugpersist.Boot(m.Spec.Resources, m.Status.AppliedVCPUs, m.Status.AppliedMemoryMiB)
+	if err != nil {
+		return m
+	}
+	m.Spec.Resources.CPU = size.CPU
+	m.Spec.Resources.Memory = size.Memory
+	return m
 }

@@ -165,3 +165,15 @@ or `kaironctl nic add fw lan --bridge br-lan` / `kaironctl nic remove fw lan`
 The MCP tools `machine_disk` and `machine_nic` (write, `--allow-write`) make
 the same spec edits for agents.
 
+## Stop/start keeps the realized size
+
+FluxVM boots from the create request, not from QMP hotplug state. On the
+next create, kairon-node sends max(`spec.resources`, `status.appliedVCPUs` /
+`appliedMemoryMiB`), clamped to `maxCpu` / `maxMemory` when those are set.
+A restart therefore comes back at the size that was actually realized.
+
+Set `kairon.zyvor.dev/hotplug-persist: "true"` to also write that size
+back into `spec.resources`. The write only raises CPU or memory. Without
+the annotation, spec stays at the GitOps value and only the next boot
+uses the realized size.
+
