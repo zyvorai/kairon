@@ -76,6 +76,8 @@ func run() int {
 	livenessLeaseDuration := flag.Duration("liveness-lease-duration", 0, "override nodeliveness.DefaultLeaseDuration (60s) when non-zero")
 	networkDefaultDeny := flag.Bool("network-default-deny", env("KAIRON_NETWORK_DEFAULT_DENY", "false") == "true", "push DefaultAllow: false onto every Machine on this node not currently matched by any MachineNetworkPolicy/NetworkSecurityGroup-derived policy, instead of silently leaving it on FluxVM's native defaultAllow: true. False (the default) is today's unchanged behavior. Global, not per-namespace: enabling this with no policies written yet cuts all VM-to-VM connectivity on this node outright -- see docs/guides/network-policy.md.")
 	atlasRBDPools := flag.String("atlas-rbd-pools", env("KAIRON_ATLAS_RBD_POOLS", ""), "comma-separated Ceph pools this node may boot Atlas rbd-mode volumes from (FluxVM storage=ceph-rbd-in-place, credentials from FluxVM's own config); empty (the default) refuses atlas.mode=rbd -- see docs/guides/machine-storage-atlas.md")
+	reservedCPUs := flag.String("reserved-cpus", env("KAIRON_RESERVED_CPUS", ""), "cpuset kept off the discovered kairon.zyvor.dev/pinnable-cpus label (OS, kubelet, kairon-node), e.g. 0-1; empty (the default) publishes no label -- see docs/guides/machine-cpu-pinning.md")
+	cpuManagerState := flag.String("cpu-manager-state", env("KAIRON_CPU_MANAGER_STATE", "/var/lib/kubelet/cpu_manager_state"), "kubelet cpu_manager_state file; exclusive pod CPUs listed there are kept off the pinnable set")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -165,6 +167,8 @@ func run() int {
 		LivenessLeaseDuration:        *livenessLeaseDuration,
 		NetworkDefaultDeny:           *networkDefaultDeny,
 		AtlasRBDPools:                splitList(*atlasRBDPools),
+		ReservedCPUs:                 *reservedCPUs,
+		CPUManagerState:              *cpuManagerState,
 		Log:                          log,
 		Metrics:                      rec,
 		Tracer:                       oteltrace.FromEnv(),

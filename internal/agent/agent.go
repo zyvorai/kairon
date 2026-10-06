@@ -70,8 +70,10 @@ type Agent struct {
 	SysRoot string
 	// CPUManagerState is kubelet's cpu_manager_state; empty uses the default path.
 	CPUManagerState string
-	// ReservedCPUs is a cpuset list kept off the discovered pinnable set.
+	// ReservedCPUs is the cpuset kept off the discovered pinnable set.
+	// Empty refuses discovery, so no label is published.
 	ReservedCPUs string
+	pin          pinState
 	// AttestCommand is the in-guest command that prints a base64 report
 	// for {kind} and hex {data}; empty uses the go-sev-guest/go-tdx-guest
 	// attest tool.

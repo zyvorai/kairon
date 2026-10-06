@@ -9,31 +9,73 @@ import (
 	"testing"
 )
 
-func TestDiscoverSubtractsKubeletExclusiveAndDefault(t *testing.T) {
+func writeInputs(t *testing.T, online, state string) Input {
+	t.Helper()
 	dir := t.TempDir()
-	online := filepath.Join(dir, "online")
-	state := filepath.Join(dir, "cpu_manager_state")
-	os.WriteFile(online, []byte("0-7\n"), 0o644)
-	os.WriteFile(state, []byte(`{"policyName":"static","defaultCpuSet":"0-1","entries":{"p":{"c":"2-3"}}}`), 0o644)
-	got, err := Discover(Input{OnlinePath: online, StatePath: state})
+	in := Input{OnlinePath: filepath.Join(dir, "online"), StatePath: filepath.Join(dir, "cpu_manager_state")}
+	if err := os.WriteFile(in.OnlinePath, []byte(online), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if state != "" {
+		if err := os.WriteFile(in.StatePath, []byte(state), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return in
+}
+
+func TestDiscoverStaticSubtractsExclusiveAndReservedNotDefault(t *testing.T) {
+	// defaultCpuSet is the shared pool: every CPU not exclusively assigned.
+	in := writeInputs(t, "0-7\n", `{"policyName":"static","defaultCpuSet":"0-1,4-7","entries":{"p":{"c":"2-3"}}}`)
+	in.Reserved = "0-1"
+	got, err := Discover(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Refused != "" || got.List != "4-7" {
-		t.Fatalf("got %+v", got)
+		t.Fatalf("got %+v, want 4-7", got)
+	}
+}
+
+func TestDiscoverNonePolicyKeepsReservedOff(t *testing.T) {
+	in := writeInputs(t, "0-11\n", `{"policyName":"none","defaultCpuSet":"","checksum":1}`)
+	in.Reserved = "0-1"
+	got, err := Discover(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Refused != "" || got.List != "2-11" {
+		t.Fatalf("got %+v, want 2-11", got)
 	}
 }
 
 func TestDiscoverRefusesWithoutProof(t *testing.T) {
-	dir := t.TempDir()
-	online := filepath.Join(dir, "online")
-	os.WriteFile(online, []byte("0-3\n"), 0o644)
-	got, err := Discover(Input{OnlinePath: online, StatePath: filepath.Join(dir, "missing")})
-	if err != nil {
-		t.Fatal(err)
+	cases := map[string]Input{
+		"no reserved": writeInputs(t, "0-3\n", `{"policyName":"none","defaultCpuSet":""}`),
+		"no state": func() Input {
+			in := writeInputs(t, "0-3\n", "")
+			in.Reserved = "0"
+			return in
+		}(),
+		"bad reserved": func() Input {
+			in := writeInputs(t, "0-3\n", `{"policyName":"none","defaultCpuSet":""}`)
+			in.Reserved = "0-x"
+			return in
+		}(),
+		"bad entry": func() Input {
+			in := writeInputs(t, "0-3\n", `{"policyName":"static","defaultCpuSet":"0-1","entries":{"p":{"c":"two"}}}`)
+			in.Reserved = "0"
+			return in
+		}(),
 	}
-	if got.Refused == "" || got.List != "" {
-		t.Fatalf("got %+v, want refused", got)
+	for name, in := range cases {
+		got, err := Discover(in)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Refused == "" || got.List != "" {
+			t.Fatalf("%s: got %+v, want refused", name, got)
+		}
 	}
 }
 

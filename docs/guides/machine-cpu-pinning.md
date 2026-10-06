@@ -110,5 +110,12 @@ into one FluxVM call, never two competing writes.
 
 kairon-node reads `/sys/devices/system/cpu/online` and kubelet `cpu_manager_state`. It publishes `kairon.zyvor.dev/pinnable-cpus` only when it can prove the set, and marks it with `kairon.zyvor.dev/pinnable-cpus-source=discovered`. An operator label without that annotation is left alone. If discovery later fails, only a discovered label is cleared, so a Machine that asks for `cpuPinning` fails closed on a node that cannot prove its cores.
 
-`ReservedCPUs` on the agent subtracts an extra cpuset. When it is empty, kubelet `defaultCpuSet` is the reserved set. Pod exclusive entries are always subtracted.
+The set is online CPUs minus `--reserved-cpus` minus CPUs kubelet assigned exclusively to pods (`entries` in `cpu_manager_state`). `defaultCpuSet` is not subtracted: under the `static` policy it is the shared pool, so subtracting it would leave nothing.
 
+Discovery refuses, and publishes no label, when:
+
+- `--reserved-cpus` (`KAIRON_RESERVED_CPUS`) is empty. kubelet's own reserved CPUs are not in `cpu_manager_state`, so kairon-node cannot infer them. Set it to at least kubelet's `reservedSystemCPUs`.
+- `cpu_manager_state` cannot be read or parsed (`--cpu-manager-state`, default `/var/lib/kubelet/cpu_manager_state`). kubelet writes it `0600 root`; the systemd unit runs kairon-node as `kairon`, so grant read access or point the flag at a readable copy.
+- The online set or any cpuset does not parse.
+
+A refusal is logged once per change, not every reconcile.
