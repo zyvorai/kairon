@@ -162,23 +162,23 @@ type claimPoolRequest struct {
 	MachineName   string `json:"machineName,omitempty"`
 }
 
-// machineSpecFromPoolTemplate builds a best-effort model.MachineSpec from
-// a pool's own Template (FluxVM's raw CreateRequest shape, stored as
-// map[string]any since Kairon never otherwise needs to understand a
-// pool's template contents -- see createPoolRequest's own doc comment).
-// Covers the fields every Machine needs to be meaningfully reconciled
-// (image, cpu/memory, backend) -- deliberately not every possible
-// CreateRequest field (VFIO devices, NUMA/hugepages, cloud-init, etc.);
-// a first cut, same discipline as every other "real, named limit, not a
-// hidden gap" scoping decision in this project.
-func machineSpecFromPoolTemplate(template map[string]any) (model.MachineSpec, error) {
+// machineSpecFromPoolTemplate builds a model.MachineSpec from a pool's own
+// Template (FluxVM's raw CreateRequest shape, stored as map[string]any
+// since Kairon never otherwise needs to understand a pool's template
+// contents -- see createPoolRequest's own doc comment). Every field with a
+// Machine spec equivalent is carried, so a later recreate of the Machine
+// boots the same VM the pool did. Fields that have no safe equivalent
+// come back as warnings instead of being dropped silently: VFIO devices
+// (one device can back only one VM), the raw network map (per-VM MACs),
+// shared folders, data disks and a storage override.
+func machineSpecFromPoolTemplate(template map[string]any) (model.MachineSpec, []string, error) {
 	raw, err := json.Marshal(template)
 	if err != nil {
-		return model.MachineSpec{}, err
+		return model.MachineSpec{}, nil, err
 	}
 	var cr fluxvm.CreateRequest
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return model.MachineSpec{}, err
+		return model.MachineSpec{}, nil, err
 	}
 	backend := cr.Backend
 	if backend == "" {
@@ -192,12 +192,94 @@ func machineSpecFromPoolTemplate(template map[string]any) (model.MachineSpec, er
 	if cr.VCPUs > 0 {
 		cpu = strconv.FormatUint(uint64(cr.VCPUs), 10)
 	}
-	return model.MachineSpec{
-		Image:      model.ImageSpec{Path: cr.Image},
-		Resources:  model.ResourceSpec{CPU: cpu, Memory: memory},
-		Runtime:    model.RuntimeSpec{Backend: backend},
+	spec := model.MachineSpec{
+		Image: model.ImageSpec{Path: cr.Image},
+		Resources: model.ResourceSpec{
+			CPU: cpu, Memory: memory,
+			Hugepages: cr.Hugepages, NUMANode: cr.NUMANode, CPUSet: cr.CPUSet,
+		},
+		Runtime:    model.RuntimeSpec{Backend: backend, Kernel: cr.Kernel},
 		PowerState: "Running",
-	}, nil
+		TTLSeconds: cr.TTLSeconds,
+		Security:   model.SecuritySpec{SecureBoot: cr.SecureBoot, TPM: cr.TPM},
+		GuestAgent: model.GuestAgentSpec{
+			Enabled: cr.Qga != nil && cr.Qga.Enabled,
+			Console: cr.Agent != nil && cr.Agent.Enabled,
+		},
+	}
+	if cr.MaxVCPUs != nil {
+		spec.Resources.MaxCPU = strconv.FormatUint(uint64(*cr.MaxVCPUs), 10)
+	}
+	if cr.MaxMemoryMiB != nil {
+		spec.Resources.MaxMemory = strconv.FormatUint(*cr.MaxMemoryMiB, 10) + "Mi"
+	}
+	if ci := cr.CloudInit; ci != nil {
+		spec.CloudInit = model.CloudInitSpec{
+			Hostname: ci.Hostname, User: ci.User, SSHAuthorizedKeys: ci.SSHAuthorizedKeys,
+			Packages: ci.Packages, RunCmd: ci.RunCmd,
+		}
+		for _, f := range ci.WriteFiles {
+			spec.CloudInit.WriteFiles = append(spec.CloudInit.WriteFiles, model.CloudInitFile{Path: f.Path, Content: f.Content, Permissions: f.Permissions})
+		}
+		spec.Network.StaticNetwork = ci.StaticNetwork
+	}
+	var warnings []string
+	if len(cr.VFIODevices) > 0 {
+		warnings = append(warnings, "template vfio_devices not carried: a device can back only one VM; use spec.deviceClaims on the Machine if it needs one")
+	}
+	if forwards, ok := userModeForwards(cr.Network); ok {
+		spec.Network.Forwards = forwards
+	} else {
+		warnings = append(warnings, "template network not carried: set spec.network on the Machine if it needs more than the default NIC")
+	}
+	if len(cr.SharedFolders) > 0 {
+		warnings = append(warnings, "template shared_folders not carried: use spec.volumes on the Machine")
+	}
+	if len(cr.DataDisks) > 0 {
+		warnings = append(warnings, "template data_disks not carried: use spec.disks on the Machine")
+	}
+	if cr.Storage != "" && cr.Storage != "default" {
+		warnings = append(warnings, "template storage "+strconv.Quote(cr.Storage)+" not carried: a recreated Machine boots from its image path")
+	}
+	return spec, warnings, nil
+}
+
+// userModeForwards reads a template network map that a Machine's default
+// user-mode NIC can express: empty, or mode "user" with only port
+// forwards. FluxVM fills mode/forwards into every stored template, so
+// this is the common case. Anything else (tap, bridges, MACs, extra
+// NICs) reports ok=false.
+func userModeForwards(network map[string]any) ([]model.PortForward, bool) {
+	if len(network) == 0 {
+		return nil, true
+	}
+	for key := range network {
+		if key != "mode" && key != "forwards" {
+			return nil, false
+		}
+	}
+	if mode, _ := network["mode"].(string); mode != "" && mode != "user" {
+		return nil, false
+	}
+	raw, err := json.Marshal(network["forwards"])
+	if err != nil {
+		return nil, false
+	}
+	var wire []struct {
+		HostPort  uint16 `json:"host_port"`
+		GuestPort uint16 `json:"guest_port"`
+		Protocol  string `json:"protocol"`
+	}
+	if string(raw) != "null" {
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return nil, false
+		}
+	}
+	var forwards []model.PortForward
+	for _, f := range wire {
+		forwards = append(forwards, model.PortForward{HostPort: f.HostPort, GuestPort: f.GuestPort, Protocol: f.Protocol})
+	}
+	return forwards, true
 }
 
 // handleClaimPool pops one ready pool member, resumes it, and returns the
@@ -275,7 +357,7 @@ func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	spec, err := machineSpecFromPoolTemplate(template)
+	spec, warnings, err := machineSpecFromPoolTemplate(template)
 	if err != nil {
 		// The claim itself already succeeded and the VM is real, running
 		// state -- report the Machine-creation failure without pretending
@@ -286,6 +368,12 @@ func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 			"machineError": "parsing pool template for Machine spec: " + err.Error(),
 		})
 		return
+	}
+	// The claimed VM already runs on this node; without nodeName the
+	// scheduler could place the Machine elsewhere and boot a duplicate.
+	spec.NodeName = nodeName
+	if req.TTLSeconds != nil {
+		spec.TTLSeconds = *req.TTLSeconds
 	}
 	machine := model.Machine{
 		TypeMeta: model.TypeMeta{APIVersion: model.APIVersion, Kind: model.KindMachine},
@@ -300,5 +388,9 @@ func (s *Server) handleClaimPool(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"vm": claimed, "machine": created})
+	out := map[string]any{"vm": claimed, "machine": created}
+	if len(warnings) > 0 {
+		out["machineWarnings"] = warnings
+	}
+	writeJSON(w, http.StatusOK, out)
 }

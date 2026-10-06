@@ -158,12 +158,18 @@ computes -- so kairon-node's existing adoption path (it already falls back
 to looking up a runtime *by that exact name* when a Machine has no
 `status.runtimeID` yet) picks up this precise VM on its very next
 reconcile tick, instead of creating a second, duplicate one. The new
-Machine's `spec.image`/`spec.resources`/`spec.runtime.backend` are built
-from the **pool's own template** (fetched fresh at claim time, the same
-spec every member was actually booted from) -- a first cut that covers
-what every Machine needs to be meaningfully reconciled, not every possible
-FluxVM `CreateVmRequest` field (no VFIO/NUMA/hugepages/cloud-init carried
-over). If creating the Machine object itself fails (a namespace/name
+Machine's spec is built from the **pool's own template** (fetched fresh at
+claim time, the same spec every member was actually booted from):
+image, CPU/memory and their `maxCpu`/`maxMemory` hotplug headroom,
+backend and kernel, cloud-init (including `staticNetwork`),
+`numaNode`/`cpuSet`/`hugepages`, `secureBoot`/`tpm`, the guest agents and
+`ttlSeconds` (the claim's own `ttlSeconds` wins when set). `spec.nodeName`
+is set to the claimed VM's node, so the scheduler can never place the
+Machine elsewhere and boot a duplicate. Template fields with no safe
+Machine equivalent -- `vfio_devices` (a device can back only one VM), the
+raw `network` map (per-VM MACs), `shared_folders`, `data_disks` and a
+`storage` override -- are not carried; each one present adds a line to a
+`"machineWarnings"` array in the response. If creating the Machine object itself fails (a namespace/name
 conflict, an unreachable API server), the response still reports the
 successful claim (`"vm"` populated, `"machine": null`, plus a
 `"machineError"` explaining what to do next) -- the VM is real, running
@@ -202,11 +208,10 @@ identical underlying FluxVM state.
 - **No dashboard yet.** Every capability here (create, list, HTTP proxy,
   template build/list) is API-only -- `kaironctl` has no dedicated verbs
   either.
-- **`claim`'s `createMachine` builds a Machine spec from the pool's
-  template covering image/CPU/memory/backend only** -- VFIO device
-  claims, NUMA/cpuset/hugepages, cloud-init, and every other
-  `CreateVmRequest` field the template might set are not carried over
-  onto the new Machine object, a first cut, not full fidelity.
+- **`claim`'s `createMachine` does not carry VFIO devices, the raw network
+  map, shared folders, data disks or a storage override** from the pool
+  template -- they come back as `machineWarnings`; add the matching
+  Machine fields (`deviceClaims`, `network`, `volumes`, `disks`) yourself.
 - **No snapshot listing/deletion for templates**, matching
   [VM-state snapshot/restore](machine-vm-state-snapshot.md)'s own posture
   for tags -- FluxVM owns storage, Kairon has no prune/list-by-age

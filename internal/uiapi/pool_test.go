@@ -249,6 +249,73 @@ func TestHandleClaimPoolWithCreateMachineForcesRuntimeNameAndCreatesMachine(t *t
 	if created.Spec.Image.Path != "/images/agent.qcow2" {
 		t.Fatalf("unexpected created machine spec: %+v", created.Spec)
 	}
+	if created.Spec.NodeName != "worker-1" {
+		t.Fatalf("expected the Machine pinned to the claimed VM's node, got nodeName=%q", created.Spec.NodeName)
+	}
+}
+
+func TestMachineSpecFromPoolTemplateCarriesClaims(t *testing.T) {
+	numa := 1
+	template := map[string]any{
+		"backend": "qemu", "image": "/images/agent.qcow2", "kernel": "/k/vmlinuz",
+		"vcpus": 2, "memory_mib": 1024, "max_vcpus": 8, "max_memory_mib": 8192,
+		"numa_node": numa, "cpuset": "2-3", "hugepages": true,
+		"secure_boot": true, "tpm": true, "ttl_seconds": 600, "storage": "default",
+		"network": map[string]any{"mode": "user", "forwards": []map[string]any{{"host_port": 2222, "guest_port": 22, "protocol": "tcp"}}},
+		"qga":   map[string]any{"enabled": true},
+		"agent": map[string]any{"enabled": true},
+		"cloud_init": map[string]any{
+			"hostname": "agent", "user": "ops", "ssh_authorized_keys": []string{"ssh-ed25519 AAA"},
+			"runcmd": []string{"echo hi"}, "static_network": true,
+			"write_files": []map[string]any{{"path": "/etc/x", "content": "y", "permissions": "0644"}},
+		},
+	}
+	spec, warnings, err := machineSpecFromPoolTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+	r := spec.Resources
+	if r.CPU != "2" || r.Memory != "1024Mi" || r.MaxCPU != "8" || r.MaxMemory != "8192Mi" {
+		t.Fatalf("resources not carried: %+v", r)
+	}
+	if r.NUMANode == nil || *r.NUMANode != 1 || r.CPUSet != "2-3" || !r.Hugepages {
+		t.Fatalf("NUMA claims not carried: %+v", r)
+	}
+	if f := spec.Network.Forwards; len(f) != 1 || f[0].HostPort != 2222 || f[0].GuestPort != 22 {
+		t.Fatalf("user-mode forwards not carried: %+v", f)
+	}
+	if spec.Runtime.Kernel != "/k/vmlinuz" || spec.TTLSeconds != 600 {
+		t.Fatalf("kernel/ttl not carried: %+v", spec)
+	}
+	if !spec.Security.SecureBoot || !spec.Security.TPM || !spec.GuestAgent.Enabled || !spec.GuestAgent.Console {
+		t.Fatalf("security/guest agent not carried: %+v %+v", spec.Security, spec.GuestAgent)
+	}
+	ci := spec.CloudInit
+	if ci.Hostname != "agent" || ci.User != "ops" || len(ci.SSHAuthorizedKeys) != 1 || len(ci.RunCmd) != 1 ||
+		len(ci.WriteFiles) != 1 || ci.WriteFiles[0].Permissions != "0644" || !spec.Network.StaticNetwork {
+		t.Fatalf("cloud-init not carried: %+v static=%v", ci, spec.Network.StaticNetwork)
+	}
+}
+
+func TestMachineSpecFromPoolTemplateWarnsOnUncarriedFields(t *testing.T) {
+	_, warnings, err := machineSpecFromPoolTemplate(map[string]any{
+		"image": "/images/a.qcow2", "vcpus": 1, "memory_mib": 512,
+		"vfio_devices": []string{"0000:01:00.0"},
+		"network":      map[string]any{"mode": "tap", "mac": "52:54:00:00:00:01"},
+		"data_disks":   []map[string]any{{"name": "d", "backing": "/b"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"vfio_devices", "network", "data_disks"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected a warning naming %s, got %v", want, warnings)
+		}
+	}
 }
 
 func TestHandleClaimPoolWithCreateMachineRequiresMachineName(t *testing.T) {
