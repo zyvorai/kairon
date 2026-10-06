@@ -105,3 +105,10 @@ into one FluxVM call, never two competing writes.
   `pinnable-cpus` label, and whether that's sensible is between you and
   the target node's own topology.
 - **No dashboard support** -- `spec.resources.cpuPinning` is spec-only.
+
+## Discovered set
+
+kairon-node reads `/sys/devices/system/cpu/online` and kubelet `cpu_manager_state`. It publishes `kairon.zyvor.dev/pinnable-cpus` only when it can prove the set, and marks it with `kairon.zyvor.dev/pinnable-cpus-source=discovered`. An operator label without that annotation is left alone. If discovery later fails, only a discovered label is cleared, so a Machine that asks for `cpuPinning` fails closed on a node that cannot prove its cores.
+
+`ReservedCPUs` on the agent subtracts an extra cpuset. When it is empty, kubelet `defaultCpuSet` is the reserved set. Pod exclusive entries are always subtracted.
+

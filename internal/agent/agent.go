@@ -68,6 +68,10 @@ type Agent struct {
 	attest attestState
 	// SysRoot is where confidential capability is read; empty is /sys.
 	SysRoot string
+	// CPUManagerState is kubelet's cpu_manager_state; empty uses the default path.
+	CPUManagerState string
+	// ReservedCPUs is a cpuset list kept off the discovered pinnable set.
+	ReservedCPUs string
 	// AttestCommand is the in-guest command that prints a base64 report
 	// for {kind} and hex {data}; empty uses the go-sev-guest/go-tdx-guest
 	// attest tool.
@@ -201,6 +205,7 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 		return err
 	}
 	a.publishConfidentialCapability(ctx)
+	a.publishPinnableCPUs(ctx)
 	local := make(map[string]model.Machine, len(machines))
 	for _, m := range machines {
 		if m.Spec.NodeName == a.NodeName {
