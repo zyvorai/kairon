@@ -262,8 +262,8 @@ func TestMachineSpecFromPoolTemplateCarriesClaims(t *testing.T) {
 		"numa_node": numa, "cpuset": "2-3", "hugepages": true,
 		"secure_boot": true, "tpm": true, "ttl_seconds": 600, "storage": "default",
 		"network": map[string]any{"mode": "user", "forwards": []map[string]any{{"host_port": 2222, "guest_port": 22, "protocol": "tcp"}}},
-		"qga":   map[string]any{"enabled": true},
-		"agent": map[string]any{"enabled": true},
+		"qga":     map[string]any{"enabled": true},
+		"agent":   map[string]any{"enabled": true},
 		"cloud_init": map[string]any{
 			"hostname": "agent", "user": "ops", "ssh_authorized_keys": []string{"ssh-ed25519 AAA"},
 			"runcmd": []string{"echo hi"}, "static_network": true,
