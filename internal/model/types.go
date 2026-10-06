@@ -218,11 +218,12 @@ type MachineSpec struct {
 	// are valid for a below-default class, and the zero value (every
 	// Machine before this field existed) sorts identically to today's
 	// plain list order since sort.SliceStable never reorders equal
-	// keys. Purely an admission-order signal for this tick's pending
-	// Machines: it never preempts/evicts an already-scheduled Machine,
-	// however low its own Priority, and never influences which node an
-	// eligible Machine lands on (that's still internal/scheduler's own
-	// load/affinity/topology scoring) -- see
+	// keys. Admission order for this tick's pending Machines. It does not
+	// change which node an eligible Machine lands on. It preempts only
+	// when the pending Machine sets kairon.zyvor.dev/preempt=true and a
+	// lower-priority scheduled Machine in the same namespace sets
+	// kairon.zyvor.dev/preemption-policy=Halt (internal/preempt). Halt
+	// is the only action: Paused still consumes node capacity. See
 	// internal/scheduler.SortByPriorityDesc and
 	// docs/guides/machine-placement.md.
 	Priority  int32           `json:"priority,omitempty"`

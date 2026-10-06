@@ -1,0 +1,31 @@
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: gpu-job
+  namespace: lab
+  annotations:
+    kairon.zyvor.dev/preempt: "true"
+spec:
+  priority: 10
+  powerState: Running
+  image:
+    source: oci://ghcr.io/example/gpu-job:1.0
+  resources:
+    cpu: "4"
+    memory: 8Gi
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: dev-box
+  namespace: lab
+  annotations:
+    kairon.zyvor.dev/preemption-policy: Halt
+spec:
+  priority: 0
+  powerState: Running
+  image:
+    source: oci://ghcr.io/example/dev-box:1.0
+  resources:
+    cpu: "4"
+    memory: 8Gi

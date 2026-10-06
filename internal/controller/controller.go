@@ -273,9 +273,11 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	scheduler.SortByPriorityDesc(pending)
 
+	var unschedulable []model.Machine
 	for _, m := range pending {
 		node, err := c.Scheduler.Choose(m, nodes, machines, nodeLoad, draHints[m.Namespace()+"/"+m.Metadata.Name])
 		if err != nil {
+			unschedulable = append(unschedulable, m)
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = err.Error()
@@ -292,6 +294,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		// for a Machine that turns out to have no eligible node anyway,
 		// starving a later Machine in this same pass that could have fit.
 		if blocker := admitQuota(quotaTrackers, m); blocker != "" {
+			unschedulable = append(unschedulable, m)
 			status := m.Status
 			status.Phase = "Pending"
 			status.Message = blocker
@@ -339,6 +342,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				if statusErr := c.Kube.PatchMachineStatus(ctx, m.Namespace(), m.Metadata.Name, status); statusErr != nil {
 					c.Log.Error("machine status patch failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", statusErr)
 				}
+				unschedulable = append(unschedulable, m)
 				continue
 			}
 			specPatch["resources"] = map[string]any{"allocatedCpuSet": cpuset}
@@ -352,6 +356,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		scheduler.Reserve(nodeLoad, node, m)
 		c.Log.Info("scheduled machine", "namespace", m.Namespace(), "machine", m.Metadata.Name, "node", node)
 	}
+	c.preemptForPending(ctx, unschedulable, machines, migrations)
 
 	// observedQuotas carries each tracker's final Spec/Status pair (seeded
 	// usage plus whatever this same tick's scheduling loop admitted) --

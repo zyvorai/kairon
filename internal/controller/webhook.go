@@ -17,6 +17,7 @@ import (
 	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/conversion"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/preempt"
 	"github.com/zyvorai/kairon/internal/tenantfence"
 	"github.com/zyvorai/kairon/internal/tlsreload"
 )
@@ -281,6 +282,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := tenantfence.CheckCreate(m.Spec.Tenant, m.Metadata.Annotations); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := preempt.ValidatePolicy(m.Metadata.Annotations[preempt.AnnPolicy]); err != nil {
+		return admission.Deny(err.Error())
+	}
 	if err := agentplane.AdmitMachine(agentplane.MachineAdmission{
 		Namespace: req.Namespace, Name: m.Metadata.Name, Tenant: m.Spec.Tenant,
 		Annotations: m.Metadata.Annotations, ImageDigest: m.Spec.Image.Digest,
@@ -340,6 +344,9 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 		return admission.Deny(err.Error())
 	}
 	if err := tenantfence.CheckUpdate(oldM.Spec.Tenant, newM.Spec.Tenant, newM.Metadata.Annotations); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := preempt.ValidatePolicy(newM.Metadata.Annotations[preempt.AnnPolicy]); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if err := c.checkAttestationWrite(req.UserInfo.Username, oldM.Metadata.Annotations, newM.Metadata.Annotations); err != nil {
