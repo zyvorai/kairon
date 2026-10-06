@@ -44,6 +44,11 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinenetworkpolicies"]
     verbs: ["create", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # Tenant fence owns one NetworkSecurityGroup per opted-in
+    # namespace/tenant (internal/controller/tenantfence.go).
+    resources: ["networksecuritygroups"]
+    verbs: ["create", "delete"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]

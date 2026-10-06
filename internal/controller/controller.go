@@ -123,6 +123,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	c.syncAssignedNodeLabels(ctx, machines)
+	c.reconcileTenantFences(ctx, machines)
 	machines = c.resolveInstanceTypes(ctx, machines)
 	machines, volumesNotReady := c.reconcileAtlasVolumes(ctx, machines)
 	c.reconcileCiliumAttach(ctx, machines)

@@ -1,0 +1,34 @@
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: acme-web
+  namespace: lab
+  annotations:
+    kairon.zyvor.dev/tenant-fence: "true"
+spec:
+  tenant: acme
+  image:
+    source: oci://ghcr.io/example/acme-web:1.0
+  resources:
+    cpu: "2"
+    memory: 2Gi
+  network:
+    dataplaneMode: ebpf
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: globex-web
+  namespace: lab
+  annotations:
+    kairon.zyvor.dev/tenant-fence: "true"
+spec:
+  tenant: globex
+  image:
+    source: oci://ghcr.io/example/globex-web:1.0
+  resources:
+    cpu: "2"
+    memory: 2Gi
+  network:
+    dataplaneMode: ebpf

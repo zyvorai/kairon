@@ -17,6 +17,7 @@ import (
 	"github.com/zyvorai/kairon/internal/agentplane"
 	"github.com/zyvorai/kairon/internal/conversion"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/tenantfence"
 	"github.com/zyvorai/kairon/internal/tlsreload"
 )
 
@@ -277,6 +278,9 @@ func (c *Controller) validateMachineCreate(r *http.Request, req *admission.Reque
 	if err := model.ValidateCiliumAttach(m.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := tenantfence.CheckCreate(m.Spec.Tenant, m.Metadata.Annotations); err != nil {
+		return admission.Deny(err.Error())
+	}
 	if err := agentplane.AdmitMachine(agentplane.MachineAdmission{
 		Namespace: req.Namespace, Name: m.Metadata.Name, Tenant: m.Spec.Tenant,
 		Annotations: m.Metadata.Annotations, ImageDigest: m.Spec.Image.Digest,
@@ -333,6 +337,9 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	// the same validateMachineResize call that handles every Machine
 	// UPDATE, not just a resource resize.
 	if err := validateResourceQuantities(newM.Spec.Resources); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := tenantfence.CheckUpdate(oldM.Spec.Tenant, newM.Spec.Tenant, newM.Metadata.Annotations); err != nil {
 		return admission.Deny(err.Error())
 	}
 	if err := c.checkAttestationWrite(req.UserInfo.Username, oldM.Metadata.Annotations, newM.Metadata.Annotations); err != nil {
@@ -447,6 +454,9 @@ func (c *Controller) validateMachineNetworkPolicy(r *http.Request, req *admissio
 	}
 	if err := model.ValidateVmNetworkPolicy(p.Spec.Policy); err != nil {
 		return admission.Deny(fmt.Sprintf("spec.policy.%v", err))
+	}
+	if err := tenantfence.CheckPolicy(p.Spec.Selector, p.Metadata.Labels); err != nil {
+		return admission.Deny(err.Error())
 	}
 	return admission.Allow()
 }

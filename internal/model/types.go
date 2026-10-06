@@ -197,8 +197,12 @@ type MachineSpec struct {
 	ServiceFabric    ServiceFabricSpec `json:"serviceFabric,omitempty"`
 	PowerState       string            `json:"powerState,omitempty"`
 	// Tenant is free-form metadata unless the Machine opts in. Admission
-	// enforces it when kairon.zyvor.dev/agent-pool or
-	// kairon.zyvor.dev/require-tenant is true (internal/agentplane). MCP
+	// enforces a DNS-1123 label when it is set, and rejects a later
+	// rename (internal/tenantfence). kairon.zyvor.dev/tenant-fence=true
+	// makes the controller own a NetworkSecurityGroup that denies other
+	// tenants' observed guest addresses; kairon-node merges that list
+	// into the FluxVM policy it already posts. agent-pool and
+	// require-tenant still require a tenant (internal/agentplane). MCP
 	// tools honour KAIRON_MCP_TENANT the same way. Namespace remains the
 	// quota and disruption boundary.
 	Tenant     string `json:"tenant,omitempty"`

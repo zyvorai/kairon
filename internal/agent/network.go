@@ -14,6 +14,7 @@ import (
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/tenantfence"
 )
 
 func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
@@ -24,6 +25,7 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 		}
 		return err
 	}
+	a.tenantDenies = tenantfence.DenyIndex(groups)
 	for _, g := range groups {
 		if err := a.reconcileSecurityGroup(ctx, g); err != nil {
 			a.Log.Error("network security group reconcile failed", "namespace", g.Namespace(), "name", g.Metadata.Name, "error", err)
@@ -59,7 +61,44 @@ func (a *Agent) reconcileNetworkResources(ctx context.Context) error {
 	if a.NetworkDefaultDeny {
 		a.enforceNetworkDefaultDeny(ctx, policies, machines)
 	}
+	a.enforceTenantFence(ctx, policies, machines)
 	return nil
+}
+
+// deniesFor returns the tenant fence CIDRs for m, or nil when m has no
+// tenant or no managed group was indexed this tick.
+func (a *Agent) deniesFor(m model.Machine) []string {
+	if a.tenantDenies == nil || m.Spec.Tenant == "" {
+		return nil
+	}
+	return a.tenantDenies[m.Namespace()+"\x00"+m.Spec.Tenant]
+}
+
+// enforceTenantFence pushes east-west denies onto fenced Machines that
+// no MachineNetworkPolicy selected. Selected Machines already received
+// the merged deny list in reconcileMachineNetworkPolicy. DefaultAllow
+// stays true unless the node-wide default-deny pass also applies, so
+// this does not turn a tenant fence into a full egress deny.
+func (a *Agent) enforceTenantFence(ctx context.Context, policies []model.MachineNetworkPolicy, machines []model.Machine) {
+	for _, m := range machines {
+		if m.Spec.NodeName != a.NodeName || m.Spec.Tenant == "" || !tenantfence.WantsFence(m.Metadata.Annotations) {
+			continue
+		}
+		if m.Status.Phase != "Running" || m.Status.RuntimeID == "" {
+			continue
+		}
+		if anyCurrentPolicySelects(policies, m) {
+			continue
+		}
+		denies := a.deniesFor(m)
+		if len(denies) == 0 {
+			continue
+		}
+		pol := tenantfence.Merge(model.VmNetworkPolicy{DefaultAllow: !a.NetworkDefaultDeny}, denies)
+		if err := a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, pol); err != nil {
+			a.Log.Error("tenant fence push failed", "namespace", m.Namespace(), "machine", m.Metadata.Name, "error", err)
+		}
+	}
 }
 
 // enforceNetworkDefaultDeny is NetworkDefaultDeny's opt-in second pass,
@@ -253,7 +292,8 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 		if m.Status.Phase != "Running" || m.Status.RuntimeID == "" {
 			continue
 		}
-		if err := a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, p.Spec.Policy); err != nil {
+		posted := tenantfence.Merge(p.Spec.Policy, a.deniesFor(m))
+		if err := a.Flux.SetVMNetworkPolicy(ctx, m.Status.RuntimeID, posted); err != nil {
 			return fmt.Errorf("set policy on %s/%s: %w", m.Namespace(), m.Metadata.Name, err)
 		}
 		applied++
@@ -267,7 +307,7 @@ func (a *Agent) reconcileMachineNetworkPolicy(ctx context.Context, p model.Machi
 		// soft-fail posture the dataplane status projection above
 		// already takes for a "legacy FluxVM" gap.
 		got, err := a.Flux.GetVMNetworkPolicy(ctx, m.Status.RuntimeID)
-		if err != nil || !reflect.DeepEqual(*got, p.Spec.Policy) {
+		if err != nil || !reflect.DeepEqual(*got, posted) {
 			allConfirmed = false
 		}
 	}

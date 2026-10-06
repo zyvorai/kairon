@@ -52,6 +52,10 @@ type Agent struct {
 	Metrics *metrics.Recorder
 	// edge caches the last policy list and drop counts for the VM edge.
 	edge edgeCache
+	// tenantDenies is namespace + NUL + tenant to the fence group's
+	// deny CIDRs, refreshed at the start of reconcileNetworkResources.
+	// Nil means no fence was listed; policy apply then posts spec as-is.
+	tenantDenies map[string][]string
 	// edgeEvents suppresses repeated edge Warning Events per Machine.
 	edgeEvents edgeEventDedup
 	// edgeBaseline scores each Machine's traffic against its own history.

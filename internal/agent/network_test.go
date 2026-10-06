@@ -17,6 +17,7 @@ import (
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
+	"github.com/zyvorai/kairon/internal/tenantfence"
 )
 
 func TestProjectNetworkStatusFallsBackToQGAWhenNoLeaseIP(t *testing.T) {
@@ -1635,5 +1636,59 @@ func TestProjectNetworkStatusCiliumModeUnattachedFailsClosed(t *testing.T) {
 	var status model.MachineStatus
 	if err := a.projectNetworkStatus(context.Background(), m, rec, &status); err == nil {
 		t.Fatal("expected fail-closed when cilium dataplane unattached")
+	}
+}
+
+func TestReconcileMachineNetworkPolicyMergesTenantFence(t *testing.T) {
+	machine := model.Machine{
+		Metadata: model.ObjectMeta{Name: "web", Namespace: "lab", Labels: map[string]string{"app": "web"}},
+		Spec:     model.MachineSpec{NodeName: "worker-1", Tenant: "acme", PowerState: "Running"},
+		Status:   model.MachineStatus{Phase: "Running", RuntimeID: "vm-1", NodeName: "worker-1"},
+	}
+	policy := model.MachineNetworkPolicy{
+		Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "lab", Finalizers: []string{model.FinalizerNetworkPolicy}},
+		Spec: model.MachineNetworkPolicySpec{
+			Selector: map[string]string{"app": "web"},
+			Policy:   model.VmNetworkPolicy{DefaultAllow: true, AllowPorts: []string{"tcp/443"}},
+		},
+	}
+	var posted fluxvm.WireVmNetworkPolicy
+	fs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/vms/vm-1/network/policy" {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/vms/vm-1/network/policy" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(posted)
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+	}))
+	defer fs.Close()
+	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ks.Close()
+	kc, _ := kube.New(ks.URL, "", "", false)
+	kc.HTTP = ks.Client()
+	fc := fluxvm.New(fs.URL, "")
+	fc.HTTP = fs.Client()
+	a := &Agent{NodeName: "worker-1", Kube: kc, Flux: fc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a.tenantDenies = tenantfence.DenyIndex([]model.NetworkSecurityGroup{{
+		Metadata: model.ObjectMeta{Name: "tenant-fence-acme", Namespace: "lab", Labels: map[string]string{tenantfence.LabelManaged: tenantfence.ManagedValue, tenantfence.LabelTenant: "acme"}},
+		Spec:     model.NetworkSecurityGroupSpec{Policy: model.VmNetworkPolicy{DenyCidrs: []string{"10.0.0.8/32"}}},
+	}})
+	if err := a.reconcileMachineNetworkPolicy(context.Background(), policy, []model.MachineNetworkPolicy{policy}, []model.Machine{machine}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(posted.DenyCidrs) != 1 || posted.DenyCidrs[0] != "10.0.0.8/32" {
+		t.Fatalf("posted deny = %#v, want [10.0.0.8/32]", posted.DenyCidrs)
+	}
+	if !posted.DefaultAllow || len(posted.AllowPorts) != 1 {
+		t.Fatalf("user policy was replaced: %+v", posted)
 	}
 }

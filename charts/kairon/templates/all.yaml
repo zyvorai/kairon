@@ -79,6 +79,11 @@ rules:
     # controller creates on bind and deletes on release.
     resources: ["machinenetworkpolicies"]
     verbs: ["create", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    # Tenant fence owns one NetworkSecurityGroup per opted-in
+    # namespace/tenant (internal/controller/tenantfence.go).
+    resources: ["networksecuritygroups"]
+    verbs: ["create", "delete"]
 {{ if .Values.controller.cordonEvacuation.enabled }}
   - apiGroups: ["kairon.zyvor.dev"]
     # cordonEvacuation is the only reason kairon-controller itself ever
