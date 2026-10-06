@@ -45,7 +45,11 @@ func (a *Agent) publishPinnableCPUs(ctx context.Context) {
 	changed := !a.pin.seen || got.List != a.pin.last.List || got.Refused != a.pin.last.Refused
 	fresh := !changed && time.Since(a.pin.checkedAt) < pinRecheck
 	a.pin.mu.Unlock()
-	if changed && got.Refused != "" {
+	switch {
+	case !changed || got.Refused == "":
+	case len(a.ReservedCPUs) == 0:
+		a.log().Info("pinnable cpu discovery off: --reserved-cpus not set", "node", a.NodeName)
+	default:
 		a.log().Warn("pinnable cpu discovery refused", "node", a.NodeName, "reason", got.Refused)
 	}
 	if fresh {

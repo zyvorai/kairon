@@ -127,6 +127,17 @@ Flags:
                           free port is chosen automatically and reported.
   --controller-port=N     kairon-controller health port (default 32301), same
                           auto-fallback-if-busy behavior as --node-port.
+  --reserved-cpus=LIST    Set KAIRON_RESERVED_CPUS (kubelet's reserved CPUs,
+                          e.g. 0-1) in kairon-node.env, even when the file
+                          already exists. Other keys are left untouched.
+  --cpu-pinning           Turn on pinnable-CPU discovery: install
+                          kairon-cpustate.path/.service, which copy kubelet's
+                          root-only cpu_manager_state to a file kairon-node
+                          can read, and point KAIRON_CPU_MANAGER_STATE at it.
+                          Needs reserved CPUs (--reserved-cpus, or already
+                          in kairon-node.env).
+  --no-cpu-pinning        Turn discovery off again: remove those units, the
+                          copy, and both env keys.
   --migration-ca=PATH     Local CA PEM file for the live-migration mTLS peer
                           control plane. All three of --migration-ca/-cert/-key
                           must be given together (fail-closed, matches
@@ -216,6 +227,8 @@ MIGRATION_PORT="9443"
 MIGRATION_PORT_EXPLICIT=0
 MIGRATION_ADAPTER_SOCKET="/run/kairon/migration-adapter.sock"
 WITH_MIGRATION_ADAPTER_STUB=0
+RESERVED_CPUS=""
+CPU_PINNING=""
 VERSION_OVERRIDE="${KAIRON_VERSION:-}"
 SSH_PORT="${SSH_PORT:-22}"
 USER_ARG=""
@@ -278,6 +291,9 @@ while [[ $# -gt 0 ]]; do
     --with-migration-adapter-stub) WITH_MIGRATION_ADAPTER_STUB=1 ;;
     --version=*) VERSION_OVERRIDE="${1#*=}" ;;
     --ssh-port=*) SSH_PORT="${1#*=}" ;;
+    --reserved-cpus=*) RESERVED_CPUS="${1#*=}" ;;
+    --cpu-pinning) CPU_PINNING=1 ;;
+    --no-cpu-pinning) CPU_PINNING=0 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; while [[ $# -gt 0 ]]; do POSITIONAL+=("$1"); shift; done ;;
     -*) die "unknown flag: $1 (see --help)" ;;
@@ -285,6 +301,13 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ -n "$RESERVED_CPUS" && ! "$RESERVED_CPUS" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]; then
+  die "--reserved-cpus=$RESERVED_CPUS: want a CPU list like 0-1 or 0,6"
+fi
+if [[ "$CPU_PINNING" == "0" && -n "$RESERVED_CPUS" ]]; then
+  die "--no-cpu-pinning and --reserved-cpus contradict each other"
+fi
 
 MIGRATION_CONFIGURED=0
 migration_paths_given=0
@@ -524,11 +547,12 @@ systemctl stop kairon-node.service 2>/dev/null || true
 systemctl stop kairon-controller.service 2>/dev/null || true
 systemctl stop kairon-ui.service 2>/dev/null || true
 systemctl stop kairon-migration-adapter-stub.service 2>/dev/null || true
+systemctl disable --now kairon-cpustate.path 2>/dev/null || true
 systemctl disable kairon-node.service 2>/dev/null || true
 systemctl disable kairon-controller.service 2>/dev/null || true
 systemctl disable kairon-ui.service 2>/dev/null || true
 systemctl disable kairon-migration-adapter-stub.service 2>/dev/null || true
-rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service /etc/systemd/system/kairon-ui.service /etc/systemd/system/kairon-migration-adapter-stub.service
+rm -f /etc/systemd/system/kairon-node.service /etc/systemd/system/kairon-controller.service /etc/systemd/system/kairon-ui.service /etc/systemd/system/kairon-migration-adapter-stub.service /etc/systemd/system/kairon-cpustate.path /etc/systemd/system/kairon-cpustate.service
 systemctl daemon-reload
 rm -f /usr/bin/kairon-node /usr/bin/kairon-controller /usr/bin/kairon-ui /usr/bin/kaironctl /usr/bin/kairon-migration-adapter-stub
 if [[ "$PURGE" == "1" ]]; then
@@ -721,6 +745,8 @@ run_deploy() {
     printf 'CONSOLE_PORT=%q\n' "$CONSOLE_PORT"
     printf 'CONSOLE_PORT_EXPLICIT=%q\n' "$CONSOLE_PORT_EXPLICIT"
     printf 'WITH_CONSOLE_TLS=%q\n' "$WITH_CONSOLE_TLS"
+    printf 'RESERVED_CPUS=%q\n' "$RESERVED_CPUS"
+    printf 'CPU_PINNING=%q\n' "$CPU_PINNING"
   } > "$local_stage/params.env"
 
   cat > "$local_stage/install.sh" <<'INSTALL_EOF'
@@ -872,6 +898,38 @@ else
   fi
 fi
 
+# Sets KEY=VALUE in an env file, replacing a live or commented-out line.
+set_env_key() {
+  local file="$1" key="$2" value="$3"
+  if grep -qE "^#?${key}=" "$file"; then
+    sed -i -E "s#^\#?${key}=.*#${key}=${value}#" "$file"
+  else
+    echo "${key}=${value}" >> "$file"
+  fi
+}
+
+CPU_STATE_COPY=/var/lib/kairon-node/cpu_manager_state
+if [[ -n "$RESERVED_CPUS" ]]; then
+  set_env_key /etc/kairon/kairon-node.env KAIRON_RESERVED_CPUS "$RESERVED_CPUS"
+  ok "set KAIRON_RESERVED_CPUS=$RESERVED_CPUS in /etc/kairon/kairon-node.env"
+fi
+if [[ "$CPU_PINNING" == "1" ]]; then
+  if ! grep -qE '^KAIRON_RESERVED_CPUS=.+' /etc/kairon/kairon-node.env; then
+    echo "ERROR: --cpu-pinning needs reserved CPUs: pass --reserved-cpus=LIST (kubelet's reserved set)" >&2
+    exit 1
+  fi
+  [[ -f /var/lib/kubelet/cpu_manager_state ]] || warn "/var/lib/kubelet/cpu_manager_state not found -- discovery will refuse until kubelet writes it"
+  install -m 0644 -o root -g root ./kairon-cpustate.service /etc/systemd/system/kairon-cpustate.service
+  install -m 0644 -o root -g root ./kairon-cpustate.path /etc/systemd/system/kairon-cpustate.path
+  set_env_key /etc/kairon/kairon-node.env KAIRON_CPU_MANAGER_STATE "$CPU_STATE_COPY"
+  ok "installed kairon-cpustate.path/.service; KAIRON_CPU_MANAGER_STATE=$CPU_STATE_COPY"
+elif [[ "$CPU_PINNING" == "0" ]]; then
+  systemctl disable --now kairon-cpustate.path 2>/dev/null || true
+  rm -f /etc/systemd/system/kairon-cpustate.path /etc/systemd/system/kairon-cpustate.service "$CPU_STATE_COPY"
+  sed -i -E '/^(KAIRON_RESERVED_CPUS|KAIRON_CPU_MANAGER_STATE)=/d' /etc/kairon/kairon-node.env
+  ok "pinnable-CPU discovery turned off (units, state copy and env keys removed)"
+fi
+
 if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
   install -d -m 0750 -o root -g kairon /etc/kairon/migration
   install -m 0640 -o root -g kairon ./migration-ca.pem /etc/kairon/migration/ca.pem
@@ -992,6 +1050,11 @@ if [[ "$NO_START" != "1" ]]; then
     systemctl restart kairon-migration-adapter-stub.service
     ok "enabled + started kairon-migration-adapter-stub.service"
   fi
+  if [[ "$CPU_PINNING" == "1" ]]; then
+    systemctl enable --now kairon-cpustate.path
+    systemctl start kairon-cpustate.service || warn "kairon-cpustate.service failed -- check: journalctl -u kairon-cpustate"
+    ok "enabled kairon-cpustate.path (state copy refreshed)"
+  fi
   systemctl enable kairon-node.service
   systemctl restart kairon-node.service
   ok "enabled + started kairon-node.service"
@@ -1020,6 +1083,9 @@ INSTALL_EOF
   local scp_files=("$build_dir/kairon-node" "$build_dir/kaironctl" "$REPO_ROOT/systemd/kairon-node.service")
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
     scp_files+=("$build_dir/kairon-controller" "$REPO_ROOT/systemd/kairon-controller.service")
+  fi
+  if [[ "$CPU_PINNING" == "1" ]]; then
+    scp_files+=("$REPO_ROOT/systemd/kairon-cpustate.service" "$REPO_ROOT/systemd/kairon-cpustate.path")
   fi
   if [[ "$MIGRATION_CONFIGURED" == "1" ]]; then
     cp "$MIGRATION_CA" "$local_stage/migration-ca.pem"

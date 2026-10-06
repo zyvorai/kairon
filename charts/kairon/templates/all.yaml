@@ -407,8 +407,43 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector:
 {{ toYaml .Values.node.nodeSelector | indent 8 }}
-{{ if and .Values.migration.enabled .Values.migration.adapterHostPath .Values.migration.dataplaneTls }}
+{{ if or .Values.node.cpuPinning.enabled (and .Values.migration.enabled .Values.migration.adapterHostPath .Values.migration.dataplaneTls) }}
       initContainers:
+{{ end }}
+{{ if .Values.node.cpuPinning.enabled }}
+        # Native sidecar (restartPolicy: Always, Kubernetes 1.29+): kubelet's
+        # cpu_manager_state is root-only 0600 and replaced by rename, so a
+        # single-file hostPath would go stale. This root container reads it
+        # from a read-only mount of its directory and republishes it into a
+        # pod-private emptyDir; kairon-node itself stays non-root with no
+        # capabilities. The startup probe holds kairon-node back until the
+        # first copy exists, so discovery never starts on a missing file.
+        - name: cpu-state-copier
+          image: {{ .Values.node.cpuPinning.copierImage | quote }}
+          restartPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                if cp {{ .Values.node.cpuPinning.stateFile | quote }} /kairon-cpustate/.tmp 2>/dev/null; then
+                  chmod 0644 /kairon-cpustate/.tmp && mv -f /kairon-cpustate/.tmp /kairon-cpustate/cpu_manager_state
+                fi
+                sleep {{ .Values.node.cpuPinning.copyIntervalSeconds }}
+              done
+          startupProbe:
+            exec: {command: ["test", "-s", "/kairon-cpustate/cpu_manager_state"]}
+            periodSeconds: 2
+            failureThreshold: 150
+          volumeMounts:
+            - {name: kubelet-state-dir, mountPath: {{ dir .Values.node.cpuPinning.stateFile | quote }}, readOnly: true}
+            - {name: cpu-state, mountPath: /kairon-cpustate}
+          securityContext: {runAsUser: 0, runAsNonRoot: false, allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {cpu: 50m, memory: 32Mi}
+{{ end }}
+{{ if and .Values.migration.enabled .Values.migration.adapterHostPath .Values.migration.dataplaneTls }}
         # kairon-migration-adapter-fluxvm runs as a bare-host systemd unit,
         # not in this pod -- it has no access to either Secret volume
         # below. Materialize the cert material it needs (for the QEMU
@@ -514,6 +549,10 @@ spec:
             - "--csi-chap-secret-namespace={{ .Release.Namespace }}"
 {{ end }}
             - "--network-default-deny={{ .Values.node.networkDefaultDeny }}"
+{{ if .Values.node.cpuPinning.enabled }}
+            - "--reserved-cpus={{ required "node.cpuPinning.reservedCPUs is required when node.cpuPinning.enabled (kubelet's reserved CPU list, e.g. 0-1)" .Values.node.cpuPinning.reservedCPUs }}"
+            - "--cpu-manager-state=/kairon-cpustate/cpu_manager_state"
+{{ end }}
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
@@ -544,7 +583,7 @@ spec:
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, runAsNonRoot: true, capabilities: {drop: ["ALL"]}}
           resources:
 {{ toYaml .Values.node.resources | indent 12 }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers .Values.node.cpuPinning.enabled }}
           volumeMounts:
 {{ if .Values.migration.enabled }}
             - {name: migration-tls, mountPath: /etc/kairon/migration-tls, readOnly: true}
@@ -583,8 +622,11 @@ spec:
             # docs/guides/machine-storage-thirdparty-csi.md.
             - {name: kubelet-plugins-dir, mountPath: /var/lib/kubelet/plugins, readOnly: true}
 {{ end }}
+{{ if .Values.node.cpuPinning.enabled }}
+            - {name: cpu-state, mountPath: /kairon-cpustate, readOnly: true}
 {{ end }}
-{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers }}
+{{ end }}
+{{ if or .Values.migration.enabled (and .Values.console.enabled .Values.console.tls.enabled) .Values.csiNode.enabled .Values.node.imageCacheDir .Values.node.thirdPartyCSIDrivers .Values.node.cpuPinning.enabled }}
       volumes:
 {{ if .Values.migration.enabled }}
         - name: migration-tls
@@ -635,6 +677,14 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins
             type: Directory
+{{ end }}
+{{ if .Values.node.cpuPinning.enabled }}
+        - name: kubelet-state-dir
+          hostPath:
+            path: {{ dir .Values.node.cpuPinning.stateFile | quote }}
+            type: Directory
+        - name: cpu-state
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
 {{ end }}
 {{ end }}
 {{ if .Values.csiNode.enabled }}

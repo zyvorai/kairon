@@ -114,24 +114,56 @@ The set is online CPUs minus `--reserved-cpus` minus CPUs kubelet assigned exclu
 Discovery refuses, and publishes no label, when:
 
 - `--reserved-cpus` (`KAIRON_RESERVED_CPUS`) is empty. kubelet's own reserved CPUs are not in `cpu_manager_state`, so kairon-node cannot infer them. Set it to at least kubelet's `reservedSystemCPUs`.
-- `cpu_manager_state` cannot be read or parsed (`--cpu-manager-state`, default `/var/lib/kubelet/cpu_manager_state`). kubelet writes it `0600 root`; the systemd unit runs kairon-node as `kairon`, so grant read access or point the flag at a readable copy.
+- `cpu_manager_state` cannot be read or parsed (`--cpu-manager-state`, default `/var/lib/kubelet/cpu_manager_state`). kubelet writes it `0600 root`, and kairon-node runs unprivileged in both install layouts, so it needs a readable copy; see "Turning on discovery" below.
 - The online set or any cpuset does not parse.
 - The result does not fit the 63-character label limit.
 
-A refusal is logged once per change, not every reconcile.
+A refusal is logged once per change, not every reconcile. With `--reserved-cpus` unset, discovery is simply off and kairon-node logs that at info level.
 
 Under kubelet's `none` policy there are no exclusive pod CPUs, so every
 online CPU outside `--reserved-cpus` is published, including cores that
 ordinary Pods also run on. Reserve generously on nodes that also run Pods.
 
-To enable it on a systemd host (`scripts/deploy-remote.sh` layout), add to
-`/etc/kairon/kairon-node.env` and restart `kairon-node`:
+## Turning on discovery
+
+kubelet's state file is root-only and replaced by rename on every write.
+Both install layouts copy it with a small root-side helper instead of
+giving kairon-node extra privileges.
+
+**systemd host (`scripts/deploy-remote.sh`):**
 
 ```bash
-KAIRON_RESERVED_CPUS=0-1
-# only if the default path is not readable by the kairon user:
-KAIRON_CPU_MANAGER_STATE=/path/readable/by/kairon/cpu_manager_state
+./scripts/deploy-remote.sh HOST USER --reserved-cpus=0-1 --cpu-pinning
 ```
+
+`--reserved-cpus` sets `KAIRON_RESERVED_CPUS` in
+`/etc/kairon/kairon-node.env`, even if the file already exists (other keys
+are left alone). `--cpu-pinning` installs `kairon-cpustate.path`, which
+watches the kubelet file, and `kairon-cpustate.service`, which copies it
+atomically to `/var/lib/kairon-node/cpu_manager_state` (`root:kairon`,
+`0640`); it also sets `KAIRON_CPU_MANAGER_STATE` to that copy.
+`--no-cpu-pinning` removes the units, the copy and both env keys again.
+kairon-node removes a label it published on its own once discovery
+refuses; clear an operator-set label yourself.
+
+**Helm:**
+
+```yaml
+node:
+  cpuPinning:
+    enabled: true
+    reservedCPUs: "0-1"   # kubelet's reserved CPUs; required
+```
+
+This adds a native sidecar (Kubernetes 1.29+) running as root with all
+capabilities dropped. It mounts the state file's directory read-only
+(`/var/lib/kubelet` by default, which also holds other pods' volume data,
+so treat the sidecar image like any other privileged node component) and
+copies the file every `copyIntervalSeconds` into a pod-private in-memory
+volume. kairon-node gets `--reserved-cpus` and `--cpu-manager-state`
+pointing at the copy and stays non-root. Its startup probe keeps
+kairon-node from starting until the first copy exists. Set `stateFile` if
+kubelet uses a non-default root directory.
 
 Check the result with
 `kubectl get node NODE -L kairon.zyvor.dev/pinnable-cpus`.
