@@ -21,7 +21,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["--interval=5s", "--require-capable-label=true"]
           ports:
-            - {name: health, containerPort: 8080}
+            - {name: health, containerPort: 32301}
           readinessProbe: {httpGet: {path: /readyz, port: health}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: health}, periodSeconds: 10}
           securityContext:

@@ -125,7 +125,7 @@ Flags:
   --node-port=N           kairon-node health port (default 32302). If busy on
                           the remote host and not explicitly set, a random
                           free port is chosen automatically and reported.
-  --controller-port=N     kairon-controller health port (default 8080), same
+  --controller-port=N     kairon-controller health port (default 32301), same
                           auto-fallback-if-busy behavior as --node-port.
   --migration-ca=PATH     Local CA PEM file for the live-migration mTLS peer
                           control plane. All three of --migration-ca/-cert/-key
@@ -206,7 +206,7 @@ NODE_NAME_OVERRIDE=""
 INTERVAL="3s"
 NODE_PORT="32302"
 NODE_PORT_EXPLICIT=0
-CONTROLLER_PORT="8080"
+CONTROLLER_PORT="32301"
 CONTROLLER_PORT_EXPLICIT=0
 MIGRATION_CA=""
 MIGRATION_CERT=""
@@ -1087,9 +1087,9 @@ INSTALL_EOF
 
   if [[ "$WITH_CONTROLLER" == "1" ]]; then
     local ctrl_port
-    ctrl_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-controller.service | cut -d: -f2" || echo 8080)"
+    ctrl_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--health-addr=:[0-9]+' /etc/systemd/system/kairon-controller.service | cut -d: -f2" || echo 32301)"
     local ctrl_report ctrl_active ctrl_healthz ctrl_readyz
-    ctrl_report="$(verify_remote kairon-controller.service "${ctrl_port:-8080}")"
+    ctrl_report="$(verify_remote kairon-controller.service "${ctrl_port:-32301}")"
     ctrl_active="$(sed -n '1p' <<< "$ctrl_report")"
     ctrl_healthz="$(sed -n '2p' <<< "$ctrl_report")"
     ctrl_readyz="$(sed -n '3p' <<< "$ctrl_report")"

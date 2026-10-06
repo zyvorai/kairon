@@ -9,7 +9,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kairon-controller --interval=5s --health-addr=:8080
+ExecStart=/usr/bin/kairon-controller --interval=5s --health-addr=:32301
 Restart=on-failure
 RestartSec=5s
 EnvironmentFile=/etc/kairon/kairon-controller.env

@@ -44,7 +44,7 @@ func main() {
 // so every deferred cleanup (e.g. cancel()) actually runs before exit.
 func run() int {
 	interval := flag.Duration("interval", 5*time.Second, "reconciliation interval")
-	healthAddr := flag.String("health-addr", ":8080", "health server address")
+	healthAddr := flag.String("health-addr", ":32301", "health server address")
 	requireLabel := flag.Bool("require-capable-label", true, "only schedule onto nodes labeled kairon.zyvor.dev/capable=true")
 	maxPerNode := flag.Int("migration-max-concurrent-per-node", 0, "max concurrent non-terminal migrations touching a single node (0 = unlimited)")
 	maxCluster := flag.Int("migration-max-concurrent-cluster", 0, "max concurrent non-terminal migrations cluster-wide (0 = unlimited)")

@@ -153,7 +153,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 
 | Component | Port | Role |
 |---|---|---|
-| `kairon-controller` | `:8080` health, `:8443` webhook | Placement, migration state machine, fencing, snapshots, quotas and budgets |
+| `kairon-controller` | `:32301` health, `:8443` webhook | Placement, migration state machine, fencing, snapshots, quotas and budgets |
 | `kairon-node` | `:32302` health, `:9443` mTLS peer, `:8090` console | Per-host agent: FluxVM lifecycle, eBPF policy, live-migration peer, edge Warning events, confidential-capability label |
 | `kairon-ui` | `:8082` | Optional dashboard: Machines, migrations, snapshots, Network panel, VNC console |
 | `kaironctl` | — | CLI and `kubectl kairon` plugin, embedded Helm installer, MCP server |

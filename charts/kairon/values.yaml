@@ -10,7 +10,7 @@ controller:
   # /healthz /readyz port. Change if it collides with something else
   # already running on a node sharing this container's network namespace
   # (found the hard way once already -- see console.port below).
-  healthPort: 8080
+  healthPort: 32301
   # A single reconciler is lightweight by design (see internal/controller:
   # no in-memory cache, every tick re-lists from the API) -- raising
   # replicaCount is about HA, not throughput; there's no data yet on this

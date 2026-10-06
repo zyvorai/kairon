@@ -24,7 +24,7 @@
   <div class="api"><b>Kubernetes API</b><div>Machine &middot; MachineMigration &middot; MachineSnapshot &middot; MachinePool &middot; MachineNetworkPolicy</div></div>
   <div class="pipe"></div>
   <div class="row">
-    <div class="card k"><span class="port">:8080 &middot; :8443 webhook</span><h3>kairon-controller</h3><p>Placement on real allocatable, migration state machine, fencing, snapshots, quotas and budgets.</p></div>
+    <div class="card k"><span class="port">:32301 &middot; :8443 webhook</span><h3>kairon-controller</h3><p>Placement on real allocatable, migration state machine, fencing, snapshots, quotas and budgets.</p></div>
     <div class="card a"><span class="port">:9443 mTLS peer &middot; :8090 console</span><h3>kairon-node</h3><p>One per host: FluxVM lifecycle, disks and NICs, eBPF policy, live-migration peer.</p></div>
     <div class="card o"><span class="port">127.0.0.1:7788</span><h3>FluxVM &rarr; KVM</h3><p>QEMU, Cloud Hypervisor, Firecracker or FluxVM, with a TC/eBPF edge on every VM tap.</p></div>
   </div>
