@@ -36,6 +36,12 @@ test:
 test-race:
 	$(GO) test -race ./...
 
+# Allocation and latency baselines for the control-plane paths. Compare
+# repeated runs on the same machine; this is not a VM runtime benchmark.
+.PHONY: bench-controlplane
+bench-controlplane:
+	$(GO) test -run '^$$' -bench 'BenchmarkFileLogRead|BenchmarkClientListMachines|BenchmarkLimiterAllow' -benchmem -count=5 ./internal/agentplane ./internal/kube ./internal/ratelimit
+
 cover:
 	$(GO) test -coverprofile=coverage.out ./internal/...
 
