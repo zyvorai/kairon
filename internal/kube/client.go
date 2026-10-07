@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -84,7 +85,17 @@ func FromEnvironment() (*Client, error) {
 }
 
 func New(baseURL, token, caPath string, insecure bool) (*Client, error) {
-	tr := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure}} // #nosec G402 - opt-in dev mode
+	// Reuse connections across reconciliation bursts, but release idle
+	// sockets. Keep proxy behavior unchanged and allow long-lived watches.
+	tr := &http.Transport{
+		DialContext:  (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		MaxIdleConns: 100, MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		ForceAttemptHTTP2:     true,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecure}, // #nosec G402 - opt-in dev mode
+	}
 	if caPath != "" && !insecure {
 		pem, err := os.ReadFile(caPath)
 		if err != nil {

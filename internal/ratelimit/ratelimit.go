@@ -23,6 +23,9 @@ type bucket struct {
 	lastSeen time.Time
 }
 
+// DefaultMaxKeys bounds state even during bursts of previously unseen IPs.
+const DefaultMaxKeys = 65536
+
 // Limiter tracks one token bucket per key. Not a global var by design --
 // callers construct one and pass it explicitly, matching this codebase's
 // existing style (metrics.Recorder, Agent.MigrationPeer, etc.).
@@ -32,18 +35,31 @@ type Limiter struct {
 	rps     float64
 	burst   float64
 	now     func() time.Time
+	maxKeys int
 }
 
 // New builds a Limiter allowing, per key, an average of rps requests per
 // second with bursts up to burst requests before throttling kicks in. A
-// key's bucket starts full (burst tokens), so a key's very first request
-// is never throttled by an empty bucket it never had a chance to fill.
+// key's bucket starts full (burst tokens). Previously unseen keys are
+// denied when DefaultMaxKeys is reached until Prune frees capacity.
 func New(rps float64, burst int) *Limiter {
+	return NewWithCapacity(rps, burst, DefaultMaxKeys)
+}
+
+// NewWithCapacity sets a hard bound on tracked keys. At capacity, unknown
+// keys are denied until Prune frees space; existing buckets are never evicted
+// to admit new keys, which would let churn reset an exhausted bucket.
+// Nonpositive capacity uses DefaultMaxKeys.
+func NewWithCapacity(rps float64, burst, maxKeys int) *Limiter {
+	if maxKeys <= 0 {
+		maxKeys = DefaultMaxKeys
+	}
 	return &Limiter{
 		buckets: map[string]*bucket{},
 		rps:     rps,
 		burst:   float64(burst),
 		now:     time.Now,
+		maxKeys: maxKeys,
 	}
 }
 
@@ -58,6 +74,9 @@ func (l *Limiter) Allow(key string) (allowed bool, retryAfter time.Duration) {
 	now := l.now()
 	b, ok := l.buckets[key]
 	if !ok {
+		if len(l.buckets) >= l.maxKeys {
+			return false, time.Second
+		}
 		b = &bucket{tokens: l.burst, lastSeen: now}
 		l.buckets[key] = b
 	} else {

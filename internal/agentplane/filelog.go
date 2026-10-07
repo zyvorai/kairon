@@ -33,15 +33,11 @@ func OpenFileLog(path string) (*FileLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	events, err := readChain(path)
+	_, last, err := scanChain(path, nil)
 	if err != nil {
 		return nil, err
 	}
-	l := &FileLog{path: path}
-	if n := len(events); n > 0 {
-		l.last = events[n-1].Hash
-	}
-	return l, nil
+	return &FileLog{path: path, last: last}, nil
 }
 
 // Append records e, chains it and writes it durably.
@@ -89,17 +85,22 @@ func (l *FileLog) Append(e Event) (Event, error) {
 func (l *FileLog) Replay(claim string) ([]Event, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	events, err := readChain(l.path)
+	var events []Event
+	_, _, err := scanChain(l.path, func(e Event) {
+		if claim == "" || e.Claim == claim {
+			events = append(events, e)
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
-	return Replay(events, claim), nil
+	return events, nil
 }
 
 // VerifyFile checks the whole chain and returns the record count.
 func VerifyFile(path string) (int, error) {
-	events, err := readChain(path)
-	return len(events), err
+	n, _, err := scanChain(path, nil)
+	return n, err
 }
 
 func chainHash(e Event) string {
@@ -109,29 +110,37 @@ func chainHash(e Event) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func readChain(path string) ([]Event, error) {
+// scanChain verifies every record while retaining only the previous hash.
+// visit may collect matching records; verification never skips other claims.
+func scanChain(path string, visit func(Event)) (int, string, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return 0, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return 0, "", err
 	}
 	defer func() { _ = f.Close() }()
-	var out []Event
+	count := 0
 	prev := ""
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
 	for n := 1; sc.Scan(); n++ {
 		var e Event
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
-			return nil, fmt.Errorf("audit log %s line %d: %w", path, n, err)
+			return 0, "", fmt.Errorf("audit log %s line %d: %w", path, n, err)
 		}
 		if e.PrevHash != prev || chainHash(e) != e.Hash {
-			return nil, fmt.Errorf("audit log %s line %d: hash chain broken", path, n)
+			return 0, "", fmt.Errorf("audit log %s line %d: hash chain broken", path, n)
 		}
 		prev = e.Hash
-		out = append(out, e)
+		count++
+		if visit != nil {
+			visit(e)
+		}
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil {
+		return 0, "", err
+	}
+	return count, prev, nil
 }
