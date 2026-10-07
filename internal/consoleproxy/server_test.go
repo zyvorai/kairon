@@ -879,3 +879,51 @@ func TestHandleVMRestoreSnapshotPropagatesFluxVMFailure(t *testing.T) {
 		t.Fatalf("expected 502 when start-from-snapshot fails, got %d", resp.StatusCode)
 	}
 }
+
+func TestHandleBackupRootStreamsAndMapsNotFound(t *testing.T) {
+	fluxSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer flux" {
+			http.Error(w, "no token", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/backups/web-1.qcow2/root":
+			w.Header().Set("Content-Length", "8")
+			_, _ = w.Write([]byte("QFI\xfbdisk"))
+		default:
+			http.Error(w, "backup not found", http.StatusNotFound)
+		}
+	}))
+	defer fluxSrv.Close()
+	s := &Server{Flux: fluxvm.New(fluxSrv.URL, "flux"), Token: "secret"}
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	get := func(path, token string) *http.Response {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := get("/backup-root/web-1.qcow2", "secret")
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "QFI\xfbdisk" {
+		t.Fatalf("got %d %q", resp.StatusCode, body)
+	}
+	resp = get("/backup-root/nope", "secret")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing backup: got %d, want 404", resp.StatusCode)
+	}
+	resp = get("/backup-root/web-1.qcow2", "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token: got %d, want 401", resp.StatusCode)
+	}
+}
