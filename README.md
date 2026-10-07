@@ -50,6 +50,7 @@ On `main` since v0.6.0, heading for v0.7:
 | **CPU-pinning discovery, deployed** | `deploy-remote.sh --reserved-cpus=0-1` or Helm `node.cpuPinning` gives kairon-node kubelet's CPU state, so `pinnable-cpus` is discovered. [Guide →](docs/guides/machine-cpu-pinning.md) |
 | **Approval for agent actions** | Destructive MCP tools wait for a single-use `kaironctl approve`. [Guide →](docs/guides/hermes-mcp.md) |
 | **Stale evacuation** | Opt-in: Machines marked `evacuate=true` are fenced off a node attested dead with `kaironctl node fence`. [Guide →](docs/guides/machine-fencing.md) |
+| **Image catalog and ISO installs** | Cluster-scoped `MachineImage` (disk or ISO, pinned by digest), `spec.cdroms` install media on SATA, blank root disks, and seeding of empty boot volumes. No CDI. [Guide →](docs/guides/machine-images.md) |
 | **OCI containerDisk** | `spec.image.source.oci` pulls a disk image by digest with streaming per-layer verification. [Guide →](docs/guides/machine-image-import.md) |
 
 ---

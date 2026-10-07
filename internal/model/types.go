@@ -233,7 +233,10 @@ type MachineSpec struct {
 	// Disks are PVC-backed block disks hot-attached to the running guest
 	// as SCSI disks (serial = name), added and removed live as this list
 	// changes. See MachineDisk.
-	Disks        []MachineDisk          `json:"disks,omitempty"`
+	Disks []MachineDisk `json:"disks,omitempty"`
+	// Cdroms attach install media read-only (qemu backend) from the first
+	// boot. Creation-time-only. See MachineCdrom.
+	Cdroms       []MachineCdrom         `json:"cdroms,omitempty"`
 	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
 	GuestAgent   GuestAgentSpec         `json:"guestAgent,omitempty"`
 	// Sandbox opts this Machine into FluxVM's own agent-sandbox track
@@ -341,6 +344,18 @@ type ImageSpec struct {
 	// FluxVM's own catalog integrity checks (mandatory SHA-256, optional
 	// Ed25519 signature) are the trust boundary here instead.
 	CatalogName string `json:"catalogName,omitempty"`
+	// ImageRef names a cluster-scoped MachineImage of kind disk.
+	// kairon-controller copies its source and digest into this spec once,
+	// before the Machine boots, so republishing the image never changes what
+	// this Machine boots. See docs/guides/machine-images.md.
+	ImageRef string `json:"imageRef,omitempty"`
+	// Blank boots an empty root disk of DiskSize instead of an image -- the
+	// target of an install from spec.cdroms. With spec.volumes[0], the empty
+	// disk is created inside the volume instead.
+	Blank bool `json:"blank,omitempty"`
+	// DiskSize grows the root disk to this quantity (e.g. 60Gi) at creation.
+	// Required with Blank; creation-time-only like the rest of spec.image.
+	DiskSize string `json:"diskSize,omitempty"`
 	// Storage is the FluxVM storage backend kairon-node chose for this boot
 	// disk (e.g. ceph-rbd-in-place for an Atlas RBD volume). Never read
 	// from or written to the API, so a Machine author can't select it.
@@ -369,6 +384,10 @@ type ImageSource struct {
 	// VMware or another hypervisor (virtio initramfs, /dev/sdX to
 	// /dev/vdX, VMware tools disabled, DHCP fallback). Implies an import.
 	Repair bool `json:"repair,omitempty"`
+	// InsecureSkipTLSVerify downloads httpURL without verifying the server
+	// certificate (a self-signed image server). The digest check still
+	// guarantees the bytes; only confidentiality of the transfer is lost.
+	InsecureSkipTLSVerify bool `json:"insecureSkipTLSVerify,omitempty"`
 }
 
 // ImageSourceFormats are the accepted ImageSource.Format values.
@@ -625,6 +644,77 @@ type MachineDisk struct {
 	// (/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_<name>).
 	Name      string `json:"name"`
 	ClaimName string `json:"claimName"`
+}
+
+// MachineCdrom is one read-only ISO attached as a SATA CD-ROM. Set either
+// ImageRef (a MachineImage of kind iso, resolved by kairon-controller like
+// spec.image.imageRef) or Source plus Digest. kairon-node downloads it into
+// the same digest-keyed cache as spec.image.source.
+type MachineCdrom struct {
+	Name     string       `json:"name"`
+	ImageRef string       `json:"imageRef,omitempty"`
+	Source   *ImageSource `json:"source,omitempty"`
+	Digest   string       `json:"digest,omitempty"`
+	// Path is the cached ISO kairon-node resolved; never read from or
+	// written to the API.
+	Path string `json:"-"`
+}
+
+// MaxCdroms matches FluxVM's limit (AHCI ports on q35).
+const MaxCdroms = 4
+
+// ValidateCdroms checks names and sources. An entry with only ImageRef is
+// valid here; kairon-controller fills in Source and Digest before boot.
+func ValidateCdroms(cdroms []MachineCdrom) error {
+	if len(cdroms) > MaxCdroms {
+		return fmt.Errorf("spec.cdroms: at most %d entries", MaxCdroms)
+	}
+	seen := map[string]bool{}
+	for i, c := range cdroms {
+		if !diskNameRE.MatchString(c.Name) || c.Name == "root" {
+			return fmt.Errorf("spec.cdroms[%d].name %q: use 1-32 of [a-z0-9-], starting alphanumeric, not 'root'", i, c.Name)
+		}
+		if seen[c.Name] {
+			return fmt.Errorf("spec.cdroms[%d]: duplicate name %q", i, c.Name)
+		}
+		seen[c.Name] = true
+		if c.Source == nil {
+			if strings.TrimSpace(c.ImageRef) == "" {
+				return fmt.Errorf("spec.cdroms[%d] needs imageRef or source", i)
+			}
+			continue
+		}
+		if c.Source.OCI != "" || (c.Source.Format != "" && c.Source.Format != "raw") || c.Source.Repair {
+			return fmt.Errorf("spec.cdroms[%d].source: install media must be an http(s) URL to raw bytes (no oci, format or repair)", i)
+		}
+		if err := ValidateImageSource(ImageSpec{Source: c.Source, Digest: c.Digest}); err != nil {
+			return fmt.Errorf("spec.cdroms[%d]: %s", i, strings.TrimPrefix(err.Error(), "spec.image."))
+		}
+	}
+	return nil
+}
+
+// ValidateRootImage checks the spec.image fields added for catalog images
+// and blank installs: Blank excludes every other boot source and needs a
+// DiskSize, and DiskSize must parse.
+func ValidateRootImage(img ImageSpec) error {
+	if img.DiskSize != "" {
+		if _, err := ParseDiskSizeGiB(img.DiskSize); err != nil {
+			return fmt.Errorf("spec.image.diskSize: %w", err)
+		}
+	}
+	if img.Blank {
+		if img.DiskSize == "" {
+			return fmt.Errorf("spec.image.blank needs spec.image.diskSize")
+		}
+		if img.Path != "" || img.Source != nil || img.CatalogName != "" || img.ImageRef != "" {
+			return fmt.Errorf("spec.image.blank excludes path, source, catalogName and imageRef")
+		}
+	}
+	if img.ImageRef != "" && (img.Path != "" || img.CatalogName != "") {
+		return fmt.Errorf("spec.image.imageRef excludes path and catalogName")
+	}
+	return nil
 }
 
 // ValidateDisks checks spec.disks: unique FluxVM-safe names and a claim.

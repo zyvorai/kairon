@@ -48,6 +48,7 @@ try:
         "machinepools.kairon.zyvor.dev",
         "machineclaims.kairon.zyvor.dev",
         "machineinstancetypes.kairon.zyvor.dev",
+        "machineimages.kairon.zyvor.dev",
         "migrationpolicies.kairon.zyvor.dev",
         "machinesnapshotschedules.kairon.zyvor.dev",
         "machinebackups.kairon.zyvor.dev",
@@ -62,7 +63,7 @@ try:
     # itself ever observes or reports back) -- no status subresource, the
     # same real-world precedent a StorageClass/PriorityClass already sets
     # among Kubernetes' own built-in CRD-shaped resources.
-    no_status = {"machineinstancetypes.kairon.zyvor.dev"}
+    no_status = {"machineinstancetypes.kairon.zyvor.dev", "machineimages.kairon.zyvor.dev"}
     for d in crds:
         if d["metadata"]["name"] in {r + ".fleet.kairon.zyvor.dev" for r in fleet_resources}:
             versions = d["spec"]["versions"]

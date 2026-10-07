@@ -133,6 +133,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.syncAssignedNodeLabels(ctx, machines)
 	c.reconcileTenantFences(ctx, machines)
 	machines = c.resolveInstanceTypes(ctx, machines)
+	machines, imagesNotReady := c.resolveImageRefs(ctx, machines)
 	machines, volumesNotReady := c.reconcileAtlasVolumes(ctx, machines)
 	c.reconcileCiliumAttach(ctx, machines)
 	c.reconcileCiliumPolicySync(ctx)
@@ -275,6 +276,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 			continue
 		}
 		if _, waiting := volumesNotReady[m.Namespace()+"/"+m.Metadata.Name]; waiting {
+			continue
+		}
+		if _, waiting := imagesNotReady[m.Namespace()+"/"+m.Metadata.Name]; waiting {
 			continue
 		}
 		pending = append(pending, m)

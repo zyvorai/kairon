@@ -662,6 +662,13 @@ func (c *Client) PatchMachineBackupRestoreStatus(ctx context.Context, ns, name s
 	return c.request(ctx, http.MethodPatch, namespacedObjectPath(ns, "machinebackuprestores", name)+"/status", map[string]any{"status": status}, nil, "application/merge-patch+json")
 }
 
+// ListMachineImages lists the cluster-scoped MachineImage catalog.
+func (c *Client) ListMachineImages(ctx context.Context) ([]model.MachineImage, error) {
+	var list model.MachineImageList
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineimages", nil, &list, "")
+	return list.Items, err
+}
+
 func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
 	var list model.MachineInstanceTypeList
 	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")

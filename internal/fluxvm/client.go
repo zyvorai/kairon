@@ -143,6 +143,17 @@ type CreateRequest struct {
 	// DataDisks are per-VM qcow2 overlays on shared images, present from
 	// the first boot (QEMU only): an imported OVA's extra disks.
 	DataDisks []DataDisk `json:"data_disks,omitempty"`
+	// DiskSizeGiB grows the root disk at creation (spec.image.diskSize).
+	DiskSizeGiB *uint64 `json:"disk_size_gib,omitempty"`
+	// Cdroms are read-only install media (spec.cdroms), QEMU only. Needs a
+	// FluxVM that knows the field; an older one ignores it.
+	Cdroms []Cdrom `json:"cdroms,omitempty"`
+}
+
+// Cdrom is one FluxVM CreateVmRequest.cdroms entry.
+type Cdrom struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 // DataDisk is one FluxVM CreateVmRequest.data_disks entry.
@@ -483,6 +494,24 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 		SecureBoot:    m.Spec.Security.SecureBoot,
 		TPM:           m.Spec.Security.TPM,
 		SharedFolders: sharedFolders,
+	}
+	if m.Spec.Image.DiskSize != "" {
+		gib, err := model.ParseDiskSizeGiB(m.Spec.Image.DiskSize)
+		if err != nil {
+			return CreateRequest{}, fmt.Errorf("spec.image.diskSize: %w", err)
+		}
+		payload.DiskSizeGiB = &gib
+	}
+	if len(m.Spec.Cdroms) > 0 {
+		if backend != "qemu" {
+			return CreateRequest{}, fmt.Errorf("spec.cdroms requires the qemu backend (FluxVM attaches install media only there); Machine resolves to backend %q", backend)
+		}
+		for _, cd := range m.Spec.Cdroms {
+			if cd.Path == "" {
+				return CreateRequest{}, fmt.Errorf("spec.cdroms %q has no resolved path", cd.Name)
+			}
+			payload.Cdroms = append(payload.Cdroms, Cdrom{Name: cd.Name, Path: cd.Path})
+		}
 	}
 	if m.Spec.GuestAgent.Enabled {
 		payload.Qga = &QgaSpec{Enabled: true}

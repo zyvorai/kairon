@@ -679,3 +679,45 @@ func TestCreateSendsDataDisks(t *testing.T) {
 		t.Fatalf("data_disks = %v", body["data_disks"])
 	}
 }
+
+func TestBuildCreateRequestInstallMedia(t *testing.T) {
+	m := model.Machine{Spec: model.MachineSpec{
+		Image:     model.ImageSpec{Path: "/cache/blank/empty.raw", Blank: true, DiskSize: "60Gi"},
+		Resources: model.ResourceSpec{CPU: "2", Memory: "4Gi"},
+		Cdroms:    []model.MachineCdrom{{Name: "install", Path: "/cache/sha256/aa"}, {Name: "virtio", Path: "/cache/sha256/bb"}},
+	}}
+	req, err := buildCreateRequest(m, "qemu", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.DiskSizeGiB == nil || *req.DiskSizeGiB != 60 {
+		t.Fatalf("disk size: %v", req.DiskSizeGiB)
+	}
+	if len(req.Cdroms) != 2 || req.Cdroms[0] != (Cdrom{Name: "install", Path: "/cache/sha256/aa"}) {
+		t.Fatalf("cdroms: %+v", req.Cdroms)
+	}
+	b, _ := json.Marshal(req)
+	if !strings.Contains(string(b), `"disk_size_gib":60`) || !strings.Contains(string(b), `"cdroms":[{"name":"install","path":"/cache/sha256/aa"}`) {
+		t.Fatalf("wire format: %s", b)
+	}
+	if _, err := buildCreateRequest(m, "cloud-hypervisor", nil, nil); err == nil || !strings.Contains(err.Error(), "spec.cdroms requires the qemu backend") {
+		t.Fatalf("non-qemu cdroms: %v", err)
+	}
+	m.Spec.Cdroms[1].Path = ""
+	if _, err := buildCreateRequest(m, "qemu", nil, nil); err == nil {
+		t.Fatal("unresolved cdrom path must fail")
+	}
+	plain := model.Machine{Spec: model.MachineSpec{Image: model.ImageSpec{Path: "/x"}, Resources: model.ResourceSpec{CPU: "1", Memory: "1Gi"}}}
+	if b, _ := json.Marshal(mustBuild(t, plain)); strings.Contains(string(b), "cdroms") || strings.Contains(string(b), "disk_size_gib") {
+		t.Fatalf("plain request must not carry new fields: %s", b)
+	}
+}
+
+func mustBuild(t *testing.T, m model.Machine) CreateRequest {
+	t.Helper()
+	req, err := buildCreateRequest(m, "qemu", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
