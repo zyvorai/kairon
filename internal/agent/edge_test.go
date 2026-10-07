@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/zyvorai/kairon/internal/ebpfedge"
 	"github.com/zyvorai/kairon/internal/fluxvm"
+	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/model"
@@ -257,10 +258,73 @@ func TestDropDeltasHandleResetAndEviction(t *testing.T) {
 	}
 	c.dropDeltas("b/", map[string]uint64{"b/y": 1})
 	c.dropDeltas("a/", map[string]uint64{})
-	if _, ok := c.drops["a/x"]; ok {
-		t.Fatal("evicted series kept")
+	if d := c.dropDeltas("a/", map[string]uint64{"a/x": 4}); d["a/x"] != 4 {
+		t.Fatal("evicted series baseline kept")
 	}
-	if c.drops["b/y"] != 1 {
+	if d := c.dropDeltas("b/", map[string]uint64{"b/y": 1}); len(d) != 0 {
 		t.Fatal("other Machine's series dropped")
+	}
+}
+
+func TestReconcilePrunesEdgeDropsOnlyAfterSuccessfulList(t *testing.T) {
+	for _, failList := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failList=%v", failList), func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines" {
+					if failList {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					_, _ = w.Write([]byte(`{"items":[]}`))
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer s.Close()
+			kc, err := kube.New(s.URL, "", "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer kc.HTTP.CloseIdleConnections()
+			a := &Agent{Kube: kc, NodeName: "worker-1", SysRoot: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			a.edge.dropDeltas("demo/deleted/", map[string]uint64{"demo/deleted/flow": 5})
+			err = a.Reconcile(context.Background())
+			if (err != nil) != failList {
+				t.Fatalf("reconcile = %v", err)
+			}
+			got := a.edge.dropDeltas("demo/deleted/", map[string]uint64{"demo/deleted/flow": 5})
+			if failList && len(got) != 0 {
+				t.Fatal("failed list discarded counter baseline")
+			}
+			if !failList && got["demo/deleted/flow"] != 5 {
+				t.Fatal("deleted Machine baseline retained")
+			}
+		})
+	}
+}
+
+func TestObserveEdgeDropsBoundsReportedSeries(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/vms/vm-1/network/drops" {
+			_, _ = w.Write([]byte(`{"items":[`))
+			for i := 0; i < edgeDropLimit+50; i++ {
+				if i > 0 {
+					_, _ = w.Write([]byte(","))
+				}
+				_, _ = fmt.Fprintf(w, `{"reason":"dns_deny","policyName":"web-egress","dstPort":%d,"packets":1}`, i+1)
+			}
+			_, _ = w.Write([]byte(`]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	rec := metrics.NewNodeRecorder()
+	a := &Agent{Flux: fluxvm.New(s.URL, ""), Metrics: rec, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	m := model.Machine{Metadata: model.ObjectMeta{Namespace: "demo", Name: "web"}}
+	a.observeEdgeDrops(context.Background(), m, "vm-1")
+	counter := rec.Edge().Drops.WithLabelValues("demo", "web", "dns_deny", "web-egress")
+	if got := testutil.ToFloat64(counter); got != edgeDropLimit {
+		t.Fatalf("counted %v series, want %d", got, edgeDropLimit)
 	}
 }

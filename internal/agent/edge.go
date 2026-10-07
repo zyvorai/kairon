@@ -27,7 +27,7 @@ const edgeDropLimit = 256
 type edgeCache struct {
 	mu       sync.Mutex
 	policies []model.MachineNetworkPolicy
-	drops    map[string]uint64
+	drops    ebpfedge.DropCounters
 }
 
 func (c *edgeCache) setPolicies(p []model.MachineNetworkPolicy) {
@@ -54,28 +54,7 @@ func (c *edgeCache) selecting(m model.Machine) (model.MachineNetworkPolicy, bool
 // that shrank (FluxVM evicted flow entries, or restarted) counts from zero.
 // Series under prefix that are no longer reported are forgotten.
 func (c *edgeCache) dropDeltas(prefix string, totals map[string]uint64) map[string]uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.drops == nil {
-		c.drops = map[string]uint64{}
-	}
-	for key := range c.drops {
-		if _, ok := totals[key]; !ok && strings.HasPrefix(key, prefix) {
-			delete(c.drops, key)
-		}
-	}
-	out := map[string]uint64{}
-	for key, now := range totals {
-		last := c.drops[key]
-		switch {
-		case now > last:
-			out[key] = now - last
-		case now < last:
-			out[key] = now
-		}
-		c.drops[key] = now
-	}
-	return out
+	return c.drops.Observe(prefix, totals)
 }
 
 // edgeRequested reports whether this Machine asked for the VM-edge eBPF
@@ -273,7 +252,8 @@ func (a *Agent) observeEdgeDrops(ctx context.Context, m model.Machine, runtimeID
 	totals := map[string]uint64{}
 	labels := map[string]series{}
 	prefix := m.Namespace() + "/" + m.Metadata.Name + "/"
-	for _, it := range body.Items {
+	// Bound retained series even when an upstream ignores the requested limit.
+	for _, it := range body.Items[:min(len(body.Items), edgeDropLimit)] {
 		key := fmt.Sprintf("%s%s|%s|%s|%s|%s|%s|%d", prefix, it.Reason, it.PolicyName, it.Direction, it.SrcIP, it.DstIP, it.Proto, it.DstPort)
 		totals[key] = it.Packets
 		labels[key] = series{it.Reason, it.PolicyName, it.DstIP}
