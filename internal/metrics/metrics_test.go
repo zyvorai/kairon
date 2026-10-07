@@ -477,3 +477,21 @@ func TestUIRecorderOmitsReconcileAndMigrationMetrics(t *testing.T) {
 		t.Error("NewUIRecorder should expose apiserver call metrics")
 	}
 }
+
+func TestCachedUsageDoesNotRefreshLiveSampleTimestamp(t *testing.T) {
+	r := NewNodeRecorder()
+	timestamp := r.machineUsageTimestamp.WithLabelValues("default", "vm")
+	r.ObserveMachineResourceUsage("default", "vm", &model.ResourceUsage{CPUPercent: 50})
+	if got := testutil.ToFloat64(timestamp); got != 0 {
+		t.Fatalf("cached usage marked fresh: %v", got)
+	}
+	r.ObserveMachineUsageFreshness("default", "vm")
+	fresh := testutil.ToFloat64(timestamp)
+	if fresh < float64(time.Now().Unix()-2) {
+		t.Fatalf("fresh sample not recorded: %v", fresh)
+	}
+	r.ObserveMachineResourceUsage("default", "vm", &model.ResourceUsage{CPUPercent: 50})
+	if got := testutil.ToFloat64(timestamp); got != fresh {
+		t.Fatal("cached sample advanced freshness")
+	}
+}

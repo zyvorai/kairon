@@ -53,6 +53,8 @@ try:
         "machinebackups.kairon.zyvor.dev",
         "machinebackuprestores.kairon.zyvor.dev",
     }
+    fleet_resources = {"machinehaprofiles", "nodefencerequests", "machineactionapprovals", "machinebalancepolicies", "machineautoscalers", "machinerecoveryplans", "machinebackupgroups", "machineimportplans", "machinetemplateversions", "machinetemplateclaims", "machinevirtualnetworks", "machinenetworkclaims", "machineusageledgers"}
+    expected |= {r + ".fleet.kairon.zyvor.dev" for r in fleet_resources}
     if names != expected:
         fail(f"unexpected CRD set: {sorted(names)}")
     # MachineInstanceType is pure reference/config data (a named
@@ -62,6 +64,11 @@ try:
     # among Kubernetes' own built-in CRD-shaped resources.
     no_status = {"machineinstancetypes.kairon.zyvor.dev"}
     for d in crds:
+        if d["metadata"]["name"] in {r + ".fleet.kairon.zyvor.dev" for r in fleet_resources}:
+            versions = d["spec"]["versions"]
+            if d["spec"]["group"] != "fleet.kairon.zyvor.dev" or len(versions) != 1 or versions[0]["name"] != "v1alpha1" or not versions[0].get("storage") or not versions[0].get("served") or "status" not in versions[0].get("subresources", {}):
+                fail(f"invalid fleet CRD group/version/status for {d['metadata']['name']}")
+            continue
         if d["spec"]["group"] != "kairon.zyvor.dev":
             fail(f"unexpected group for {d['metadata']['name']}")
         versions = {v["name"]: v for v in d["spec"]["versions"]}

@@ -74,6 +74,7 @@ import (
 // FluxVM to attach the NIC, at VM create or edit time.
 func (c *Controller) WebhookHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /validate-fleet", admission.Handler(c.Log, c.validateFleet, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machine", admission.Handler(c.Log, c.validateMachine, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinemigration", admission.Handler(c.Log, c.validateMachineMigration, c.observeWebhookDecision))
 	mux.HandleFunc("POST /validate-machinenetworkpolicy", admission.Handler(c.Log, c.validateMachineNetworkPolicy, c.observeWebhookDecision))

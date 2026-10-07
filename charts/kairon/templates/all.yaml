@@ -327,6 +327,13 @@ spec:
             - "--node-liveness-lease-namespace={{ .Release.Namespace }}"
 {{ end }}
           env:
+{{ if .Values.fleet.enabled }}
+            - {name: KAIRON_FLEET_ENABLED, value: "true"}
+            - {name: KAIRON_FLEET_CONTROL_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: KAIRON_FLEET_PROMETHEUS_URL, value: {{ .Values.fleet.prometheusURL | quote }}}
+            - {name: KAIRON_FLEET_REDFISH_ORIGINS, value: {{ join "," .Values.fleet.redfishOrigins | quote }}}
+            - {name: KAIRON_FLEET_TEST_BRIDGES, value: {{ join "," .Values.fleet.isolatedTestBridges | quote }}}
+{{ end }}
             - name: KAIRON_CONTROLLER_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
 {{ if .Values.otel.enabled }}

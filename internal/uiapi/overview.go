@@ -55,6 +55,20 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out overviewResponse
+	visibleMachines := machines[:0]
+	for _, m := range machines {
+		if s.authorizedForNamespace(r.Context(), m.Namespace()) {
+			visibleMachines = append(visibleMachines, m)
+		}
+	}
+	machines = visibleMachines
+	visibleMigrations := migrations[:0]
+	for _, m := range migrations {
+		if s.authorizedForNamespace(r.Context(), m.Namespace()) {
+			visibleMigrations = append(visibleMigrations, m)
+		}
+	}
+	migrations = visibleMigrations
 	out.Machines.Total = len(machines)
 	out.Machines.ByPhase = map[string]int{}
 	for _, m := range machines {
@@ -81,7 +95,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	out.Nodes = len(nodes)
+	if !s.NamespaceScopingEnabled || s.isAdminIdentity(r.Context(), usernameFromContext(r.Context())) {
+		out.Nodes = len(nodes)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 

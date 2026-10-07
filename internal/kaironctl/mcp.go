@@ -57,6 +57,9 @@ capture. Logs go to stderr; stdout carries only protocol messages.`,
 				s.Audit = mcpAuditHook(log)
 				if requireApproval {
 					s.Approve = mcpApproveHook(opts.Namespace, func() (approvalStore, error) { return kube.FromEnvironment() }, time.Now)
+					if os.Getenv("KAIRON_MCP_APPROVAL_MODE") == "resource" {
+						s.Approve = mcpResourceApproveHook(opts.Namespace)
+					}
 				}
 			}
 			s.Add(kaironTools(opts, kube.FromEnvironment)...)

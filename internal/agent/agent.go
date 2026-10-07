@@ -490,6 +490,9 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 			CPUPercent: usage.CPUUsagePercent, MemoryBytes: usage.MemoryUsageBytes,
 			DiskReadBytes: usage.DiskReadBytes, DiskWriteBytes: usage.DiskWriteBytes,
 		}
+		if a.Metrics != nil {
+			a.Metrics.ObserveMachineUsageFreshness(m.Namespace(), m.Metadata.Name)
+		}
 	}
 	if err := a.projectNetworkStatus(ctx, m, rec, &status); err != nil {
 		return err

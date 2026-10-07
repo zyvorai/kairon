@@ -109,7 +109,8 @@ type Recorder struct {
 
 	// Live Machine resource usage -- only registered by NewNodeRecorder.
 	// See ObserveMachineResourceUsage.
-	machineResourceUsage *prometheus.GaugeVec
+	machineResourceUsage  *prometheus.GaugeVec
+	machineUsageTimestamp *prometheus.GaugeVec
 
 	mu         sync.Mutex
 	phaseSince map[phaseKey]phaseState
@@ -246,6 +247,8 @@ func NewNodeRecorder() *Recorder {
 		machineResourceUsage: machineResourceUsage,
 	}
 	reg.MustRegister(r.reconcileDuration, r.reconcileErrors, r.reconcileItemErrors, r.apiRequestDuration, r.machineResourceUsage)
+	r.machineUsageTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "kairon_machine_usage_sample_timestamp_seconds", Help: "Time of the last successful live FluxVM usage sample."}, []string{"namespace", "machine"})
+	reg.MustRegister(r.machineUsageTimestamp)
 	r.edge = NewEdgeRecorder(reg)
 	return r
 }
@@ -547,4 +550,11 @@ func (r *Recorder) ObserveHTTPRequest(method, route string, status int, d time.D
 		class = "3xx"
 	}
 	r.uiRequestDuration.WithLabelValues(method, route, class).Observe(d.Seconds())
+}
+
+// ObserveMachineUsageFreshness records only successful live stats reads.
+func (r *Recorder) ObserveMachineUsageFreshness(namespace, name string) {
+	if r.machineUsageTimestamp != nil {
+		r.machineUsageTimestamp.WithLabelValues(namespace, name).Set(float64(time.Now().Unix()))
+	}
 }

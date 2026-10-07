@@ -735,3 +735,12 @@ ui:
     # silently dropped.
     enabled: false
     allowIngressFrom: []
+
+# Enterprise automation is opt-in. Enable the validating webhook with Fail
+# policy before granting any tenant create privileges for fleet resources.
+fleet:
+  enabled: false
+  prometheusURL: ""
+  redfishOrigins: []
+  redfishSecretNames: []
+  isolatedTestBridges: []

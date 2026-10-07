@@ -141,7 +141,7 @@ func TestScheduledSnapshotsToPrune(t *testing.T) {
 	}
 	snaps := []MachineSnapshot{snap("d3", 72*time.Hour), snap("d0", time.Hour), snap("d1", 24*time.Hour), snap("d2", 48*time.Hour)}
 	names := func(in []MachineSnapshot) []string {
-		var out []string
+		out := make([]string, 0, len(in))
 		for _, s := range in {
 			out = append(out, s.Metadata.Name)
 		}

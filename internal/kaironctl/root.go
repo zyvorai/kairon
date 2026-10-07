@@ -81,6 +81,7 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 
 	root.AddCommand(
 		newVersionCmd(opts),
+		newFleetCmd(opts),
 		newCompletionCmd(root),
 		newInstallCmd(opts),
 		newUninstallCmd(opts),

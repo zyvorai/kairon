@@ -29,7 +29,9 @@ import (
 // POST /api/v1/users/{username}/password (see setOwnPassword/resetPassword
 // below), which is why every read of Server.Users goes through usersMu.
 type User struct {
-	Username     string `json:"username"`
+	Username string `json:"username"`
+	// Role optionally restricts a named account to read-only access.
+	Role         string `json:"role,omitempty"`
 	PasswordHash string `json:"passwordHash"`
 	// IsAdmin gates POST /api/v1/users/{username}/password -- only an admin
 	// account may reset another operator's password. The Helm-seeded
@@ -303,11 +305,8 @@ func (s *Server) isAdminIdentity(ctx context.Context, username string) bool {
 // unchanged behavior, and the default; flipping every existing non-admin
 // operator to "sees nothing" the moment this field existed would be a
 // real break, so scoping is opt-in and this is its single off-switch.
-// Also always true for an admin identity (isAdminIdentity) and for the
-// legacy shared token (usernameFromContext returns "" for it, and for the
-// unauthenticated-dev-mode caller too) -- neither has a per-caller
-// identity to scope by; deploy per-operator ui.auth.users/OIDC instead if
-// namespace scoping matters to you.
+// Admin identities remain unrestricted. Scoped deployments reject shared
+// tokens and unauthenticated callers because they have no tenant identity.
 //
 // Otherwise: true iff ns is in the union of the caller's static
 // User.Namespaces and every OIDCAuth.NamespaceGroups entry for a group
@@ -323,10 +322,7 @@ func (s *Server) authorizedForNamespace(ctx context.Context, ns string) bool {
 	}
 	username := usernameFromContext(ctx)
 	if username == "" {
-		// Legacy shared token (or unauthenticated dev mode, when neither
-		// Token nor Users nor OIDC is configured at all) -- no per-caller
-		// identity exists to scope by, so it stays unrestricted by design.
-		return true
+		return false // Scoped deployments require an authenticated identity.
 	}
 	if s.isAdminIdentity(ctx, username) {
 		return true

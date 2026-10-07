@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyvorai/kairon/internal/fleet"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/model"
@@ -20,7 +21,8 @@ import (
 )
 
 type Controller struct {
-	Kube *kube.Client
+	Kube  *kube.Client
+	Fleet *fleet.Engine
 	// Cosign, when set, makes the webhook verify the image signature of
 	// every agent-pool Machine. Nil keeps the annotation shape check only.
 	Cosign ImageVerifier
@@ -397,6 +399,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	c.reconcileCordonEvacuation(ctx, machines, nodes, migrations)
 	c.detectUnreachableNodes(ctx, machines, nodes)
 	c.reconcileStaleEvacuation(ctx, machines, nodes, migrations)
+	if err := c.reconcileFleet(ctx, machines, nodes, migrations); err != nil {
+		c.Log.Error("fleet automation blocked", "error", err)
+	}
 	return nil
 }
 

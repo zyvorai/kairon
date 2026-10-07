@@ -2,6 +2,8 @@
 
 ## Added
 
+- Experimental opt-in fleet automation: verified Redfish fencing, balancing, autoscaling, backup/recovery/import plans, immutable template claims, bridge-backed IPAM, usage CSV, trusted Kubernetes-identity action approvals and a Fleet dashboard. Scoped UI authorization now denies unnamed sessions and filters overview/evacuation access. See `docs/guides/enterprise-fleet.md` for feature boundaries and setup.
+
 - **VM edge, enforced by FluxVM.** `spec.network.antiSpoof`, `learnIP` and `qos`, and a selecting MachineNetworkPolicy's `allowSNI`, `allowDNS` and `maxIngress*`, are posted to FluxVM as a per-Machine edge and enforced in its TC program (FluxVM dataplane schema 12): anti-spoof drops (`spoof_ip`, `spoof_mac`), DNS and TLS SNI allow lists (`dns_deny`, `sni_deny`), egress and ingress rate limits (`rate_limit`), guest-IP learning from ARP/ND/DHCP (`status.network.edge.guestIPSource`), attributed drops (`kaironctl network drops`), and live-migration conntrack export/restore with an identity check (`status.network.edge.conntrackRestored`, `blackholeWindowMs`). FluxVM persists the edge across its own restarts. See `docs/ebpf-edge.md`.
 - **Policy-only VM edge.** A `mode: tap` Machine selected by a MachineNetworkPolicy with `allowSNI`, `allowDNS` or `maxIngress*` now gets the edge even without Machine edge fields (previously `dataplaneMode: cilium` alone left those policy fields unenforced). Uses the policy list the network reconcile already fetches; no extra API calls.
 - **VM-edge Prometheus metrics.** kairon-node registers and feeds `kairon_net_drops_total{namespace,machine,reason,policy}` from FluxVM's attributed drops, and `kairon_net_conntrack_restored_total` / `kairon_net_migration_blackhole_ms` from migration restores.

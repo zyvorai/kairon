@@ -132,6 +132,13 @@ func (s *Server) handleEvacuate(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, err)
 		return
 	}
+	// Authorize the entire batch before making its first write.
+	for _, machine := range machines {
+		if machine.Spec.NodeName == req.Node && machine.Metadata.DeletionTimestamp == nil && !s.authorizedForNamespace(r.Context(), machine.Namespace()) {
+			writeError(w, http.StatusForbidden, "evacuation includes an unauthorized namespace")
+			return
+		}
+	}
 	stamp := time.Now().UTC().Format("20060102-150405")
 	created := make([]string, 0, len(machines))
 	for _, machine := range machines {

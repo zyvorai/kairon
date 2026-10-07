@@ -106,6 +106,8 @@ OVERRIDES = {
     # Watch lives in internal/kube/watch.go; same resources as the List forms.
     "WatchMachines": ("kairon.zyvor.dev", "machines", "watch"),
     "WatchMachineMigrations": ("kairon.zyvor.dev", "machinemigrations", "watch"),
+    # Merge-patches status.lastRunError; "Set" isn't a verb prefix.
+    "SetMachineSnapshotScheduleError": ("kairon.zyvor.dev", "machinesnapshotschedules/status", "patch"),
 }
 
 VERB_PREFIXES = [

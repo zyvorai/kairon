@@ -171,10 +171,8 @@ type Server struct {
 	// them from "sees every namespace" to "sees none" -- fail-closed, not
 	// a silent no-op, so review ui.auth.users[].namespaces and
 	// ui.oidc.namespaceGroups before enabling this in
-	// charts/kairon/values.yaml. GET /api/v1/overview is deliberately
-	// exempt (it aggregates cluster-wide regardless), and Node isn't a
-	// namespaced kairon object at all, so node-scoped routes are exempt
-	// too -- see requireNamespace's own call sites in Handler() below.
+	// charts/kairon/values.yaml. Overview is filtered; node-scoped proxy routes require an admin
+	// in scoped deployments. Legacy shared tokens are refused when scoped.
 	NamespaceScopingEnabled bool
 	// ImageStoreDir enables the uploaded-image store (images.go): empty
 	// disables every /api/v1/images route and /images/ blob serving.
@@ -209,11 +207,13 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	api := http.NewServeMux()
-	// GET /api/v1/overview is deliberately NOT wrapped by requireNamespace
-	// below -- it aggregates cluster-wide by design (see its own doc
-	// comment in overview.go) regardless of NamespaceScopingEnabled, one
-	// of this feature's documented honest limits.
+	// Overview filters every namespaced object using the caller's current grants.
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
+	api.HandleFunc("GET /api/v1/namespaces", s.handleNamespaces)
+	api.HandleFunc("GET /api/v1/fleet/{resource}", s.requireNamespace(namespaceParam, s.handleListFleet))
+	api.HandleFunc("POST /api/v1/fleet/{resource}", s.requireNamespace(namespaceParam, s.handleCreateFleet))
+	api.HandleFunc("DELETE /api/v1/fleet/{resource}/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteFleet))
+	api.HandleFunc("GET /api/v1/usage.csv", s.requireNamespace(namespaceParam, s.handleLedgerCSV))
 	s.mountAgentPlane(api)
 
 	api.HandleFunc("GET /api/v1/machines", s.requireNamespace(namespaceParam, s.handleListMachines))
@@ -241,13 +241,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/v1/migrations", s.requireNamespace(namespaceParam, s.handleListMigrations))
 	api.HandleFunc("POST /api/v1/migrations", s.requireNamespace(namespaceParam, s.handleCreateMigration))
 	api.HandleFunc("GET /api/v1/migrations/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleGetMigration))
-	// handleEvacuate is deliberately NOT namespace-scoped: it takes a Node
-	// (not a namespace) and bulk-migrates every Machine currently
-	// assigned to it, cluster-wide, across whatever namespaces those
-	// Machines happen to live in -- there is no single ns to check against
-	// requireNamespace's own getNS(r) shape. An honest first-cut limit of
-	// this feature, not an oversight: enabling NamespaceScopingEnabled
-	// does not scope this one node-shaped bulk action.
+	// Evacuation authorizes the full batch before its first write.
 	api.HandleFunc("POST /api/v1/migrations/evacuate", s.handleEvacuate)
 	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/recover", s.requireNamespace(namespaceFromPath, s.handleRecoverMigration))
 	api.HandleFunc("POST /api/v1/migrations/{namespace}/{name}/cancel", s.requireNamespace(namespaceFromPath, s.handleCancelMigration))
@@ -325,7 +319,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/v1/auth/password", s.handleSetOwnPassword)
 	api.HandleFunc("POST /api/v1/users/{username}/password", s.handleResetPassword)
 
-	top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))
+	top.Handle("/api/v1/", s.withAudit(s.withAuth(s.withActionAuthorization(api))))
 
 	// Unauthenticated by necessity: login must be reachable without a
 	// token to be useful at all; config/logout follow the same
@@ -676,7 +670,7 @@ func namespaceFromPath(r *http.Request) string {
 // rather than being one outer middleware layered above api as a whole
 // (the way withAuth/withAudit/withMetrics are) -- deliberately, because
 // it can't work that way here. Handler() below mounts api as
-// `top.Handle("/api/v1/", s.withAudit(s.withAuth(api)))`: withAuth wraps
+// `top.Handle("/api/v1/", s.withAudit(s.withAuth(s.withActionAuthorization(api))))`: withAuth wraps
 // api from *outside*, and Go's http.ServeMux only populates
 // r.PathValue(...) once it has matched and dispatched to the specific
 // registered handler *inside* api -- which hasn't happened yet at that

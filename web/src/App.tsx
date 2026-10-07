@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import Nav, { Page } from './components/Nav';
 import Overview from './pages/Overview';
+import Fleet from './pages/Fleet';
 import Machines from './pages/Machines';
 import Migrations from './pages/Migrations';
 import Snapshots from './pages/Snapshots';
@@ -85,6 +86,7 @@ export default function App() {
 
   const body = {
     overview: <Overview />,
+    fleet: <Fleet />,
     machines: <Machines onMigrate={goMigrate} onSnapshot={goSnapshot} />,
     migrations: <Migrations prefillMachine={prefillMachine} />,
     snapshots: <Snapshots prefillMachine={prefillMachine} onRestore={goRestore} />,

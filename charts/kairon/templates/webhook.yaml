@@ -132,3 +132,29 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
 {{ end }}
+
+{{ if and .Values.webhook.enabled .Values.webhook.tlsSecretName .Values.webhook.caBundle }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata: {name: kairon-fleet-webhook}
+webhooks:
+  - name: fleet.kairon.zyvor.dev
+    admissionReviewVersions: [v1]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    clientConfig:
+      caBundle: {{ .Values.webhook.caBundle | quote }}
+      service:
+        name: kairon-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-fleet
+        port: 443
+    rules:
+      - apiGroups: [fleet.kairon.zyvor.dev]
+        apiVersions: [v1alpha1]
+        resources: ["*", "machineactionapprovals/status"]
+        operations: [CREATE, UPDATE]
+        scope: Namespaced
+{{ end }}

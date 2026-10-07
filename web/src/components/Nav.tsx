@@ -5,6 +5,7 @@ import { Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, Lo
 
 export type Page =
   | 'overview'
+  | 'fleet'
   | 'machines'
   | 'migrations'
   | 'snapshots'
@@ -23,6 +24,7 @@ export type Page =
 
 const ITEMS: [Page, React.ReactNode, string][] = [
   ['overview', <Activity size={17} key="i" />, 'Overview'],
+  ['fleet', <Layers size={17} key="i" />, 'Fleet operations'],
   ['machines', <Box size={17} key="i" />, 'Machines'],
   ['migrations', <ArrowLeftRight size={17} key="i" />, 'Migrations'],
   ['snapshots', <Camera size={17} key="i" />, 'Snapshots'],

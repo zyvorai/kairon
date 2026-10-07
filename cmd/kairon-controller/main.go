@@ -21,6 +21,7 @@ import (
 	"github.com/zyvorai/kairon/internal/agentplane/cosign"
 	"github.com/zyvorai/kairon/internal/attest"
 	"github.com/zyvorai/kairon/internal/controller"
+	"github.com/zyvorai/kairon/internal/fleet"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/leaderelection"
@@ -43,6 +44,8 @@ func main() {
 // run returns the process exit code rather than calling os.Exit directly,
 // so every deferred cleanup (e.g. cancel()) actually runs before exit.
 func run() int {
+	fleetEnabled := flag.Bool("fleet-enabled", envBool("KAIRON_FLEET_ENABLED", false), "enable declarative enterprise fleet automation")
+	fleetNamespace := flag.String("fleet-control-namespace", envDefault("KAIRON_FLEET_CONTROL_NAMESPACE", "kairon-system"), "namespace for trusted HA profiles and BMC credentials")
 	interval := flag.Duration("interval", 5*time.Second, "reconciliation interval")
 	healthAddr := flag.String("health-addr", ":32301", "health server address")
 	requireLabel := flag.Bool("require-capable-label", true, "only schedule onto nodes labeled kairon.zyvor.dev/capable=true")
@@ -96,6 +99,10 @@ func run() int {
 			return 1
 		}
 	}
+	if *fleetEnabled && webhookTLSConfig == nil {
+		log.Error("fleet automation requires admission webhook TLS configuration")
+		return 1
+	}
 	atlasCfg, err := atlasConfig(*atlasURL, *atlasTokenFile, *atlasTenant, *atlasPolicy)
 	if err != nil {
 		log.Error("atlas client", "error", err)
@@ -143,6 +150,9 @@ func run() int {
 		NodeLivenessLeaseNamespace: *nodeLivenessLeaseNamespace,
 		Tracer:                     oteltrace.FromEnv(),
 		Atlas:                      atlasCfg,
+	}
+	if *fleetEnabled {
+		ctl.Fleet = &fleet.Engine{Kube: kc, Scheduler: ctl.Scheduler, Log: log, ControlNamespace: *fleetNamespace, RedfishOrigins: fleet.RedfishOrigins(os.Getenv("KAIRON_FLEET_REDFISH_ORIGINS")), IsolatedBridges: fleet.RedfishOrigins(os.Getenv("KAIRON_FLEET_TEST_BRIDGES")), Metrics: &fleet.Prometheus{URL: os.Getenv("KAIRON_FLEET_PROMETHEUS_URL"), Token: os.Getenv("KAIRON_FLEET_PROMETHEUS_TOKEN")}}
 	}
 	if cosignVerifier != nil {
 		ctl.Cosign = cosignVerifier

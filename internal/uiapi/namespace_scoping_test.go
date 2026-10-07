@@ -132,34 +132,14 @@ func TestNamespaceScopingAdminIsUnrestricted(t *testing.T) {
 	}
 }
 
-// TestNamespaceScopingLegacySharedTokenIsUnrestricted proves the legacy
-// shared bearer token stays fully unrestricted regardless of
-// NamespaceScopingEnabled -- it has no per-caller identity to scope by,
-// by design (see authorizedForNamespace's own doc comment).
-func TestNamespaceScopingLegacySharedTokenIsUnrestricted(t *testing.T) {
+func TestNamespaceScopingLegacySharedTokenDenied(t *testing.T) {
 	fk := newFakeKube()
-	fk.machines["db"] = model.Machine{Metadata: model.ObjectMeta{Name: "db", Namespace: "default"}}
-	srv := httptest.NewServer(fk.handler())
-	t.Cleanup(srv.Close)
-	kc, err := kube.New(srv.URL, "", "", false)
-	if err != nil {
-		t.Fatalf("kube.New: %v", err)
-	}
-	s := &Server{
-		Kube:                    kc,
-		Token:                   "shared-secret",
-		NamespaceScopingEnabled: true,
-	}
-	h := s.Handler()
-
-	if rr := doJSON(t, h, http.MethodGet, "/api/v1/machines?namespace=default", "shared-secret", nil); rr.Code != http.StatusOK {
-		t.Fatalf("legacy token against namespace %q: expected 200, got %d: %s", "default", rr.Code, rr.Body.String())
-	}
-	// See TestNamespaceScopingAdminIsUnrestricted's own comment on why a
-	// non-403 (not necessarily 200) is the right assertion against a
-	// namespace the fake apiserver fixture doesn't model.
-	if rr := doJSON(t, h, http.MethodGet, "/api/v1/machines?namespace=some-other-namespace", "shared-secret", nil); rr.Code == http.StatusForbidden {
-		t.Fatalf("legacy token against an unscoped namespace: expected requireNamespace to never 403 it, got 403: %s", rr.Body.String())
+	s := newNamespaceScopingTestServer(t, fk, nil, nil, true)
+	s.Token = "shared-secret"
+	for _, path := range []string{"/api/v1/machines?namespace=default", "/api/v1/overview", "/api/v1/nodes"} {
+		if rr := doJSON(t, s.Handler(), http.MethodGet, path, "shared-secret", nil); rr.Code != http.StatusForbidden {
+			t.Fatalf("%s: got %d", path, rr.Code)
+		}
 	}
 }
 
@@ -374,5 +354,21 @@ func TestEveryNamespacedRouteIsWrappedByRequireNamespace(t *testing.T) {
 	}
 	if handlerChecked == 0 {
 		t.Fatal("expected at least one namespaceParam-handler route registration to check -- this test's own handler cross-referencing is broken")
+	}
+}
+
+func TestFleetViewerCannotMutate(t *testing.T) {
+	s := newNamespaceScopingTestServer(t, newFakeKube(), []User{{Username: "viewer", PasswordHash: hashFor(t, "pw"), Namespaces: []string{"default"}, Role: "viewer"}}, nil, true)
+	h := s.Handler()
+	token := loginToken(t, h, "viewer", "pw")
+	for _, path := range []string{"/api/v1/machines?namespace=default", "/api/v1/fleet/machinetemplateclaims?namespace=default"} {
+		rr := doJSON(t, h, http.MethodPost, path, token, map[string]any{})
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("viewer %s got %d", path, rr.Code)
+		}
+	}
+	rr := doJSON(t, h, http.MethodGet, "/api/v1/namespaces", token, nil)
+	if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != "[\"default\"]" {
+		t.Fatalf("namespace discovery: %d %s", rr.Code, rr.Body.String())
 	}
 }
