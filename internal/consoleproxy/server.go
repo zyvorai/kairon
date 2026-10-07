@@ -55,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /qga-firewall/open/{runtimeID}", s.handleQGAFirewallOpen)
 	mux.HandleFunc("POST /qga-firewall/close/{runtimeID}", s.handleQGAFirewallClose)
 	mux.HandleFunc("GET /logs/{runtimeID}", s.handleLogs)
+	mux.HandleFunc("GET /backup-root/{name}", s.handleBackupRoot)
 	mux.HandleFunc("POST /vm-snapshot/{runtimeID}", s.handleVMSnapshot)
 	mux.HandleFunc("POST /vm-restore-snapshot/{runtimeID}", s.handleVMRestoreSnapshot)
 	mux.HandleFunc("GET /sandboxes", s.handleListSandboxes)
@@ -580,4 +581,45 @@ func relay(a, b io.ReadWriteCloser) {
 	go func() { _, _ = io.Copy(a, b); done <- struct{}{} }()
 	go func() { _, _ = io.Copy(b, a); done <- struct{}{} }()
 	<-done
+}
+
+// handleBackupRoot streams a FluxVM backup's standalone root qcow2 (GET
+// /v1/backups/{name}/root), e.g. a MachineBackup Veyron publishes as a
+// golden image. Multi-GB, so it bypasses the FluxVM client's request
+// timeout and lives only as long as the caller's request.
+func (s *Server) handleBackupRoot(w http.ResponseWriter, r *http.Request) {
+	if !s.checkToken(w, r) {
+		return
+	}
+	upstreamURL := s.Flux.BaseURL + "/v1/backups/" + url.PathEscape(r.PathValue("name")) + "/root"
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.Flux.Token != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+s.Flux.Token)
+	}
+	hc := &http.Client{Transport: s.Flux.HTTP.Transport}
+	resp, err := hc.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("dial fluxvm backup: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		status := http.StatusBadGateway
+		if resp.StatusCode == http.StatusNotFound {
+			status = http.StatusNotFound
+		}
+		http.Error(w, fmt.Sprintf("fluxvm backup: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(data))), status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		w.Header().Set("Content-Length", cl)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, resp.Body)
 }
