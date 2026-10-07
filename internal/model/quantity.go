@@ -90,3 +90,13 @@ func ParseMemoryMiB(v string) (uint64, error) {
 	}
 	return uint64(math.Ceil(bytes / (1024 * 1024))), nil
 }
+
+// ParseDiskSizeGiB parses a disk quantity (60Gi, 1Ti, 100G) and rounds up to
+// whole GiB, the unit FluxVM sizes root disks in.
+func ParseDiskSizeGiB(v string) (uint64, error) {
+	mib, err := ParseMemoryMiB(v)
+	if err != nil {
+		return 0, fmt.Errorf("invalid disk size %q", strings.TrimSpace(v))
+	}
+	return (mib + 1023) / 1024, nil
+}

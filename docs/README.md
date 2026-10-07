@@ -53,6 +53,8 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`guides/machine-storage-thirdparty-csi.md`](guides/machine-storage-thirdparty-csi.md) | `node.thirdPartyCSIDrivers`: `kairon-node` as a generic CSI client against an allowlisted third-party driver, including `attachRequired` drivers (VolumeAttachment) and namespace-allowlisted node secrets |
 | [`guides/migrate-from-vmware.md`](guides/migrate-from-vmware.md) | Moving VMware VMs to Kairon: `kaironctl import ova`, offline virtio repair, checklist |
 | [`guides/machine-image-import.md`](guides/machine-image-import.md) | `spec.image.source`: downloading a remote image URL into `kairon-node`'s own digest-keyed cache |
+| [`guides/machine-images.md`](guides/machine-images.md) | `MachineImage`: a cluster-scoped, versioned catalog of boot disks and ISOs, pinned into a Machine by digest once |
+| [`guides/machine-install-media.md`](guides/machine-install-media.md) | `spec.cdroms` + `spec.image.blank`: install Windows or Linux from an ISO onto an empty disk |
 | [`guides/machine-sets.md`](guides/machine-sets.md) | `MachineSet`: replica reconciliation, `RollingUpdate`/`Recreate` rollout strategy |
 | [`guides/machine-fork.md`](guides/machine-fork.md) | `kaironctl fork` / `fork_machine`: live copies of a Running Machine from one memory snapshot |
 | [`guides/machine-pools.md`](guides/machine-pools.md) | `MachinePool` / `MachineClaim`: warm, pre-booted Machines claimed in one reconcile tick |

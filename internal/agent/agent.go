@@ -290,6 +290,14 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 	var volStatus csiVolumeStatus
 	var dataDisks []fluxvm.DataDisk
 	if !usingSandboxTemplate && !usingCatalogImage {
+		if err := model.ValidateRootImage(m.Spec.Image); err != nil {
+			return err
+		}
+		if m.Spec.Image.ImageRef != "" && m.Spec.Image.Source == nil {
+			return fmt.Errorf("spec.image.imageRef %q is not resolved yet (kairon-controller pins it from the MachineImage)", m.Spec.Image.ImageRef)
+		}
+		// seedPath is what an empty spec.volumes[0] boot disk is seeded from.
+		var seedPath string
 		if m.Spec.Image.Source != nil {
 			cachedPath, err := a.resolveImageSource(ctx, m)
 			if err != nil {
@@ -302,7 +310,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 				}
 				cachedPath, dataDisks = imported.Image, imported.dataDisks()
 			}
-			m.Spec.Image.Path = cachedPath
+			m.Spec.Image.Path, seedPath = cachedPath, cachedPath
+		} else if m.Spec.Image.Blank && len(m.Spec.Volumes) == 0 {
+			base, err := a.blankBase()
+			if err != nil {
+				return err
+			}
+			m.Spec.Image.Path = base
 		}
 		bootDisk, rbdBoot, err := a.resolveAtlasRBDBoot(m)
 		if err != nil {
@@ -317,7 +331,16 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		if bootDisk == "" {
 			return fmt.Errorf("spec.image.path or spec.volumes[0] is required")
 		}
-		if len(m.Spec.Volumes) == 0 && m.Spec.Image.Source == nil {
+		if !rbdBoot && len(m.Spec.Volumes) > 0 && (m.Spec.Image.Source != nil || m.Spec.Image.Blank) {
+			var sizeGiB uint64
+			if m.Spec.Image.DiskSize != "" {
+				sizeGiB, _ = model.ParseDiskSizeGiB(m.Spec.Image.DiskSize)
+			}
+			if err := populateBootVolume(bootDisk, seedPath, sizeGiB); err != nil {
+				return err
+			}
+		}
+		if len(m.Spec.Volumes) == 0 && m.Spec.Image.Source == nil && !m.Spec.Image.Blank {
 			// Only fence plain spec.image.path against ImageRoot -- a
 			// PVC-resolved path already went through a stronger gate (the PVC
 			// had to exist and be Bound, not just be a string any Machine
@@ -331,6 +354,13 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		}
 		m.Spec.Image.Path = bootDisk
 		volStatus = vs
+	}
+
+	if !usingSandboxTemplate {
+		m.Spec.Cdroms = append([]model.MachineCdrom(nil), m.Spec.Cdroms...)
+		if err := a.resolveCdroms(ctx, &m); err != nil {
+			return err
+		}
 	}
 
 	var sharedFolders []fluxvm.SharedFolder

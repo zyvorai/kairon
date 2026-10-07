@@ -94,9 +94,31 @@ spec:
                         enum: ["qcow2", "raw", "ova", "vmdk", "vhd", "vhdx"]
                       repair:
                         type: boolean
+                      insecureSkipTLSVerify:
+                        type: boolean
+                        description: Download httpURL without verifying the
+                          server certificate. The sha256 digest still
+                          guarantees the bytes.
                   catalogName:
                     type: string
                     minLength: 1
+                  imageRef:
+                    type: string
+                    minLength: 1
+                    description: Names a cluster-scoped MachineImage (kind
+                      disk). kairon-controller copies its source and digest
+                      here once, before the Machine is scheduled. See
+                      docs/guides/machine-images.md.
+                  blank:
+                    type: boolean
+                    description: Boot an empty root disk of diskSize (an
+                      install from spec.cdroms). Excludes path, source,
+                      catalogName and imageRef.
+                  diskSize:
+                    type: string
+                    minLength: 1
+                    description: Grow the root disk to this size (e.g. 60Gi)
+                      at creation. Required with blank.
               resources:
                 type: object
                 properties:
@@ -498,6 +520,39 @@ spec:
                     readOnly:
                       type: boolean
                       description: Mount volumes[1+] virtiofs share read-only.
+              cdroms:
+                type: array
+                description: Read-only install media (ISO) attached as SATA
+                  CD-ROMs from the first boot (qemu backend). Each entry names
+                  a MachineImage of kind iso (imageRef) or an http(s) source
+                  plus digest. Creation-time-only. See
+                  docs/guides/machine-install-media.md.
+                maxItems: 4
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys: [name]
+                items:
+                  type: object
+                  required: [name]
+                  properties:
+                    name:
+                      type: string
+                      pattern: '^[a-z0-9][a-z0-9-]{0,31}$'
+                    imageRef:
+                      type: string
+                      minLength: 1
+                    digest:
+                      type: string
+                    source:
+                      type: object
+                      properties:
+                        httpURL:
+                          type: string
+                          minLength: 1
+                        format:
+                          type: string
+                          enum: ["raw"]
+                        insecureSkipTLSVerify:
+                          type: boolean
               disks:
                 type: array
                 description: PVC-backed block disks hot-attached to the running guest as SCSI disks (serial = name) and detached when removed. hostPath/local PVs only; Block mode attaches the device, Filesystem mode the disk.img inside it. See docs/guides/machine-hotplug.md.

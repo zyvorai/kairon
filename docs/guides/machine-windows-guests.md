@@ -100,9 +100,10 @@ than refused outright.
 - Secure Boot/vTPM need a FluxVM node-level OVMF vars template configured
   by the operator -- see above. No `Machine`-spec field to override the
   firmware/vars path per-Machine yet, only the node-wide default.
-- No driver-ISO-attach for an interactive Windows Setup flow -- bring a
-  pre-built image with virtio drivers already installed, the same
-  expectation Kairon already has for every other guest OS.
+- Interactive Windows Setup from an ISO, with the VirtIO driver ISO as a
+  second CD-ROM, works through `spec.cdroms` + `spec.image.blank` -- see
+  [`machine-install-media.md`](machine-install-media.md). A pre-built image
+  is still the fast path for fleets.
 - `spec.guestAgent` (real `qemu-guest-agent`-reported `status.guestIP`,
   see [`machine-guest-agent.md`](machine-guest-agent.md)) needs the
   Windows `qemu-guest-agent` service installed in your image too --

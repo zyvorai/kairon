@@ -36,7 +36,7 @@ rules:
     # Read-only: MachineInstanceType is pure reference data
     # kairon-controller looks up to resolve spec.instanceTypeName, never
     # writes -- see internal/controller/instancetype.go.
-    resources: ["machineinstancetypes"]
+    resources: ["machineinstancetypes", "machineimages"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kairon.zyvor.dev"]
     # MachineSet is the only reason kairon-controller itself ever
@@ -1078,7 +1078,7 @@ rules:
   # suspend/resume toggle, handleSuspendMachineSnapshotSchedule) -- all
   # already-shipped mutations that were equally broken.
   - apiGroups: ["kairon.zyvor.dev"]
-    resources: ["machinequotas", "machinedisruptionbudgets", "machineinstancetypes", "migrationpolicies"]
+    resources: ["machinequotas", "machinedisruptionbudgets", "machineinstancetypes", "machineimages", "migrationpolicies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesets"]

@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -35,9 +36,16 @@ func (a *Agent) resolveImageSource(ctx context.Context, m model.Machine) (string
 	if err := model.ValidateImageSource(m.Spec.Image); err != nil {
 		return "", err
 	}
-	hexDigest := strings.TrimPrefix(m.Spec.Image.Digest, model.ImageDigestPrefix)
+	return a.fetchToCache(ctx, m.Spec.Image)
+}
+
+// fetchToCache returns the digest-keyed cache path for img.Source,
+// downloading (or pulling) it first when absent. img must already be
+// validated.
+func (a *Agent) fetchToCache(ctx context.Context, img model.ImageSpec) (string, error) {
+	hexDigest := strings.TrimPrefix(img.Digest, model.ImageDigestPrefix)
 	cachePath := filepath.Join(a.ImageCacheDir, "sha256", hexDigest)
-	if m.Spec.Image.Source.OCI != "" {
+	if img.Source.OCI != "" {
 		// Keyed by manifest digest, not disk bytes, so kept apart.
 		cachePath = filepath.Join(a.ImageCacheDir, "oci", "sha256", hexDigest)
 	}
@@ -46,16 +54,128 @@ func (a *Agent) resolveImageSource(ctx context.Context, m model.Machine) (string
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat image cache entry %s: %w", cachePath, err)
 	}
-	if m.Spec.Image.Source.OCI != "" {
-		if err := a.pullOCIDisk(ctx, m.Spec.Image, cachePath); err != nil {
+	if img.Source.OCI != "" {
+		if err := a.pullOCIDisk(ctx, img, cachePath); err != nil {
 			return "", err
 		}
 		return cachePath, nil
 	}
-	if err := downloadToTemp(ctx, m.Spec.Image.Source.HTTPURL, cachePath, hexDigest); err != nil {
+	if err := downloadToTemp(ctx, img.Source.HTTPURL, cachePath, hexDigest, img.Source.InsecureSkipTLSVerify); err != nil {
 		return "", err
 	}
 	return cachePath, nil
+}
+
+// resolveCdroms fills each spec.cdroms entry's Path from the image cache.
+// Entries still waiting on an imageRef never reach a node (the controller
+// holds the Machine back), so a missing source here is an error.
+func (a *Agent) resolveCdroms(ctx context.Context, m *model.Machine) error {
+	if len(m.Spec.Cdroms) == 0 {
+		return nil
+	}
+	if a.ImageCacheDir == "" {
+		return fmt.Errorf("this node has no image cache configured (-image-cache-dir / $KAIRON_IMAGE_CACHE_DIR) -- spec.cdroms cannot be used without it")
+	}
+	if err := model.ValidateCdroms(m.Spec.Cdroms); err != nil {
+		return err
+	}
+	for i := range m.Spec.Cdroms {
+		cd := &m.Spec.Cdroms[i]
+		if cd.Source == nil {
+			return fmt.Errorf("spec.cdroms[%d]: imageRef %q is not resolved yet", i, cd.ImageRef)
+		}
+		path, err := a.fetchToCache(ctx, model.ImageSpec{Source: cd.Source, Digest: cd.Digest})
+		if err != nil {
+			return fmt.Errorf("spec.cdroms[%d]: %w", i, err)
+		}
+		cd.Path = path
+	}
+	return nil
+}
+
+// blankBaseSize is the empty raw file every blank root disk overlays;
+// FluxVM grows the overlay to spec.image.diskSize.
+const blankBaseSize = 1 << 20
+
+// blankBase returns the shared empty base image, creating it once.
+func (a *Agent) blankBase() (string, error) {
+	if a.ImageCacheDir == "" {
+		return "", fmt.Errorf("this node has no image cache configured (-image-cache-dir / $KAIRON_IMAGE_CACHE_DIR) -- spec.image.blank cannot be used without it")
+	}
+	path := filepath.Join(a.ImageCacheDir, "blank", "empty.raw")
+	if fi, err := os.Stat(path); err == nil && fi.Size() == blankBaseSize {
+		return path, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return "", fmt.Errorf("create blank image directory: %w", err)
+	}
+	if err := writeSparseFile(path, blankBaseSize); err != nil {
+		return "", fmt.Errorf("create blank base image: %w", err)
+	}
+	return path, nil
+}
+
+// writeSparseFile atomically creates path as a zero-filled file of size bytes.
+func writeSparseFile(path string, size int64) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".blank-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Truncate(size); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// populateBootVolume seeds an empty spec.volumes[0] boot disk: with the
+// cached image at sourcePath, or (sourcePath empty) a blank raw disk of
+// sizeGiB. An existing non-empty disk is never touched, so this only ever
+// runs before a Machine's first boot. Block-mode volumes aren't seeded.
+func populateBootVolume(bootDisk, sourcePath string, sizeGiB uint64) error {
+	fi, err := os.Stat(bootDisk)
+	switch {
+	case err == nil && fi.Mode()&os.ModeDevice != 0:
+		return fmt.Errorf("spec.volumes[0] is a Block-mode volume: Kairon only seeds Filesystem-mode boot volumes from spec.image.source/blank; write the image to the device yourself")
+	case err == nil && fi.Size() > 0:
+		return nil
+	case err != nil && !os.IsNotExist(err):
+		return fmt.Errorf("stat boot disk %s: %w", bootDisk, err)
+	}
+	if sourcePath == "" {
+		if sizeGiB == 0 {
+			return fmt.Errorf("spec.image.blank needs spec.image.diskSize")
+		}
+		return writeSparseFile(bootDisk, int64(sizeGiB)<<30)
+	}
+	return copyFileAtomic(sourcePath, bootDisk)
+}
+
+func copyFileAtomic(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".seed-*")
+	if err != nil {
+		return fmt.Errorf("seed boot volume: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("seed boot volume: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, dst)
 }
 
 // downloadToTemp streams source into a temp file in the same directory as
@@ -64,8 +184,9 @@ func (a *Agent) resolveImageSource(ctx context.Context, m model.Machine) (string
 // verifies the result against wantHexDigest before the rename. No format
 // conversion: FluxVM already consumes qcow2/raw directly (see
 // docs/guides/machine-storage.md), so bytes are trusted via digest, not
-// inspected.
-func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string) error {
+// inspected -- which is also why skipping TLS verification is safe for
+// integrity.
+func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string, insecure bool) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
 		return fmt.Errorf("create image cache directory: %w", err)
 	}
@@ -73,7 +194,13 @@ func downloadToTemp(ctx context.Context, source, destPath, wantHexDigest string)
 	if err != nil {
 		return fmt.Errorf("build request for %s: %w", source, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := http.DefaultClient
+	if insecure {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // bytes are verified against the pinned sha256 below
+		client = &http.Client{Transport: tr}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("download %s: %w", source, err)
 	}

@@ -35,6 +35,26 @@ directory, and boots from `<directory>/disk.img`. If you're hand-provisioning
 storage for a test, that means placing (or copying) your qcow2/raw image at
 exactly `<PersistentVolume path>/disk.img` before the Machine reconciles.
 
+## Seeding a boot volume
+
+An empty `spec.volumes[0]` no longer has to be filled by hand. When the
+Machine also sets `spec.image.source` (or `imageRef`), kairon-node copies
+the cached image into `<volume>/disk.img` before the first boot; with
+`spec.image.blank` it creates a sparse empty `disk.img` of
+`spec.image.diskSize` instead (an ISO install onto the volume, see
+[`machine-install-media.md`](machine-install-media.md)).
+
+```yaml
+spec:
+  image: {imageRef: ubuntu-24-04}
+  volumes: [{name: root, claimName: db-root-pvc}]
+```
+
+Seeding only happens when `disk.img` is missing or empty: an existing disk
+is never overwritten, so republishing the image or restarting the Machine
+can't clobber it. Filesystem-mode volumes only; a Block-mode volume fails
+with a clear error (write the image to the device yourself).
+
 ## Real limits today
 
 - **Boot volume:** `spec.volumes[0]` is the boot disk (`disk.img` inside the

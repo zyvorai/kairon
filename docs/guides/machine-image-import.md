@@ -55,6 +55,18 @@ image file today). The downloaded bytes land at this same absolute path on
 the host, which is what makes them visible to FluxVM (a separate process on
 the same host) once `spec.image.path` is set to the cache path.
 
+## Self-signed image servers
+
+`source.insecureSkipTLSVerify: true` downloads `httpURL` without verifying
+the server certificate, for in-cluster image stores with a self-signed
+certificate (Veyron's upload store, for example). The sha256 digest is still
+checked before the file enters the cache, so the bytes can't be swapped;
+only the transfer's confidentiality is lost. Leave it off for anything on a
+public network.
+
+Named, versioned images (`spec.image.imageRef`) live in the
+[`MachineImage`](machine-images.md) catalog.
+
 ## How it works
 
 On the first reconcile of a `spec.image.source` Machine, `kairon-node`:
