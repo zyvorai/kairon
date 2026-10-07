@@ -55,6 +55,11 @@ is never overwritten, so republishing the image or restarting the Machine
 can't clobber it. Filesystem-mode volumes only; a Block-mode volume fails
 with a clear error (write the image to the device yourself).
 
+kairon-node writes `disk.img` itself, so the PV directory must be writable by
+the `kairon` user: with the packaged `ProtectSystem=strict` unit, add the PV
+root to the unit's `ReadWritePaths` (a drop-in is enough). FluxVM then opens
+the disk, so the same root must also be in its `allowed_image_dirs`.
+
 ## Real limits today
 
 - **Boot volume:** `spec.volumes[0]` is the boot disk (`disk.img` inside the
