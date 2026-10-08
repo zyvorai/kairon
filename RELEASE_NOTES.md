@@ -1,5 +1,9 @@
 # Unreleased
 
+## Upgrade notes
+
+- **FluxVM native eBPF default.** Current FluxVM treats an omitted `[sandbox.dataplane]` table as `mode = "ebpf"`, `required = true`. Machines with an empty `dataplaneMode` follow the host setting, so `mode: tap` and `mode: macvtap` Machines fail to create or start on a node without the BPF objects. Before upgrading FluxVM, run its `scripts/network-fabric-preflight.sh --require-bpf` on each node, or pin `mode = "legacy"` in `/etc/fluxvm.toml`. See `docs/ebpf-edge.md`.
+
 ## Added
 
 - Experimental opt-in fleet automation: verified Redfish fencing, balancing, autoscaling, backup/recovery/import plans, immutable template claims, bridge-backed IPAM, usage CSV, trusted Kubernetes-identity action approvals and a Fleet dashboard. Scoped UI authorization now denies unnamed sessions and filters overview/evacuation access. See `docs/guides/enterprise-fleet.md` for feature boundaries and setup.

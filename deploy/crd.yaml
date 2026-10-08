@@ -2257,7 +2257,7 @@ spec:
                     default: false
                   dataplaneMode:
                     type: string
-                    description: FluxVM sandbox dataplane mode (legacy|ebpf|cilium). Empty uses FluxVM's own default.
+                    description: FluxVM sandbox dataplane mode (legacy|ebpf|cilium). Empty uses the host's sandbox.dataplane setting in fluxvm.toml; current FluxVM defaults an omitted setting to required native eBPF.
                     enum:
                     - legacy
                     - ebpf
