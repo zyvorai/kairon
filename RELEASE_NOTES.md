@@ -6,6 +6,8 @@
 
 ## Added
 
+- **Developer ecosystem kit.** Dependency-free Python/TypeScript SDKs for namespaced core/fleet CRDs and existing UI guest operations; digest-pinned recipe rendering, disposable VM GitHub Actions, an opt-in orphan sweeper, Terraform composition, partner metadata and single-VM lifecycle qualification. Existing authorization and controller/runtime paths are unchanged. See `ecosystem/README.md`.
+
 - **Eject install media.** Removing an entry from `spec.cdroms` on an existing Machine now ejects that CD-ROM's medium through FluxVM (live when running), so an installed VM can live-migrate. The admission webhook allows only removals after creation. Needs FluxVM with the cdrom eject route (fluxvm PR #149). See `docs/guides/machine-install-media.md`.
 - Experimental opt-in fleet automation: verified Redfish fencing, balancing, autoscaling, backup/recovery/import plans, immutable template claims, bridge-backed IPAM, usage CSV, trusted Kubernetes-identity action approvals and a Fleet dashboard. Scoped UI authorization now denies unnamed sessions and filters overview/evacuation access. See `docs/guides/enterprise-fleet.md` for feature boundaries and setup.
 

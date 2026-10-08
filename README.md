@@ -276,6 +276,7 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 | Getting started | [docs/getting-started.md](docs/getting-started.md) |
 | What ships | [docs/WHAT_SHIPS.md](docs/WHAT_SHIPS.md) |
 | Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) · [docs/architecture.md](docs/architecture.md) |
+| Developer ecosystem | [SDKs, templates, CI and integrations](ecosystem/README.md) |
 | AI agents and MCP | [docs/ai-agents.md](docs/ai-agents.md) |
 | Status and gaps | [docs/STATUS.md](docs/STATUS.md) |
 | Hardware matrix | [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
