@@ -79,7 +79,9 @@ type NetworkSpec struct {
 	PodUID            string        `json:"podUID,omitempty"`
 	DataplaneRequired bool          `json:"dataplaneRequired,omitempty"`
 	// DataplaneMode requests FluxVM sandbox dataplane: legacy|ebpf|cilium.
-	// Empty leaves FluxVM's own default (typically from fluxvm.toml).
+	// Empty leaves the host's sandbox.dataplane setting from fluxvm.toml;
+	// current FluxVM defaults an omitted setting to mode=ebpf, required=true.
+	// Attachment strictness (required) is always the host's, not per Machine.
 	DataplaneMode string `json:"dataplaneMode,omitempty"`
 	// CiliumAttach, when true, asks kairon-controller to reconcile a
 	// CiliumExternalWorkload so the Machine can join the cluster Cilium

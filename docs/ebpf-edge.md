@@ -28,6 +28,16 @@ FluxVM's side (routes, wire format, BPF maps, host requirements) is in
 - FluxVM with dataplane schema 12 and its eBPF dataplane
   (`sandbox.dataplane.mode = "ebpf"` or `"cilium"` in `/etc/fluxvm.toml`).
   In `legacy` mode FluxVM rejects an edge that enforces anything.
+- `dataplaneMode` is passed to FluxVM per Machine; an empty value uses the
+  host's `[sandbox.dataplane]` setting. Attachment strictness (`required`)
+  is always the host's. Current FluxVM treats an omitted table as
+  `mode = "ebpf"`, `required = true` (older releases used `legacy` with
+  optional attach). On those hosts every `mode: tap` or `mode: macvtap`
+  Machine fails to create or start if the BPF objects are missing or BPF
+  can't be loaded, even with `dataplaneMode` empty. Before upgrading FluxVM, run its
+  `scripts/network-fabric-preflight.sh --require-bpf` on each node, or pin
+  `mode = "legacy"` in `/etc/fluxvm.toml` on nodes that can't load BPF.
+  `user` and `none` networking have no host edge and are unaffected.
 - A `mode: tap` Machine. `user` and `macvtap` networking have no edge
   hook.
 - A netns Machine (`netns: true`) without `spec.network.mac` gets a stable
