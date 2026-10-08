@@ -133,6 +133,8 @@ Cold migration, node evacuation, and secure live migration over mutual TLS with 
 
 ### An eBPF edge on every VM
 
+[![Declare it in YAML, the kernel enforces it: anti-spoof, DNS and TLS SNI allow lists, rate limits and conntrack that moves with live migration](docs/assets/ebpf-edge.jpg)](docs/ebpf-edge.md)
+
 Each VM tap gets FluxVM's eBPF dataplane: anti-spoofing, DNS and TLS-SNI allowlists, rate limits, and drops attributed to a reason (`spoof_ip`, `dns_deny`, `sni_deny`, `rate_limit`, …). Write policy as `MachineNetworkPolicy` / `NetworkSecurityGroup`; see it live in the CLI and the dashboard **Network** panel; capture packets from one VM in one command. [VM edge →](docs/ebpf-edge.md) · [Network fabric →](docs/network-fabric.md)
 
 ```bash

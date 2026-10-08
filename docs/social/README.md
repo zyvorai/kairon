@@ -16,6 +16,7 @@ or primary color. The Zyvor "Z" mark (`zyvor-mark.svg`) is drawn in the same blu
 | `readme/vs-kubevirt.html` → `../assets/kairon-vs-kubevirt.jpg` | 1600×820 stack comparison: what sits between `kubectl` and KVM | same script |
 | `readme/capabilities.html` → `../assets/readme-capabilities.jpg` | 1600×640 Run / Move / Protect / Automate | same script |
 | `readme/architecture.html` → `../assets/readme-architecture.jpg` | 1600×700 components and ports | same script |
+| `readme/ebpf-edge.html` → `../assets/ebpf-edge.jpg` | 1600×760 VM-edge eBPF card over generated art (`../assets/ebpf-hero-art.jpg`, no text) | same script |
 | `../assets/social-preview.svg` / `.png` | 1280×640 README hero, light | `python3 docs/social/build-social-svg.py docs/assets` then `rsvg-convert -w 1280 -h 640 docs/assets/social-preview.svg -o docs/assets/social-preview.png` |
 | `../assets/social-preview-dark.svg` / `.png` | Same hero, dark (used via `prefers-color-scheme: dark` in the README) | same, with `social-preview-dark` |
 

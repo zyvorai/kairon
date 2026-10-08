@@ -1,5 +1,26 @@
 # VM-edge eBPF
 
+![Declare it in YAML, the kernel enforces it](assets/ebpf-edge.jpg)
+
+**Declare it in YAML. The kernel enforces it.** Each Machine's network edge is enforced per packet by a
+kernel-verified eBPF program on that VM's own interface. No sidecar, no iptables chain and no extra Pod
+sit between the guest and the wire, so a policy change is a map update and nothing gets rebuilt.
+
+| What you get | How it shows up |
+| --- | --- |
+| **Forged traffic dies at the edge** | Anti-spoof drops (`spoof_ip`, `spoof_mac`) before the packet reaches the host network |
+| **Egress by name, not just IP** | DNS and TLS SNI allow lists on a MachineNetworkPolicy (`dns_deny`, `sni_deny`) |
+| **Fair sharing** | Egress and ingress rate limits per Machine (`rate_limit`) |
+| **Answers, not guesses** | Every drop attributed to a reason and policy: `kaironctl network drops`, the dashboard Network panel, `kairon_net_drops_total` |
+| **Connections that survive migration** | Conntrack exported on the source and restored on the destination after an identity check (`status.network.edge.conntrackRestored`, `blackholeWindowMs`) |
+| **A pcap in one command** | `kaironctl network capture demo --seconds 15 --output demo.pcap` |
+
+Status: preview, green on a single-host lab (see the [README](../README.md) status table). For the
+dataplane itself (packet path, measured numbers, safety model) see
+[FluxVM's eBPF overview](https://github.com/zyvorai/zyvor-fluxvm/blob/main/docs/ebpf.md).
+
+## How it works
+
 Kairon declares a per-Machine network edge: a stable identity,
 anti-spoof, guest-IP learning, rate limits, DNS and TLS SNI allow
 lists, attributed drops, and conntrack that moves with a live
