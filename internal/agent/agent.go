@@ -465,6 +465,11 @@ func (a *Agent) reconcileMachine(ctx context.Context, m model.Machine) error {
 		}
 		restarted = true
 	}
+	if !freshlyCreated && !usingSandboxTemplate {
+		if rec, err = a.ejectRemovedCdroms(ctx, m, rec); err != nil {
+			return err
+		}
+	}
 	// Prune whatever CSI volume this Machine had staged/published *before*
 	// this tick -- using m.Status, not the not-yet-committed status below
 	// -- before it's overwritten by volStatus and lost. Fails closed: an

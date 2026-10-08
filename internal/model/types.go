@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -235,7 +236,9 @@ type MachineSpec struct {
 	// changes. See MachineDisk.
 	Disks []MachineDisk `json:"disks,omitempty"`
 	// Cdroms attach install media read-only (qemu backend) from the first
-	// boot. Creation-time-only. See MachineCdrom.
+	// boot. After creation entries can only be removed: kairon-node then
+	// ejects that drive's medium (live when running), so the VM can
+	// live-migrate. See MachineCdrom.
 	Cdroms       []MachineCdrom         `json:"cdroms,omitempty"`
 	DeviceClaims []DeviceClaimReference `json:"deviceClaims,omitempty"`
 	GuestAgent   GuestAgentSpec         `json:"guestAgent,omitempty"`
@@ -689,6 +692,27 @@ func ValidateCdroms(cdroms []MachineCdrom) error {
 		}
 		if err := ValidateImageSource(ImageSpec{Source: c.Source, Digest: c.Digest}); err != nil {
 			return fmt.Errorf("spec.cdroms[%d]: %s", i, strings.TrimPrefix(err.Error(), "spec.image."))
+		}
+	}
+	return nil
+}
+
+// ValidateCdromsUpdate allows an update to spec.cdroms only to remove
+// entries: FluxVM can eject install media from a created VM but not insert
+// new media. An imageRef entry that kairon-controller has since resolved
+// (Source and Digest filled in) is still the same entry.
+func ValidateCdromsUpdate(old, updated []MachineCdrom) error {
+	prev := make(map[string]MachineCdrom, len(old))
+	for _, c := range old {
+		prev[c.Name] = c
+	}
+	for i, c := range updated {
+		o, ok := prev[c.Name]
+		if !ok {
+			return fmt.Errorf("spec.cdroms[%d] %q: entries can't be added after creation (only removed, which ejects the medium)", i, c.Name)
+		}
+		if o.ImageRef != c.ImageRef || (o.Source != nil && (!reflect.DeepEqual(o.Source, c.Source) || o.Digest != c.Digest)) {
+			return fmt.Errorf("spec.cdroms[%d] %q: entries can't be changed after creation (only removed, which ejects the medium)", i, c.Name)
 		}
 	}
 	return nil

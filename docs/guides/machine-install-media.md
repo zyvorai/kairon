@@ -53,6 +53,28 @@ Open the console (VNC) right after creating the Machine to catch it.
    ([`machine-images.md`](machine-images.md)).
 3. Create Machines with `spec.image.imageRef`.
 
+## Ejecting media after the install
+
+FluxVM won't live-migrate a VM that still has media in a CD-ROM, because the ISO is a file on the
+node. Once the OS is installed, delete the entry from `spec.cdroms`:
+
+```bash
+# eject both ISOs from a running Machine
+kubectl patch machine win2022 --type=json -p='[{"op":"remove","path":"/spec/cdroms"}]'
+# or eject one (here the first entry, "install")
+kubectl patch machine win2022 --type=json -p='[{"op":"remove","path":"/spec/cdroms/0"}]'
+```
+
+kairon-node notices a drive that still holds media but is no longer listed, and calls FluxVM's
+`POST /v1/vms/{id}/cdroms/{name}/eject`. If the VM is running, the medium is removed live; the guest
+sees an empty drive and nothing is unplugged. FluxVM records the drive as empty, so restarts and
+migration targets bring it up without the ISO and drive letters stay put. Then the Machine can
+live-migrate.
+
+After creation, entries can only be **removed**. Adding or changing an entry is denied by the
+admission webhook. Without the webhook, kairon-node simply doesn't attach the new entry, because
+FluxVM can't insert media into an existing VM yet. To boot from a different ISO, create a new Machine.
+
 ## Persistent installs on a volume
 
 With `spec.volumes[0]` set, `blank: true` creates the empty disk **inside
@@ -64,6 +86,6 @@ cache. See [`machine-storage.md`](machine-storage.md#seeding-a-boot-volume).
 - QEMU backend only.
 - Requires a FluxVM with `CreateVmRequest.cdroms` (fluxvm PR #142 or later).
   An older FluxVM ignores the field and boots the blank disk with no media.
-- `spec.cdroms` is creation-time-only, like the rest of `spec.image`.
-- FluxVM refuses to live-migrate a VM that has media attached. Rebuild the
-  Machine from the sealed image to get a migratable VM.
+- After creation, `spec.cdroms` entries can only be removed, which ejects them (see above). Ejecting
+  needs FluxVM with `POST /v1/vms/{id}/cdroms/{name}/eject` (fluxvm PR #149 or later).
+- FluxVM refuses to live-migrate a VM while a CD-ROM still holds media. Eject it first.

@@ -59,6 +59,9 @@ type Record struct {
 				TapName string `json:"tap_name,omitempty"`
 			} `json:"extra,omitempty"`
 		} `json:"network,omitempty"`
+		// Cdroms are the VM's CD-ROM drives; an empty Path is an ejected
+		// drive (the device stays so the guest's layout doesn't change).
+		Cdroms []Cdrom `json:"cdroms,omitempty"`
 	} `json:"request,omitempty"`
 }
 
@@ -745,6 +748,21 @@ func (c *Client) Resume(ctx context.Context, id string) (*Record, error) {
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("decode resume response: %w", err)
+	}
+	return &rec, nil
+}
+
+// EjectCdrom removes the medium from a CD-ROM drive (live when the VM is
+// running) and records the drive as empty. Needs FluxVM with
+// POST /v1/vms/{id}/cdroms/{name}/eject; ejecting an empty drive is a no-op.
+func (c *Client) EjectCdrom(ctx context.Context, id, name string) (*Record, error) {
+	data, err := c.do(ctx, http.MethodPost, "/v1/vms/"+url.PathEscape(id)+"/cdroms/"+url.PathEscape(name)+"/eject", nil)
+	if err != nil {
+		return nil, err
+	}
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("decode cdrom eject response: %w", err)
 	}
 	return &rec, nil
 }

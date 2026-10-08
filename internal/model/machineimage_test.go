@@ -86,6 +86,37 @@ func TestValidateCdroms(t *testing.T) {
 	}
 }
 
+func TestValidateCdromsUpdate(t *testing.T) {
+	old := []MachineCdrom{
+		{Name: "install", ImageRef: "windows-server-2022-iso"},
+		{Name: "virtio", Source: &ImageSource{HTTPURL: "https://x/virtio-win.iso"}, Digest: testDigest},
+	}
+	resolved := []MachineCdrom{
+		{Name: "install", ImageRef: "windows-server-2022-iso", Source: &ImageSource{HTTPURL: "https://x/ws.iso"}, Digest: testDigest},
+		old[1],
+	}
+	for name, updated := range map[string][]MachineCdrom{
+		"unchanged":       old,
+		"remove one":      old[1:],
+		"remove all":      nil,
+		"imageRef filled": resolved,
+	} {
+		if err := ValidateCdromsUpdate(old, updated); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, updated := range map[string][]MachineCdrom{
+		"add":            append(append([]MachineCdrom(nil), old...), MachineCdrom{Name: "extra", ImageRef: "x"}),
+		"swap imageRef":  {{Name: "install", ImageRef: "other-iso"}},
+		"swap source":    {{Name: "virtio", Source: &ImageSource{HTTPURL: "https://x/other.iso"}, Digest: testDigest}},
+		"rename install": {{Name: "setup", ImageRef: "windows-server-2022-iso"}},
+	} {
+		if err := ValidateCdromsUpdate(old, updated); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+}
+
 func TestParseDiskSizeGiB(t *testing.T) {
 	for in, want := range map[string]uint64{"60Gi": 60, "1Ti": 1024, "1500Mi": 2, "100G": 94} {
 		got, err := ParseDiskSizeGiB(in)

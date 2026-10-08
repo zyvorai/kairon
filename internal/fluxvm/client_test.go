@@ -37,6 +37,26 @@ func TestBuildCreateRequestInPlaceRBD(t *testing.T) {
 	}
 }
 
+func TestEjectCdrom(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/vms/u1/cdroms/install/eject" {
+			http.Error(w, "bad route "+r.URL.Path, 404)
+			return
+		}
+		_, _ = w.Write([]byte(`{"uuid":"u1","status":"Running","request":{"cdroms":[{"name":"install","path":""},{"name":"virtio","path":"/c/v.iso"}]}}`))
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	rec, err := c.EjectCdrom(context.Background(), "u1", "install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Request.Cdroms) != 2 || rec.Request.Cdroms[0].Path != "" || rec.Request.Cdroms[1].Path != "/c/v.iso" {
+		t.Fatalf("cdroms=%+v", rec.Request.Cdroms)
+	}
+}
+
 func TestCreateMapping(t *testing.T) {
 	var got CreateRequest
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

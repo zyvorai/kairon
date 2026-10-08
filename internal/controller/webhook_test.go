@@ -115,6 +115,25 @@ func TestValidateMachineResizeAllowsUnscheduledMachine(t *testing.T) {
 	}
 }
 
+func TestValidateMachineUpdateCdromsRemoveOnly(t *testing.T) {
+	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)
+	old := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "win"}, Spec: model.MachineSpec{
+		Cdroms: []model.MachineCdrom{{Name: "install", ImageRef: "ws2022-iso"}, {Name: "virtio", ImageRef: "virtio-win"}},
+	}}
+	ejected := old
+	ejected.Spec.Cdroms = old.Spec.Cdroms[1:]
+	r, req := admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, ejected, old)
+	if d := ctl.validateMachine(r, req); !d.Allowed {
+		t.Fatalf("removing a cdrom (eject) should be allowed, got denied: %s", d.Reason)
+	}
+	added := old
+	added.Spec.Cdroms = append(append([]model.MachineCdrom(nil), old.Spec.Cdroms...), model.MachineCdrom{Name: "tools", ImageRef: "tools-iso"})
+	r, req = admissionReqWithOld(t, "machines", "prod", admission.OperationUpdate, added, old)
+	if d := ctl.validateMachine(r, req); d.Allowed || !strings.Contains(d.Reason, "can't be added") {
+		t.Fatalf("adding a cdrom after creation should be denied, got %+v", d)
+	}
+}
+
 func TestValidateMachineResizeAllowsShrinkOrNoChange(t *testing.T) {
 	quota := model.MachineQuota{Metadata: model.ObjectMeta{Namespace: "prod", Name: "q"}, Spec: model.MachineQuotaSpec{MaxTotalCPU: "2"}}
 	existing := model.Machine{Metadata: model.ObjectMeta{Namespace: "prod", Name: "vm-1"}, Spec: model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2"}}}
