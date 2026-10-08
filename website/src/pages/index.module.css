@@ -74,3 +74,35 @@
   margin: 0 auto 2rem;
   color: var(--ifm-color-emphasis-700);
 }
+
+.macs {
+  padding: var(--zv-section-space) 0;
+}
+
+.macImg {
+  display: block;
+  width: 100%;
+  max-width: 1100px;
+  margin: 1.5rem auto;
+  border-radius: 18px;
+}
+
+.macGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.macCard {
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 16px;
+}
+
+@media screen and (max-width: 768px) {
+  .macGrid {
+    grid-template-columns: 1fr;
+  }
+}

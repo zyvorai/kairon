@@ -337,3 +337,11 @@ Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-k
 ## Native macOS
 
 Kairon builds and runs natively on Apple silicon and can schedule Machines onto a Mac through FluxVM's `vz` backend. See [docs/macos.md](docs/macos.md) for what is verified and the limits.
+
+![Mac mini for home, Mac Studio for a team, MacBook Pro for development](docs/assets/macos/readme-macs.jpg)
+
+Every Mac becomes a Kubernetes Node: a [Mac mini](https://www.apple.com/in/mac-mini/) at home, a [Mac Studio](https://www.apple.com/in/mac-studio/) for a team, a [MacBook Pro](https://www.apple.com/in/macbook-pro/) that comes and goes. Kairon places Machines by allocatable unified memory, FluxVM runs them, and [Velora](https://github.com/zyvorai/zyvor-velora) serves private OpenAI-compatible LLM endpoints on the same hardware. A few Mac Studios become a quiet, low-power, on-premise inference cluster.
+
+![A private LLM cluster made of Macs](docs/assets/macos/readme-home-cluster.jpg)
+
+**Verified** on an Apple M4, macOS 27.2: a Mac registered as a Ready Node, a `vz` Machine scheduled, booted, SSH, deleted. **Not yet verified:** multi-Mac clusters, Thunderbolt RDMA. Cluster guide with a multi-Mac example ([`examples/macos-fleet.yaml`](examples/macos-fleet.yaml)), sizing and roadmap, after GK Servis's [Mac Studio case study](https://www.gkservis.com/case-studies/llm-inference-cluster.html): [docs/macos-cluster.md](docs/macos-cluster.md).

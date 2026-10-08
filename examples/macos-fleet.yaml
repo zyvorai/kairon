@@ -1,0 +1,66 @@
+# Copyright 2026 Zyvor · https://zyvor.dev
+# SPDX-License-Identifier: Apache-2.0
+#
+# Machines spread over several Macs. Each Mac runs kairon-node (registers itself as a Node) and FluxVM (`fluxctl serve`).
+# NODE_NAME on each Mac sets the Node name used below. Multi-Mac clusters are not yet verified; see docs/macos-cluster.md.
+#
+#   studio-1  Mac Studio, also serves models (kairon-node --mlx-url ...): gets a gateway VM next to the models
+#   mini-1    Mac mini: gets a small CI runner
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: inference-gateway
+  namespace: default
+spec:
+  image:
+    path: /Users/you/Library/Application Support/FluxVM/images/debian-13-arm64.raw
+  resources:
+    cpu: "2"
+    memory: 2Gi
+  runtime:
+    backend: vz
+  powerState: Running
+  cloudInit:
+    hostname: inference-gateway
+    user: velora
+    sshAuthorizedKeys:
+      - ssh-ed25519 AAAA... you@mac
+  placement:
+    architecture: arm64
+    nodeSelector:
+      kairon.zyvor.dev/backend.vz: "true"
+      kairon.zyvor.dev/mlx: "true"
+    tolerations:
+      - key: kairon.zyvor.dev/vm-only
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: kairon.zyvor.dev/v1alpha1
+kind: Machine
+metadata:
+  name: ci-runner
+  namespace: default
+spec:
+  image:
+    path: /Users/you/Library/Application Support/FluxVM/images/debian-13-arm64.raw
+  resources:
+    cpu: "2"
+    memory: 3Gi
+  runtime:
+    backend: vz
+  powerState: Running
+  cloudInit:
+    hostname: ci-runner
+    user: velora
+    sshAuthorizedKeys:
+      - ssh-ed25519 AAAA... you@mac
+  placement:
+    architecture: arm64
+    nodeSelector:
+      kairon.zyvor.dev/backend.vz: "true"
+      kubernetes.io/hostname: mini-1
+    tolerations:
+      - key: kairon.zyvor.dev/vm-only
+        operator: Exists
+        effect: NoSchedule

@@ -4,6 +4,7 @@
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import FeatureHighlights from '@site/src/components/FeatureHighlights';
@@ -76,6 +77,61 @@ function ProblemStatement() {
               split-brain.
             </p>
           </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+function MacSection() {
+  return (
+    <section className={styles.macs}>
+      <div className="container">
+        <Reveal>
+          <div className="text--center">
+            <Heading as="h2" className={styles.sectionHeading}>
+              Every Mac a Node: Mac mini to Mac Studio cluster
+            </Heading>
+            <p className={styles.enterpriseCopy}>
+              <code>kairon-node</code> registers an Apple silicon Mac as a
+              Kubernetes Node with allocatable unified memory, and Kairon
+              schedules Machines onto it through FluxVM's <code>vz</code>{' '}
+              backend. Next to Velora's private LLM endpoints, a few Macs
+              become a quiet, low-power, on-premise cluster.
+            </p>
+          </div>
+          <img
+            className={styles.macImg}
+            src={useBaseUrl('/img/macos/readme-macs.jpg')}
+            alt="Mac mini for home, Mac Studio for a team, MacBook Pro for development"
+            loading="lazy"
+          />
+          <div className={styles.macGrid}>
+            <div className={styles.macCard}>
+              <Heading as="h3">Home, low cost</Heading>
+              <p>A Mac mini as one Node: a VM or two beside a private chat endpoint.</p>
+            </div>
+            <div className={styles.macCard}>
+              <Heading as="h3">Team</Heading>
+              <p>A Mac Studio labelled <code>kairon.zyvor.dev/mlx=true</code> with its inference URL.</p>
+            </div>
+            <div className={styles.macCard}>
+              <Heading as="h3">On-premise cluster</Heading>
+              <p>Two to four Mac Studios in one pool, Machines placed by unified memory.</p>
+            </div>
+          </div>
+          <img
+            className={styles.macImg}
+            src={useBaseUrl('/img/macos/readme-home-cluster.jpg')}
+            alt="A private LLM cluster made of Mac Studios joined by Thunderbolt 5"
+            loading="lazy"
+          />
+          <p className="text--center">
+            Verified on an Apple M4 with macOS 27.2: the Mac registers as a
+            Ready Node and a <code>vz</code> Machine boots, gets an address and
+            answers SSH. Multi-Mac clusters are not yet verified.{' '}
+            <Link to="/docs/macos-cluster">Read the Mac guide →</Link>
+          </p>
         </Reveal>
       </div>
     </section>
@@ -158,6 +214,7 @@ export default function Home(): ReactNode {
         <Reveal>
           <FeatureHighlights />
         </Reveal>
+        <MacSection />
         <TrustBand />
         <EnterpriseCTA />
       </main>

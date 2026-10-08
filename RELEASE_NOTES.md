@@ -8,6 +8,8 @@
 
 - **Native macOS node.** `kairon-node` registers an Apple silicon Mac as a Kubernetes Node (no kubelet needed: labels, allocatable unified memory, Ready heartbeat, a `kairon.zyvor.dev/vm-only` taint) and runs Machines with `runtime.backend: vz` through FluxVM's Apple Virtualization.framework backend. The Machine CRD enum gains `vz`; `internal/fluxvm/apple.go` rejects Linux-only features with a specific message; macOS path defaults and `vz` as the default backend on darwin. Verified on an Apple M4: build, vet and all tests on darwin, and `scripts/macos-e2e.sh` (Node Ready → Machine scheduled → Debian 13 booted by FluxVM → guest address in status → SSH → delete). See `docs/macos.md`. Not verified: macOS guests, migration, CSI, multi-Mac clusters.
 
+- **Docs: Kairon on Macs.** `docs/macos-cluster.md` (Mac mini to Mac Studio cluster, placement by unified memory, the Velora/FluxVM stack, verified and not verified), `examples/macos-fleet.yaml`, README cards and a Mac section on the website home page.
+
 - **Developer ecosystem kit.** Dependency-free Python/TypeScript SDKs for namespaced core/fleet CRDs and existing UI guest operations; digest-pinned recipe rendering, disposable VM GitHub Actions, an opt-in orphan sweeper, Terraform composition, partner metadata and single-VM lifecycle qualification. Existing authorization and controller/runtime paths are unchanged. See `ecosystem/README.md`.
 
 - **Eject install media.** Removing an entry from `spec.cdroms` on an existing Machine now ejects that CD-ROM's medium through FluxVM (live when running), so an installed VM can live-migrate. The admission webhook allows only removals after creation. Needs FluxVM with the cdrom eject route (fluxvm PR #149). See `docs/guides/machine-install-media.md`.
