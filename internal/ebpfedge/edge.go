@@ -28,6 +28,9 @@ const (
 	IdentityReserved uint32 = 256
 	// CaptureMaxSeconds is the operator-facing bound on a ringbuf tap.
 	CaptureMaxSeconds = 30
+	// FluxVM schema 12 declares 32,768 entries in each VM's conntrack map.
+	ConntrackMaxEntries       = 32768
+	ConntrackMaxSnapshotBytes = 16 << 20
 
 	ReasonSpoofMAC    = "spoof_mac"
 	ReasonSpoofIP     = "spoof_ip"
@@ -409,16 +412,8 @@ func ExportConntrack(identity uint32, generation uint64, entries []ConntrackEntr
 	if identity == 0 {
 		return ConntrackSnapshot{}, errors.New("identity is required")
 	}
-	for i, e := range entries {
-		if e.Proto != "tcp" && e.Proto != "udp" {
-			return ConntrackSnapshot{}, fmt.Errorf("entry %d: proto must be tcp or udp", i)
-		}
-		if _, err := netip.ParseAddr(e.SrcIP); err != nil {
-			return ConntrackSnapshot{}, fmt.Errorf("entry %d: srcIP: %w", i, err)
-		}
-		if _, err := netip.ParseAddr(e.DstIP); err != nil {
-			return ConntrackSnapshot{}, fmt.Errorf("entry %d: dstIP: %w", i, err)
-		}
+	if err := ValidateConntrackEntries(entries); err != nil {
+		return ConntrackSnapshot{}, err
 	}
 	return ConntrackSnapshot{
 		Identity:   identity,
@@ -431,11 +426,17 @@ func ExportConntrack(identity uint32, generation uint64, entries []ConntrackEntr
 // RestoreConntrack checks the snapshot still belongs to this Machine and
 // reports how long the guest was black-holed.
 func RestoreConntrack(wantIdentity uint32, snap ConntrackSnapshot, now time.Time) (RestoreResult, error) {
+	if wantIdentity == 0 || snap.Identity == 0 {
+		return RestoreResult{}, errors.New("conntrack identity is required")
+	}
 	if snap.Identity != wantIdentity {
 		return RestoreResult{}, fmt.Errorf("conntrack identity %d does not match machine identity %d", snap.Identity, wantIdentity)
 	}
 	if snap.ExportedAt.IsZero() {
 		return RestoreResult{}, errors.New("conntrack export timestamp is required")
+	}
+	if err := ValidateConntrackEntries(snap.Entries); err != nil {
+		return RestoreResult{}, err
 	}
 	window := now.Sub(snap.ExportedAt)
 	if window < 0 {
@@ -450,9 +451,15 @@ func RestoreConntrack(wantIdentity uint32, snap ConntrackSnapshot, now time.Time
 
 // MarshalSnapshot encodes a snapshot for the migration session.
 func MarshalSnapshot(snap ConntrackSnapshot) (json.RawMessage, error) {
+	if _, err := RestoreConntrack(snap.Identity, snap, snap.ExportedAt); err != nil {
+		return nil, err
+	}
 	b, err := json.Marshal(snap)
 	if err != nil {
 		return nil, err
+	}
+	if len(b) > ConntrackMaxSnapshotBytes {
+		return nil, errors.New("conntrack snapshot exceeds byte limit")
 	}
 	return b, nil
 }
@@ -463,10 +470,46 @@ func UnmarshalSnapshot(raw json.RawMessage) (ConntrackSnapshot, error) {
 	if len(raw) == 0 {
 		return snap, errors.New("empty conntrack snapshot")
 	}
+	if len(raw) > ConntrackMaxSnapshotBytes {
+		return snap, errors.New("conntrack snapshot exceeds byte limit")
+	}
 	if err := json.Unmarshal(raw, &snap); err != nil {
 		return snap, err
 	}
+	if _, err := RestoreConntrack(snap.Identity, snap, snap.ExportedAt); err != nil {
+		return ConntrackSnapshot{}, err
+	}
 	return snap, nil
+}
+
+// ValidateConntrackEntries checks the entire transfer before a receiver can
+// write any entries. SCTP matches FluxVM's existing conntrack key ABI.
+func ValidateConntrackEntries(entries []ConntrackEntry) error {
+	if len(entries) > ConntrackMaxEntries {
+		return errors.New("conntrack snapshot exceeds entry limit")
+	}
+	for i, e := range entries {
+		switch strings.ToLower(e.Proto) {
+		case "tcp", "udp", "sctp":
+		default:
+			return fmt.Errorf("entry %d: proto must be tcp, udp or sctp", i)
+		}
+		src, err := netip.ParseAddr(e.SrcIP)
+		if err != nil || src.Zone() != "" {
+			return fmt.Errorf("entry %d: invalid source address", i)
+		}
+		dst, err := netip.ParseAddr(e.DstIP)
+		if err != nil || dst.Zone() != "" {
+			return fmt.Errorf("entry %d: invalid destination address", i)
+		}
+		if src.Is4() != dst.Is4() {
+			return fmt.Errorf("entry %d: source and destination address families differ", i)
+		}
+		if len(e.State) > 64 {
+			return fmt.Errorf("entry %d: state exceeds 64 bytes", i)
+		}
+	}
+	return nil
 }
 
 // NewCapture builds a short-lived tap request. Seconds above

@@ -175,6 +175,13 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	activeEdgePrefixes := make(map[string]bool, len(machines))
+	for _, m := range machines {
+		if m.Spec.NodeName == a.NodeName {
+			activeEdgePrefixes[m.Namespace()+"/"+m.Metadata.Name+"/"] = true
+		}
+	}
+	a.edge.drops.Prune(activeEdgePrefixes)
 	for _, m := range machines {
 		// Defense in depth: never act on a Machine whose spec disagrees
 		// with the assignment label (stale label / partial patch).
