@@ -6,6 +6,7 @@
 
 ## Added
 
+- **Eject install media.** Removing an entry from `spec.cdroms` on an existing Machine now ejects that CD-ROM's medium through FluxVM (live when running), so an installed VM can live-migrate. The admission webhook allows only removals after creation. Needs FluxVM with the cdrom eject route (fluxvm PR #149). See `docs/guides/machine-install-media.md`.
 - Experimental opt-in fleet automation: verified Redfish fencing, balancing, autoscaling, backup/recovery/import plans, immutable template claims, bridge-backed IPAM, usage CSV, trusted Kubernetes-identity action approvals and a Fleet dashboard. Scoped UI authorization now denies unnamed sessions and filters overview/evacuation access. See `docs/guides/enterprise-fleet.md` for feature boundaries and setup.
 
 - **VM edge, enforced by FluxVM.** `spec.network.antiSpoof`, `learnIP` and `qos`, and a selecting MachineNetworkPolicy's `allowSNI`, `allowDNS` and `maxIngress*`, are posted to FluxVM as a per-Machine edge and enforced in its TC program (FluxVM dataplane schema 12): anti-spoof drops (`spoof_ip`, `spoof_mac`), DNS and TLS SNI allow lists (`dns_deny`, `sni_deny`), egress and ingress rate limits (`rate_limit`), guest-IP learning from ARP/ND/DHCP (`status.network.edge.guestIPSource`), attributed drops (`kaironctl network drops`), and live-migration conntrack export/restore with an identity check (`status.network.edge.conntrackRestored`, `blackholeWindowMs`). FluxVM persists the edge across its own restarts. See `docs/ebpf-edge.md`.

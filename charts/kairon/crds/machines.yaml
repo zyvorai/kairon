@@ -525,7 +525,7 @@ spec:
                 description: Read-only install media (ISO) attached as SATA
                   CD-ROMs from the first boot (qemu backend). Each entry names
                   a MachineImage of kind iso (imageRef) or an http(s) source
-                  plus digest. Creation-time-only. See
+                  plus digest. After creation entries can only be removed, which ejects the medium (live when running). See
                   docs/guides/machine-install-media.md.
                 maxItems: 4
                 x-kubernetes-list-type: map

@@ -368,6 +368,12 @@ func (c *Controller) validateMachineResize(r *http.Request, req *admission.Reque
 	if err := model.ValidateCiliumAttach(newM.Spec.Network); err != nil {
 		return admission.Deny(err.Error())
 	}
+	if err := model.ValidateCdroms(newM.Spec.Cdroms); err != nil {
+		return admission.Deny(err.Error())
+	}
+	if err := model.ValidateCdromsUpdate(oldM.Spec.Cdroms, newM.Spec.Cdroms); err != nil {
+		return admission.Deny(err.Error())
+	}
 	if !MachineCountsTowardQuota(oldM) {
 		return admission.Allow()
 	}
