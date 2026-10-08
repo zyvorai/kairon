@@ -180,6 +180,7 @@ spec:
                     - cloud-hypervisor
                     - firecracker
                     - flux-vm
+                    - vz
                     default: auto
                   kernel:
                     type: string

@@ -333,3 +333,7 @@ Bugs and feature requests → [GitHub Issues](https://github.com/zyvorai/zyvor-k
 [![Star on GitHub](https://img.shields.io/github/stars/zyvorai/zyvor-kairon?style=for-the-badge&logo=github&label=Star&color=2997ff)](https://github.com/zyvorai/zyvor-kairon)
 
 </div>
+
+## Native macOS
+
+Kairon builds and runs natively on Apple silicon and can schedule Machines onto a Mac through FluxVM's `vz` backend. See [docs/macos.md](docs/macos.md) for what is verified and the limits.

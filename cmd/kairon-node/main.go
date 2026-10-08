@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/zyvorai/kairon/internal/fluxvm"
 	"github.com/zyvorai/kairon/internal/health"
 	"github.com/zyvorai/kairon/internal/kube"
+	"github.com/zyvorai/kairon/internal/macnode"
 	"github.com/zyvorai/kairon/internal/metrics"
 	"github.com/zyvorai/kairon/internal/migration"
 	"github.com/zyvorai/kairon/internal/oteltrace"
@@ -41,14 +44,31 @@ func main() {
 	os.Exit(run())
 }
 
+// osDefault picks a flag default per OS: kairon-node's paths assume a Linux host unless told otherwise.
+func osDefault(linux, darwin string) string {
+	if runtime.GOOS == "darwin" {
+		return darwin
+	}
+	return linux
+}
+
+// macSupport is a path under the user's Application Support folder (used for macOS defaults).
+func macSupport(rel string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "kairon", rel)
+	}
+	return filepath.Join(home, "Library", "Application Support", rel)
+}
+
 // run returns the process exit code rather than calling os.Exit directly,
 // so every deferred cleanup (e.g. cancel()) actually runs before exit.
 func run() int {
 	interval := flag.Duration("interval", 5*time.Minute, "safety resync interval (hot-path reconcile is watch-driven)")
 	healthAddr := flag.String("health-addr", ":32302", "health server address")
 	fluxURL := flag.String("fluxvm-url", env("FLUXVM_URL", "http://127.0.0.1:7788"), "node-local FluxVM URL")
-	backend := flag.String("default-backend", env("KAIRON_DEFAULT_BACKEND", "qemu"), "backend used when Machine runtime.backend is auto")
-	imageRoot := flag.String("image-root", env("KAIRON_IMAGE_ROOT", "/var/lib/fluxvm/images"), "allowed root for Machine image paths")
+	backend := flag.String("default-backend", env("KAIRON_DEFAULT_BACKEND", osDefault("qemu", "vz")), "backend used when Machine runtime.backend is auto")
+	imageRoot := flag.String("image-root", env("KAIRON_IMAGE_ROOT", osDefault("/var/lib/fluxvm/images", macSupport("FluxVM/images"))), "allowed root for Machine image paths")
 	imageCacheDir := flag.String("image-cache-dir", env("KAIRON_IMAGE_CACHE_DIR", ""), "directory kairon-node downloads/caches spec.image.source images into, keyed by digest -- empty (the default) refuses any Machine that sets spec.image.source; see docs/guides/machine-image-import.md")
 	vfioAllowlistRaw := flag.String("vfio-allowlist", env("KAIRON_VFIO_ALLOWLIST", ""), "comma-separated PCI BDFs this node permits for DRA-backed VFIO passthrough")
 	migrationAddr := flag.String("migration-addr", env("KAIRON_MIGRATION_ADDR", ":9443"), "mTLS migration peer listen address")
@@ -56,7 +76,7 @@ func run() int {
 	migrationCert := flag.String("migration-cert", env("KAIRON_MIGRATION_CERT", ""), "node migration TLS certificate PEM")
 	migrationKey := flag.String("migration-key", env("KAIRON_MIGRATION_KEY", ""), "node migration TLS private key PEM")
 	migrationServerName := flag.String("migration-server-name", env("KAIRON_MIGRATION_SERVER_NAME", "kairon-node"), "TLS server name expected from migration peers; empty verifies the peer IP from the URL")
-	migrationStateDir := flag.String("migration-state-dir", env("KAIRON_MIGRATION_STATE_DIR", "/var/run/kairon/migrations"), "destination migration session journal")
+	migrationStateDir := flag.String("migration-state-dir", env("KAIRON_MIGRATION_STATE_DIR", osDefault("/var/run/kairon/migrations", macSupport("Kairon/migrations"))), "destination migration session journal")
 	migrationAdapterSocket := flag.String("migration-adapter-socket", env("KAIRON_MIGRATION_ADAPTER_SOCKET", ""), "optional Kairon migration adapter Unix socket")
 	migrationPort := flag.Int("migration-port", 9443, "peer migration TCP port advertised through node InternalIP")
 	migrationHeartbeatTTL := flag.Duration("migration-heartbeat-ttl", 0, "how long a destination-side Prepared migration session may go without a heartbeat from its source before this node self-aborts it, releasing whatever it reserved -- closes the gap where a source kairon-node crashes or is fenced between a successful Prepare and ever calling Commit/Abort. Zero (the default) disables this entirely: no reaper goroutine, no behavior change from before this existed. A non-zero value should be set comfortably larger than several multiples of --interval (the source heartbeats once per reconcile tick) to tolerate transient blips; the reaper itself checks every TTL/4 (floored at 10s).")
@@ -65,10 +85,10 @@ func run() int {
 	consoleTLSCert := flag.String("console-tls-cert", env("KAIRON_NODE_CONSOLE_TLS_CERT", ""), "optional TLS certificate PEM for the console relay listener (server-only TLS -- the shared token already authenticates the caller, so no client cert is needed); must be set together with --console-tls-key")
 	consoleTLSKey := flag.String("console-tls-key", env("KAIRON_NODE_CONSOLE_TLS_KEY", ""), "optional TLS private key PEM for the console relay listener; must be set together with --console-tls-cert")
 	csiSocket := flag.String("csi-socket", env("KAIRON_CSI_SOCKET", ""), "kairon-csi-node's local Unix socket path (default: $KAIRON_CSI_SOCKET); empty refuses any CSI-backed (network-block) Machine volume with a clear error rather than silently failing -- see docs/guides/machine-storage-csi.md")
-	csiStagingDir := flag.String("csi-staging-dir", env("KAIRON_CSI_STAGING_DIR", "/var/lib/kairon/csi/staging"), "per-node directory kairon-node asks kairon-csi-node to stage CSI volumes under")
+	csiStagingDir := flag.String("csi-staging-dir", env("KAIRON_CSI_STAGING_DIR", osDefault("/var/lib/kairon/csi/staging", macSupport("Kairon/csi/staging"))), "per-node directory kairon-node asks kairon-csi-node to stage CSI volumes under")
 	edgeBaselinePath := flag.String("edge-baseline-file", env("KAIRON_EDGE_BASELINE_FILE", ""), "node-local snapshot of per-Machine traffic baselines so a restart keeps the warm-up, e.g. /var/lib/kairon/edge-baseline.json; empty keeps them in memory")
 	attestCommand := flag.String("attest-guest-command", env("KAIRON_ATTEST_GUEST_COMMAND", ""), "in-guest command that prints a base64 SEV-SNP report or TDX quote for {kind} with hex REPORT_DATA {data}; empty uses the go-sev-guest/go-tdx-guest attest tool")
-	csiPublishDir := flag.String("csi-publish-dir", env("KAIRON_CSI_PUBLISH_DIR", "/var/lib/kairon/csi/publish"), "per-node directory kairon-node asks kairon-csi-node to publish (bind-mount) CSI volumes under")
+	csiPublishDir := flag.String("csi-publish-dir", env("KAIRON_CSI_PUBLISH_DIR", osDefault("/var/lib/kairon/csi/publish", macSupport("Kairon/csi/publish"))), "per-node directory kairon-node asks kairon-csi-node to publish (bind-mount) CSI volumes under")
 	csiChapSecretNamespace := flag.String("csi-chap-secret-namespace", env("KAIRON_CSI_CHAP_SECRET_NAMESPACE", ""), "when set, allow resolveCSIVolume to read a PV's nodeStageSecretRef for iSCSI CHAP -- but only Secrets in this exact namespace (never cluster-wide); empty (the default) refuses any secret ref. Pair with node.csi.chap.enabled in Helm")
 	thirdPartyCSIDriversRaw := flag.String("third-party-csi-drivers", env("KAIRON_THIRD_PARTY_CSI_DRIVERS", ""), "comma-separated driverName=/socket/path list of third-party CSI drivers kairon-node may drive directly for a Machine boot disk (attachRequired drivers go through a VolumeAttachment -- see docs/guides/machine-storage-thirdparty-csi.md); empty (the default) means only Kairon's own driver can be used, exactly as before this existed")
 	thirdPartyCSISecretNamespace := flag.String("third-party-csi-secret-namespace", env("KAIRON_THIRD_PARTY_CSI_SECRET_NAMESPACE", ""), "the only namespace a third-party CSI PV's nodeStageSecretRef/nodePublishSecretRef may name; empty (the default) refuses any secret ref")
@@ -78,6 +98,8 @@ func run() int {
 	atlasRBDPools := flag.String("atlas-rbd-pools", env("KAIRON_ATLAS_RBD_POOLS", ""), "comma-separated Ceph pools this node may boot Atlas rbd-mode volumes from (FluxVM storage=ceph-rbd-in-place, credentials from FluxVM's own config); empty (the default) refuses atlas.mode=rbd -- see docs/guides/machine-storage-atlas.md")
 	reservedCPUs := flag.String("reserved-cpus", env("KAIRON_RESERVED_CPUS", ""), "cpuset kept off the discovered kairon.zyvor.dev/pinnable-cpus label (OS, kubelet, kairon-node), e.g. 0-1; empty (the default) publishes no label -- see docs/guides/machine-cpu-pinning.md")
 	cpuManagerState := flag.String("cpu-manager-state", env("KAIRON_CPU_MANAGER_STATE", "/var/lib/kubelet/cpu_manager_state"), "kubelet cpu_manager_state file; exclusive pod CPUs listed there are kept off the pinnable set")
+	registerNode := flag.Bool("register-node", env("KAIRON_REGISTER_NODE", fmt.Sprint(runtime.GOOS == "darwin")) == "true", "create and heartbeat this host's Kubernetes Node object (a Mac has no kubelet to do it); on by default on macOS")
+	mlxURL := flag.String("mlx-url", env("KAIRON_MLX_URL", ""), "loopback OpenAI-compatible endpoint of this Mac's MLX runtime (Velora); when set the Node gets the kairon.zyvor.dev/mlx=true label and an inference-url annotation")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *showVersion {
@@ -110,6 +132,12 @@ func run() int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	if *registerNode {
+		info := macnode.Discover()
+		info.MLXURL = *mlxURL
+		log.Info("registering this host as a Kubernetes Node", "node", node, "arch", info.Arch, "cpus", info.CPUs, "memoryMiB", info.MemoryMiB, "address", info.InternalIP)
+		go macnode.Run(ctx, kc, node, info, 10*time.Second, func(err error) { log.Error("node registration", "error", err) })
+	}
 
 	hs := &health.Server{Metrics: rec.Handler()}
 	go func() {
