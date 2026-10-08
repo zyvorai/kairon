@@ -444,6 +444,11 @@ func buildCreateRequest(m model.Machine, defaultBackend string, vfioDevices []st
 	if backend == "" {
 		backend = "qemu"
 	}
+	if backend == BackendApple {
+		if err := checkAppleBackend(m, cpu, mem, maxVCPUs, maxMemoryMiB, vfioDevices); err != nil {
+			return CreateRequest{}, err
+		}
+	}
 	if r := m.Spec.Resources; (r.NUMANode != nil || r.CPUSet != "" || r.Hugepages) && backend != "qemu" {
 		return CreateRequest{}, fmt.Errorf("spec.resources.numaNode/cpuSet/hugepages require the qemu backend (FluxVM only supports them there); Machine resolves to backend %q", backend)
 	}

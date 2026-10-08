@@ -929,6 +929,16 @@ func (c *Client) PatchNode(ctx context.Context, name string, patch map[string]an
 	return c.request(ctx, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%s", url.PathEscape(name)), patch, nil, "application/merge-patch+json")
 }
 
+// CreateNode POSTs a Node object. kairon-node uses it on a Mac, where there is no kubelet to register the node.
+func (c *Client) CreateNode(ctx context.Context, node map[string]any) error {
+	return c.request(ctx, http.MethodPost, "/api/v1/nodes", node, nil, "")
+}
+
+// PatchNodeStatus merge-patches a Node's status subresource (capacity, allocatable, the Ready heartbeat).
+func (c *Client) PatchNodeStatus(ctx context.Context, name string, patch map[string]any) error {
+	return c.request(ctx, http.MethodPatch, fmt.Sprintf("/api/v1/nodes/%s/status", url.PathEscape(name)), patch, nil, "application/merge-patch+json")
+}
+
 func leasePath(ns, name string) string {
 	return fmt.Sprintf("/apis/coordination.k8s.io/v1/namespaces/%s/leases/%s", url.PathEscape(ns), url.PathEscape(name))
 }
