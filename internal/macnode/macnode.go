@@ -1,3 +1,6 @@
+// Copyright 2026 Zyvor · https://zyvor.dev
+// SPDX-License-Identifier: Apache-2.0
+
 // Package macnode lets a Mac run kairon-node without a kubelet: it publishes the Mac as a (virtual) Kubernetes
 // Node, with labels, capacity and a Ready heartbeat, so Kairon's controller can schedule Machines to it and
 // kairon-node can drive them through FluxVM's Apple Virtualization.framework backend ("vz").
