@@ -16,7 +16,7 @@ COPY web/package.json web/package-lock.json web/tsconfig.json web/vite.config.ts
 COPY web/src ./web/src
 RUN cd web && npm ci && npm run build
 
-FROM golang:1.27-bookworm@sha256:648f440f42a0958804efb24df176f806f9d353b41f1c0627f666428e40310f6b AS build
+FROM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
 WORKDIR /src
 COPY go.mod ./
 COPY . .
