@@ -1,3 +1,11 @@
+# Kairon v0.7.1
+
+Released 2026-10-09. Same features as v0.7.0, rebuilt on Go 1.27.2.
+
+## Security
+
+- Built with Go 1.27.2, fixing CVE-2026-78667 (`net/http`) and CVE-2026-97031 (`crypto/tls`) in the standard library. The v0.7.0 tag's image scan failed on these, so no v0.7.0 images or release assets were published; use v0.7.1.
+
 # Kairon v0.7.0
 
 Released 2026-10-09.
@@ -50,10 +58,6 @@ Released 2026-10-09.
 - **`deploy-remote.sh` treated a port held by the kairon service it was about to restart as busy**, so a redeploy moved ports to random values, or failed with `--node-port=N is already in use` after installing binaries but before restarting services. A port held by the same kairon binary now counts as free.
 - **`examples/tenant-fence.yaml`, `preemption.yaml` and `hotplug-persist.yaml` used a string `spec.image.source`**, which the Machine CRD rejects; they now use `spec.image.path`.
 - **`spec.tenant` descriptions** in the CRD and `kaironctl describe` no longer claim the field is never read.
-
-## Security
-
-- Built with Go 1.27.2 (release images and `go.mod`), which fixes CVE-2026-78667 (`net/http`) and CVE-2026-97031 (`crypto/tls`) in the standard library.
 
 ## Build and CI
 
