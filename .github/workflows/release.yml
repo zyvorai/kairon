@@ -145,6 +145,14 @@ jobs:
             cd dist
             sha256sum kaironctl-* kubectl-kairon-* > SHA256SUMS
           )
+      - name: Package kubectl-kairon archives and Krew manifest
+        run: |
+          set -euo pipefail
+          # Reads VERSION, which must equal the tag. Writes
+          # dist/krew/kairon_{darwin,linux}_{amd64,arm64}.tar.gz and a filled
+          # dist/krew/kairon.yaml (deploy/krew/kairon.yaml stays the template).
+          test "$(tr -d '[:space:]' < VERSION)" = "${GITHUB_REF_NAME}"
+          ./scripts/krew-package.sh
       - name: Package and push Helm chart to OCI
         run: |
           set -euo pipefail
@@ -166,6 +174,7 @@ jobs:
 
           ### Artifacts
           - \`kaironctl\` / \`kubectl-kairon\` (linux amd64/arm64) + \`SHA256SUMS\`
+          - Krew: \`kairon_{darwin,linux}_{amd64,arm64}.tar.gz\` + a checksummed \`kairon.yaml\` manifest
           - Container images: \`ghcr.io/zyvorai/kairon-{controller,node,ui,csi-node,csi-controller}:${version}\` (cosign-signed, SBOM attested)
           - Helm chart (OCI): \`oci://ghcr.io/zyvorai/charts/kairon:${chart_version}\`
 
@@ -187,6 +196,11 @@ jobs:
             dist/kubectl-kairon-linux-amd64 \
             dist/kubectl-kairon-linux-arm64 \
             dist/SHA256SUMS \
+            dist/krew/kairon_darwin_arm64.tar.gz \
+            dist/krew/kairon_darwin_amd64.tar.gz \
+            dist/krew/kairon_linux_amd64.tar.gz \
+            dist/krew/kairon_linux_arm64.tar.gz \
+            dist/krew/kairon.yaml \
             "dist/kairon-${chart_version}.tgz" \
             --title "$version" \
             --notes "$notes"
