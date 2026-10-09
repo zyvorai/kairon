@@ -1,3 +1,15 @@
+# Kairon v0.7.2
+
+Released 2026-10-09. Same features as v0.7.1.
+
+## Security
+
+- `golang.org/x/net` v0.59.0 → v0.60.0, fixing the HTTP/2 advisories GO-2026-6610 through GO-2026-6617. They are reachable from the FluxVM client, the Kubernetes client and the CSI gRPC server, so the v0.7.1 controller, node and CSI images carry them; use v0.7.2.
+
+## Build and CI
+
+- golangci-lint v2.14 (v2.13 cannot load Go 1.27.2 export data). The release workflow now attaches the Krew archives (`kairon_{darwin,linux}_{amd64,arm64}.tar.gz`) and a checksummed `kairon.yaml`; Krew URIs use the lowercase asset names the packaging script produces.
+
 # Kairon v0.7.1
 
 Released 2026-10-09. Same features as v0.7.0, rebuilt on Go 1.27.2.
