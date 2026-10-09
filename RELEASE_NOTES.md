@@ -51,6 +51,10 @@ Released 2026-10-09.
 - **`examples/tenant-fence.yaml`, `preemption.yaml` and `hotplug-persist.yaml` used a string `spec.image.source`**, which the Machine CRD rejects; they now use `spec.image.path`.
 - **`spec.tenant` descriptions** in the CRD and `kaironctl describe` no longer claim the field is never read.
 
+## Security
+
+- Built with Go 1.27.2 (release images and `go.mod`), which fixes CVE-2026-78667 (`net/http`) and CVE-2026-97031 (`crypto/tls`) in the standard library.
+
 ## Build and CI
 
 - Ecosystem test requirements are hash-pinned; website `tinypool` and `postcss-selector-parser` overrides patch Dependabot alerts; the MCP end-to-end test asserts the read-only/write split instead of pinning the full tool list; `anchore/sbom-action` bumped.
