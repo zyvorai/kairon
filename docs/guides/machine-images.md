@@ -22,6 +22,8 @@ spec:
   defaults: {cpu: "4", memory: 8Gi, diskSize: 80Gi}
 ```
 
+A complete example with a disk image and an install ISO is in [`examples/machineimage.yaml`](https://github.com/zyvorai/zyvor-kairon/blob/main/examples/machineimage.yaml); its URLs and digests are placeholders.
+
 ```yaml
 apiVersion: kairon.zyvor.dev/v1beta1
 kind: Machine

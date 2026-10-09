@@ -30,7 +30,32 @@ The e2e used a single-node k3s cluster running in a Velora VM on the same Mac as
 3. `kairon-node` sends the Machine to FluxVM (`--fluxvm-url`, default `http://127.0.0.1:7788`) with `backend: vz`.
    `internal/fluxvm/apple.go` rejects, with a specific message, anything the vz backend cannot honour (tap networking, port
    forwards, NUMA, hugepages, cpuSet, pinning, hotplug, TPM, secure boot, VFIO, data disks, cdroms, the QEMU guest agent).
-4. Defaults on a Mac: backend `vz`; image root, migration state and CSI directories under `~/Library/Application Support`.
+4. Defaults on a Mac: backend `vz`; image root, migration state and CSI directories under `~/Library/Application Support`
+   (see the table below).
+
+## Defaults and settings on a Mac
+
+`kairon-node` picks these defaults per OS (`osDefault` and `macSupport` in `cmd/kairon-node/main.go`). Each flag also reads
+the environment variable shown, and an explicit flag wins. If the home directory cannot be resolved, the macOS paths fall
+back to `$TMPDIR/kairon/<path>`.
+
+| Flag | Environment variable | Default on macOS | Default on Linux |
+| --- | --- | --- | --- |
+| `--default-backend` | `KAIRON_DEFAULT_BACKEND` | `vz` | `qemu` |
+| `--image-root` | `KAIRON_IMAGE_ROOT` | `~/Library/Application Support/FluxVM/images` | `/var/lib/fluxvm/images` |
+| `--migration-state-dir` | `KAIRON_MIGRATION_STATE_DIR` | `~/Library/Application Support/Kairon/migrations` | `/var/run/kairon/migrations` |
+| `--csi-staging-dir` | `KAIRON_CSI_STAGING_DIR` | `~/Library/Application Support/Kairon/csi/staging` | `/var/lib/kairon/csi/staging` |
+| `--csi-publish-dir` | `KAIRON_CSI_PUBLISH_DIR` | `~/Library/Application Support/Kairon/csi/publish` | `/var/lib/kairon/csi/publish` |
+
+Two more settings are specific to Node registration:
+
+- `KAIRON_REGISTER_NODE` (flag `--register-node`): create and heartbeat this host's Kubernetes Node. The default is `true`
+  on macOS and `false` elsewhere. The environment variable is only honoured when its value is exactly `true`; any other
+  value, including `1`, turns it off.
+- `KAIRON_MLX_URL` (flag `--mlx-url`): a loopback OpenAI-compatible endpoint for this Mac's MLX runtime (Velora). When set,
+  the Node gets the `kairon.zyvor.dev/mlx=true` label and a `kairon.zyvor.dev/inference-url` annotation. Empty by default.
+
+The migration and CSI directories exist as defaults, but migration and CSI are not verified on macOS (see above).
 
 ## Run it
 
@@ -39,6 +64,18 @@ The e2e used a single-node k3s cluster running in a Velora VM on the same Mac as
 # 2. FluxVM with the vz backend (../fluxvm, branch feat/macos-apple-backend)
 KUBECONFIG=/path/to/kubeconfig scripts/macos-e2e.sh /path/to/arm64-debian.raw
 ```
+
+`scripts/macos-e2e.sh` needs Apple silicon, Go, Rust, the Xcode command line tools, `kubectl` and a Kubernetes API. It builds
+FluxVM from a sibling checkout at `../fluxvm` (relative to the Kairon repository root), which must be on the branch with the
+`vz` backend. Environment overrides:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FLUXVM_DIR` | `<repo>/../fluxvm` | Path of the FluxVM checkout to build and run. |
+| `FLUXVM_E2E_PORT` | `7798` | Port of the throwaway FluxVM daemon the script starts on `127.0.0.1`. |
+
+The script takes the raw arm64 disk image as its only argument and exits 2 on anything but Apple-silicon macOS. The Node name
+is the lower-cased `scutil --get LocalHostName` (or `mac`).
 
 By hand: apply `deploy/crd.yaml`, `deploy/rbac.yaml` and `deploy/macos/rbac.yaml`; run `kairon-controller` and `kairon-node`
 natively with `KAIRON_KUBE_URL`, `KAIRON_KUBE_TOKEN` (a ServiceAccount token) and `KAIRON_KUBE_CA`, and `NODE_NAME` for the node.

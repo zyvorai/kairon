@@ -31,7 +31,7 @@
 
 ## What's new
 
-New in v0.7.0 (since v0.6.0):
+New since v0.6.0 (current: v0.7.2):
 
 | | |
 |---|---|
@@ -206,7 +206,7 @@ From your laptop to a bare-metal host (cross-compiled locally, shipped as static
 <summary><strong>From source, kind, or raw manifests</strong></summary>
 
 ```bash
-git clone https://github.com/zyvorai/zyvor-kairon.git && cd kairon
+git clone https://github.com/zyvorai/zyvor-kairon.git && cd zyvor-kairon
 make docker-build
 helm upgrade --install kairon ./charts/kairon -n kairon-system --create-namespace
 # or: kaironctl install   (embedded Helm SDK, no helm binary needed)

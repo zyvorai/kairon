@@ -173,6 +173,8 @@ spec:
   The newest ready snapshot per Machine is always kept, however old, so a
   stalled schedule never prunes a Machine down to zero backups.
 
+See `examples/snapshotschedule-daily.yaml` for a complete daily schedule using all three.
+
 An invalid combination the CRD schema can't catch (for example
 `jitterSeconds` not below `intervalSeconds`) never fires; it shows up as
 `status.lastRunError: invalid spec: ...`. `kaironctl create/edit

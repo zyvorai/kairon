@@ -382,15 +382,64 @@ sessions and `GET .../network-capture/{token}` downloads the pcap
 
 ## MCP server for AI agents (`kaironctl mcp serve`)
 
+Full tool list and setup: [`docs/guides/hermes-mcp.md`](docs/guides/hermes-mcp.md).
+
 - **No new privilege.** It runs as a local subprocess of the agent and
   acts with whatever `KAIRON_KUBE_*` and `KAIRON_UI_TOKEN` credentials it
   is given; there is no listener and no Kairon-side identity. Scope those
   credentials (a Kubernetes Role with only the verbs the agent should
   have, a non-admin kairon-ui account) rather than relying on the tool
   list.
-- **Writes are opt-in.** Without `--allow-write`, the power, snapshot and
-  capture tools are neither listed nor callable. Delete, migrate, exec,
-  and edge or policy changes are not exposed at all.
+- **Writes are opt-in.** Without `--allow-write`, no write tool is listed
+  or callable. With it, the write set is: `set_power_state`,
+  `create_snapshot`, `snapshot_volume`, `network_capture`, `claim_machine`,
+  `release_claim`, `fork_machine`, `machine_disk`, `machine_nic`,
+  `machine_backup` (create, restore, delete), `delete_machine`,
+  `create_sealed_claim`, `apply_network_policy`, `apply_claim_step` and
+  `audit_record`. Machine delete is therefore reachable through MCP (it
+  refuses MachineSet replicas). Migrate, exec, and edge changes other than
+  `apply_network_policy` are not exposed.
+- **Human approval for destructive tools.** With `--allow-write`,
+  `--require-approval` (default `true`) makes `delete_machine`,
+  `fork_machine` and `machine_backup` with `action: restore` or `delete`
+  refuse until a human approves that exact call. `--require-approval=false`
+  turns it off.
+  - Default (annotation) mode: the refused call returns an approval id and
+    the command `kaironctl approve machine/NS/NAME ID` (or `machinebackup/...`).
+    That writes the `kairon.zyvor.dev/mcp-approval` annotation
+    (`<id>;<expiry>;<approver>`) on the target Machine or MachineBackup,
+    valid for `--ttl` (default 10 minutes). The approver needs `patch` on
+    that resource. The agent's next identical call consumes it with an
+    atomic test-and-remove patch, so an approval is **single-use** and is
+    spent before the tool runs (a failed call needs a new one). The id is a
+    12-hex-character SHA-256 prefix over tool, canonicalised arguments and
+    `KAIRON_MCP_PRINCIPAL` (default: the OS user), so changing any of them
+    needs a new approval. The approver is recorded from `KAIRON_APPROVER`,
+    else the local user name.
+  - Resource mode (`KAIRON_MCP_APPROVAL_MODE=resource`): the approval is a
+    separate Kubernetes object bound to the authenticated principal, the
+    target UID and generation, and an expiry, created by a different
+    identity with `kaironctl fleet approve-action REQUEST.json`; see
+    "Fleet trusted approvals" below.
+  - Limit: in annotation mode anything with `patch` on Machines or
+    MachineBackups can write the annotation, including the agent's own
+    credential if it has that verb. Approval only constrains an agent whose
+    way in is MCP; keep the agent's token to the verbs the server needs and
+    keep it away from shell access.
+- **Audit log.** Every write call is recorded before and after it runs in
+  a hash-chained JSONL log (`--audit-log`, default `~/.kairon/audit.jsonl`;
+  `--audit-configmap ns/name` mirrors records into an existing ConfigMap).
+  Each record carries the previous record's hash, so an edited, reordered or
+  removed line breaks the chain; `kaironctl agent audit-verify` checks it. If
+  the log cannot be written the write is refused. Outcomes include
+  `approval-required`, `approval-expired` and `approved:<approver>`. The
+  chain detects tampering after the fact; it does not stop someone with
+  write access to the file from truncating it or from rewriting the whole
+  chain.
+- **Tenant scoping.** `KAIRON_MCP_TENANT` scopes the claim tools and
+  `diagnose` to one tenant, and is recorded in audit records. It is an
+  environment setting of the local process, not an authorization decision
+  made by the cluster.
 - **Prompt injection.** Tool results include data a guest or tenant can
   influence (Machine messages, flow and drop records, console-derived
   status). An agent that reads them and also has write tools can be
@@ -399,6 +448,111 @@ sessions and `GET .../network-capture/{token}` downloads the pcap
   that path with the server process's permissions.
 - Tokens come from the environment and are never included in tool
   results; tool output is capped at 64 KB.
+
+## Tenant fence (`kairon.zyvor.dev/tenant-fence`)
+
+See [`docs/guides/tenant-fence.md`](docs/guides/tenant-fence.md). It is a
+best-effort deny list, not tenant isolation:
+
+- It is not a VRF. The controller denies the guest IPs it has observed on
+  other tenants' Machines in the same namespace; an address Kubernetes has
+  not observed yet, or one outside the namespace, is not denied. An address
+  shared with a same-tenant Machine is not denied.
+- A user `MachineNetworkPolicy` is merged with, not replaced by, the fence.
+  Node-wide default-deny still wins on `defaultAllow` when enabled.
+- Without the admission webhook (`webhook.enabled`) nothing stops a tenant
+  from being renamed or a selector crossing tenants; the fence itself still
+  works.
+- `spec.tenant` drives this fence only; it is not an authorization boundary
+  for the Kubernetes API, kairon-ui or the console.
+- Verified on one live k3s host (2026-10-06) for deny-list content and group
+  cleanup; actual packet isolation between tenants is not claimed here.
+
+## Scoped `kairon-ui` authorization (opt-in)
+
+`ui.auth.namespaceScoping.enabled` (kairon-ui `-namespace-scoping-enabled`,
+default `false`; the production Helm profile enables it). When on, a
+non-admin operator may use a namespace only if it is in their
+`ui.auth.users[].namespaces` or reachable through `ui.oidc.namespaceGroups`;
+other namespaces return 403. The check runs per request against current
+config (no re-login needed). Admins stay unrestricted. In scoped mode the
+legacy shared token and unauthenticated callers have no per-caller identity
+and are denied (`internal/uiapi/auth.go`, `actionauth.go`); the overview
+counts only visible namespaces and reports the node count only for admins.
+Routes under `/api/v1/nodes` expose cross-namespace data and require an
+admin when scoping is on (`internal/uiapi/actionauth.go`).
+Off by default, so an upgrade changes nothing: with it off every
+authenticated operator sees every namespace. The dashboard's own
+ClusterRole is still cluster-wide, so a kairon-ui compromise is not bounded
+by this setting.
+
+## Fleet trusted approvals and Redfish fencing (experimental)
+
+See [`docs/guides/enterprise-fleet.md`](docs/guides/enterprise-fleet.md).
+
+- **Trusted approvals.** With `KAIRON_MCP_APPROVAL_MODE=resource`, the agent
+  gets the `kairon-action-consumer` role and a separate human credential
+  gets `kairon-action-approver` (namespace RoleBindings; neither is bound
+  automatically). Admission binds the approver to Kubernetes `userInfo` and
+  rejects self-approval, excessive expiry and replay or reset; status moves
+  once to Consumed, only by the bound principal. Consumption happens before
+  the action, so a failed action needs a new approval, and there is still a
+  consume-to-mutation race. Administrative Kubernetes credentials bypass
+  RBAC and must stay outside the agent's trust boundary. Legacy annotation
+  mode remains the default.
+- **Redfish fencing.** BMC origins are an administrator allowlist
+  (`fleet.redfishOrigins`, HTTPS only), credentials come from Secrets
+  (`username`, `password`, optional `ca.crt`), TLS verification stays on and
+  redirects are rejected. ForceOff is bound to the Node UID and the host
+  must be confirmed Off before ownership is released. Tests run against
+  simulated servers; physical power fencing and vendor coverage are not
+  verified. Automatic recovery leaves hosts cordoned.
+
+## Node fencing is an operator attestation
+
+`kaironctl fence MACHINE --reason ...`, `kaironctl node fence NODE --reason
+...` and the controller's `--stale-evacuation` do not verify that a node is
+dead. The `--reason` (or the `kairon.zyvor.dev/node-fenced` annotation) is
+the operator's claim, and the controller then lets the scheduler start the
+Machine elsewhere. If the old node was only partitioned and FluxVM is still
+running the VM, two copies run against the same storage (split-brain).
+Mitigations are partial: the optional kairon-node liveness Lease makes
+`kaironctl fence` refuse while the agent still looks alive, and stale
+evacuation additionally needs a per-Machine `kairon.zyvor.dev/evacuate=true`
+opt-in and respects MachineDisruptionBudgets. Anyone who can `patch` Nodes
+can set the attestation and anyone who can annotate Machines can opt them in,
+so restrict both verbs to the people and power-fencing tooling that need
+them. Procedure: [`docs/runbook-node-fence.md`](docs/runbook-node-fence.md).
+
+## macOS node trust model
+
+See [`docs/macos.md`](docs/macos.md) and
+[`docs/runbook-macos-node.md`](docs/runbook-macos-node.md).
+
+- **Self-registration.** A Mac has no kubelet, so `kairon-node` creates and
+  heartbeats its own Node. `deploy/macos/rbac.yaml` grants the `kairon-node`
+  ServiceAccount `get`, `list`, `create` and `patch` on `nodes` and `patch`
+  on `nodes/status`, cluster-wide and without `resourceNames`. Whoever holds
+  that token (it sits in the Mac's environment, `KAIRON_KUBE_TOKEN`) can
+  create or modify any Node object, including labels, capacity, the Ready
+  condition and the `node-fenced` annotation. Because the binding is to the
+  shared ServiceAccount, applying that file extends these verbs to every
+  kairon-node using it, not only Macs. Use a dedicated ServiceAccount or
+  token for Mac nodes if that matters to you.
+- **vm-only taint.** The Mac Node carries `kairon.zyvor.dev/vm-only:NoSchedule`
+  so ordinary pods are not scheduled to a node without a kubelet. Machines
+  opt in with a toleration. It is a scheduling convention, not isolation.
+- **Isolation boundary.** Guest isolation is FluxVM's `vz` backend on Apple's
+  Virtualization.framework; Kairon adds none of its own. `internal/fluxvm/apple.go`
+  rejects features the backend cannot honour, but that is a compatibility
+  check, not a security control. The FluxVM URL defaults to loopback
+  (`http://127.0.0.1:7788`, optional `FLUXVM_TOKEN`); kairon-node's health
+  listener defaults to `:32302` on all interfaces and serves `/healthz`,
+  `/readyz` and `/metrics` without authentication.
+- **Not verified on macOS:** macOS guests, live migration, CSI, the VNC
+  console relay, kairon-ui, multi-Mac clusters and Intel Macs. Do not rely
+  on this document's other sections for those cases. The end-to-end run used
+  a single-node k3s cluster on the same Mac.
 
 ## Network observability (`.../network-effective`, `.../network-stats`, `.../network-flows`, `.../network-drop-reasons`)
 

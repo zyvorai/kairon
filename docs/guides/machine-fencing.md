@@ -186,6 +186,16 @@ once the node is repaired or retired:
 kaironctl node fence worker-3 --clear
 ```
 
+## Annotations, labels and finalizers
+
+| Key | On | Set by | Meaning |
+| --- | --- | --- | --- |
+| `kairon.zyvor.dev/node-fenced` | Node | operator, via `kaironctl node fence NODE --reason ...` (`--clear` removes it), or an out-of-band power-fencing tool | Non-empty value attests the node is powered off or isolated; the value is the evidence and is copied into the `Fenced` condition message. Only read by `--stale-evacuation`: without that flag it does nothing. A `Ready` node with a fresh liveness Lease is ignored. |
+| `kairon.zyvor.dev/evacuate` | Machine | operator | `"true"` opts this Machine into automatic fencing once its node carries `node-fenced`. Without it the Machine is only logged and left for `kaironctl fence`. |
+| `kairon.zyvor.dev/runtime-cleanup` | Machine (finalizer) | kairon-node | Removed by `kaironctl fence` and stale evacuation (only the dead node could remove it); the next node adds it back. |
+| `kairon.zyvor.dev/storage-domain`, `kairon.zyvor.dev/network-domain` | Node (labels) | operator | Migration preflight blocks a target whose value differs from the source's (see below). |
+| `kairon.zyvor.dev/vfio-devices` | Node (label) | operator | Asserts the target has an equivalent VFIO device, so a cold migration of a `deviceClaims` Machine may proceed (see below). |
+
 ## Migration preflight: storage/network domain labels
 
 Separately, `migrationTarget` checks a chosen live/cold-migration

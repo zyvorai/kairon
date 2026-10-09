@@ -7,6 +7,8 @@ title: CLI
 
 `kaironctl` is a [Cobra](https://github.com/spf13/cobra)-based CLI with Cilium-style colored tables, emoji progress for install/uninstall, and hierarchical help.
 
+Commands that talk to `kairon-ui` (image upload, network capture, guest operations) call the routes in the [kairon-ui API reference](guides/kairon-ui-api.md).
+
 **Dependency exception:** the CLI embeds the Helm chart (`go:embed`) and drives install/upgrade/uninstall through `helm.sh/helm/v3`. `kairon-controller` and `kairon-node` remain Go-stdlib-only — see [DEPENDENCIES.md](DEPENDENCIES.md).
 
 ```bash
@@ -51,12 +53,14 @@ kaironctl status [--namespace kairon-system] [--wait] [--timeout 5m] [--interact
 ## Resources & power
 
 ```text
-kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|machinepools|machineclaims|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|nodes] [--selector k=v]
+kaironctl get [machines|migrations|snapshots|restores|quotas|budgets|machinesets|machinepools|machineclaims|instancetypes|migrationpolicies|snapshotschedules|networkpolicies|securitygroups|backups|backuprestores|nodes] [--selector k=v]
 kaironctl describe [RESOURCE] NAME
 kaironctl create NAME --image PATH [--cpu N] [--memory SIZE] [--backend qemu|…]
                  [--forward hostPort:guestPort[/proto]] [--hostname NAME] [--user NAME]
                  [--ssh-key KEY] [--package PKG] [--runcmd CMD] [--priority N]
 kaironctl create machineset|machinepool|instancetype|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup NAME …
+kaironctl create snapshotschedule NAME --selector k=v (--interval-seconds N | --daily-at HH:MM)
+                 [--jitter-seconds N] [--max-age-seconds N]   # exactly one of interval / daily-at
 kaironctl delete [RESOURCE] NAME
 kaironctl delete RESOURCE --selector k=v [--dry-run]
 kaironctl edit [machine|machineset|migrationpolicy|snapshotschedule|quota|budget|networkpolicy|securitygroup] NAME …
@@ -142,11 +146,35 @@ kaironctl image delete NAME
 Needs `KAIRON_UI_URL` and an admin `KAIRON_UI_TOKEN` session token. See
 [guides/machine-image-import.md](guides/machine-image-import.md#uploading-images).
 
+`create snapshotschedule` takes exactly one of `--interval-seconds` (minimum 60)
+or `--daily-at HH:MM` (UTC). `--jitter-seconds N` adds a stable per-schedule
+offset in `[0, N)` so many schedules do not fire together, and
+`--max-age-seconds N` prunes the schedule's own snapshots older than N seconds
+(the newest is always kept). See
+[guides/machine-snapshot-schedules.md](guides/machine-snapshot-schedules.md).
+
+## Fleet automation (experimental)
+
+```text
+kaironctl fleet resources                     # list the fleet resource kinds
+kaironctl fleet get RESOURCE                  # list one kind
+kaironctl fleet create FILE.json              # create/apply one fleet object
+kaironctl fleet delete RESOURCE NAME
+kaironctl fleet approve-action REQUEST.json   # approve an exact MCP action with your Kubernetes identity
+kaironctl fleet release-address NETWORK CLAIM-UID   # release a bridge-backed IPAM address
+```
+
+Opt-in; see [guides/enterprise-fleet.md](guides/enterprise-fleet.md) and the
+per-kind [reference](guides/enterprise-fleet-reference.md).
+
 ## AI agents (MCP)
 
 ```bash
 kaironctl mcp serve                 # read tools only
-kaironctl mcp serve --allow-write   # also power, snapshot, capture
+kaironctl mcp serve --allow-write   # also power, snapshot, capture, and gated destructive tools
+kaironctl mcp serve --allow-write --require-approval=false   # skip human approval (default: required)
+        [--audit-log PATH] [--audit-configmap NAMESPACE/NAME]
+kaironctl approve KIND/[NAMESPACE/]NAME ID [--ttl 10m]       # KIND: machine | machinebackup
 ```
 
 `kaironctl mcp serve` is a Model Context Protocol server on stdin/stdout for
@@ -165,7 +193,13 @@ log (`--audit-log`, default `~/.kairon/audit.jsonl`; `--audit-configmap
 ns/name` mirrors it) and are refused if it cannot be written.
 `delete_machine`, `fork_machine` and `machine_backup` restore/delete also need
 a human's `kaironctl approve KIND/NAMESPACE/NAME ID` per call (off with
-`--require-approval=false`). It
+`--require-approval=false`). `approve` writes a single-use
+`kairon.zyvor.dev/mcp-approval` annotation that the agent's identical retry
+consumes; it expires after `--ttl` (default 10m). The approver is
+`$KAIRON_APPROVER`, else the local user name. Other environment variables:
+`KAIRON_MCP_TENANT` scopes claim tools to a tenant, `KAIRON_MCP_PRINCIPAL`
+names the caller in the audit log, and `KAIRON_MCP_APPROVAL_MODE=resource`
+switches to resource-bound approvals. It
 uses `KAIRON_KUBE_*` for Machines and `KAIRON_UI_URL`/`KAIRON_UI_TOKEN` for
 network data. See [ai-agents.md](ai-agents.md) for setup with Hermes and
 other clients, and [guides/hermes-mcp.md](guides/hermes-mcp.md) for the reference.
@@ -186,7 +220,7 @@ to the cluster. `ask` and the summary in `diagnose` use any
 OpenAI-compatible endpoint set by `KAIRON_LLM_URL`, `KAIRON_LLM_MODEL` and
 optionally `KAIRON_LLM_API_KEY`; the model's answer is validated by the
 same compilers before it is printed. `kaironctl agent --help` lists the
-rest (`migration-claim`, `cpu-label`, `gateway`). See
+rest (`migration-claim`, `cpu-label`, `gateway`). The MCP server also offers the read-only `detect_edge_anomalies` (beacon, DNS-tunnel, SNI-spread and deny-burst findings) and `project_confidential` (sealed or not, from a node attestation report); neither applies anything. See
 [guides/agent-plane.md](guides/agent-plane.md).
 
 ## Meta

@@ -180,6 +180,8 @@ back into `spec.resources`. The write only raises CPU or memory. Without
 the annotation, spec stays at the GitOps value and only the next boot
 uses the realized size.
 
+See `examples/hotplug-persist.yaml` for a Machine with the annotation and `maxCpu`/`maxMemory` headroom set.
+
 Lowering `spec.resources` does not shrink the next boot either: it is
 still max(spec, applied). When the boot memory reaches `maxMemory`,
 kairon-node omits `max_memory_mib` and FluxVM picks its default headroom,

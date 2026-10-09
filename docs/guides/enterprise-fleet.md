@@ -2,6 +2,8 @@
 
 This opt-in extension uses `fleet.kairon.zyvor.dev/v1alpha1` resources and existing Kairon Machine, migration, backup, restore, pool and set primitives. It does not introduce a second hypervisor. Review the status below before deploying; this is a draft feature set needing cluster and hardware validation.
 
+For per-kind field tables, status fields, safety gates, the REST/CLI surface and controller flags, see the [Enterprise fleet reference](enterprise-fleet-reference.md).
+
 | Requested feature | Implemented behavior | Remaining work |
 | --- | --- | --- |
 | Verified HA | Node-UID-bound Redfish ForceOff, confirmed Off before ownership release, restart limits, disruption budgets | Hardware fault injection, vendor coverage; automatic recovery leaves hosts cordoned |

@@ -13,12 +13,13 @@ Do **not** file security vulnerabilities as public issues -- follow [SECURITY.md
 Changes land through GitHub pull requests against `main`. `main` is branch-protected: a PR needs one approving review and green `lint`, `test`, and `analyze (go)` checks, and merges with linear history.
 
 1. Fork the repository and create a focused branch.
-2. Run `make all` before opening a pull request. That is `gofmt` check, `go vet`, `golangci-lint` (install it locally: https://golangci-lint.run/welcome/install/), race tests, a coverage floor (`internal/...` at or above `COVERAGE_THRESHOLD`, currently 50%), build/smoke, `scripts/validate.py`, RBAC coverage, and `helm lint`. The last two need `helm` and PyYAML.
-3. Add tests for scheduler, API, reconciliation or parsing changes.
-4. Touching `web/` (the `kairon-ui` dashboard)? Run `npm --prefix web run typecheck && npm --prefix web test && npm --prefix web run build` -- the same three steps CI's `web` job runs. `make all` doesn't build the frontend, so this is a separate step.
-5. Keep the control plane dependency-light and never add a libvirt/KubeVirt runtime dependency. `kairon-controller` and `kairon-node` stay stdlib-only. Named exceptions are in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). Do not add the Cilium Go SDK; Cilium objects go through raw REST in `internal/kube`.
-6. Document API behavior changes in `docs/` and update examples.
-7. By contributing, you agree that your contributions are licensed under the Apache License, Version 2.0.
+2. Use Go 1.27.2 or newer (`go.mod` says `go 1.27.2`; CI uses Go `1.27.x`) and golangci-lint **v2.14** (the version CI runs). golangci-lint v2.13 cannot load Go 1.27.2 export data, so an older local install will fail to lint. Install it from https://golangci-lint.run/welcome/install/.
+3. Run `make all` before opening a pull request. That is `gofmt` check, `go vet`, `golangci-lint`, race tests, a coverage floor (`internal/...` at or above `COVERAGE_THRESHOLD`, currently 50%), build/smoke, `scripts/validate.py`, RBAC coverage, `helm lint` and the stdlib-boundary check (`make stdlib-boundary`). RBAC coverage and `helm lint` need `helm` and PyYAML. `make all` does **not** run the license-header check; run `python3 scripts/check_license_headers.py` (or `make license-headers`) yourself. CI runs it in the `hygiene` job of `ci-extra.yml`.
+4. Add tests for scheduler, API, reconciliation or parsing changes.
+5. Touching `web/` (the `kairon-ui` dashboard)? Run `npm --prefix web run typecheck && npm --prefix web test && npm --prefix web run build` -- the same three steps CI's `web` job runs. `make all` doesn't build the frontend, so this is a separate step.
+6. Keep the control plane dependency-light and never add a libvirt/KubeVirt runtime dependency. `kairon-controller` and `kairon-node` stay stdlib-only. Named exceptions are in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md). Do not add the Cilium Go SDK; Cilium objects go through raw REST in `internal/kube`.
+7. Document API behavior changes in `docs/` and update examples.
+8. By contributing, you agree that your contributions are licensed under the Apache License, Version 2.0.
 
 Commits should be small and reviewable. New features should prefer declarative API fields and idempotent reconciliation over imperative one-shot operations.
 
@@ -28,8 +29,8 @@ Commits should be small and reviewable. New features should prefer declarative A
 - **Tests:** new functionality and bug fixes must come with automated tests (Go `testing` for `internal/...`, Vitest for `web/`). A bug fix should include a regression test that fails without the fix. Coverage of `internal/...` must stay at or above `COVERAGE_THRESHOLD`.
 - **Warnings:** compiler, `go vet`, linter, CodeQL, and `govulncheck` findings are treated as errors and must be fixed, not suppressed, unless the suppression is justified in a code comment.
 - **Dependencies:** follow the stdlib-only rule above and [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
-- **Docs:** user-visible behavior changes update `docs/` and `RELEASE_NOTES.md` (under `# Unreleased`).
-- **License:** every Go, Python, shell, TypeScript, and workflow file carries the Zyvor copyright and `SPDX-License-Identifier: Apache-2.0` header (enforced by `scripts/check_license_headers.py`).
+- **Docs:** user-visible behavior changes update `docs/` and `RELEASE_NOTES.md` (add a new `# Unreleased` section at the top of the file; `RELEASE_NOTES.md` starts at the latest release, so there is no existing `# Unreleased` heading to append to).
+- **License:** every Go, Python, shell, TypeScript, and workflow file carries the Zyvor copyright and `SPDX-License-Identifier: Apache-2.0` header (enforced by `scripts/check_license_headers.py`, run by CI's `hygiene` job and by `make license-headers`, but not by `make all`).
 
 Questions: https://zyvor.dev · security: security@zyvor.dev
 
@@ -44,6 +45,19 @@ make test-race
 CI (`.github/workflows/ci.yml`) runs the same Go checks, plus Helm render of the default chart, migration, kairon-ui, and Cilium RBAC flags, `kaironctl network` help smoke, the website and dashboard builds, and a Trivy scan of every container image. `python3 scripts/check_rbac_coverage.py` needs `helm` on `PATH` — it cross-checks every `internal/kube.Client` call `kairon-controller`/`kairon-node`/`kairon-ui` actually make against what their own rendered ClusterRole/Role really grants.
 
 Runtime code for the controller and node uses the **Go standard library only** — no `client-go`, no generated deep stacks. That's a deliberate constraint, not an oversight: it keeps the control plane small enough to actually audit, and it's why the admission webhook hand-rolls the small, stable `AdmissionReview` JSON shape (`internal/admission`) instead of pulling in `k8s.io/api`. Named exceptions live in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md): `kaironctl` (Cobra + Helm SDK), `kairon-ui` OIDC, and the CSI plugins. Cilium integration does not add a fourth — it uses raw REST.
+
+Touching the SDKs or `ecosystem/`? `make all` doesn't run these either. The same commands CI's `ecosystem.yml` workflow runs (see [`ecosystem/README.md`](ecosystem/README.md)):
+
+```bash
+python -m pip install -r ecosystem/requirements-test.txt
+python -m unittest discover -s sdk/python/tests -v
+python -m unittest discover -s ecosystem/tests -v
+npm --prefix sdk/typescript ci
+npm --prefix sdk/typescript run typecheck
+npm --prefix sdk/typescript test
+```
+
+Working on the macOS node? The Go code builds and tests natively on darwin (the `macos` workflow runs `go vet ./...`, `go build ./...` and `go test ./internal/macnode/... ./internal/fluxvm/... ./internal/scheduler/... ./internal/kube/... ./internal/model/... ./cmd/...` on a hosted macOS runner). The real-VM end-to-end check, `scripts/macos-e2e.sh`, needs an Apple-silicon Mac, a Kubernetes API and a sibling `../fluxvm` checkout, so CI does not run it. See [`docs/macos.md`](docs/macos.md).
 
 Touching the dashboard (`web/`)? `make all` doesn't build the frontend — run its own checks:
 
