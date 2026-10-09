@@ -148,9 +148,9 @@ function TrustBand() {
               Open, and honest about its limits
             </Heading>
             <p>
-              Apache-2.0. <strong>v0.6.0</strong> ships admission webhooks,
-              dashboard SSO, MachineSet, pause/halt, snapshot schedules, and
-              more — cold relocation, snapshots, DRA bridging, the secure
+              Apache-2.0. <strong>v0.7.0</strong> ships admission webhooks,
+              dashboard SSO, MachineSet, pause/halt, snapshot schedules, a
+              native macOS node, the developer ecosystem kit, and more — cold relocation, snapshots, DRA bridging, the secure
               live control plane, and a real FluxVM migration adapter are
               tested. Real two-host live migration has not yet been
               exercised against real hardware in this repo&apos;s own CI.
@@ -168,8 +168,8 @@ function TrustBand() {
               alt="Apache 2.0 license"
             />
             <img
-              src="https://img.shields.io/badge/version-v0.6.0-blue"
-              alt="v0.6.0"
+              src="https://img.shields.io/badge/version-v0.7.0-blue"
+              alt="v0.7.0"
             />
           </div>
         </Reveal>

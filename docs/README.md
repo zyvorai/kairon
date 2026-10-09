@@ -35,6 +35,8 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`architecture.md`](architecture.md) | Deep reference: the cold/live migration state machines, session durability, CSI/DRA mechanics, operational visibility |
 | [`migration-adapter.md`](migration-adapter.md) | The migration adapter HTTP contract, trust boundary, the real `kairon-migration-adapter-fluxvm` implementation |
 | [`network-fabric.md`](network-fabric.md) | `MachineNetworkPolicy`/`NetworkSecurityGroup`, FluxVM eBPF edge, opt-in Cilium ExternalWorkload attach and CNP sync |
+| [`macos.md`](macos.md) · [`macos-cluster.md`](macos-cluster.md) | Kairon on Apple silicon: Mac as a Node, `vz` Machines, verified vs not, Mac mini to Mac Studio cluster |
+| [`ecosystem/README.md`](https://github.com/zyvorai/kairon/blob/main/ecosystem/README.md) | Developer ecosystem kit: SDKs, recipes, GitHub Actions, Terraform |
 | [`ebpf-edge.md`](ebpf-edge.md) | VM edge enforced by FluxVM: anti-spoof, learn-IP, QoS, DNS/SNI allow lists, attributed drops and metrics, packet capture, conntrack move on live migration |
 | [`tutorials/network-fabric.md`](tutorials/network-fabric.md) · [`guides/machine-network.md`](guides/machine-network.md) · [`guides/network-policy.md`](guides/network-policy.md) | Network Fabric walkthrough and field-level guides |
 | [`guides/machine-quotas.md`](guides/machine-quotas.md) · [`guides/machine-disruption-budgets.md`](guides/machine-disruption-budgets.md) | `MachineQuota`/`MachineDisruptionBudget` reference, including the admission webhook |
@@ -103,4 +105,4 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`WHAT_SHIPS.md`](WHAT_SHIPS.md) | Full feature inventory (was README “What ships today”) |
 | [`CLI.md`](CLI.md) | Full `kaironctl` / `kubectl kairon` command reference (Cobra, embedded Helm, Krew) |
 | [`DEPENDENCIES.md`](DEPENDENCIES.md) | Stdlib-only controller/node vs named exceptions (CLI Helm, OIDC, CSI) |
-| [`STATUS.md`](STATUS.md) | v0.6.0 status + production gaps |
+| [`STATUS.md`](STATUS.md) | v0.7.0 status + production gaps |
