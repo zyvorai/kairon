@@ -1,4 +1,6 @@
-# Unreleased
+# Kairon v0.7.0
+
+Released 2026-10-09.
 
 ## Upgrade notes
 
@@ -48,6 +50,10 @@
 - **`deploy-remote.sh` treated a port held by the kairon service it was about to restart as busy**, so a redeploy moved ports to random values, or failed with `--node-port=N is already in use` after installing binaries but before restarting services. A port held by the same kairon binary now counts as free.
 - **`examples/tenant-fence.yaml`, `preemption.yaml` and `hotplug-persist.yaml` used a string `spec.image.source`**, which the Machine CRD rejects; they now use `spec.image.path`.
 - **`spec.tenant` descriptions** in the CRD and `kaironctl describe` no longer claim the field is never read.
+
+## Build and CI
+
+- Ecosystem test requirements are hash-pinned; website `tinypool` and `postcss-selector-parser` overrides patch Dependabot alerts; the MCP end-to-end test asserts the read-only/write split instead of pinning the full tool list; `anchore/sbom-action` bumped.
 
 ## Docs
 

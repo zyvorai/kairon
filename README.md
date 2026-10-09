@@ -31,10 +31,13 @@
 
 ## What's new
 
-On `main` since v0.6.0, heading for v0.7:
+New in v0.7.0 (since v0.6.0):
 
 | | |
 |---|---|
+| **Native macOS node** | `kairon-node` registers an Apple silicon Mac as a Node and runs `backend: vz` Machines through FluxVM. Verified on an M4; multi-Mac clusters not yet. [Guide →](docs/macos.md) · [Mac cluster →](docs/macos-cluster.md) |
+| **Developer ecosystem kit** | Python and TypeScript SDKs, digest-pinned recipes, disposable-VM GitHub Actions, Terraform composition. [Kit →](ecosystem/README.md) |
+| **Fleet automation (experimental)** | Opt-in Redfish fencing, balancing, autoscaling, backup and recovery plans, template claims, usage CSV and a Fleet dashboard. [Guide →](docs/guides/enterprise-fleet.md) |
 | **Kairon vs KubeVirt benchmark** | Same node, same guest, one script driving both; method and raw JSON in [docs/benchmarks](docs/benchmarks/kairon-vs-kubevirt.md). |
 | **Import from VMware** | `kaironctl import ova` streams an OVA once, reads vCPU, memory and firmware from the OVF, and FluxVM converts and repairs the disk. [Guide →](docs/guides/migrate-from-vmware.md) |
 | **Warm pools and claims** | `MachinePool` keeps booted Machines ready; a `MachineClaim` binds one in a single reconcile tick, with per-claim egress allowlists. [Guide →](docs/guides/machine-pools.md) |
@@ -181,10 +184,10 @@ On a Kubernetes cluster whose VM hosts run [FluxVM](https://github.com/zyvorai/z
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
 
 helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
-  --version 0.6.0 -n kairon-system --create-namespace \
-  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.6.0/charts/kairon/values-production.yaml
+  --version 0.7.0 -n kairon-system --create-namespace \
+  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.7.0/charts/kairon/values-production.yaml
 
-curl -fsSL -o kaironctl https://github.com/zyvorai/zyvor-kairon/releases/download/v0.6.0/kaironctl-linux-amd64
+curl -fsSL -o kaironctl https://github.com/zyvorai/kairon/releases/download/v0.7.0/kaironctl-linux-amd64
 chmod +x kaironctl && sudo mv kaironctl /usr/local/bin/      # or: kubectl krew install kairon
 
 kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi
@@ -265,7 +268,7 @@ kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
 | MCP server for AI agents | Preview, CI end-to-end with the official SDK |
 | CPU/memory hotplug | Grow-only (QEMU) |
 
-**v0.6.0** is the latest release. **v0.7** is on `main` and gets tagged once the multi-host migration matrix is green. Honest gaps live in [docs/STATUS.md](docs/STATUS.md); what comes next is in [ROADMAP.md](ROADMAP.md).
+**v0.7.0** is the latest release. Real two-host live migration is still Preview: the multi-host lab matrix is not yet green, so it is not claimed as Stable. Honest gaps live in [docs/STATUS.md](docs/STATUS.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
 ---
 

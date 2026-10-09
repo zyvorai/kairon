@@ -105,13 +105,13 @@ if chart_crds != bundle_crds:
 
 try:
     chart = yaml.safe_load((root / "charts/kairon/Chart.yaml").read_text())
-    if chart.get("version") != "0.6.0" or chart.get("appVersion") != "0.6.0":
-        fail("Helm chart version/appVersion must be 0.6.0")
+    if chart.get("version") != "0.7.0" or chart.get("appVersion") != "0.7.0":
+        fail("Helm chart version/appVersion must be 0.7.0")
 except Exception as e:
     fail(f"Chart semantic check failed: {e}")
 
-if (root / "VERSION").read_text().strip() != "v0.6.0":
-    fail("VERSION must be v0.6.0")
+if (root / "VERSION").read_text().strip() != "v0.7.0":
+    fail("VERSION must be v0.7.0")
 
 # README is a landing page; detail lives in the docs it links to.
 readme_docs = ["README.md", "ARCHITECTURE.md", "docs/README.md", "docs/WHAT_SHIPS.md", "docs/STATUS.md"]

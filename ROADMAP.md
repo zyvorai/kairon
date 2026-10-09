@@ -38,18 +38,26 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 
 ## v0.7 — Prove maturity, eBPF UX, STATUS gaps
 
-Shipped on `main` (not tagged): eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
+Tagged v0.7.0 (2026-10-09). Shipped: eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
 
-**Left before v0.7.0:**
+**v0.7.0 contents (the multi-host matrix carried over to v0.8):**
 
-- [ ] Green multi-host migration matrix (cold + live + live-eBPF) on Zyvor lab → [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — needs `kairon-lab` runner + `KAIRON_HW_*` / kube secrets
+- [ ] (carried to v0.8) Green multi-host migration matrix (cold + live + live-eBPF) on Zyvor lab → [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — needs `kairon-lab` runner + `KAIRON_HW_*` / kube secrets
 - [x] Matrix script: `live-ebpf` case + cold respects `KAIRON_MIGRATE_STRATEGY`
 - [x] First-class eBPF operator surface: `kaironctl network flows|drop-reasons|stats|effective`; production/docs recommend `dataplaneMode: ebpf`
 - [x] Dashboard Network panel (flows / drops / effective)
 - [x] Multi-volume first cut: `spec.volumes[1+]` → FluxVM virtiofs shared folders (QEMU)
 - [x] Fencing: liveness lease into `NodeUnreachable` detection (Ready + stale → `AgentLivenessStale`)
 - [x] CSI node-side CHAP (allowlisted release-namespace Secrets via `node.csi.chap.enabled`); opt-in OTel reconcile spans (`otel.enabled`)
-- [ ] Cut v0.7.0 + README maturity refresh after live matrix green
+- [x] Native macOS node and `vz` backend scheduling (`docs/macos.md`, `docs/macos-cluster.md`)
+- [x] Developer ecosystem kit: Python/TypeScript SDKs, recipes, GitHub Actions, Terraform (`ecosystem/`)
+- [x] VM edge enforced by FluxVM, MCP server with human approval, tenant fence, preemption, MachineImage/ISO media, stale evacuation, snapshot schedules at a time of day
+- [x] Cut v0.7.0 + README refresh
+
+## v0.8 — Prove live migration, beyond one Mac
+
+- [ ] Green multi-host migration matrix (cold + live + live-eBPF) on the Zyvor lab
+- [ ] Multi-Mac cluster verification (Thunderbolt RDMA, macOS guests)
 
 ## v0.6 — Production Foundations
 
