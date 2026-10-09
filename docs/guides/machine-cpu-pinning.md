@@ -146,6 +146,19 @@ atomically to `/var/lib/kairon-node/cpu_manager_state` (`root:kairon`,
 kairon-node removes a label it published on its own once discovery
 refuses; clear an operator-set label yourself.
 
+The units live in `systemd/`. `kairon-cpustate.path` fires
+`kairon-cpustate.service` whenever `/var/lib/kubelet/cpu_manager_state`
+changes (`PathChanged=`). The service is a oneshot: it creates
+`/var/lib/kairon-node` (`0700`, `kairon:kairon`), copies the kubelet file to
+`.cpu_manager_state.tmp` there as `root:kairon` `0640`, and renames it over
+`cpu_manager_state`, so a reader never sees a missing or half-written file.
+The service has `ConditionPathExists=/var/lib/kubelet/cpu_manager_state`, so
+on a host without kubelet's CPU manager state file it silently does nothing:
+systemd skips the start (visible only as a skipped condition in
+`systemctl status kairon-cpustate.service`), no copy is made, and discovery
+keeps refusing. `deploy-remote.sh` warns at install time if the file is not
+there yet.
+
 **Helm:**
 
 ```yaml

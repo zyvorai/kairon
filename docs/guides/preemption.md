@@ -32,6 +32,17 @@ Rules:
 - A non-terminal MachineMigration or a MachineDisruptionBudget with no allowance refuses the victim.
 - The controller writes `kairon.zyvor.dev/preempted-by` and restores `powerState: Running` when the preemptor is gone, Halted, Stopped, or no longer pending and unscheduled.
 
+## Annotations
+
+| Annotation | On | Set by | Meaning |
+| --- | --- | --- | --- |
+| `kairon.zyvor.dev/preempt` | pending Machine | you | `"true"` lets this Machine halt a lower-priority victim. Any other value is off. |
+| `kairon.zyvor.dev/preemption-policy` | candidate victim | you | `Halt` (or `Halted`) allows the Machine to be halted. Anything else means it is never a victim. |
+| `kairon.zyvor.dev/preempted-by` | victim | kairon-controller | `namespace/name` of the preemptor that halted it. A Machine with this set is not chosen as a victim again, and it is what the controller looks for when deciding to resume. |
+| `kairon.zyvor.dev/preempted-power` | victim | kairon-controller | The `spec.powerState` the victim had before the halt (`Running`; an empty or missing value is read as `Running`). On resume the controller sets `powerState` back to `Running` and removes both `preempted-*` annotations. A halted Machine whose value is anything other than `Running` or empty is left halted. |
+
+Do not set or edit `preempted-by` / `preempted-power` yourself. To resume a victim by hand, set `spec.powerState: Running` and remove both annotations.
+
 Placement is retried on the next tick, after the halt is visible to the scheduler.
 
 See `examples/preemption.yaml`.

@@ -26,6 +26,14 @@ wired to each component's own `Recorder` in `cmd/*/main.go`) gives every
 component apiserver call visibility for free, labeled `method`
 (GET/POST/PATCH/PUT/DELETE) and `outcome` (ok/error).
 
+`kairon-node` also registers the VM-edge metrics below (not registered on the controller or kairon-ui). Details, including how drops are read from FluxVM, are in [`docs/ebpf-edge.md`](../ebpf-edge.md#metrics).
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `kairon_net_drops_total` | counter | `namespace`, `machine`, `reason`, `policy` | VM-edge drops attributed to a MachineNetworkPolicy or dataplane guard; `policy` is `-` when not tied to a policy. No series exists until the first drop. |
+| `kairon_net_conntrack_restored_total` | counter | none | Conntrack entries restored onto a destination during live migration. |
+| `kairon_net_migration_blackhole_ms` | histogram | none | Milliseconds between conntrack export and restore. Buckets 5 to 2500 ms. |
+
 `kairon-node`'s metrics needed no chart changes -- its health port was
 already exposed as a container port, just never serving `/metrics`.
 `kairon-ui`'s did: it has no separate health-check port at all, so its

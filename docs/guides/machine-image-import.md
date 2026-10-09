@@ -157,6 +157,13 @@ spec:
 For an image that isn't already on a web server or registry, upload it to
 kairon-ui's image store and boot it through the same `httpURL` path:
 
+The routes are `GET /api/v1/images` (any session), `PUT` and `DELETE
+/api/v1/images/{name}` (administrator only) and `GET /images/sha256/{digest}`,
+which `kairon-node` uses to download the image and is unauthenticated: it
+verifies the bytes against `spec.image.digest`, and anyone who can reach
+kairon-ui and knows a digest can fetch that image. See the
+[kairon-ui API reference](kairon-ui-api.md).
+
 ```bash
 helm upgrade kairon ./charts/kairon -n kairon-system --reuse-values \
   --set ui.enabled=true --set ui.imageStore.enabled=true \

@@ -38,9 +38,9 @@ Close every gap in the [README comparison](README.md#kairon-vs-kubevirt) and pub
 
 ## v0.7 — Prove maturity, eBPF UX, STATUS gaps
 
-Tagged v0.7.0 (2026-10-09). Shipped: eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
+v0.7.0 was tagged on 2026-10-09 but never published: its image scan failed on Go standard-library CVEs (CVE-2026-78667, CVE-2026-97031), so no v0.7.0 images or release assets exist. v0.7.1 (rebuilt on Go 1.27.2) was the first published v0.7 release, and v0.7.2 (2026-10-09, `golang.org/x/net` v0.60.0) is the current one. The v0.7 scope below shipped across them. Shipped: eBPF CLI/UX, Network panel, multi-volume virtiofs, lease→`NodeUnreachable`, CSI node CHAP, OTel spans. Product landing: [README.md](README.md).
 
-**v0.7.0 contents (the multi-host matrix carried over to v0.8):**
+**v0.7 contents (the multi-host matrix carried over to v0.8):**
 
 - [ ] (carried to v0.8) Green multi-host migration matrix (cold + live + live-eBPF) on Zyvor lab → [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — needs `kairon-lab` runner + `KAIRON_HW_*` / kube secrets
 - [x] Matrix script: `live-ebpf` case + cold respects `KAIRON_MIGRATE_STRATEGY`
@@ -52,7 +52,7 @@ Tagged v0.7.0 (2026-10-09). Shipped: eBPF CLI/UX, Network panel, multi-volume vi
 - [x] Native macOS node and `vz` backend scheduling (`docs/macos.md`, `docs/macos-cluster.md`)
 - [x] Developer ecosystem kit: Python/TypeScript SDKs, recipes, GitHub Actions, Terraform (`ecosystem/`)
 - [x] VM edge enforced by FluxVM, MCP server with human approval, tenant fence, preemption, MachineImage/ISO media, stale evacuation, snapshot schedules at a time of day
-- [x] Cut v0.7.0 + README refresh
+- [x] Cut v0.7.0 + README refresh (tag never published; superseded by v0.7.1, then v0.7.2)
 
 ## v0.8 — Prove live migration, beyond one Mac
 

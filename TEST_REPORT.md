@@ -1,8 +1,8 @@
-# Unreleased: RELEASE_NOTES.md's newest batch (24 fixes/features) -- no live-cluster verification this round
+# Shipped in v0.5.0: the 24-fix/feature batch recorded in RELEASE_NOTES.md at the time -- no live-cluster verification this round
 
 This file's own convention is specifically **real, live-cluster/live-host verification beyond source-level gates** -- every entry below documents an actual deployment, a real API call against a running FluxVM/Kubernetes, or a bug a real environment surfaced that unit tests alone didn't. Being honest about that bar: the batch of 24 fixes/features described in RELEASE_NOTES.md's newest `## Added`/`## Changed` entries (MachineQuota hotplug self-check through the migration heartbeat/reaper) was verified via `go build`/`go vet`/the full `go test ./...` suite (including `-race` for the migration heartbeat/reaper's concurrency-critical path, run repeatedly), `gofmt`, `helm lint`, `helm template`, and `python3 scripts/validate.py` -- real, and in several cases (the reaper's per-session locking) deliberately adversarial test design proving a specific race can't happen -- but none of it was exercised against an actual running Kubernetes cluster or a live FluxVM host. No live cluster/host was available in this working session. Recorded here plainly rather than either skipping the gap silently or writing an entry that reads like the live-verification bar above was met when it wasn't.
 
-# Unreleased: guest-agent real guest-IP reporting test report
+# Shipped in v0.5.0: guest-agent real guest-IP reporting test report
 
 ## Result
 
@@ -27,7 +27,7 @@ This file's own convention is specifically **real, live-cluster/live-host verifi
 total (internal/...): 68.1% (threshold 50%)
 ```
 
-# Unreleased: CPU/memory hotplug test report
+# Shipped in v0.5.0: CPU/memory hotplug test report
 
 ## Result
 
@@ -54,7 +54,7 @@ The FluxVM side was independently verified against real KVM before this Kairon-s
 total (internal/...): 68.0% (threshold 50%)
 ```
 
-# Unreleased: MachineSnapshotRestore test report
+# Shipped in v0.5.0: MachineSnapshotRestore test report
 
 ## Result
 
@@ -83,7 +83,7 @@ The success path (real `Succeeded` snapshot restored into a real `Bound` PVC) is
 total (internal/...): 68.2% (threshold 50%)
 ```
 
-# Unreleased: MachineQuota test report
+# Shipped in v0.5.0: MachineQuota test report
 
 ## Result
 
@@ -112,7 +112,7 @@ Deployed to the same real lab k3s host used throughout this project's verificati
 total (internal/...): 68.6% (threshold 50%)
 ```
 
-# Unreleased: Machine affinity/anti-affinity + MachineDisruptionBudget test report
+# Shipped in v0.5.0: Machine affinity/anti-affinity + MachineDisruptionBudget test report
 
 ## Result
 
@@ -136,7 +136,7 @@ Both features were deployed to the same real lab k3s host (`212.8.248.187`) used
 total (internal/...): 68.4% (threshold 50%)
 ```
 
-# Unreleased: PVC-backed boot disk test report
+# Shipped in v0.5.0: PVC-backed boot disk test report
 
 ## Result
 
@@ -162,7 +162,7 @@ Deployed the updated `kairon-node` binary to the same real lab host (`212.8.248.
 total (internal/...): 68.1% (threshold 50%)
 ```
 
-# Unreleased: login lockout, console audit/TLS, deploy-remote.sh console support test report
+# Shipped in v0.5.0: login lockout, console audit/TLS, deploy-remote.sh console support test report
 
 ## Result
 
@@ -196,7 +196,7 @@ This closes out the five-item gap list from the previous VNC console report, min
 total (internal/...): 68.1% (threshold 50%)
 ```
 
-# Unreleased: VNC console + login redesign test report
+# Shipped in v0.5.0: VNC console + login redesign test report
 
 ## Result
 
@@ -222,7 +222,7 @@ total (internal/...): 68.1% (threshold 50%)
 total (internal/...): 67.4% (threshold 50%)
 ```
 
-# Unreleased: VM day-2 ops + kairon-ui login test report
+# Shipped in v0.5.0: VM day-2 ops + kairon-ui login test report
 
 ## Result
 

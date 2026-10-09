@@ -616,11 +616,14 @@ ui:
     namespaceScoping:
       # enabled turns on per-namespace authorization for kairon-ui's own
       # HTTP layer: once true, a non-admin session-token operator (a
-      # ui.auth.users[] account or an OIDC session -- never the legacy
-      # ui.token, which has no per-caller identity to scope by) may only
+      # ui.auth.users[] account or an OIDC session) may only
       # see and act on a namespace listed in their own
       # ui.auth.users[].namespaces entry or reachable via
       # ui.oidc.namespaceGroups below; every other namespace gets a 403.
+      # A request with no named identity -- the legacy shared ui.token --
+      # is refused with a 403 ("namespace scoping requires a named
+      # session"), /api/v1/overview is filtered to the caller's grants,
+      # and node routes need an administrator.
       # Off by default -- today, kairon-ui's own ClusterRole is
       # cluster-scoped and this HTTP layer has no namespace authorization
       # axis at all, only admin-vs-not (ui.auth.users[].admin), so every

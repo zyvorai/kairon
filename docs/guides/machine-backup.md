@@ -43,6 +43,8 @@ spec:
 
 The spec is immutable. To back up again, create a new MachineBackup.
 
+See `examples/machinebackup.yaml` for a `MachineBackup` plus the matching in-place `MachineBackupRestore`.
+
 ### Consistency
 
 kairon-node asks FluxVM to back up the VM. For a running VM, FluxVM takes

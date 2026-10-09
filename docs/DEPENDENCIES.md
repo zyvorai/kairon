@@ -32,6 +32,29 @@ The README “Go-stdlib only” badge refers to **this** control-plane surface, 
 
 Optional UI features (websocket console, Prometheus metrics client) may pull small libraries already listed in `go.mod`; they do not relax the controller/node rule.
 
+## Direct third-party modules in `go.mod`
+
+Checked against `go.mod` and `go list -deps` for `cmd/kairon-controller` and `cmd/kairon-node` on this tree. The "stdlib-only" rule above is a policy about the *named exceptions* in the previous section; in practice the controller and node link a few small, non-Helm modules, listed here so they are not a surprise.
+
+| Module | Used by | Why |
+|--------|---------|-----|
+| `github.com/google/go-sev-guest`, `github.com/google/go-tdx-guest` | `internal/attest`, linked into `kairon-controller` and `kairon-node` (`cmd/kairon-node` also imports them) | Confidential-guest SEV-SNP / TDX report parsing and verification. Not something to hand-roll |
+| `github.com/coder/websocket` | `internal/consoleproxy` (node console relay), `internal/uiapi` | VNC and text console WebSocket handling |
+| `github.com/prometheus/client_golang` | `internal/metrics`, `internal/agent` | `/metrics` for controller and node |
+| `github.com/zyvorai/atlas/clients/go` | `internal/controller` | Atlas storage client; itself stdlib-only (see above) |
+| `golang.org/x/sys` | `internal/csinode`, `internal/macnode` | Mounts and host introspection |
+| `google.golang.org/grpc`, `google.golang.org/protobuf`, `github.com/container-storage-interface/spec` | `internal/csinode`, `internal/agent`, `cmd/kairon-csi-*` (grpc and the CSI spec also appear in the `kairon-node` graph through `internal/agent`) | CSI client/server; the CSI exception above |
+| `golang.org/x/crypto` | `cmd/kairon-ui`, `internal/uiapi` (bcrypt), and the `kairon-controller` graph | Password hashing for kairon-ui |
+| `github.com/go-jose/go-jose/v4` | `internal/uiapi` | JOSE handling for OIDC sessions |
+
+`scripts/check_stdlib_boundary.py` (run by `make all` through `make stdlib-boundary`, and by the `hygiene` job in `ci-extra.yml`) is a **deny list**, not an allow list. It fails if the `kairon-controller` or `kairon-node` import graph gains `helm.sh/`, `k8s.io/`, `sigs.k8s.io/`, `github.com/spf13/`, `github.com/coreos/go-oidc`, `golang.org/x/oauth2`, `github.com/containerd/` or `oras.land/`. Anything else, including the modules in the table above, is not blocked by the script and is governed by review and this document.
+
+### Version floors and pins
+
+- **`golang.org/x/net` v0.60.0 (floor).** It is an indirect dependency (`// indirect` in `go.mod`). v0.60.0 fixes the HTTP/2 advisories GO-2026-6610 through GO-2026-6617, which are reachable from the FluxVM client, the Kubernetes client and the CSI gRPC path. Do not let it drop below v0.60.0 (v0.59.0, the previous pin, is affected). Landed in v0.7.2.
+- **`google.golang.org/grpc` v1.86.0-dev (pre-release pin).** The history is: the repository was moved to a pre-release commit (`v1.85.0-dev.0.20260825072537-93e31b48545e`, commit 533d808) to pick up the fix for GO-2026-6443 (gRPC server panic on a missing `:authority`/Host, reachable from `kairon-csi-controller`) because there was no tagged v1.85.0 yet; Dependabot then moved it to the `v1.86.0-dev` tag (commit 975f704, PR #28). Whether a tagged, non-`-dev` release containing the fix now exists was not checked from this repository; move to the tagged release as soon as one does, and do not roll back below the GO-2026-6443 fix.
+- **Go 1.27.2** (`go 1.27.2` in `go.mod`) clears the Go standard-library advisories CVE-2026-78667 and CVE-2026-97031 (v0.7.1); `golangci-lint` v2.14 is required to load it.
+
 ## What “embedded Helm” means for the CLI
 
 `kaironctl install` defaults to the chart baked into the binary (`charts` package via `go:embed`) and drives install/upgrade/uninstall through the Helm v3 Go SDK. Operators can still pass `--chart ./charts/kairon` or `--helm-cli` to shell out to a system Helm 3 binary. Dry-run renders manifests offline (no cluster required).
