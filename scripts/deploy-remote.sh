@@ -69,6 +69,15 @@ Flags:
                           (and --ui-allow-unauthenticated isn't set), one is
                           auto-generated locally and printed once at the end
                           of the run -- save it, it is not shown again.
+  --ui-admin-password=PW  Password for the dashboard's built-in 'admin' account
+                          (username/password login; default Admin@321). Seeded
+                          into a fresh kairon-ui.env together with a generated
+                          KAIRON_UI_SESSION_SECRET. CHANGE IT for anything
+                          reachable beyond a lab network. No whitespace,
+                          quotes, '$' or backslash (systemd EnvironmentFile).
+  --reseed-ui-auth        Also (re)apply the admin password and, if missing, a
+                          session secret to an EXISTING kairon-ui.env, then
+                          restart is picked up by the normal service start.
   --ui-allow-unauthenticated  Start kairon-ui without a token (local
                           development only -- every dashboard route is then
                           open to anyone who can reach the port).
@@ -187,6 +196,9 @@ WITH_CONTROLLER=0
 WITH_UI=0
 UI_TOKEN=""
 UI_ALLOW_UNAUTHENTICATED=0
+UI_ADMIN_PASSWORD="Admin@321"
+RESEED_UI_AUTH=0
+RESOLVED_UI_SESSION_SECRET=""
 UI_PORT="8082"
 UI_PORT_EXPLICIT=0
 RESOLVED_UI_TOKEN=""
@@ -258,6 +270,14 @@ while [[ $# -gt 0 ]]; do
     --with-ui) WITH_UI=1 ;;
     --ui-token=*) UI_TOKEN="${1#*=}" ;;
     --ui-allow-unauthenticated) UI_ALLOW_UNAUTHENTICATED=1 ;;
+    --ui-admin-password=*)
+      UI_ADMIN_PASSWORD="${1#*=}"
+      case "$UI_ADMIN_PASSWORD" in
+        *[[:space:]]*|*\"*|*\'*|*\$*|*\\*|*\#*) die "--ui-admin-password must not contain whitespace, quotes, '\$', '#' or backslash" ;;
+      esac
+      [[ ${#UI_ADMIN_PASSWORD} -ge 8 ]] || die "--ui-admin-password must be at least 8 characters"
+      ;;
+    --reseed-ui-auth) RESEED_UI_AUTH=1 ;;
     --ui-port=*) UI_PORT="${1#*=}"; UI_PORT_EXPLICIT=1 ;;
     --with-console) WITH_CONSOLE=1 ;;
     --console-port=*) CONSOLE_PORT="${1#*=}"; CONSOLE_PORT_EXPLICIT=1 ;;
@@ -488,7 +508,8 @@ Remote paths:
   /etc/kairon/kairon-node.env   (seeded only if absent)
   /etc/systemd/system/kairon-node.service$([[ "$WITH_CONTROLLER" == "1" ]] && echo ", kairon-controller.service")$([[ "$WITH_UI" == "1" ]] && echo ", kairon-ui.service")
 $([[ "$WITH_UI" == "1" ]] && echo "  /etc/kairon/ui-web/ (web assets, replaced on every --with-ui deploy)")
-$([[ "$WITH_UI" == "1" ]] && echo "  /etc/kairon/kairon-ui.env   (seeded only if absent)")
+$([[ "$WITH_UI" == "1" ]] && echo "Dashboard login:          admin / $(if [[ "$UI_ADMIN_PASSWORD" == "Admin@321" ]]; then echo "Admin@321 (default -- change it)"; else echo "(from --ui-admin-password)"; fi)  [token login stays enabled]")
+$([[ "$WITH_UI" == "1" ]] && echo "  /etc/kairon/kairon-ui.env   (seeded only if absent$([[ "$RESEED_UI_AUTH" == "1" ]] && echo "; admin password + session secret re-applied"))")
 EOF
 }
 
@@ -611,6 +632,10 @@ run_deploy() {
       RESOLVED_UI_TOKEN="$(openssl rand -hex 24)"
       RESOLVED_UI_TOKEN_SOURCE="generated"
       warn "auto-generated a dashboard token (shown once at the end of this run) -- pass --ui-token=... to pin it across redeploys"
+    fi
+    if [[ "$UI_ALLOW_UNAUTHENTICATED" != "1" ]]; then
+      command -v openssl >/dev/null 2>&1 || die "--with-ui needs 'openssl' to generate the dashboard session secret"
+      RESOLVED_UI_SESSION_SECRET="$(openssl rand -hex 32)"
     fi
   fi
   if [[ "$WITH_CONSOLE" == "1" ]]; then
@@ -738,6 +763,9 @@ run_deploy() {
     printf 'WITH_UI=%q\n' "$WITH_UI"
     printf 'UI_ALLOW_UNAUTHENTICATED=%q\n' "$UI_ALLOW_UNAUTHENTICATED"
     printf 'UI_TOKEN=%q\n' "$RESOLVED_UI_TOKEN"
+    printf 'UI_ADMIN_PASSWORD=%q\n' "$UI_ADMIN_PASSWORD"
+    printf 'UI_SESSION_SECRET=%q\n' "$RESOLVED_UI_SESSION_SECRET"
+    printf 'RESEED_UI_AUTH=%q\n' "$RESEED_UI_AUTH"
     printf 'UI_PORT=%q\n' "$UI_PORT"
     printf 'UI_PORT_EXPLICIT=%q\n' "$UI_PORT_EXPLICIT"
     printf 'WITH_CONSOLE=%q\n' "$WITH_CONSOLE"
@@ -961,6 +989,13 @@ if [[ "$WITH_UI" == "1" ]]; then
     {
       if [[ -n "$UI_TOKEN" ]]; then echo "KAIRON_UI_TOKEN=$UI_TOKEN"; else echo "#KAIRON_UI_TOKEN="; fi
       if [[ "$UI_ALLOW_UNAUTHENTICATED" == "1" ]]; then echo "KAIRON_UI_ALLOW_UNAUTHENTICATED=true"; else echo "#KAIRON_UI_ALLOW_UNAUTHENTICATED=false"; fi
+      if [[ -n "$UI_SESSION_SECRET" ]]; then
+        echo "KAIRON_UI_DEFAULT_ADMIN_PASSWORD=$UI_ADMIN_PASSWORD"
+        echo "KAIRON_UI_SESSION_SECRET=$UI_SESSION_SECRET"
+      else
+        echo "#KAIRON_UI_DEFAULT_ADMIN_PASSWORD="
+        echo "#KAIRON_UI_SESSION_SECRET="
+      fi
       if [[ -n "$KUBE_URL" ]]; then echo "KAIRON_KUBE_URL=$KUBE_URL"; else echo "#KAIRON_KUBE_URL="; fi
       if [[ -n "$KUBE_TOKEN" ]]; then echo "KAIRON_KUBE_TOKEN=$KUBE_TOKEN"; else echo "#KAIRON_KUBE_TOKEN="; fi
       if [[ -n "$KUBE_CA" ]]; then echo "KAIRON_KUBE_CA=$KUBE_CA"; else echo "#KAIRON_KUBE_CA="; fi
@@ -982,7 +1017,26 @@ if [[ "$WITH_UI" == "1" ]]; then
     chown root:kairon /etc/kairon/kairon-ui.env
     ok "seeded /etc/kairon/kairon-ui.env"
   else
+    if [[ "$RESEED_UI_AUTH" == "1" && -n "$UI_SESSION_SECRET" ]]; then
+      # Only the two username/password keys are touched; token, kube and
+      # console settings stay exactly as the operator left them.
+      cp -p /etc/kairon/kairon-ui.env /etc/kairon/kairon-ui.env.bak
+      grep -vE '^#?KAIRON_UI_DEFAULT_ADMIN_PASSWORD=' /etc/kairon/kairon-ui.env > /etc/kairon/kairon-ui.env.new || true
+      echo "KAIRON_UI_DEFAULT_ADMIN_PASSWORD=$UI_ADMIN_PASSWORD" >> /etc/kairon/kairon-ui.env.new
+      if ! grep -qE '^KAIRON_UI_SESSION_SECRET=.+' /etc/kairon/kairon-ui.env.new; then
+        grep -vE '^#?KAIRON_UI_SESSION_SECRET=' /etc/kairon/kairon-ui.env.new > /etc/kairon/kairon-ui.env.new2 || true
+        echo "KAIRON_UI_SESSION_SECRET=$UI_SESSION_SECRET" >> /etc/kairon/kairon-ui.env.new2
+        mv /etc/kairon/kairon-ui.env.new2 /etc/kairon/kairon-ui.env.new
+      fi
+      chmod 0640 /etc/kairon/kairon-ui.env.new
+      chown root:kairon /etc/kairon/kairon-ui.env.new
+      mv /etc/kairon/kairon-ui.env.new /etc/kairon/kairon-ui.env
+      ok "re-applied admin password + session secret in /etc/kairon/kairon-ui.env (backup: kairon-ui.env.bak)"
+    else
     warn "/etc/kairon/kairon-ui.env already exists -- left untouched"
+    if [[ -n "$UI_SESSION_SECRET" ]]; then
+      warn "username/password login keys were NOT applied; re-run with --reseed-ui-auth to add KAIRON_UI_DEFAULT_ADMIN_PASSWORD + KAIRON_UI_SESSION_SECRET"
+    fi
     if [[ -n "$UI_TOKEN$KUBE_URL$KUBE_TOKEN$KUBE_CA" || "$UI_ALLOW_UNAUTHENTICATED" == "1" || "$KUBE_INSECURE" == "1" ]]; then
       warn "--ui-token/--ui-allow-unauthenticated/--kube-* flags were given but ignored because the env file already exists"
       warn "edit /etc/kairon/kairon-ui.env by hand, then: systemctl restart kairon-ui"
@@ -994,6 +1048,7 @@ if [[ "$WITH_UI" == "1" ]]; then
     if [[ "$WITH_CONSOLE_TLS" == "1" ]]; then
       warn "--console-tls was given but KAIRON_NODE_CONSOLE_CA was NOT applied because the env file already exists"
       warn "edit /etc/kairon/kairon-ui.env by hand, then: systemctl restart kairon-ui"
+    fi
     fi
   fi
 fi
@@ -1179,6 +1234,13 @@ INSTALL_EOF
 
     echo
     ok "dashboard: http://${HOST_ARG}:${ui_port:-8082}"
+    if [[ -n "$RESOLVED_UI_SESSION_SECRET" ]]; then
+      if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_UI_DEFAULT_ADMIN_PASSWORD=' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
+        ok "dashboard login: username 'admin' (password from --ui-admin-password; default Admin@321 -- change it)"
+      else
+        tip "username/password login is not configured on this host yet; re-run with --reseed-ui-auth"
+      fi
+    fi
     # /etc/kairon/kairon-ui.env is root:kairon 0640 -- the SSH user is
     # neither, so this check needs sudo (ssh_exec_privileged), not a plain
     # ssh_cmd, or "permission denied" gets misread as "token not applied".

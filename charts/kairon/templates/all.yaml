@@ -996,6 +996,10 @@ entirely.
 {{- if and $existingSession $existingSession.data (index $existingSession.data "defaultAdminPassword") }}
 {{- $defaultAdminPasswordValue = index $existingSession.data "defaultAdminPassword" | b64dec }}
 {{- end }}
+{{- if .Values.ui.auth.defaultAdminPassword }}
+{{- /* An operator-chosen value always wins over the generated/persisted one. */}}
+{{- $defaultAdminPasswordValue = .Values.ui.auth.defaultAdminPassword }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount

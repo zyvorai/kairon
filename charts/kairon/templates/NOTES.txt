@@ -5,9 +5,16 @@ kairon-ui (dashboard): {{ .Values.ui.service.type }} port {{ .Values.ui.service.
 {{- if ne (include "kairon.ui.anyAuthConfigured" .) "true" }}
 
 No ui.token / ui.auth.users / ui.allowUnauthenticated was set, so a default
-"admin" account was generated for you. Retrieve its password with:
+"admin" account was generated for you.
+{{- if .Values.ui.auth.defaultAdminPassword }} Its password is the
+ui.auth.defaultAdminPassword value you set -- treat a well-known value as a
+lab-only convenience and replace it with named ui.auth.users entries.
+{{- else }} Retrieve its password with:
+{{- end }}
 
+{{- if not .Values.ui.auth.defaultAdminPassword }}
   kubectl -n {{ .Release.Namespace }} get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
+{{- end }}
 
 Set ui.auth.users (see docs/getting-started.md) to replace this with real,
 named per-operator accounts -- generate each passwordHash with:
