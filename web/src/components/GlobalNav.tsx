@@ -100,7 +100,7 @@ export default function GlobalNav({
           </button>
           <span className={'live-dot ' + health} title={health === 'ok' ? 'Control plane reachable' : health === 'bad' ? 'Control plane unreachable' : 'Checking…'} />
           <button className="icon ghost" onClick={() => setUser((u) => !u)} aria-label="Account menu" aria-expanded={user}>
-            <span className="loginavatar" style={{ width: 26, height: 26, fontSize: 12 }}>{(username || '?').charAt(0).toUpperCase()}</span>
+            <span className="loginavatar" style={{ width: 26, height: 26, fontSize: 12 }}>{username ? username.charAt(0).toUpperCase() : <UserCog size={14} />}</span>
           </button>
         </div>
       </nav>

@@ -47,7 +47,7 @@
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); }
   50% { box-shadow: 0 0 0 6px transparent; }
 }
-.gn-burger { display: none; }
+.gn .gn-burger { display: none; }
 
 .mega-scrim {
   position: fixed; inset: var(--nav-h) 0 0 0; z-index: 150;
@@ -245,7 +245,7 @@
 /* ── responsive nav ───────────────────────────────────────────────────── */
 @media (max-width: 1080px) {
   .gn-links { display: none; }
-  .gn-burger { display: inline-grid; }
+  .gn .gn-burger { display: inline-grid; }
   .gn-search { min-width: 0; }
   .gn-search span { display: none; }
   .gn-search kbd { display: none; }
