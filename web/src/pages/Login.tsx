@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { AuthConfig, getAuthConfig, login, setToken } from '../api';
 
 type Step = 'username' | 'password';
@@ -13,22 +13,19 @@ function Avatar({ user }: { user: string }) {
 
 function LoginChrome({ children }: { children: React.ReactNode }) {
   return (
-    <div className="loginwrap">
+    <div className="loginwrap force-light">
       <div className="loginsplit">
         <div className="loginsplit-left">
           <div className="loginorb" aria-hidden />
           <div className="loginbrand">
-            <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={28} height={28} />
-            <div>
-              <div className="loginbrand-name">
-                KAIRON <small>by Zyvor</small>
-              </div>
-              <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
-            </div>
+            <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={40} height={40} />
+            <p className="login-kicker">Kairon &middot; Zyvor</p>
+            <h1 className="login-title">Real VMs.<br />One console.</h1>
+            <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
           </div>
         </div>
         <div className="loginsplit-right">
-          <div className="card logincard">{children}</div>
+          <div className="logincard">{children}</div>
           <p className="loginhost">
             Connecting to <code>{window.location.host}</code>
           </p>
@@ -38,12 +35,44 @@ function LoginChrome({ children }: { children: React.ReactNode }) {
   );
 }
 
+function Field({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  autoFocus,
+  autoComplete,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  autoFocus?: boolean;
+  autoComplete?: string;
+}) {
+  return (
+    <label className={'siw-field' + (value ? ' filled' : '')}>
+      <input
+        required
+        type={type}
+        autoFocus={autoFocus}
+        autoComplete={autoComplete}
+        value={value}
+        placeholder=" "
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [step, setStep] = useState<Step>('username');
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
   const [rawToken, setRawToken] = useState('');
+  const [useTokenForm, setUseTokenForm] = useState(false);
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +105,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     }
   }
 
-  function useToken(e: React.FormEvent) {
+  function submitToken(e: React.FormEvent) {
     e.preventDefault();
     setToken(rawToken);
     onSignedIn();
@@ -96,72 +125,75 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   // operators from named accounts to a real identity provider.
   const sso = config.ssoEnabled && config.ssoLoginURL && (
     <div className="loginstep">
-      <button type="button" className="primary" onClick={() => (window.location.href = config.ssoLoginURL!)}>
+      <button type="button" className="primary wide" onClick={() => (window.location.href = config.ssoLoginURL!)}>
         Sign in with SSO
       </button>
     </div>
+  );
+
+  const tokenForm = (
+    <form onSubmit={submitToken} className="loginstep">
+      <h3>Sign in with an API token.</h3>
+      <div className="siw">
+        <Field label="API token" type="password" autoFocus value={rawToken} onChange={setRawToken} autoComplete="off" />
+      </div>
+      <div className="formactions">
+        <button className="primary wide" type="submit" disabled={!rawToken && !config.tokenEnabled}>
+          Continue
+        </button>
+      </div>
+    </form>
   );
 
   if (!config.loginEnabled) {
     if (!config.tokenEnabled) {
       return (
         <LoginChrome>
-          <span className="eyebrow">SIGN IN</span>
           {sso}
-          {!sso && <p>No login method is configured on this server.</p>}
+          {!sso && <p className="logincopy">No login method is configured on this server.</p>}
         </LoginChrome>
       );
     }
     return (
       <LoginChrome>
-        <span className="eyebrow">SIGN IN</span>
         {sso}
         {sso && <p className="loginor">or</p>}
-        <h3>API token</h3>
-        <form onSubmit={useToken}>
-          <div className="formgrid">
-            <label>
-              Token
-              <input
-                type="password"
-                autoFocus
-                value={rawToken}
-                placeholder="required unless the server allows unauthenticated access"
-                onChange={(e) => setRawToken(e.target.value)}
-              />
-            </label>
-          </div>
-          <div className="formactions">
-            <button className="primary" type="submit">
-              Continue
-            </button>
-          </div>
-        </form>
+        {tokenForm}
       </LoginChrome>
     );
   }
 
   return (
     <LoginChrome>
-      <span className="eyebrow">SIGN IN</span>
       {sso}
       {sso && <p className="loginor">or</p>}
-      {step === 'username' ? (
+      {useTokenForm ? (
+        <>
+          {tokenForm}
+          <p className="loginfoot">
+            <button type="button" className="linklike" onClick={() => setUseTokenForm(false)}>
+              Use username and password
+            </button>
+          </p>
+        </>
+      ) : step === 'username' ? (
         <div key="username" className="loginstep">
           <form onSubmit={continueToPassword}>
-            <h3>Sign in to Kairon</h3>
-            <div className="formgrid">
-              <label>
-                Username
-                <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
-              </label>
-            </div>
-            <div className="formactions">
-              <button className="primary" type="submit" disabled={!user}>
-                Continue
+            <h3>Sign in to Kairon.</h3>
+            <div className="siw">
+              <Field label="Username" autoFocus autoComplete="username" value={user} onChange={setUser} />
+              <button className="siw-go" type="submit" disabled={!user} aria-label="Continue">
+                <ArrowRight size={16} />
               </button>
             </div>
           </form>
+          {config.tokenEnabled && (
+            <p className="loginfoot">
+              <button type="button" className="linklike" onClick={() => setUseTokenForm(true)}>
+                Use an API token instead
+              </button>
+            </p>
+          )}
         </div>
       ) : (
         <div key="password" className="loginstep">
@@ -175,20 +207,14 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
                 </button>
               </span>
             </h3>
-            <div className="formgrid">
-              <label>
-                Password
-                <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              </label>
-            </div>
-            <div className="formactions">
-              <button className="primary" type="submit" disabled={busy || !password}>
-                {busy && <Loader2 size={15} className="spin" />}
-                {busy ? 'Signing in...' : 'Sign In'}
+            <div className="siw">
+              <Field label="Password" type="password" autoFocus autoComplete="current-password" value={password} onChange={setPassword} />
+              <button className="siw-go" type="submit" disabled={busy || !password} aria-label="Sign in">
+                {busy ? <Loader2 size={16} className="spin" /> : <ArrowRight size={16} />}
               </button>
             </div>
             {msg && (
-              <div className="loginerror">
+              <div className="loginerror" role="alert">
                 <AlertCircle size={16} />
                 <span>{msg}</span>
               </div>

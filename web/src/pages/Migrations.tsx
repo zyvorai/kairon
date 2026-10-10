@@ -148,7 +148,7 @@ export default function Migrations({ prefillMachine }: { prefillMachine: string 
           </thead>
           <tbody>
             {items.map((m) => (
-              <tr key={m.metadata.name} onClick={() => setSelected(m.metadata.name)} style={{ cursor: 'pointer', background: selected === m.metadata.name ? '#f5f5f7' : undefined }}>
+              <tr key={m.metadata.name} onClick={() => setSelected(m.metadata.name)} style={{ cursor: 'pointer', background: selected === m.metadata.name ? 'var(--row-sel)' : undefined }}>
                 <td>{m.metadata.name}</td>
                 <td>{m.spec.machineName}</td>
                 <td>{m.status?.effectiveStrategy || m.spec.strategy || '-'}</td>

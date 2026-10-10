@@ -1,0 +1,89 @@
+/* Copyright 2026 Zyvor · https://zyvor.dev
+   SPDX-License-Identifier: Apache-2.0
+
+   Sign-in: veyron's "siw" two-step field group (joined floating-label
+   field + round arrow button). Always rendered light via .force-light. */
+
+.loginwrap {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  background: var(--bg-sub); color: var(--text);
+}
+.loginsplit {
+  width: min(980px, 100%); display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; align-items: center;
+}
+.loginsplit-left { position: relative; padding: 24px; min-height: 360px; display: flex; align-items: center; }
+.loginorb {
+  position: absolute; inset: 0; border-radius: 40px; filter: blur(40px); opacity: 0.9;
+  background:
+    radial-gradient(260px 220px at 30% 40%, rgba(0, 113, 227, 0.22), transparent 70%),
+    radial-gradient(240px 200px at 70% 60%, rgba(255, 90, 21, 0.18), transparent 70%);
+  animation: orbDrift 14s ease-in-out infinite alternate;
+}
+@keyframes orbDrift { to { transform: translate3d(14px, -10px, 0) scale(1.05); } }
+.loginbrand { position: relative; }
+.loginbrand .dot { border-radius: 10px; }
+.login-kicker { margin-top: 18px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--blue); }
+.login-title { font-size: clamp(32px, 4.4vw, 52px); letter-spacing: -0.045em; line-height: 1.05; margin-top: 8px; }
+.loginbrand-tagline { margin-top: 14px; color: var(--text-2); font-size: 16px; max-width: 380px; }
+
+.loginsplit-right { display: grid; justify-items: center; gap: 12px; }
+.logincard {
+  width: min(380px, 100%); padding: 32px 28px 26px;
+  background: var(--bg-elevated); border: 1px solid var(--hairline);
+  border-radius: 18px; box-shadow: var(--shadow-3);
+}
+.logincard h3 { font-size: 22px; letter-spacing: -0.03em; margin: 0 0 18px; }
+.logincard .formactions { justify-content: center; }
+.logincopy { color: var(--text-2); font-size: 14px; }
+.loginskeleton { height: 148px; border-radius: 12px; background: linear-gradient(90deg, var(--fill), var(--fill-hover), var(--fill)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.loginhost { font-size: 12px; color: var(--text-3); }
+.loginhost code { background: var(--fill); padding: 2px 6px; border-radius: 6px; }
+.loginor { text-align: center; color: var(--text-3); font-size: 12px; margin: 14px 0; }
+.loginfoot { text-align: center; margin-top: 18px; font-size: 13px; color: var(--text-2); }
+.loginstep { animation: stepIn 0.25s var(--ease); }
+@keyframes stepIn { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+button.wide { width: 100%; min-height: 40px; }
+
+.loginwho { display: flex; align-items: center; gap: 10px; font-size: 17px !important; }
+.loginavatar {
+  width: 34px; height: 34px; flex: none; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 600;
+  background: var(--blue); color: #fff;
+}
+
+/* joined floating-label field + round arrow */
+.siw { position: relative; }
+.siw-field { position: relative; display: block; }
+.siw-field input {
+  min-height: 56px; padding: 22px 52px 6px 14px; font-size: 16px; border-radius: 14px;
+  background: var(--bg-elevated);
+}
+.siw-field span {
+  position: absolute; left: 15px; top: 17px; font-size: 16px; color: var(--text-3);
+  pointer-events: none; transition: transform 0.18s var(--ease), font-size 0.18s var(--ease), top 0.18s var(--ease);
+}
+.siw-field input:focus + span,
+.siw-field input:not(:placeholder-shown) + span { top: 8px; font-size: 11px; }
+.siw-go {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--fill-hover); border-color: transparent; color: var(--text-3);
+}
+.siw-go:not(:disabled) { background: var(--blue); color: #fff; }
+.siw-go:active:not(:disabled) { transform: translateY(-50%) scale(0.96); }
+
+.loginerror {
+  margin-top: 14px; display: flex; gap: 8px; align-items: flex-start;
+  background: var(--danger-bg); color: var(--danger);
+  padding: 10px 12px; border-radius: 12px; font-size: 13px;
+}
+.loginerror svg { flex: none; margin-top: 1px; }
+.spin { animation: spin 0.8s linear infinite; }
+
+@media (max-width: 860px) {
+  .loginsplit { grid-template-columns: 1fr; }
+  .loginsplit-left { min-height: 0; padding: 8px 8px 0; }
+  .login-title br { display: none; }
+}

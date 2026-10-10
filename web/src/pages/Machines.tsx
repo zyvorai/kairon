@@ -4,7 +4,14 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { api, apiJSON, getConfig, isAdmin } from '../api';
 import { Machine } from '../types';
-import { badgeClass, formatBytes } from '../lib/phase';
+import { formatBytes } from '../lib/phase';
+import { parseHash } from '../lib/route';
+import { Plus } from 'lucide-react';
+import ResourceTable, { Column } from '../components/ResourceTable';
+import Inspector, { KV } from '../components/Inspector';
+import Sheet from '../components/Sheet';
+import { EmptyState, Status } from '../components/ui';
+import { useToast } from '../components/Toast';
 import Console from './Console';
 import Exec from './Exec';
 import AgentFiles from './AgentFiles';
@@ -98,6 +105,27 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   // that relay configured or it doesn't -- see internal/uiapi/exec.go's
   // own doc comment.
   const [consoleEnabled, setConsoleEnabled] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [selected, setSelected] = useState<string | null>(() => {
+    const t = parseHash(window.location.hash).target;
+    return t ? t.split('/').pop() ?? null : null;
+  });
+  const toast = useToast();
+
+  // Palette "New machine" and #/machines/<ns>/<name> deep links.
+  useEffect(() => {
+    const onNew = () => setCreating(true);
+    const onHash = () => {
+      const t = parseHash(window.location.hash).target;
+      if (t) setSelected(t.split('/').pop() ?? null);
+    };
+    window.addEventListener('kairon:new-machine', onNew);
+    window.addEventListener('hashchange', onHash);
+    return () => {
+      window.removeEventListener('kairon:new-machine', onNew);
+      window.removeEventListener('hashchange', onHash);
+    };
+  }, []);
 
   const refresh = () =>
     api<Machine[]>('/api/v1/machines').then(setItems).catch((e) => setMsg(String(e)));
@@ -127,6 +155,8 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
       }
       await apiJSON('/api/v1/machines', 'POST', body);
       setForm(EMPTY_FORM);
+      setCreating(false);
+      toast(`Machine ${form.name} created`);
       await refresh();
     } catch (err) {
       setMsg(String(err));
@@ -182,157 +212,198 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     }
   }
 
-  return (
-    <div className="grid">
-      <div className="card span4">
-        <span className="eyebrow">CREATE MACHINE</span>
-        <h3>New machine</h3>
-        <form onSubmit={create}>
-          <div className="formgrid">
-            <label>
-              Name
-              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            </label>
-            <label>
-              Image path
-              <input required value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="/var/lib/fluxvm/images/db.qcow2" />
-            </label>
-            <label>
-              CPU
-              <input value={form.cpu} onChange={(e) => setForm({ ...form, cpu: e.target.value })} />
-            </label>
-            <label>
-              Memory
-              <input value={form.memory} onChange={(e) => setForm({ ...form, memory: e.target.value })} />
-            </label>
-            <label>
-              Backend
-              <select value={form.backend} onChange={(e) => setForm({ ...form, backend: e.target.value })}>
-                <option value="qemu">qemu</option>
-                <option value="cloud-hypervisor">cloud-hypervisor</option>
-                <option value="firecracker">firecracker</option>
-                <option value="flux-vm">flux-vm</option>
-                <option value="auto">auto</option>
-              </select>
-            </label>
-            <label>
-              Network
-              <select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>
-                <option value="user">user</option>
-                <option value="tap">tap</option>
-                <option value="macvtap">macvtap</option>
-              </select>
-            </label>
-            <div className="check">
-              <input type="checkbox" id="netns" checked={form.netns} onChange={(e) => setForm({ ...form, netns: e.target.checked })} />
-              <label htmlFor="netns">Per-VM network namespace</label>
-            </div>
-            <label>
-              Port forward (host:guest)
-              <input value={form.forward} onChange={(e) => setForm({ ...form, forward: e.target.value })} placeholder="2222:22 (network=user only)" />
-            </label>
-            <label>
-              Hostname
-              <input value={form.hostname} onChange={(e) => setForm({ ...form, hostname: e.target.value })} placeholder="set via cloud-init" />
-            </label>
-            <label>
-              SSH public key
-              <input value={form.sshAuthorizedKey} onChange={(e) => setForm({ ...form, sshAuthorizedKey: e.target.value })} placeholder="ssh-ed25519 AAAA... (authorized via cloud-init)" />
-            </label>
-          </div>
-          <div className="formactions">
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? 'Creating...' : 'Create machine'}
-            </button>
-            {msg && <span className={msg.startsWith('Error') ? 'msg error' : 'msg'}>{msg}</span>}
-          </div>
-        </form>
-      </div>
+  const selectedMachine = items.find((m) => m.metadata.name === selected);
+  const columns: Column<Machine>[] = [
+    { header: 'Name', render: (m) => <b>{m.metadata.name}</b>, sortValue: (m) => m.metadata.name },
+    { header: 'Node', render: (m) => m.spec.nodeName || m.status?.nodeName || '-', sortValue: (m) => m.spec.nodeName || m.status?.nodeName || '' },
+    { header: 'Phase', render: (m) => <Status phase={m.status?.phase} />, sortValue: (m) => m.status?.phase || 'Unknown' },
+    {
+      header: 'CPU',
+      render: (m) => (
+        <>
+          {m.spec.resources.cpu}
+          {m.status?.resourceUsage?.cpuPercent !== undefined && <span className="usageHint"> ({m.status.resourceUsage.cpuPercent.toFixed(0)}%)</span>}
+        </>
+      ),
+      csv: (m) => m.spec.resources.cpu,
+    },
+    {
+      header: 'Memory',
+      render: (m) => (
+        <>
+          {m.spec.resources.memory}
+          {m.status?.resourceUsage?.memoryBytes !== undefined && <span className="usageHint"> ({formatBytes(m.status.resourceUsage.memoryBytes)})</span>}
+        </>
+      ),
+      csv: (m) => m.spec.resources.memory,
+    },
+    { header: 'IP', render: (m) => m.status?.guestIP || '-', sortValue: (m) => m.status?.guestIP || '' },
+    {
+      header: '',
+      render: (m) => (
+        <div className="rowactions" onClick={(e) => e.stopPropagation()}>
+          {m.status?.phase === 'Running' ? (
+            <button className="sm" onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
+          ) : m.status?.phase === 'Paused' ? (
+            <button className="sm" onClick={() => power(m.metadata.name, 'resume')}>Resume</button>
+          ) : (
+            <button className="sm" onClick={() => power(m.metadata.name, 'start')}>Start</button>
+          )}
+          <button className="sm ghost" onClick={() => setSelected(m.metadata.name)}>Details</button>
+        </div>
+      ),
+    },
+  ];
 
-      <div className="card span4">
-        <span className="eyebrow">MACHINES</span>
-        <table className="datatable">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Node</th>
-              <th>Phase</th>
-              <th>CPU</th>
-              <th>Memory</th>
-              <th>IP</th>
-              <th>Priority</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((m) => (
-              <tr key={m.metadata.name}>
-                <td>{m.metadata.name}</td>
-                <td>{m.spec.nodeName || m.status?.nodeName || '-'}</td>
-                <td>
-                  <span className={badgeClass(m.status?.phase || '')}>{m.status?.phase || 'Unknown'}</span>
-                </td>
-                <td>
-                  {m.spec.resources.cpu}
-                  {m.status?.resourceUsage?.cpuPercent !== undefined && (
-                    <span className="usageHint"> ({m.status.resourceUsage.cpuPercent.toFixed(0)}%)</span>
-                  )}
-                </td>
-                <td>
-                  {m.spec.resources.memory}
-                  {m.status?.resourceUsage?.memoryBytes !== undefined && (
-                    <span className="usageHint"> ({formatBytes(m.status.resourceUsage.memoryBytes)})</span>
-                  )}
-                </td>
-                <td>{m.status?.guestIP || '-'}</td>
-                <td>
-                  <div className="rowactions">
-                    <input
-                      type="number"
-                      step={1}
-                      className="priorityInput"
-                      value={priorityEdits[m.metadata.name] ?? String(m.spec.priority ?? 0)}
-                      onChange={(e) =>
-                        setPriorityEdits((prev) => ({ ...prev, [m.metadata.name]: e.target.value }))
-                      }
-                    />
-                    {priorityEdits[m.metadata.name] !== undefined &&
-                      priorityEdits[m.metadata.name] !== String(m.spec.priority ?? 0) && (
-                        <button onClick={() => setPriority(m.metadata.name)}>Set</button>
-                      )}
-                  </div>
-                </td>
-                <td>
-                  <div className="rowactions">
-                    <button onClick={() => power(m.metadata.name, 'start')}>Start</button>
-                    <button onClick={() => power(m.metadata.name, 'stop')}>Stop</button>
-                    {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'pause')}>Pause</button>}
-                    {m.status?.phase === 'Paused' && <button onClick={() => power(m.metadata.name, 'resume')}>Resume</button>}
-                    {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'halt')}>Halt</button>}
-                    {m.status?.phase === 'Halted' && <button onClick={() => power(m.metadata.name, 'start')}>Resume</button>}
-                    {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
-                    {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
-                    {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
-                    {consoleEnabled && isAdmin() && textConsoleEligible(m) && <button onClick={() => setAgentFilesFor(m.metadata.name)}>Files</button>}
-                    {consoleEnabled && logsEligible(m) && <button onClick={() => setLogsFor(m.metadata.name)}>Logs</button>}
-                    {consoleEnabled && logsEligible(m) && <button onClick={() => setNetworkFor(m.metadata.name)}>Network</button>}
-                    <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
-                    <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
-                    <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={8} className="msg">
-                  No machines yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+  const m = selectedMachine;
+  return (
+    <div>
+      <div className="toolbar" style={{ justifyContent: 'space-between' }}>
+        <span className="usageHint">{items.length} machine{items.length === 1 ? '' : 's'}</span>
+        <button className="primary" onClick={() => setCreating(true)}>
+          <Plus size={14} style={{ verticalAlign: -2 }} /> New machine
+        </button>
       </div>
+      {msg && <p className="msg error">{msg}</p>}
+      {items.length === 0 && !msg ? (
+        <div className="card">
+          <EmptyState title="No machines yet">Create one to get started — pick an image path on the node and a size.</EmptyState>
+        </div>
+      ) : (
+        <ResourceTable
+          items={items}
+          columns={columns}
+          keyFn={(x) => x.metadata.name}
+          emptyText="No machines yet."
+          onRowClick={(x) => setSelected(x.metadata.name)}
+          selectedKey={selected ?? undefined}
+          csvName="kairon-machines"
+        />
+      )}
+
+      {creating && (
+        <Sheet title="New machine" onClose={() => setCreating(false)}>
+          <form onSubmit={create}>
+            <div className="formgrid">
+              <label>
+                Name
+                <input required autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              </label>
+              <label>
+                Image path
+                <input required value={form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="/var/lib/fluxvm/images/db.qcow2" />
+              </label>
+              <label>
+                CPU
+                <input value={form.cpu} onChange={(e) => setForm({ ...form, cpu: e.target.value })} />
+              </label>
+              <label>
+                Memory
+                <input value={form.memory} onChange={(e) => setForm({ ...form, memory: e.target.value })} />
+              </label>
+              <label>
+                Backend
+                <select value={form.backend} onChange={(e) => setForm({ ...form, backend: e.target.value })}>
+                  <option value="qemu">qemu</option>
+                  <option value="cloud-hypervisor">cloud-hypervisor</option>
+                  <option value="firecracker">firecracker</option>
+                  <option value="flux-vm">flux-vm</option>
+                  <option value="auto">auto</option>
+                </select>
+              </label>
+              <label>
+                Network
+                <select value={form.network} onChange={(e) => setForm({ ...form, network: e.target.value })}>
+                  <option value="user">user</option>
+                  <option value="tap">tap</option>
+                  <option value="macvtap">macvtap</option>
+                </select>
+              </label>
+              <div className="check">
+                <input type="checkbox" id="netns" checked={form.netns} onChange={(e) => setForm({ ...form, netns: e.target.checked })} />
+                <label htmlFor="netns">Per-VM network namespace</label>
+              </div>
+              <label>
+                Port forward (host:guest)
+                <input value={form.forward} onChange={(e) => setForm({ ...form, forward: e.target.value })} placeholder="2222:22 (network=user only)" />
+              </label>
+              <label>
+                Hostname
+                <input value={form.hostname} onChange={(e) => setForm({ ...form, hostname: e.target.value })} placeholder="set via cloud-init" />
+              </label>
+              <label className="full">
+                SSH public key
+                <input value={form.sshAuthorizedKey} onChange={(e) => setForm({ ...form, sshAuthorizedKey: e.target.value })} placeholder="ssh-ed25519 AAAA... (authorized via cloud-init)" />
+              </label>
+            </div>
+            <div className="formactions">
+              <button className="primary" type="submit" disabled={busy}>
+                {busy ? 'Creating...' : 'Create machine'}
+              </button>
+              <button type="button" onClick={() => setCreating(false)}>Cancel</button>
+              {msg && <span className="msg error">{msg}</span>}
+            </div>
+          </form>
+        </Sheet>
+      )}
+
+      {m && (
+        <Inspector
+          title={m.metadata.name}
+          subtitle={`${m.metadata.namespace} · ${m.spec.nodeName || m.status?.nodeName || 'unscheduled'}`}
+          status={<Status phase={m.status?.phase} />}
+          onClose={() => setSelected(null)}
+          actions={
+            <>
+              {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'pause')}>Pause</button>}
+              {m.status?.phase === 'Paused' && <button onClick={() => power(m.metadata.name, 'resume')}>Resume</button>}
+              {m.status?.phase === 'Running' && <button onClick={() => power(m.metadata.name, 'halt')}>Halt</button>}
+              {m.status?.phase === 'Halted' && <button onClick={() => power(m.metadata.name, 'start')}>Resume</button>}
+              <button onClick={() => onMigrate(m.metadata.name)}>Migrate</button>
+              <button onClick={() => onSnapshot(m.metadata.name)}>Snapshot</button>
+              <button className="danger" onClick={() => remove(m.metadata.name)}>Delete</button>
+            </>
+          }
+        >
+          <h4>Overview</h4>
+          <KV
+            rows={[
+              ['Phase', m.status?.phase || 'Unknown'],
+              ['Guest IP', m.status?.guestIP],
+              ['CPU', m.spec.resources.cpu],
+              ['Memory', m.spec.resources.memory],
+              ['Image', m.spec.image?.path],
+              ['Backend', m.spec.runtime?.backend],
+              ['Network', m.spec.network?.mode],
+              ['Created', m.metadata.creationTimestamp],
+            ]}
+          />
+          <h4>Scheduling priority</h4>
+          <div className="rowactions" style={{ justifyContent: 'flex-start', padding: '8px 0' }}>
+            <input
+              type="number"
+              step={1}
+              className="priorityInput"
+              value={priorityEdits[m.metadata.name] ?? String(m.spec.priority ?? 0)}
+              onChange={(e) => setPriorityEdits((prev) => ({ ...prev, [m.metadata.name]: e.target.value }))}
+            />
+            {priorityEdits[m.metadata.name] !== undefined && priorityEdits[m.metadata.name] !== String(m.spec.priority ?? 0) && (
+              <button className="sm" onClick={() => setPriority(m.metadata.name)}>Set</button>
+            )}
+          </div>
+          <h4>Tools</h4>
+          <div className="rowactions" style={{ justifyContent: 'flex-start', padding: '8px 0' }}>
+            {consoleEnabled && consoleEligible(m) && <button onClick={() => setConsoleFor(m.metadata.name)}>Console</button>}
+            {consoleEnabled && textConsoleEligible(m) && <button onClick={() => setTextConsoleFor(m.metadata.name)}>Text console</button>}
+            {consoleEnabled && isAdmin() && execEligible(m) && <button onClick={() => setExecFor(m.metadata.name)}>Exec</button>}
+            {consoleEnabled && isAdmin() && textConsoleEligible(m) && <button onClick={() => setAgentFilesFor(m.metadata.name)}>Files</button>}
+            {consoleEnabled && logsEligible(m) && <button onClick={() => setLogsFor(m.metadata.name)}>Logs</button>}
+            {consoleEnabled && logsEligible(m) && <button onClick={() => setNetworkFor(m.metadata.name)}>Network</button>}
+            {!consoleEnabled && <span className="usageHint">Console relay is not enabled on this deployment.</span>}
+          </div>
+        </Inspector>
+      )}
+
       {consoleFor && <Console namespace="default" name={consoleFor} onClose={() => setConsoleFor(null)} />}
       {textConsoleFor && (
         <Suspense fallback={<div className="consoleOverlay" />}>

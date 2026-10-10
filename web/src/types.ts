@@ -9,6 +9,7 @@ export interface ObjectMeta {
   name: string;
   namespace?: string;
   annotations?: Record<string, string>;
+  creationTimestamp?: string;
 }
 
 export interface Machine {
