@@ -8,6 +8,7 @@
 ## Added
 
 - Global `--kubeconfig` and `--context` for every `kaironctl` command (kubeconfig auth including client certificates and exec plugins); previously only `install`/`upgrade` read a kubeconfig and the other commands needed `KAIRON_KUBE_URL` or an in-cluster service account.
+- `kaironctl connectivity test --machine --image PATH`: opt-in end-to-end Machine lifecycle check (create, wait for Running, delete).
 - `kaironctl ui`: open the dashboard through the API server (loopback proxy confined to the kairon-ui Service); `kaironctl network observe`: drops ranked by reason, policy or Machine across Machines.
 - `-o json|yaml` on `get`, `describe` and `top` (`-o name` on `get`); `kaironctl upgrade --check`; dynamic shell completion of resource kinds and object names.
 - `kaironctl doctor` (health checks with hints, `--pre-install`), `connectivity test`, `logs`, `events` and `sysdump` (redacted support bundle). See `docs/CLI.md`.

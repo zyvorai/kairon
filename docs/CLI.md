@@ -71,13 +71,15 @@ kaironctl version [--server] [-o text|json|yaml]
 ```text
 kaironctl doctor [--pre-install] [--strict] [-o json|yaml]
 kaironctl connectivity test [-o json|yaml]
+kaironctl connectivity test --machine --image PATH [--test-namespace default] [--cpu 1] [--memory 512Mi]
+                 [--backend qemu] [--network user] [--machine-timeout 3m] [--keep]
 kaironctl logs controller|node|ui|csi-node|csi-controller [--node N] [--pod P] [-c C] [--tail N] [--since 15m] [--previous] [-f]
 kaironctl events [-n NS | -A] [--warnings] [-w] [-o json|yaml]
 kaironctl sysdump [-o FILE] [--tail N] [--no-logs] [--no-crs]
 ```
 
 - **`doctor`** is read-only and prints a hint for every problem: API server, capable nodes (`kairon.zyvor.dev/capable=true`), the 17 CRDs (present, `v1` storage), the Helm release, controller / node agent / dashboard workloads with `/readyz` probed on every pod through the API server proxy, the admission webhook (CA bundle, `failurePolicy`) and migrations parked in `NeedsRecovery`. It exits non-zero on any failure (`--strict`: on warnings too). `--pre-install` runs only the checks that apply before Kairon exists.
-- **`connectivity test`** requests `/healthz` and `/readyz` of every Kairon pod (and the dashboard Service) through the API server, so it needs no port-forward. It does not create Machines or exercise live migration.
+- **`connectivity test`** requests `/healthz` and `/readyz` of every Kairon pod (and the dashboard Service) through the API server, so it needs no port-forward. It does not exercise live migration. With `--machine --image PATH` it also runs an opt-in, **disruptive** end-to-end check: create a small Machine labelled `kairon.zyvor.dev/connectivity-test=true`, wait for `Running`, delete it and wait for the deletion. It schedules a real VM and counts against quotas; the Machine is deleted even when the check fails (`--keep` leaves it). `spec.ttlSeconds` is set as a best-effort safety net that FluxVM enforces on the node, so look for leftovers with `kaironctl get machines --selector kairon.zyvor.dev/connectivity-test=true`.
 - **`logs`** streams every pod of a component; with several pods (the node agent runs one per node) lines are prefixed with the pod name.
 - **`sysdump`** writes a tar.gz with Helm values and manifest, workload and pod specs, events, nodes, Kairon resources, doctor output and recent logs. Values under credential-like keys, Secret data, container env values whose name looks secret, and Machine `spec.cloudInit` are replaced or omitted, and Secret documents are dropped from the manifest. Pod logs are included as written; review the bundle before sharing. It never overwrites an existing file.
 
