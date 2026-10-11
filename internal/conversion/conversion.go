@@ -12,9 +12,10 @@
 // https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#configure-customresourcedefinitions-to-use-conversion-webhooks
 // for the authoritative shape; this is a deliberate subset.
 //
-// No live Kairon CRD registers a second version yet -- see
-// docs/guides/crd-versioning.md for why, and what actually cutting one
-// requires. This package, its Handler, and the worked ConvertMachineQuota
+// No live Kairon CRD declares a conversion webhook: its served versions
+// share one schema and convert with the None strategy -- see
+// docs/guides/crd-versioning.md for why, and what a schema-changing
+// version requires. This package, its Handler, and the worked ConvertMachineQuota
 // example (machinequota.go) are the scaffold: proven, tested machinery
 // ready to wire a real CRD version into, not something built from scratch
 // the day it's actually needed.

@@ -29,10 +29,11 @@ var (
 )
 
 // ConvertMachineQuota is the worked example proving internal/conversion's
-// machinery end-to-end -- see the package doc comment. No live
-// MachineQuota CRD registers kairon.zyvor.dev/v1 yet (see
-// docs/guides/crd-versioning.md); this is ready to wire in the moment it
-// does, not something built from scratch that day.
+// machinery end-to-end -- see the package doc comment. The renames below
+// are hypothetical: the served v1, v1beta1 and v1alpha1 MachineQuota
+// schemas are identical (see docs/guides/crd-versioning.md), so this is
+// ready to wire in the moment a real schema change lands, not something
+// built from scratch that day.
 func ConvertMachineQuota(obj map[string]any, toVersion string) (map[string]any, error) {
 	from, _ := obj["apiVersion"].(string)
 	if from == "" {
