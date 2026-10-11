@@ -35,6 +35,21 @@ helm install kairon charts/kairon -n kairon-system --create-namespace \
 
 That enables admission webhooks, namespace-scoped UI authorization, network default-deny, and migration dataplane TLS requirements. See [`charts/kairon/values-production.yaml`](../charts/kairon/values-production.yaml) and [`docs/COMPATIBILITY.md`](COMPATIBILITY.md).
 
+### Install from the published chart (GHCR)
+
+Tagged releases publish the Helm chart and the images to GitHub Container Registry, so no repository checkout is needed:
+
+```bash
+helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
+  --version 0.8.0 -n kairon-system --create-namespace \
+  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.8.0/charts/kairon/values-production.yaml
+```
+
+- Images are `ghcr.io/zyvorai/kairon-{controller,node,ui,csi-node,csi-controller}:<version>`; the chart's image tags default to its `appVersion`, so the chart version selects the images.
+- Drop the `-f` overlay for the evaluation profile.
+- Helm applies `crds/` only on first install. When upgrading, apply the CRDs from the same tag first (`kubectl apply --server-side -f https://raw.githubusercontent.com/zyvorai/kairon/v0.8.0/deploy/crd.yaml`); see [CRD versioning](guides/crd-versioning.md#upgrading-an-existing-cluster).
+- Fetch the matching `kaironctl` from the release: `https://github.com/zyvorai/kairon/releases/download/v0.8.0/kaironctl-linux-amd64`, or `kubectl krew install kairon`.
+
 Raw manifests still work:
 
 ```bash
