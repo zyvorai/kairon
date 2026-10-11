@@ -276,3 +276,14 @@ table.datatable .rowactions { display: flex; gap: 6px; justify-content: flex-end
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* operation forms inside the inspector */
+.opgrid { justify-content: flex-start; flex-wrap: wrap; gap: 8px; padding: 6px 0; }
+.opform { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding: 6px 0; }
+.opfield { display: grid; gap: 4px; font-size: 11px; color: var(--text-3); min-width: 110px; flex: 1; }
+.opfield input, .opfield select, .opfield textarea { font-size: 13px; }
+.oplist { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.oplist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--hairline); margin: 14px 0 10px; }
+.tabs button { background: transparent; border: 0; border-radius: 0; padding: 8px 10px; font-size: 13px; color: var(--text-2); border-bottom: 2px solid transparent; min-height: 0; }
+.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }

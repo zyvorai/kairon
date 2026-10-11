@@ -3,6 +3,7 @@
 
 import { FormEvent, useState } from 'react';
 import { api, apiJSON } from '../api';
+import AgentTools from '../components/AgentTools';
 
 interface Diagnosis {
   subject: string;
@@ -181,6 +182,7 @@ export default function Assistant() {
           </>
         )}
       </div>
+      <AgentTools />
     </div>
   );
 }

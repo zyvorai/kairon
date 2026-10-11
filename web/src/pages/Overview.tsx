@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, downloadFile, apiErrorText } from '../api';
 import { NodeUsage, Overview as OverviewData } from '../types';
 import { formatBytes } from '../lib/phase';
 import { Kpi, KpiStrip, Meter, Reveal, useSeries } from '../components/ui';
@@ -52,6 +52,14 @@ export default function Overview() {
 
   return (
     <div>
+      <div className="rowactions" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          className="sm"
+          onClick={() => downloadFile('/api/v1/usage.csv?namespace=default', 'kairon-usage.csv').catch((e) => alert(apiErrorText(e)))}
+        >
+          Download usage CSV
+        </button>
+      </div>
       <KpiStrip>
         <Kpi label="Machines" value={data.machines.total} sub={`${running} running`} series={machineSeries} />
         <Kpi label="Running" value={running} sub={data.machines.total ? `${Math.round((running / data.machines.total) * 100)}% of fleet` : 'none yet'} series={runningSeries} />

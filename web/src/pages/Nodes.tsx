@@ -6,6 +6,8 @@ import { api } from '../api';
 import { KaironNode, NodeUsage } from '../types';
 import { badgeClass, formatBytes, formatCPUPercent, nodeReadyStatus, nodeTaintsSummary } from '../lib/phase';
 import ResourceTable from '../components/ResourceTable';
+import Inspector, { KV } from '../components/Inspector';
+import NodeTools from '../components/NodeTools';
 
 function formatAddresses(node: KaironNode): string {
   const addrs = node.status?.addresses || [];
@@ -32,6 +34,7 @@ export default function Nodes() {
   const [items, setItems] = useState<KaironNode[]>([]);
   const [usage, setUsage] = useState<Record<string, NodeUsage>>({});
   const [msg, setMsg] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
 
   const refresh = () => {
     api<KaironNode[]>('/api/v1/nodes').then(setItems).catch((e) => setMsg(String(e)));
@@ -61,6 +64,8 @@ export default function Nodes() {
         <ResourceTable
           items={items}
           keyFn={(n) => n.metadata.name}
+          onRowClick={(n) => setSelected(n.metadata.name)}
+          selectedKey={selected ?? undefined}
           emptyText="No nodes visible to this cluster."
           columns={[
             { header: 'Name', render: (n) => n.metadata.name },
@@ -74,6 +79,26 @@ export default function Nodes() {
           ]}
         />
       </div>
+      {selected && (
+        <Inspector
+          title={selected}
+          subtitle="FluxVM node tools"
+          status={(() => {
+            const n = items.find((x) => x.metadata.name === selected);
+            return n ? <span className={badgeClass(nodeReadyStatus(n))}>{nodeReadyStatus(n)}</span> : undefined;
+          })()}
+          onClose={() => setSelected(null)}
+        >
+          <KV
+            rows={[
+              ['Machines', usage[selected]?.machines ?? 0],
+              ['CPU', usage[selected] ? formatCPUPercent(usage[selected].cpuPercent) : undefined],
+              ['Memory', usage[selected] ? formatBytes(usage[selected].memoryBytes) : undefined],
+            ]}
+          />
+          <NodeTools node={selected} />
+        </Inspector>
+      )}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { parseHash } from '../lib/route';
 import { Plus } from 'lucide-react';
 import ResourceTable, { Column } from '../components/ResourceTable';
 import Inspector, { KV } from '../components/Inspector';
+import MachineOps from '../components/MachineOps';
 import Sheet from '../components/Sheet';
 import { EmptyState, Status } from '../components/ui';
 import { useToast } from '../components/Toast';
@@ -401,6 +402,9 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
             {consoleEnabled && logsEligible(m) && <button onClick={() => setNetworkFor(m.metadata.name)}>Network</button>}
             {!consoleEnabled && <span className="usageHint">Console relay is not enabled on this deployment.</span>}
           </div>
+          {consoleEnabled && m.status?.phase && m.status.phase !== 'Pending' && (
+            <MachineOps namespace={m.metadata.namespace || 'default'} name={m.metadata.name} />
+          )}
         </Inspector>
       )}
 
