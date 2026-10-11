@@ -106,3 +106,6 @@ migration network quiesce/export/restore exercises FluxVM's TC/eBPF path
 | FluxVM | |
 | Cilium | |
 | CSI / storage | |
+| Deploy node+controller+ui with `--apply-crds --apply-rbac` (`v0.7.2-17-g81911e3`) | pass | 2026-10-11 | Host `80.79.5.173` / `nldw4-4-16-36` (k3s). CRDs now `v1` (storage) + `v1beta1`/`v1alpha1` served, deprecated (the `v1alpha1` read prints the deprecation warning). RBAC regenerated from the chart; `kairon-ui` has the Pools/Claims/Backups grants. UI auto-picked `:27231` because `:18082` is held by `zyvor-fabric-agent` (pinned with `--ui-port=27231`) |
+| Dashboard API sweep on `v1` | pass | 2026-10-11 | 26 list/diagnostic routes 200 (quotas, budgets, sets, instance types, policies, pools, claims, backups, restores, fleet, usage.csv, node capabilities/catalog/pools/templates/sandboxes); wrong password and unauthenticated calls 401; Images and `/atlas/*` 501 (unconfigured, by design) |
+| Machine create + delete through the UI API on `v1` | pass | 2026-10-11 | Created `v1-smoke` (apiVersion `kairon.zyvor.dev/v1`, Pending: node lacks the capability label), delete returned 204 and the object was gone |
