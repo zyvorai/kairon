@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
-import { AuthConfig, getAuthConfig, login, setToken } from '../api';
+import { AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { AuthConfig, getAuthConfig, loginOrToken } from '../api';
 import { BENCHMARKS, BENCHMARK_NOTE } from '../lib/brag';
 import { CountValue } from '../components/ui';
 
-type Step = 'username' | 'password';
 const SAVED_USER = 'kairon_saved_user';
 
 function savedUser(): string {
@@ -140,13 +139,10 @@ function Field({
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [user, setUser] = useState(savedUser());
-  const [step, setStep] = useState<Step>(user ? 'password' : 'username');
+  const [user, setUser] = useState(savedUser() || 'admin');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
-  const [rememberMe, setRememberMe] = useState(!!user);
-  const [rawToken, setRawToken] = useState('');
-  const [useTokenForm, setUseTokenForm] = useState(false);
+  const [rememberMe, setRememberMe] = useState(!!savedUser());
   const [msg, setMsg] = useState('');
   const [shake, setShake] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -154,31 +150,26 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   useEffect(() => {
     getAuthConfig()
       .then(setConfig)
-      // An old or unreachable server falls back to the raw-token box.
+      // An old or unreachable server falls back to the token-as-password path.
       .catch(() => setConfig({ loginEnabled: false, tokenEnabled: true }));
   }, []);
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
+    if (!config) return;
     setBusy(true);
     setMsg('');
     try {
-      await login(user, password);
-      remember(rememberMe ? user : null);
+      const how = await loginOrToken(user.trim(), password, config);
+      remember(rememberMe && how === 'password' ? user.trim() : null);
       onSignedIn();
-    } catch (err) {
+    } catch {
       setPassword('');
-      setMsg(String(err));
+      setMsg('Wrong username or password.');
       setShake((n) => n + 1);
     } finally {
       setBusy(false);
     }
-  }
-
-  function submitToken(e: React.FormEvent) {
-    e.preventDefault();
-    setToken(rawToken);
-    onSignedIn();
   }
 
   if (!config) {
@@ -197,27 +188,11 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     </div>
   );
 
-  const tokenForm = (
-    <form onSubmit={submitToken} className="loginstep">
-      <h3>Sign in with an API token.</h3>
-      <div className="siw">
-        <Field label="API token" type="password" autoFocus value={rawToken} onChange={setRawToken} autoComplete="off" />
-      </div>
-      <div className="formactions">
-        <button className="primary wide" type="submit" disabled={!rawToken}>
-          Continue
-        </button>
-      </div>
-    </form>
-  );
-
-  if (!config.loginEnabled) {
+  if (!config.loginEnabled && !config.tokenEnabled) {
     return (
       <LoginChrome stats={config.stats}>
         {sso}
-        {!config.tokenEnabled && !sso && <p className="logincopy">No login method is configured on this server.</p>}
-        {config.tokenEnabled && sso && <p className="loginor">or</p>}
-        {config.tokenEnabled && tokenForm}
+        {!sso && <p className="logincopy">No login method is configured on this server.</p>}
       </LoginChrome>
     );
   }
@@ -226,81 +201,42 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     <LoginChrome hint={config.loginHint} stats={config.stats}>
       {sso}
       {sso && <p className="loginor">or</p>}
-      {useTokenForm ? (
-        <>
-          {tokenForm}
-          <p className="loginfoot">
-            <button type="button" className="linklike" onClick={() => setUseTokenForm(false)}>
-              Use username and password
-            </button>
-          </p>
-        </>
-      ) : step === 'username' ? (
-        <div key="username" className="loginstep">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setMsg('');
-              setStep('password');
-            }}
-          >
-            <h3>Sign in with your account.</h3>
-            <div className="siw">
-              <Field label="Username" autoComplete="username" value={user} onChange={setUser} />
+      <div className="loginstep">
+        <form onSubmit={signIn} key={shake} className={shake ? 'shake' : undefined}>
+          <h3>Sign in.</h3>
+          <div className="siw">
+            <Field label="Username" autoComplete="username" autoFocus={!user} value={user} onChange={setUser} />
+            <Field
+              label="Password"
+              type={showPw ? 'text' : 'password'}
+              autoComplete="current-password"
+              autoFocus={!!user}
+              value={password}
+              onChange={setPassword}
+              right={
+                <button type="button" className="siw-eye" aria-label={showPw ? 'Hide password' : 'Show password'} onClick={() => setShowPw((v) => !v)}>
+                  {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              }
+            />
+          </div>
+          <label className="login-remember">
+            <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+            <span>Remember me on this device</span>
+          </label>
+          {msg && (
+            <div className="loginerror" role="alert">
+              <AlertCircle size={16} />
+              <span>{msg}</span>
             </div>
-            <div className="formactions">
-              <button className="primary wide" type="submit" disabled={!user}>
-                Continue
-              </button>
-            </div>
-          </form>
-          {config.tokenEnabled && (
-            <p className="loginfoot">
-              <button type="button" className="linklike" onClick={() => setUseTokenForm(true)}>
-                Use an API token instead
-              </button>
-            </p>
           )}
-        </div>
-      ) : (
-        <div key="password" className="loginstep">
-          <form onSubmit={signIn} key={shake} className={shake ? 'shake' : undefined}>
-            <button type="button" className="login-identity" onClick={() => setStep('username')} aria-label="Change account">
-              <ArrowLeft size={14} /> {user}
+          <div className="formactions">
+            <button className="primary wide" type="submit" disabled={busy || !user || !password}>
+              {busy ? <Loader2 size={16} className="spin" /> : 'Sign in'}
             </button>
-            <h3>Enter your password.</h3>
-            <div className="siw">
-              <Field
-                label="Password"
-                type={showPw ? 'text' : 'password'}
-                autoComplete="current-password"
-                value={password}
-                onChange={setPassword}
-                right={
-                  <button type="button" className="siw-eye" aria-label={showPw ? 'Hide password' : 'Show password'} onClick={() => setShowPw((v) => !v)}>
-                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                }
-              />
-            </div>
-            <label className="login-remember">
-              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
-              <span>Remember me on this device</span>
-            </label>
-            {msg && (
-              <div className="loginerror" role="alert">
-                <AlertCircle size={16} />
-                <span>{msg}</span>
-              </div>
-            )}
-            <div className="formactions">
-              <button className="primary wide" type="submit" disabled={busy || !password}>
-                {busy ? <Loader2 size={16} className="spin" /> : 'Sign in'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </div>
     </LoginChrome>
   );
 }

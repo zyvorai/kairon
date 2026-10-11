@@ -81,6 +81,31 @@ export async function login(usernameInput: string, password: string): Promise<vo
   setSession(out.token, out.username, out.isAdmin);
 }
 
+// loginOrToken signs in with a username and password. Servers that still use
+// the legacy shared bearer token accept it as the password, so one form
+// serves both: when username/password sign-in is off (loginEnabled false) or
+// is refused, and the server accepts tokens, the password is tried as the
+// token. The token is only kept once an authenticated request succeeds.
+export async function loginOrToken(user: string, password: string, cfg: { loginEnabled: boolean; tokenEnabled: boolean }): Promise<'password' | 'token'> {
+  let loginError: unknown = null;
+  if (cfg.loginEnabled) {
+    try {
+      await login(user, password);
+      return 'password';
+    } catch (e) {
+      loginError = e;
+    }
+  }
+  if (cfg.tokenEnabled) {
+    const r = await fetch('/api/v1/overview', { headers: { Authorization: `Bearer ${password}` } });
+    if (r.ok) {
+      setToken(password);
+      return 'token';
+    }
+  }
+  throw loginError ?? new Error('Wrong username or password.');
+}
+
 // parseSSOCallbackFragment is the pure part of completeSSOCallback below,
 // split out so it's testable without a DOM (see api.test.ts) -- it never
 // touches window/sessionStorage itself.

@@ -2,6 +2,8 @@
 
 ## Upgrade notes
 
+- **Fresh Helm installs of the dashboard now seed `admin` / `Admin@321`** (`ui.auth.wellKnownDefault: true`) instead of a random password, and the sign-in page shows that hint. Existing installs keep the password they have; `values-production.yaml` sets it to `false`; an explicit `ui.auth.defaultAdminPassword` still wins. Set `ui.auth.wellKnownDefault=false` for a random password anywhere the dashboard is reachable by untrusted users.
+
 - **`kaironctl upgrade` now keeps the previous release's values.** Before, an upgrade that did not restate `--set`/`-f` silently reset every override to chart defaults. It now applies Helm's reset-then-reuse (new chart defaults, then your previous overrides, then this call's flags). Pass `--reset-values` for the old behaviour.
 - **`kaironctl status` exits non-zero while the control plane is not ready.** Scripts that relied on a zero exit should add `--wait` or ignore the code.
 
@@ -10,6 +12,8 @@
 - The dashboard only ever showed (and acted on) namespace `default`: it never sent the `namespace` parameter the API scopes lists by, and hard-coded `default` in actions. It now has a Namespace selector in the account menu and uses the selected namespace for lists, creates, power/delete/scale actions, consoles, logs and the usage CSV.
 
 ## Added
+
+- Dashboard sign-in is one username and password form (no separate "API token" screen; the legacy shared token works as the password) and the nav uses the Zyvor Z logomark.
 
 - Global `--kubeconfig` and `--context` for every `kaironctl` command (kubeconfig auth including client certificates and exec plugins); previously only `install`/`upgrade` read a kubeconfig and the other commands needed `KAIRON_KUBE_URL` or an in-cluster service account.
 - `kaironctl connectivity test --machine --image PATH`: opt-in end-to-end Machine lifecycle check (create, wait for Running, delete).

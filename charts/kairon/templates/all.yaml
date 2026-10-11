@@ -993,6 +993,10 @@ entirely.
 {{- $sessionSecretValue = index $existingSession.data "sessionSecret" | b64dec }}
 {{- end }}
 {{- $defaultAdminPasswordValue := randAlphaNum 24 }}
+{{- if .Values.ui.auth.wellKnownDefault }}
+{{- /* Fresh installs only: a persisted password below always wins. */}}
+{{- $defaultAdminPasswordValue = "Admin@321" }}
+{{- end }}
 {{- if and $existingSession $existingSession.data (index $existingSession.data "defaultAdminPassword") }}
 {{- $defaultAdminPasswordValue = index $existingSession.data "defaultAdminPassword" | b64dec }}
 {{- end }}

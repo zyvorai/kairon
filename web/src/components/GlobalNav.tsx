@@ -78,7 +78,7 @@ export default function GlobalNav({
           {mobile ? <X size={18} /> : <Menu size={18} />}
         </button>
         <button className="gn-brand" onClick={() => pick('overview')} aria-label="Kairon home">
-          <img src="/zyvor-favicon.svg" alt="" width={22} height={22} />
+          <img src="/zyvor-logomark.svg" alt="" width={22} height={22} className="gn-mark" />
           KAIRON <small>by Zyvor</small>
         </button>
 
