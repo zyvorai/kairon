@@ -8,6 +8,7 @@
 ## Added
 
 - Global `--kubeconfig` and `--context` for every `kaironctl` command (kubeconfig auth including client certificates and exec plugins); previously only `install`/`upgrade` read a kubeconfig and the other commands needed `KAIRON_KUBE_URL` or an in-cluster service account.
+- `kaironctl doctor` (health checks with hints, `--pre-install`), `connectivity test`, `logs`, `events` and `sysdump` (redacted support bundle). See `docs/CLI.md`.
 - `kaironctl config view|get|set|unset`, `history` and `rollback` for the installed Helm release.
 - `kaironctl version --server` (release, chart, controller/node/UI images) and `kaironctl status -o json|yaml` with a release row.
 - `kaironctl install|upgrade --profile production` and `--chart oci://ghcr.io/zyvorai/charts/kairon --version X`.
