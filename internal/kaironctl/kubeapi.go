@@ -32,6 +32,9 @@ type podSummary struct {
 	IP         string
 	Containers []string
 	Labels     map[string]string
+	// HealthPort is the containerPort named "health" (0 when absent); the
+	// controller and node agent serve /healthz, /readyz and /metrics there.
+	HealthPort int
 }
 
 type podList struct {
@@ -43,7 +46,11 @@ type podList struct {
 		Spec struct {
 			NodeName   string `json:"nodeName"`
 			Containers []struct {
-				Name string `json:"name"`
+				Name  string `json:"name"`
+				Ports []struct {
+					Name          string `json:"name"`
+					ContainerPort int    `json:"containerPort"`
+				} `json:"ports"`
 			} `json:"containers"`
 		} `json:"spec"`
 		Status struct {
@@ -72,6 +79,11 @@ func listPods(ctx context.Context, kc *kube.Client, ns, selector string) ([]podS
 		p := podSummary{Name: it.Metadata.Name, Phase: it.Status.Phase, Node: it.Spec.NodeName, IP: it.Status.PodIP, Labels: it.Metadata.Labels}
 		for _, c := range it.Spec.Containers {
 			p.Containers = append(p.Containers, c.Name)
+			for _, port := range c.Ports {
+				if port.Name == "health" {
+					p.HealthPort = port.ContainerPort
+				}
+			}
 		}
 		p.Ready = len(it.Status.ContainerStatuses) > 0
 		for _, cs := range it.Status.ContainerStatuses {

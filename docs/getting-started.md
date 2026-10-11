@@ -22,6 +22,7 @@ kaironctl install
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
 kubectl label node worker-2 kairon.zyvor.dev/capable=true
 kaironctl status
+kaironctl doctor     # health checks with a hint for every problem
 ```
 
 ### Evaluation vs production
