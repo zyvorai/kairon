@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/zyvorai/kairon/internal/agentplane"
-	"github.com/zyvorai/kairon/internal/kube"
 )
 
 // mcpAudit is the write-tool audit log of the running MCP server. Nil
@@ -42,7 +41,7 @@ func openMCPAudit(path, configMap string) (*agentplane.FileLog, error) {
 		return nil, fmt.Errorf("--audit-configmap must be namespace/name")
 	}
 	log.Mirror = func(e agentplane.Event) error {
-		kc, err := kube.FromEnvironment()
+		kc, err := newKubeClient()
 		if err != nil {
 			return err
 		}

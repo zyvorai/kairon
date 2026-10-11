@@ -65,7 +65,8 @@ func (g *restClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
 }
 
 func restConfigFromEnv() (*rest.Config, error) {
-	if base := os.Getenv("KAIRON_KUBE_URL"); base != "" {
+	explicit := explicitKubeTarget()
+	if base := os.Getenv("KAIRON_KUBE_URL"); base != "" && !explicit {
 		cfg := &rest.Config{
 			Host:        base,
 			BearerToken: os.Getenv("KAIRON_KUBE_TOKEN"),
@@ -79,11 +80,14 @@ func restConfigFromEnv() (*rest.Config, error) {
 		}
 		return cfg, nil
 	}
-	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" && !explicit {
 		return rest.InClusterConfig()
 	}
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	overrides := &clientcmd.ConfigOverrides{}
+	if kubeFlags.Kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeFlags.Kubeconfig
+	}
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: kubeFlags.Context}
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 }
 

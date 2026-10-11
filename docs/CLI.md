@@ -247,7 +247,14 @@ kaironctl completion bash|zsh|fish|powershell
 
 `create`/`scale`/`edit` cover the common flag-friendly fields only — richer fields still need `kubectl apply`/YAML.
 
-Point at a cluster with `KAIRON_KUBE_URL` (e.g. after `kubectl proxy`), a standard kubeconfig (Helm SDK path), or run in-cluster with the mounted service account.
+Point at a cluster with, in order of precedence:
+
+1. `--kubeconfig PATH` and/or `--context NAME` (global flags; accepted before or after the verb), which use any kubeconfig auth (client certificates, tokens, exec plugins);
+2. `KAIRON_KUBE_URL` (+ `KAIRON_KUBE_TOKEN`, `KAIRON_KUBE_CA`, `KAIRON_KUBE_INSECURE`), e.g. after `kubectl proxy`;
+3. the in-cluster service account;
+4. the default kubeconfig (`$KUBECONFIG`, `~/.kube/config`).
+
+Every command, including `get`, `status` and the Helm-backed `install`/`upgrade`, uses the same selection, so they always target one cluster.
 
 **`kubectl kairon ...`** works identically once `kubectl-kairon` is on `$PATH` (Krew or `make build`).
 

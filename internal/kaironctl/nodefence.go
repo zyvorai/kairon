@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zyvorai/kairon/internal/fencing"
-	"github.com/zyvorai/kairon/internal/kube"
 )
 
 type nodePatcher interface {
@@ -56,7 +55,7 @@ there would end up running twice. --clear removes the annotation.`,
 			if clear == (reason != "") {
 				return fmt.Errorf("pass exactly one of --reason or --clear")
 			}
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}

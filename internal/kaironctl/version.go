@@ -103,7 +103,7 @@ func collectServerVersion(ctx context.Context, ref *releaseRef) (*serverVersion,
 // workloadImages returns component -> image for the Kairon workloads that
 // exist in ns. Failures are returned as warnings so a partial answer still prints.
 func workloadImages(ctx context.Context, ns string) (map[string]string, []string) {
-	kc, err := kube.FromEnvironment()
+	kc, err := newKubeClient()
 	if err != nil {
 		return nil, []string{"workload images unavailable: " + err.Error()}
 	}

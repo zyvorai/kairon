@@ -137,7 +137,7 @@ func imageSpecSnippet(img uploadedImage) string {
 }
 
 func uiBase() (string, error) {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("KAIRON_UI_URL")), "/")
+	base := uiBaseURL()
 	if base == "" {
 		return "", fmt.Errorf("set KAIRON_UI_URL to reach kairon-ui's image store")
 	}
@@ -181,7 +181,7 @@ func uploadImage(ctx context.Context, file, name, format string, replace bool) (
 	req.ContentLength = size
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("X-Image-Digest", "sha256:"+hex.EncodeToString(hasher.Sum(nil)))
-	if token := os.Getenv("KAIRON_UI_TOKEN"); token != "" {
+	if token := uiToken(false); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := http.DefaultClient.Do(req)
