@@ -182,6 +182,25 @@ rules:
   - apiGroups: ["kairon.zyvor.dev"]
     resources: ["machinesnapshots"]
     verbs: ["get", "list", "watch", "create"]
+  # Kept in step with charts/kairon/templates/all.yaml's kairon-ui role:
+  # the Restores page and the read-mostly dashboard routes in
+  # internal/uiapi/fleet.go (quotas, budgets, machine sets, instance types,
+  # migration policies, snapshot schedules, network policies, security groups).
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshotrestores"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinequotas", "machinedisruptionbudgets", "machineinstancetypes", "machineimages", "migrationpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesets"]
+    verbs: ["get", "list", "watch", "delete", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinesnapshotschedules"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["kairon.zyvor.dev"]
+    resources: ["machinenetworkpolicies", "networksecuritygroups"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -191,6 +210,29 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kairon-ui
+subjects:
+  - kind: ServiceAccount
+    name: kairon-ui
+    namespace: kairon-system
+---
+# Fleet resources the dashboard's Fleet page lists (chart: kairon-fleet-ui).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kairon-fleet-ui
+rules:
+  - apiGroups: ["fleet.kairon.zyvor.dev"]
+    resources: ["machinehaprofiles", "nodefencerequests", "machinebalancepolicies", "machineautoscalers", "machinerecoveryplans", "machinebackupgroups", "machineimportplans", "machinetemplateversions", "machinetemplateclaims", "machinevirtualnetworks", "machinenetworkclaims", "machineusageledgers"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kairon-fleet-ui
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kairon-fleet-ui
 subjects:
   - kind: ServiceAccount
     name: kairon-ui
