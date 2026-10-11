@@ -1,3 +1,22 @@
+# Unreleased
+
+## Upgrade notes
+
+- **API version `kairon.zyvor.dev/v1` is now the storage version.** `v1beta1` and `v1alpha1` are still served (identical schema, no conversion webhook) but deprecated: the API server prints a warning. Apply the CRDs before the new binaries (`deploy-remote --apply-crds`); clients, charts and examples now use `v1`. See `docs/guides/crd-versioning.md`.
+- **`kairon-ui` default port is now `:18082`** (was `:8082`). Change it with `--ui-port`, `KAIRON_UI_LISTEN` or the chart's `ui.service.port`.
+- `deploy/rbac.yaml` is now generated from the Helm chart; `deploy-remote --apply-rbac` applies it. The `kairon-ui` role gains read access for MachinePools, MachineClaims and MachineBackups.
+
+## Added
+
+- Dashboard redesign: grouped navigation, command palette, light-first theme, new sign-in page. New Storage (read-only Atlas via an allowlisted `/api/v1/atlas` proxy, `ui.atlas.*`), Pools & claims, Backups and Images pages. See `docs/guides/kairon-ui-dashboard.md`.
+- Machine operations (network capture, guest `agent-exec`, file get/put, freeze/thaw, VM snapshots), node tools, usage CSV and agent tools in the dashboard, all over existing routes.
+- `GET /api/v1/machinepools`, `/machineclaims`, `/machinebackups`, `/machinebackuprestores`.
+- `scripts/deploy-remote.sh --ui-admin-password` / `--reseed-ui-auth` and chart `ui.auth.defaultAdminPassword` for a lab admin login. See `SECURITY.md` before exposing it.
+
+## Fixed
+
+- FluxVM client treats HTTP 400 "VM not found" on DELETE as already deleted.
+
 # Kairon v0.7.2
 
 Released 2026-10-09. Same features as v0.7.1.

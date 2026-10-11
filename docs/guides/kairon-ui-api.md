@@ -32,6 +32,35 @@ over the Kubernetes API.
 | GET | `/metrics` | none |
 | GET | `/readyz` | none |
 
+### agent
+
+Read-only agent-plane routes (see [agent plane](agent-plane.md)). The bodies
+are proposals or facts; nothing is applied to the cluster.
+
+| Method | Path | Access |
+|---|---|---|
+| POST | `/api/v1/agent/anomalies` | session |
+| POST | `/api/v1/agent/ask` | session |
+| POST | `/api/v1/agent/claims/step` | session |
+| POST | `/api/v1/agent/compile-policy` | session |
+| POST | `/api/v1/agent/confidential` | session |
+| POST | `/api/v1/agent/cpu-label` | session |
+| GET | `/api/v1/agent/diagnose/{namespace}/{kind}/{name}` | namespace |
+| POST | `/api/v1/agent/explain-drops` | session |
+| POST | `/api/v1/agent/gateway` | session |
+
+### atlas
+
+| Method | Path | Access |
+|---|---|---|
+| GET | `/api/v1/atlas/{path...}` | session |
+
+An allowlisted, read-only proxy to the Atlas gateway for the dashboard Storage
+page. Returns `501` unless `ui.atlas.url` is set, and `403` for non-administrators
+when namespace scoping is on (Atlas data spans tenants). Only an allowlisted
+set of read paths is proxied (anything else is `404`); the Atlas token never
+reaches the browser. See [Atlas storage](machine-storage-atlas.md#dashboard-storage-page).
+
 ### auth
 
 | Method | Path | Access |
@@ -125,6 +154,30 @@ over the Kubernetes API.
 | GET | `/api/v1/machinesets` | namespace |
 | DELETE | `/api/v1/machinesets/{namespace}/{name}` | namespace |
 | PATCH | `/api/v1/machinesets/{namespace}/{name}/scale` | namespace |
+
+### machinebackuprestores
+
+| Method | Path | Access |
+|---|---|---|
+| GET | `/api/v1/machinebackuprestores` | namespace |
+
+### machinebackups
+
+| Method | Path | Access |
+|---|---|---|
+| GET | `/api/v1/machinebackups` | namespace |
+
+### machineclaims
+
+| Method | Path | Access |
+|---|---|---|
+| GET | `/api/v1/machineclaims` | namespace |
+
+### machinepools
+
+| Method | Path | Access |
+|---|---|---|
+| GET | `/api/v1/machinepools` | namespace |
 
 ### migration-policies
 
@@ -235,6 +288,7 @@ over the Kubernetes API.
 ## Related
 
 - [CLI reference](../CLI.md): the `kaironctl` commands that call these routes.
+- [Dashboard guide](kairon-ui-dashboard.md): the pages that call these routes.
 - [kairon-ui high availability](kairon-ui-ha.md), [OIDC](kairon-ui-oidc.md).
 - [VM edge](../ebpf-edge.md): `network-*` routes, packet capture.
 - [Enterprise fleet reference](enterprise-fleet-reference.md): `/api/v1/fleet/*`.
