@@ -43,6 +43,13 @@ type helmInstallOpts struct {
 	CreateNS    bool
 	Force       bool // uninstall only
 	HelmCLI     bool // shell out to helm instead of the embedded SDK
+
+	// Profile selects a values-<profile>.yaml shipped in the chart.
+	Profile string
+	// ResetValues / ReuseValues control how an upgrade treats the previous
+	// release's values; see valueReuse.
+	ResetValues bool
+	ReuseValues bool
 }
 
 func defaultChartPath() string {
@@ -142,8 +149,12 @@ func bindHelmFlags(cmd *cobra.Command, h *helmInstallOpts, createNS bool) {
 	cmd.Flags().DurationVar(&h.Timeout, "timeout", h.Timeout, "time to wait for --wait")
 	cmd.Flags().BoolVar(&h.DryRun, "dry-run", false, "render/simulate without applying; mute progress chatter")
 	cmd.Flags().BoolVar(&h.HelmCLI, "helm-cli", false, "shell out to helm on PATH instead of the embedded SDK")
+	cmd.Flags().StringVar(&h.Profile, "profile", "", "values profile shipped in the chart: evaluation (default) or production")
 	if createNS {
 		cmd.Flags().BoolVar(&h.CreateNS, "create-namespace", true, "create namespace if missing")
+	} else {
+		cmd.Flags().BoolVar(&h.ResetValues, "reset-values", false, "discard the previous release's values and use chart defaults plus --set/-f")
+		cmd.Flags().BoolVar(&h.ReuseValues, "reuse-values", false, "reuse the previous release's computed values verbatim (chart default changes are not picked up)")
 	}
 }
 
@@ -161,6 +172,13 @@ func buildHelmUpgradeArgs(h *helmInstallOpts, upgradeOnly bool) []string {
 	}
 	if h.Version != "" {
 		args = append(args, "--version", h.Version)
+	}
+	reuse, thenReuse := valueReuse(h, upgradeOnly)
+	if reuse {
+		args = append(args, "--reuse-values")
+	}
+	if thenReuse {
+		args = append(args, "--reset-then-reuse-values")
 	}
 	for _, s := range h.Sets {
 		args = append(args, "--set", s)
@@ -228,7 +246,7 @@ func runHelmInstall(ctx context.Context, h *helmInstallOpts, upgradeOnly bool) e
 }
 
 func runHelmCLIInstall(ctx context.Context, h *helmInstallOpts, upgradeOnly bool) error {
-	chartPath, tmp, err := resolveChartPath(h.Chart)
+	chartPath, tmp, err := resolveChartPathVersion(h.Chart, h.Version)
 	if err != nil {
 		return err
 	}
@@ -238,6 +256,9 @@ func runHelmCLIInstall(ctx context.Context, h *helmInstallOpts, upgradeOnly bool
 	cp := *h
 	cp.Chart = chartPath
 	h = &cp
+	if h, err = withProfile(h, chartPath); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("helm"); err != nil {
 		style.Failf("helm not found on PATH (needed for --helm-cli)")
 		return fmt.Errorf("helm not found on PATH")
