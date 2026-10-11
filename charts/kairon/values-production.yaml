@@ -28,6 +28,8 @@ ui:
   auth:
     namespaceScoping:
       enabled: true
+    # Random generated admin password, not the lab default "Admin@321".
+    wellKnownDefault: false
 
 csiNode:
   image:

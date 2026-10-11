@@ -14,13 +14,16 @@ guest agent, Machine phase).
 ## Signing in
 
 The sign-in page shows live fleet stats (CRD and API-route counts, fed by
-`GET /api/v1/auth/config`) and a two-step form: username, then password.
-Operators who authenticate with the legacy shared token or via OIDC use the
-same page; see [OIDC](kairon-ui-oidc.md).
+`GET /api/v1/auth/config`) and one username-and-password form (the username is
+pre-filled with `admin`, or the account remembered on this device). Servers
+that still use the legacy shared bearer token accept it in the password field,
+so there is no separate token screen. SSO appears as an extra button when
+configured; see [OIDC](kairon-ui-oidc.md).
 
-- An optional free-text lab hint appears under the form when the operator
-  configured one (`loginHint` in the auth config). It is only shown when at
-  least one named user exists.
+- A free-text hint appears under the form when the server provides one
+  (`loginHint` in the auth config; it is only sent when at least one named user
+  exists). While the seeded admin still has the lab default password it reads
+  "Lab default login: admin / Admin@321".
 - `scripts/deploy-remote.sh --with-ui` seeds a lab `admin` account; see the
   "Well-known default password" paragraph in [SECURITY.md](../../SECURITY.md)
   before exposing the port beyond a lab network.

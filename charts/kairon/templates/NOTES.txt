@@ -9,6 +9,10 @@ No ui.token / ui.auth.users / ui.allowUnauthenticated was set, so a default
 {{- if .Values.ui.auth.defaultAdminPassword }} Its password is the
 ui.auth.defaultAdminPassword value you set -- treat a well-known value as a
 lab-only convenience and replace it with named ui.auth.users entries.
+{{- else if .Values.ui.auth.wellKnownDefault }} On a fresh install its password is
+the documented lab default, login "admin" / "Admin@321" -- change it (named
+ui.auth.users entries) before exposing this dashboard. An existing install
+keeps the password it already had. Retrieve the actual value with:
 {{- else }} Retrieve its password with:
 {{- end }}
 

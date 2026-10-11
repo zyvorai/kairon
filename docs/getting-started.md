@@ -106,9 +106,11 @@ helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=
 kubectl -n kairon-system port-forward svc/kairon-ui 18082:18082
 ```
 
-No `ui.*` auth values needed: with nothing else configured, the chart seeds a
-default `admin` account with a random, generated-once password. Retrieve it
-from the `helm install` output (or any time later) with:
+No `ui.*` auth values needed: with nothing else configured, a fresh install
+seeds a default `admin` account with the documented lab password
+**`Admin@321`** (change it before exposing the dashboard; the production
+profile generates a random one instead). Confirm or retrieve the actual
+password any time with:
 
 ```bash
 kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo

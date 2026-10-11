@@ -603,6 +603,15 @@ ui:
     # "Admin@321" is convenient for labs and trivially guessable anywhere
     # else -- pass it with --set from a secret store rather than committing it.
     defaultAdminPassword: ""
+    # wellKnownDefault: on a FRESH install that seeds the default admin and has
+    # no defaultAdminPassword set, use the documented lab default
+    # "Admin@321" (login: admin / Admin@321) instead of a random password, so
+    # a new dashboard is usable straight away; the sign-in page then shows a
+    # "change it before exposing this dashboard" hint. It never replaces an
+    # existing kairon-ui-session password on upgrade, and values-production.yaml
+    # turns it off (random password). Set false anywhere the dashboard is
+    # reachable by anyone you do not trust.
+    wellKnownDefault: true
     # existingSecret: a pre-created Secret with a users.json key (a JSON
     # array of {username, passwordHash, admin}) instead of ui.auth.users
     # above. When set, kairon-ui treats it as externally managed and never
