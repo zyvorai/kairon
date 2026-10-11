@@ -35,6 +35,8 @@ export const NAV = [
       { id: 'instancetypes', label: 'Instance types', blurb: 'Reusable CPU and memory shapes' },
       { id: 'nodes', label: 'Nodes', blurb: 'FluxVM hosts, capacity and usage' },
       { id: 'storage', label: 'Storage', blurb: 'Atlas volumes, pools, backups and health' },
+      { id: 'pools', label: 'Pools & claims', blurb: 'Warm machine pools and bound claims' },
+      { id: 'images', label: 'Images', blurb: 'Upload and serve VM images to nodes' },
     ],
   },
   {
@@ -46,6 +48,7 @@ export const NAV = [
       { id: 'snapshots', label: 'Snapshots', blurb: 'Point-in-time machine snapshots' },
       { id: 'snapshot-schedules', label: 'Snapshot schedules', blurb: 'Recurring snapshots and retention' },
       { id: 'restores', label: 'Restores', blurb: 'Restore a snapshot into a new claim' },
+      { id: 'backups', label: 'Backups', blurb: 'Off-cluster machine backups and restores' },
     ],
   },
   {

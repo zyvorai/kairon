@@ -30,6 +30,9 @@ import OIDCCallback from './pages/OIDCCallback';
 import { api, logout, token, UNAUTHORIZED_EVENT, username } from './api';
 import { Machine } from './types';
 import Storage from './pages/Storage';
+import Pools from './pages/Pools';
+import Images from './pages/Images';
+import Backups from './pages/Backups';
 import { PageHero } from './components/ui';
 import { groupOf, NAV, NavItem } from './lib/nav';
 
@@ -192,6 +195,9 @@ export default function App() {
     'security-groups': <SecurityGroups />,
     nodes: <Nodes />,
     storage: <Storage />,
+    pools: <Pools />,
+    images: <Images />,
+    backups: <Backups />,
     assistant: <Assistant />,
     account: <Account />,
   }[page];

@@ -270,6 +270,10 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/restores/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteRestore))
 
 	api.HandleFunc("GET /api/v1/quotas", s.requireNamespace(namespaceParam, s.handleListQuotas))
+	api.HandleFunc("GET /api/v1/machinepools", s.requireNamespace(namespaceParam, s.handleListMachinePools))
+	api.HandleFunc("GET /api/v1/machineclaims", s.requireNamespace(namespaceParam, s.handleListMachineClaims))
+	api.HandleFunc("GET /api/v1/machinebackups", s.requireNamespace(namespaceParam, s.handleListMachineBackups))
+	api.HandleFunc("GET /api/v1/machinebackuprestores", s.requireNamespace(namespaceParam, s.handleListMachineBackupRestores))
 	api.HandleFunc("GET /api/v1/disruption-budgets", s.requireNamespace(namespaceParam, s.handleListBudgets))
 	api.HandleFunc("GET /api/v1/machinesets", s.requireNamespace(namespaceParam, s.handleListMachineSets))
 	api.HandleFunc("DELETE /api/v1/machinesets/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteMachineSet))

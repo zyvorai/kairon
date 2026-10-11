@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/zyvorai/kairon/internal/kube"
 )
 
 func atlasFake(t *testing.T) *httptest.Server {
@@ -88,5 +90,32 @@ func TestConfigReportsAtlas(t *testing.T) {
 	}
 	if c["atlasEnabled"] != true || c["atlasConsoleURL"] != "http://console" {
 		t.Fatalf("config = %v", c)
+	}
+}
+
+func TestBackupAndPoolListRoutesReturnItems(t *testing.T) {
+	var paths []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"x"}}]}`))
+	}))
+	defer api.Close()
+	kc, err := kube.New(api.URL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Token: "ui-token", Kube: kc}
+	for _, p := range []string{"machinepools", "machineclaims", "machinebackups", "machinebackuprestores"} {
+		rr := atlasGet(s, "/api/v1/"+p)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", p, rr.Code, rr.Body)
+		}
+		var items []map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil || len(items) != 1 {
+			t.Fatalf("%s: body %s (%v)", p, rr.Body, err)
+		}
+	}
+	if len(paths) != 4 || paths[0] != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinepools" {
+		t.Fatalf("unexpected upstream paths: %v", paths)
 	}
 }
