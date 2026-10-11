@@ -45,7 +45,7 @@ kaironctl install [--chart embedded|PATH|oci://REF] [--version V] [--profile eva
                  [--wait] [--timeout 5m] [--dry-run] [--helm-cli]
                  [--helm-release-name kairon] [--create-namespace]
 kaironctl upgrade  [same chart/profile/set/values/wait flags as install]
-                 [--reset-values | --reuse-values]
+                 [--reset-values | --reuse-values] [--check]
 kaironctl config view [--all] [-o yaml|json]
 kaironctl config get KEY
 kaironctl config set KEY=VALUE [KEY=VALUE...] [--wait] [--dry-run]
@@ -61,6 +61,7 @@ kaironctl version [--server] [-o text|json|yaml]
 - **`config set`/`unset`** change single values through an in-place upgrade. They refuse when the chart this binary would apply is not the chart version the release runs; run `kaironctl upgrade` first.
 - **`--profile production`** layers the chart's `values-production.yaml` under your `-f` and `--set`. Rollback restores the chart and values of a revision; it does not downgrade CRDs already applied.
 - **`--chart oci://ghcr.io/zyvorai/charts/kairon --version 0.8.0`** installs the published chart. Apply CRDs from the same tag first when upgrading ([CRD versioning](guides/crd-versioning.md#upgrading-an-existing-cluster)).
+- **`upgrade --check`** compares the installed chart, the chart this kaironctl would apply and the latest published release (GitHub, or `KAIRON_RELEASE_API`), prints the CRD-first reminder when a minor version is crossed, and changes nothing.
 - **`status`** shows the release and exits non-zero while the control plane is not ready (with `--wait`, until it is or the timeout expires). **`version`** prints only the client version; `--server` adds the Helm release and the controller, node and UI images.
 
 `uninstall` refuses while any Machine objects still exist unless `--force` is set. `--dry-run` on install renders manifests offline (no cluster needed).
@@ -79,6 +80,14 @@ kaironctl sysdump [-o FILE] [--tail N] [--no-logs] [--no-crs]
 - **`connectivity test`** requests `/healthz` and `/readyz` of every Kairon pod (and the dashboard Service) through the API server, so it needs no port-forward. It does not create Machines or exercise live migration.
 - **`logs`** streams every pod of a component; with several pods (the node agent runs one per node) lines are prefixed with the pod name.
 - **`sysdump`** writes a tar.gz with Helm values and manifest, workload and pod specs, events, nodes, Kairon resources, doctor output and recent logs. Values under credential-like keys, Secret data, container env values whose name looks secret, and Machine `spec.cloudInit` are replaced or omitted, and Secret documents are dropped from the manifest. Pod logs are included as written; review the bundle before sharing. It never overwrites an existing file.
+
+## Dashboard
+
+```text
+kaironctl ui [--port N] [--no-open] [-n kairon-system] [--service kairon-ui] [--service-port 18082]
+```
+
+Starts a proxy on `127.0.0.1` that forwards to the `kairon-ui` Service through the Kubernetes API server and opens it in a browser. No port-forward, Ingress or cluster-internal address is needed, and your kubeconfig credentials never reach the browser. The proxy is confined to that one Service path and refuses requests whose `Host` is not the loopback address; the dashboard still requires its own sign-in ([dashboard guide](guides/kairon-ui-dashboard.md)).
 
 ## Resources & power
 
@@ -105,7 +114,7 @@ kaironctl disk attach|detach MACHINE NAME [--claim PVC]   # live, see guides/mac
 kaironctl disk list MACHINE
 kaironctl nic add|remove MACHINE NAME [--bridge BR] [--mac MAC]
 kaironctl nic list MACHINE
-kaironctl top [machines|nodes] [--selector k=v]
+kaironctl top [machines|nodes] [--selector k=v] [-o json|yaml]
 kaironctl trigger snapshotschedule NAME
 kaironctl network status MACHINE [--flows] [--drop-reasons] [--limit N]
 kaironctl network policies   # same as get networkpolicies
@@ -113,7 +122,12 @@ kaironctl network flows|drop-reasons|drops|stats|effective MACHINE [--limit N]
 kaironctl network identity MACHINE
 kaironctl network capture MACHINE [--seconds 1-30] [--filter EXPR] [--output FILE]
 kaironctl network captures MACHINE
+kaironctl network observe [-A] [--by reason|policy|machine] [--top N] [--follow] [-o json|yaml]
 ```
+
+`get RESOURCE`, `describe RESOURCE NAME` and `top` accept `-o json|yaml` (`get` also `-o name`); without `-o` the output is unchanged. With `-o`, `describe` prints the stored object for every kind, including those whose default `describe` is a derived view.
+
+`network observe` ranks the attributed drops of every Running Machine (reason, policy or Machine) from kairon-ui; it needs `KAIRON_UI_URL`. The drop payload is FluxVM's: `reason`, `policy` and `count`/`packets` fields are recognised, anything else counts as one drop with an unknown reason. Use `network drops MACHINE` for the raw records.
 
 ### Network status
 
@@ -259,6 +273,8 @@ rest (`migration-claim`, `cpu-label`, `gateway`). The MCP server also offers the
 kaironctl version [--server]
 kaironctl completion bash|zsh|fish|powershell
 ```
+
+Shell completion is dynamic: after `get`, `describe`, `delete`, `edit` it completes resource kinds and then object names from the cluster (honouring `-n` and `--context`), and Machine names after `start`, `stop`, `network flows` and similar. Failures complete nothing rather than printing errors. Example: `source <(kaironctl completion zsh)`.
 
 `create`/`scale`/`edit` cover the common flag-friendly fields only — richer fields still need `kubectl apply`/YAML.
 

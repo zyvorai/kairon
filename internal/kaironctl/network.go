@@ -34,6 +34,7 @@ func newNetworkCmd(opts *Options) *cobra.Command {
   kaironctl network drops MACHINE        attributed drops (policy, spoof, sni)
   kaironctl network stats MACHINE        dataplane stats
   kaironctl network effective MACHINE    merged effective policy
+  kaironctl network observe              drops summarised across Machines (-A, --by, --top)
   kaironctl network policies             list MachineNetworkPolicies
   kaironctl network identity MACHINE     stable eBPF identity (survives IP move)
   kaironctl network capture MACHINE      bounded packet capture (max 30s), --output FILE for the pcap
@@ -42,6 +43,7 @@ func newNetworkCmd(opts *Options) *cobra.Command {
 	}
 	cmd.AddCommand(newNetworkStatusCmd(opts))
 	cmd.AddCommand(newNetworkPoliciesCmd(opts))
+	cmd.AddCommand(newNetworkObserveCmd(opts))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "flows", "network-flows", "Show recent eBPF flows for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drop-reasons", "network-drop-reasons", "Show recent eBPF drop reasons for a Machine"))
 	cmd.AddCommand(newNetworkObservabilityCmd(opts, "drops", "network-drops", "Show attributed eBPF drops for a Machine"))
@@ -133,9 +135,10 @@ func newNetworkStatusCmd(opts *Options) *cobra.Command {
 func newNetworkObservabilityCmd(opts *Options, use, kind, short string) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:   use + " MACHINE",
-		Short: short,
-		Args:  cobra.ExactArgs(1),
+		Use:               use + " MACHINE",
+		Short:             short,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeMachineNames(&opts.Namespace),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

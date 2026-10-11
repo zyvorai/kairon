@@ -18,6 +18,10 @@ import (
 )
 
 func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
+	format, args, err := extractOutput(args)
+	if err != nil {
+		fatal(err)
+	}
 	ns, args := nsFlag(args)
 	resource := "machines"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -31,6 +35,12 @@ func cmdGet(ctx context.Context, kc *kube.Client, args []string) {
 	selector, err := parseKeyValues(selectorFlag)
 	if err != nil {
 		fatal(err)
+	}
+	if format != "" {
+		if err := getStructured(ctx, kc, os.Stdout, resource, ns, selector, format); err != nil {
+			fatal(err)
+		}
+		return
 	}
 	switch resource {
 	case "machine", "machines", "vm", "vms":
