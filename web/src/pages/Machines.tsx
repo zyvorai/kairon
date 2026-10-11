@@ -18,6 +18,7 @@ import Exec from './Exec';
 import AgentFiles from './AgentFiles';
 import Logs from './Logs';
 import NetworkPanel from './NetworkPanel';
+import { currentNamespace } from '../lib/namespace';
 // Lazy-loaded: @xterm/xterm alone adds ~300kB to the bundle, not worth
 // shipping to every visitor when only a Machine with
 // spec.guestAgent.console even shows this button.
@@ -169,7 +170,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
   async function power(name: string, action: 'start' | 'stop' | 'pause' | 'resume' | 'halt') {
     setMsg('');
     try {
-      await api(`/api/v1/machines/default/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
+      await api(`/api/v1/machines/${currentNamespace()}/${encodeURIComponent(name)}/${action}`, { method: 'POST' });
       await refresh();
     } catch (err) {
       setMsg(String(err));
@@ -190,7 +191,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     }
     setMsg('');
     try {
-      await apiJSON(`/api/v1/machines/default/${encodeURIComponent(name)}/priority`, 'POST', { priority });
+      await apiJSON(`/api/v1/machines/${currentNamespace()}/${encodeURIComponent(name)}/priority`, 'POST', { priority });
       setPriorityEdits((prev) => {
         const next = { ...prev };
         delete next[name];
@@ -206,7 +207,7 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
     if (!confirm(`Delete machine "${name}"? This deletes the underlying VM runtime too.`)) return;
     setMsg('');
     try {
-      await api(`/api/v1/machines/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await api(`/api/v1/machines/${currentNamespace()}/${encodeURIComponent(name)}`, { method: 'DELETE' });
       await refresh();
     } catch (err) {
       setMsg(String(err));
@@ -403,21 +404,21 @@ export default function Machines({ onMigrate, onSnapshot }: { onMigrate: (machin
             {!consoleEnabled && <span className="usageHint">Console relay is not enabled on this deployment.</span>}
           </div>
           {consoleEnabled && m.status?.phase && m.status.phase !== 'Pending' && (
-            <MachineOps namespace={m.metadata.namespace || 'default'} name={m.metadata.name} />
+            <MachineOps namespace={m.metadata.namespace || currentNamespace()} name={m.metadata.name} />
           )}
         </Inspector>
       )}
 
-      {consoleFor && <Console namespace="default" name={consoleFor} onClose={() => setConsoleFor(null)} />}
+      {consoleFor && <Console namespace={currentNamespace()} name={consoleFor} onClose={() => setConsoleFor(null)} />}
       {textConsoleFor && (
         <Suspense fallback={<div className="consoleOverlay" />}>
-          <TextConsole namespace="default" name={textConsoleFor} onClose={() => setTextConsoleFor(null)} />
+          <TextConsole namespace={currentNamespace()} name={textConsoleFor} onClose={() => setTextConsoleFor(null)} />
         </Suspense>
       )}
-      {execFor && <Exec namespace="default" name={execFor} onClose={() => setExecFor(null)} />}
-      {agentFilesFor && <AgentFiles namespace="default" name={agentFilesFor} onClose={() => setAgentFilesFor(null)} />}
-      {logsFor && <Logs namespace="default" name={logsFor} onClose={() => setLogsFor(null)} />}
-      {networkFor && <NetworkPanel namespace="default" name={networkFor} onClose={() => setNetworkFor(null)} />}
+      {execFor && <Exec namespace={currentNamespace()} name={execFor} onClose={() => setExecFor(null)} />}
+      {agentFilesFor && <AgentFiles namespace={currentNamespace()} name={agentFilesFor} onClose={() => setAgentFilesFor(null)} />}
+      {logsFor && <Logs namespace={currentNamespace()} name={logsFor} onClose={() => setLogsFor(null)} />}
+      {networkFor && <NetworkPanel namespace={currentNamespace()} name={networkFor} onClose={() => setNetworkFor(null)} />}
     </div>
   );
 }

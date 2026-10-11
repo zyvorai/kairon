@@ -4,6 +4,7 @@
 import { FormEvent, useState } from 'react';
 import { api, apiJSON } from '../api';
 import AgentTools from '../components/AgentTools';
+import { currentNamespace } from '../lib/namespace';
 
 interface Diagnosis {
   subject: string;
@@ -55,7 +56,7 @@ export default function Assistant() {
     }
   }
 
-  const [diag, setDiag] = useState({ kind: 'machine', namespace: 'default', name: '' });
+  const [diag, setDiag] = useState({ kind: 'machine', namespace: currentNamespace(), name: '' });
   const [diagBusy, setDiagBusy] = useState(false);
   const [diagMsg, setDiagMsg] = useState('');
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);

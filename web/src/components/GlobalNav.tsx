@@ -3,6 +3,8 @@
 
 import { LogOut, Menu, Moon, Search, Sun, UserCog, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { api } from '../api';
+import { currentNamespace, setNamespace } from '../lib/namespace';
 import { NAV, NavItem, Page } from '../lib/nav';
 import { applyTheme, storedTheme, Theme } from '../lib/theme';
 import { iconFor } from './navIcons';
@@ -27,6 +29,20 @@ export default function GlobalNav({
   const [mobile, setMobile] = useState(false);
   const [theme, setTheme] = useState<Theme>(storedTheme());
   const closeTimer = useRef<number | undefined>(undefined);
+  const [namespaces, setNamespaces] = useState<string[]>([]);
+  const namespace = currentNamespace();
+
+  // Load the namespaces this operator may use when the account menu opens.
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    api<string[]>('/api/v1/namespaces')
+      .then((list) => alive && setNamespaces(list))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [user]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && (setOpen(null), setUser(false), setMobile(false));
@@ -135,6 +151,24 @@ export default function GlobalNav({
               <b>{username || 'Signed in'}</b>
               <span>{window.location.host}</span>
             </div>
+            <label className="menu-item" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span>Namespace</span>
+              <select
+                aria-label="Namespace"
+                value={namespace}
+                onChange={(e) => {
+                  setNamespace(e.target.value);
+                  setUser(false);
+                }}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {[...new Set([namespace, ...namespaces])].map((ns) => (
+                  <option key={ns} value={ns}>
+                    {ns}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="menu-item" onClick={() => pick('account')}>
               <UserCog size={16} /> Account
             </button>

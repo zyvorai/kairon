@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import GlobalNav from './components/GlobalNav';
 import CommandPalette, { pageEntries, PaletteEntry } from './components/CommandPalette';
 import { ToastProvider } from './components/Toast';
+import { currentNamespace, NAMESPACE_EVENT } from './lib/namespace';
 import { formatHash, parseHash } from './lib/route';
 import { Page } from './lib/nav';
 import { applyTheme, storedTheme } from './lib/theme';
@@ -43,6 +44,13 @@ export default function App() {
   const [prefillMachine, setPrefillMachine] = useState('');
   const [prefillSnapshot, setPrefillSnapshot] = useState('');
   const [palette, setPalette] = useState(false);
+  // The selected namespace; changing it remounts the page (see <main key>).
+  const [ns, setNs] = useState(currentNamespace());
+  useEffect(() => {
+    const onNs = () => setNs(currentNamespace());
+    window.addEventListener(NAMESPACE_EVENT, onNs);
+    return () => window.removeEventListener(NAMESPACE_EVENT, onNs);
+  }, []);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [health, setHealth] = useState<'ok' | 'bad' | 'unknown'>('unknown');
   // No client-side router elsewhere in this app -- this one path is the
@@ -100,7 +108,7 @@ export default function App() {
       cancelled = true;
       clearInterval(t);
     };
-  }, [signedIn]);
+  }, [signedIn, ns]);
 
   // Global shortcuts: ⌘/Ctrl+K or "/" palette, ⌘/Ctrl+J assistant, Esc closes.
   useEffect(() => {
@@ -211,7 +219,7 @@ export default function App() {
   return (
     <ToastProvider>
       <GlobalNav page={page} go={setPage} username={username()} health={health} onSearch={() => setPalette(true)} onSignOut={signOut} />
-      <main className="stage">
+      <main className="stage" key={ns}>
         <PageHero
           kicker={page === 'overview' ? 'VM orchestration · no KubeVirt · no libvirt' : group?.group ?? 'Account'}
           title={page === 'overview' ? 'Run, migrate, and snapshot VMs on FluxVM.' : title}

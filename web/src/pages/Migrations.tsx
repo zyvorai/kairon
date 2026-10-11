@@ -6,6 +6,7 @@ import { api, apiJSON } from '../api';
 import { MachineMigration } from '../types';
 import { badgeClass, formatBytes, formatDuration, transferProgress } from '../lib/phase';
 import TerminalFrame from '../components/TerminalFrame';
+import { currentNamespace } from '../lib/namespace';
 
 interface CreateForm {
   machine: string;
@@ -236,7 +237,7 @@ function CancelButton({ migration, onChanged }: { migration: MachineMigration; o
     setBusy(true);
     setMsg('');
     try {
-      await apiJSON(`/api/v1/migrations/${migration.metadata.namespace || 'default'}/${encodeURIComponent(migration.metadata.name)}/cancel`, 'POST', {});
+      await apiJSON(`/api/v1/migrations/${migration.metadata.namespace || currentNamespace()}/${encodeURIComponent(migration.metadata.name)}/cancel`, 'POST', {});
       onChanged();
     } catch (err) {
       setMsg(String(err));
@@ -278,7 +279,7 @@ function RecoveryPanel({ migration, onChanged }: { migration: MachineMigration; 
     setBusy(true);
     setMsg('');
     try {
-      await apiJSON(`/api/v1/migrations/${migration.metadata.namespace || 'default'}/${encodeURIComponent(migration.metadata.name)}/recover`, 'POST', {
+      await apiJSON(`/api/v1/migrations/${migration.metadata.namespace || currentNamespace()}/${encodeURIComponent(migration.metadata.name)}/recover`, 'POST', {
         action,
         acknowledgedDiagnosis: diagnosis,
         reason,

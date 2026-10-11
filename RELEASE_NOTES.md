@@ -5,6 +5,10 @@
 - **`kaironctl upgrade` now keeps the previous release's values.** Before, an upgrade that did not restate `--set`/`-f` silently reset every override to chart defaults. It now applies Helm's reset-then-reuse (new chart defaults, then your previous overrides, then this call's flags). Pass `--reset-values` for the old behaviour.
 - **`kaironctl status` exits non-zero while the control plane is not ready.** Scripts that relied on a zero exit should add `--wait` or ignore the code.
 
+## Fixed
+
+- The dashboard only ever showed (and acted on) namespace `default`: it never sent the `namespace` parameter the API scopes lists by, and hard-coded `default` in actions. It now has a Namespace selector in the account menu and uses the selected namespace for lists, creates, power/delete/scale actions, consoles, logs and the usage CSV.
+
 ## Added
 
 - Global `--kubeconfig` and `--context` for every `kaironctl` command (kubeconfig auth including client certificates and exec plugins); previously only `install`/`upgrade` read a kubeconfig and the other commands needed `KAIRON_KUBE_URL` or an in-cluster service account.

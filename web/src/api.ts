@@ -1,6 +1,8 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
+import { withNamespace } from './lib/namespace';
+
 export const token = () => sessionStorage.getItem('kairon-token') || '';
 export const username = () => sessionStorage.getItem('kairon-username') || '';
 export const isAdmin = () => sessionStorage.getItem('kairon-is-admin') === 'true';
@@ -33,7 +35,7 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
 export const UNAUTHORIZED_EVENT = 'kairon:unauthorized';
 
 export async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const r = await fetch(path, { ...init, headers: headers((init.headers as Record<string, string>) || {}) });
+  const r = await fetch(withNamespace(path), { ...init, headers: headers((init.headers as Record<string, string>) || {}) });
   if (r.status === 401) {
     window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   }
