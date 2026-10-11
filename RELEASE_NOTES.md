@@ -1,4 +1,6 @@
-# Unreleased
+# Kairon v0.8.0
+
+Released 2026-10-11.
 
 ## Upgrade notes
 
