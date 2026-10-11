@@ -21,9 +21,9 @@ func newInstanceTypeTestController(t *testing.T, instanceTypes []model.MachineIn
 	var patchedResources []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machineinstancetypes":
 			_ = json.NewEncoder(w).Encode(model.MachineInstanceTypeList{Items: instanceTypes})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/vm-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/vm-1":
 			var patch struct {
 				Spec struct {
 					Resources model.ResourceSpec `json:"resources"`

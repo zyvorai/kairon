@@ -17,7 +17,7 @@ already enabled `spec.guestAgent.console` for the text console, file
 access works with no further guest-image changes.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db

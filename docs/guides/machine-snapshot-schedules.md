@@ -10,7 +10,7 @@ means).
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSnapshotSchedule
 metadata:
   name: nightly
@@ -74,7 +74,7 @@ reconcile tick would do with this schedule, right now:
 ```console
 $ kaironctl describe snapshotschedule nightly
 {
-  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "apiVersion": "kairon.zyvor.dev/v1",
   "kind": "MachineSnapshotSchedule",
   ...
 }

@@ -178,7 +178,7 @@ func TestWithDefaultNamespace(t *testing.T) {
 
 func TestUninstallRefusesWhenMachinesExist(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines" {
+		if r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines" {
 			_ = json.NewEncoder(w).Encode(model.MachineList{
 				Items: []model.Machine{{Metadata: model.ObjectMeta{Name: "demo"}}},
 			})

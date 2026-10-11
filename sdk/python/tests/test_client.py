@@ -95,7 +95,7 @@ class ClientTests(unittest.TestCase):
         out = self.client.machines.create(MANIFEST)
         self.assertEqual(MANIFEST, original)
         method, path, headers, body = self.fixture.calls[-1]
-        self.assertEqual((method, path), ("POST", "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines"))
+        self.assertEqual((method, path), ("POST", "/apis/kairon.zyvor.dev/v1/namespaces/default/machines"))
         self.assertEqual(body["metadata"]["namespace"], "default")
         self.assertEqual(out["metadata"]["uid"], "uid-a")
         self.assertEqual(headers["Authorization"], "Bearer kube-secret")

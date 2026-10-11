@@ -26,7 +26,7 @@ clear FluxVM error, not a silent hang.
 ## How to enable it
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db

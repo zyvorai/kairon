@@ -18,7 +18,7 @@ func TestListAndPatchMachine(t *testing.T) {
 	var patched bool
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{Metadata: model.ObjectMeta{Name: "vm1", Namespace: "default"}}}})
 		case r.Method == http.MethodPatch:
 			patched = r.Header.Get("Content-Type") == "application/merge-patch+json"
@@ -45,9 +45,9 @@ func TestListAndPatchMachine(t *testing.T) {
 func TestListMachineInstanceTypesNamespaceAndListMigrationPoliciesNamespace(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machineinstancetypes":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machineinstancetypes":
 			_ = json.NewEncoder(w).Encode(model.MachineInstanceTypeList{Items: []model.MachineInstanceType{{Metadata: model.ObjectMeta{Name: "large", Namespace: "prod"}}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/migrationpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/migrationpolicies":
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: []model.MigrationPolicy{{Metadata: model.ObjectMeta{Name: "default", Namespace: "prod"}}}})
 		default:
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
@@ -70,9 +70,9 @@ func TestListMachineInstanceTypesNamespaceAndListMigrationPoliciesNamespace(t *t
 func TestListMachineNetworkPoliciesNamespaceAndListNetworkSecurityGroupsNamespace(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: []model.MachineNetworkPolicy{{Metadata: model.ObjectMeta{Name: "web-edge", Namespace: "prod"}}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{Items: []model.NetworkSecurityGroup{{Metadata: model.ObjectMeta{Name: "frontend", Namespace: "prod"}}}})
 		default:
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)
@@ -197,25 +197,25 @@ func TestGetAndDeleteEveryDescribeDeleteEligibleResourceKind(t *testing.T) {
 			return
 		}
 		switch r.URL.Path {
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/mig1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/mig1":
 			_ = json.NewEncoder(w).Encode(model.MachineMigration{Metadata: model.ObjectMeta{Name: "mig1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap1":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshot{Metadata: model.ObjectMeta{Name: "snap1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/restore1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/restore1":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotRestore{Metadata: model.ObjectMeta{Name: "restore1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/quota1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas/quota1":
 			_ = json.NewEncoder(w).Encode(model.MachineQuota{Metadata: model.ObjectMeta{Name: "quota1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/budget1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinedisruptionbudgets/budget1":
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudget{Metadata: model.ObjectMeta{Name: "budget1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesets/set1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesets/set1":
 			_ = json.NewEncoder(w).Encode(model.MachineSet{Metadata: model.ObjectMeta{Name: "set1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machineinstancetypes/type1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machineinstancetypes/type1":
 			_ = json.NewEncoder(w).Encode(model.MachineInstanceType{Metadata: model.ObjectMeta{Name: "type1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/migrationpolicies/policy1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/migrationpolicies/policy1":
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicy{Metadata: model.ObjectMeta{Name: "policy1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinenetworkpolicies/netpol1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinenetworkpolicies/netpol1":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicy{Metadata: model.ObjectMeta{Name: "netpol1", Namespace: "prod"}})
-		case "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/networksecuritygroups/group1":
+		case "/apis/kairon.zyvor.dev/v1/namespaces/prod/networksecuritygroups/group1":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroup{Metadata: model.ObjectMeta{Name: "group1", Namespace: "prod"}})
 		default:
 			http.Error(w, "unexpected path "+r.URL.Path, http.StatusNotFound)

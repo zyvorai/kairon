@@ -16,7 +16,7 @@ as `spec.resources`/`spec.network.forwards` — changing them on an existing
 Machine has no effect.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db
@@ -93,7 +93,7 @@ with a clear error (write the image to the device yourself).
   restriction doesn't apply to it.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db

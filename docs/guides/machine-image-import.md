@@ -19,7 +19,7 @@ set it still takes priority, exactly as it already does over
 `spec.image.path` -- see [`machine-storage.md`](machine-storage.md).
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web-1

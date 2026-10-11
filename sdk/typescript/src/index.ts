@@ -28,7 +28,7 @@ export class APIError extends Error {
     this.status = status;
   }
 }
-export const API_VERSION = 'kairon.zyvor.dev/v1alpha1';
+export const API_VERSION = 'kairon.zyvor.dev/v1';
 export const FLEET_VERSION = 'fleet.kairon.zyvor.dev/v1alpha1';
 const KINDS: Record<string, string> = {
   machines: 'Machine', machinepools: 'MachinePool', machineclaims: 'MachineClaim',

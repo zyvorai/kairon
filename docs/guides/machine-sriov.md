@@ -45,7 +45,7 @@ administrator already prepares a GPU for passthrough today:
 Same as GPU passthrough: reference a `ResourceClaim` from `spec.deviceClaims[]`.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: high-throughput-vm}
 spec:

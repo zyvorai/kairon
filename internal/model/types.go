@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	APIVersion           = "kairon.zyvor.dev/v1alpha1"
+	APIVersion           = "kairon.zyvor.dev/v1"
 	KindMachine          = "Machine"
 	KindMachineMigration = "MachineMigration"
 	KindMachineSnapshot  = "MachineSnapshot"

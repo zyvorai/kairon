@@ -38,7 +38,7 @@ webhooks:
         port: 443
     rules:
       - apiGroups: ["kairon.zyvor.dev"]
-        apiVersions: ["v1alpha1"]
+        apiVersions: ["v1"]
         resources: ["machines"]
         # UPDATE closes a real gap CREATE alone leaves open: a Machine
         # that grows past quota via hotplug (see internal/controller/
@@ -61,7 +61,7 @@ webhooks:
         port: 443
     rules:
       - apiGroups: ["kairon.zyvor.dev"]
-        apiVersions: ["v1alpha1"]
+        apiVersions: ["v1"]
         resources: ["machinemigrations"]
         operations: ["CREATE"]
         scope: Namespaced
@@ -79,7 +79,7 @@ webhooks:
         port: 443
     rules:
       - apiGroups: ["kairon.zyvor.dev"]
-        apiVersions: ["v1alpha1"]
+        apiVersions: ["v1"]
         resources: ["machinenetworkpolicies"]
         # UPDATE included, unlike machinemigration.kairon.zyvor.dev above:
         # a MachineNetworkPolicy is routinely edited in place (`kubectl
@@ -103,7 +103,7 @@ webhooks:
         port: 443
     rules:
       - apiGroups: ["kairon.zyvor.dev"]
-        apiVersions: ["v1alpha1"]
+        apiVersions: ["v1"]
         resources: ["networksecuritygroups"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
@@ -127,7 +127,7 @@ webhooks:
       # maxTotalCpu/maxTotalMemory isn't valid quantity syntax at all --
       # see internal/controller/webhook.go's validateMachineQuotaObject).
       - apiGroups: ["kairon.zyvor.dev"]
-        apiVersions: ["v1alpha1"]
+        apiVersions: ["v1"]
         resources: ["machinequotas"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced

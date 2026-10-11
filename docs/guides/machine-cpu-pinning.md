@@ -45,7 +45,7 @@ label has zero pinnable CPUs -- fail-closed**, the same posture an empty
 ## Requesting real pinning
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: latency-sensitive-db}
 spec:

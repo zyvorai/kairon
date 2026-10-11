@@ -41,16 +41,16 @@ func newMachineSetTestController(t *testing.T) (*Controller, *machineSetTestServ
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines":
 			var m model.Machine
 			_ = json.NewDecoder(r.Body).Decode(&m)
 			fake.created = append(fake.created, m)
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/")
 			fake.deleted = append(fake.deleted, name)
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesets/ms1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesets/ms1/status":
 			var body struct {
 				Status model.MachineSetStatus `json:"status"`
 			}
@@ -58,7 +58,7 @@ func newMachineSetTestController(t *testing.T) (*Controller, *machineSetTestServ
 			fake.patched = body.Status
 			fake.hadPatch = true
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesets/ms1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesets/ms1":
 			if fake.finalizerPatchErr {
 				http.Error(w, "boom", http.StatusInternalServerError)
 				return
@@ -281,7 +281,7 @@ func TestReconcileMachineSetDeletionKeepsFinalizerOnDeleteError(t *testing.T) {
 	// for "ms1-a" -- "ms1-b" always 404s, simulating a genuine per-Machine
 	// delete failure.
 	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/ms1-a" {
+		if r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/ms1-a" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

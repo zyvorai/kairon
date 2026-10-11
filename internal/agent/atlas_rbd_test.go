@@ -72,7 +72,7 @@ func TestReconcileBootsAtlasRBDInPlace(t *testing.T) {
 	machine := atlasRBDMachine("rbd:rbd/"+own, model.AtlasPhaseReady)
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodPatch:
 			w.WriteHeader(http.StatusOK)

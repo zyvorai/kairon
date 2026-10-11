@@ -934,7 +934,7 @@ spec:
     shortNames:
     - kmbr
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1023,9 +1023,19 @@ spec:
                       type: string
                     claimName:
                       type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1044,7 +1054,7 @@ spec:
     shortNames:
     - kmb
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1148,9 +1158,19 @@ spec:
                       type: string
                     claimName:
                       type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1169,7 +1189,7 @@ spec:
     shortNames:
     - mclaim
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1246,9 +1266,19 @@ spec:
                 type: string
               message:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1267,7 +1297,7 @@ spec:
     shortNames:
     - mdb
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1320,9 +1350,19 @@ spec:
                 type: integer
               disruptionsAllowed:
                 type: integer
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1341,7 +1381,7 @@ spec:
     shortNames:
     - mimg
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     additionalPrinterColumns: &columns
@@ -1418,9 +1458,18 @@ spec:
                     type: string
                   diskSize:
                     type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     additionalPrinterColumns: *columns
     schema: *schema
 ---
@@ -1438,7 +1487,7 @@ spec:
     shortNames:
     - mit
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     additionalPrinterColumns: &columns
@@ -1512,9 +1561,18 @@ spec:
                         items:
                           type: integer
                           minimum: 0
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     additionalPrinterColumns: *columns
     schema: *schema
 ---
@@ -1532,7 +1590,7 @@ spec:
     shortNames:
     - kmm
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1720,9 +1778,19 @@ spec:
                   appliedAt:
                     type: string
                     format: date-time
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1741,7 +1809,7 @@ spec:
     shortNames:
     - kmnp
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1867,9 +1935,19 @@ spec:
                 type: string
               ciliumSyncMessage:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1888,7 +1966,7 @@ spec:
     shortNames:
     - mpool
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -1951,9 +2029,19 @@ spec:
                 type: string
               message:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -1972,7 +2060,7 @@ spec:
     shortNames:
     - mq
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -2009,9 +2097,19 @@ spec:
                 type: integer
               usedTotalMemoryMiB:
                 type: integer
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -2031,7 +2129,7 @@ spec:
     - km
     - kvmachine
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -2836,9 +2934,19 @@ spec:
                         type: integer
                       blackholeWindowMs:
                         type: integer
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -2857,7 +2965,7 @@ spec:
     shortNames:
     - ms
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -2933,9 +3041,19 @@ spec:
                 type: string
               message:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -2954,7 +3072,7 @@ spec:
     shortNames:
     - kmsr
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -3004,9 +3122,19 @@ spec:
                 type: string
               atlasJobID:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -3025,7 +3153,7 @@ spec:
     shortNames:
     - kms
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -3088,9 +3216,19 @@ spec:
                       type: string
                     atlasJobID:
                       type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -3109,7 +3247,7 @@ spec:
     shortNames:
     - mss
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -3191,9 +3329,19 @@ spec:
                 format: date-time
               lastHandledTriggerTime:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -3212,7 +3360,7 @@ spec:
     shortNames:
     - mp
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -3253,9 +3401,19 @@ spec:
             properties:
               activeMigrations:
                 type: integer
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema
@@ -3274,7 +3432,7 @@ spec:
     shortNames:
     - knsg
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -3366,9 +3524,19 @@ spec:
                 type: integer
               appliedOn:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema

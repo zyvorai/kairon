@@ -7,7 +7,7 @@ admin API, API-only first cut.
 ## What this is
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: db}
 spec:

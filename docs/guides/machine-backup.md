@@ -27,7 +27,7 @@ kaironctl backup list
 or as a CRD:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineBackup
 metadata:
   name: nightly
@@ -117,7 +117,7 @@ kaironctl start web
 ```
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineBackupRestore
 metadata:
   name: nightly-restore

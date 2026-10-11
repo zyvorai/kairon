@@ -21,7 +21,7 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
-const backupAPI = "/apis/kairon.zyvor.dev/v1alpha1/"
+const backupAPI = "/apis/kairon.zyvor.dev/v1/"
 
 // backupKube keeps MachineBackups and MachineBackupRestores in memory and
 // applies top-level status/metadata merge patches the way the apiserver does

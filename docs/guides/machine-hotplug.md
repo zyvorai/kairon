@@ -6,7 +6,7 @@ real limits are.
 ## How it works
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db
@@ -24,7 +24,7 @@ limits" below). If you know upfront you'll want to grow a Machine well
 beyond that default, request more headroom explicitly at creation:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db

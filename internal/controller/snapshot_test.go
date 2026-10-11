@@ -40,7 +40,7 @@ func newSnapshotTestController(t *testing.T, machineAnnos map[string]string) (*C
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
 		switch {
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/vm-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/vm-1":
 			var patch struct {
 				Metadata struct {
 					Annotations map[string]any `json:"annotations"`
@@ -66,14 +66,14 @@ func newSnapshotTestController(t *testing.T, machineAnnos map[string]string) (*C
 			_ = json.NewDecoder(r.Body).Decode(&vs)
 			fake.volumeSnapshots[vs.Metadata.Name] = vs
 			_ = json.NewEncoder(w).Encode(vs)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap/status":
 			var body struct {
 				Status model.MachineSnapshotStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			fake.snapshotStatus = body.Status
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			var body struct {
 				Metadata struct {
 					Finalizers []string `json:"finalizers"`

@@ -21,7 +21,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
-API_VERSION = "kairon.zyvor.dev/v1alpha1"
+API_VERSION = "kairon.zyvor.dev/v1"
 FLEET_VERSION = "fleet.kairon.zyvor.dev/v1alpha1"
 KINDS = {
     "machines": "Machine", "machinepools": "MachinePool",

@@ -9,7 +9,7 @@ values -- Kairon's namespace-scoped equivalent of KubeVirt's own
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MigrationPolicy
 metadata:
   name: web-tier
@@ -90,7 +90,7 @@ from this policy:
 ```console
 $ kaironctl describe migrationpolicy web-tier
 {
-  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "apiVersion": "kairon.zyvor.dev/v1",
   "kind": "MigrationPolicy",
   ...
 }

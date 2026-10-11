@@ -116,7 +116,7 @@ Then reference `db-root-pvc` from a Machine exactly as you already would
 for a `hostPath`/`local`-backed one:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: db}
 spec:

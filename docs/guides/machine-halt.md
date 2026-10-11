@@ -8,7 +8,7 @@ from `spec` on next `Running`) and [`Paused`](machine-pause-resume.md)
 ## What this does
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: db}
 spec:

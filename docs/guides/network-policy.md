@@ -49,7 +49,7 @@ See [network-fabric.md](../network-fabric.md).
 ## NetworkSecurityGroup
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: NetworkSecurityGroup
 metadata:
   name: frontend
@@ -81,7 +81,7 @@ On delete, the agent removes the FluxVM group (finalizer
 Select Machines by name **or** labels (same namespace):
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineNetworkPolicy
 metadata:
   name: web-edge

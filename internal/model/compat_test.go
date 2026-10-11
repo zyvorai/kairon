@@ -19,7 +19,7 @@ import (
 // upgrade must never choke on an object a previous version wrote.
 func TestMachineDecodesOldShapeJSON(t *testing.T) {
 	const oldShape = `{
-		"apiVersion": "kairon.zyvor.dev/v1alpha1",
+		"apiVersion": "kairon.zyvor.dev/v1",
 		"kind": "Machine",
 		"metadata": {"name": "db", "namespace": "prod"},
 		"spec": {
@@ -51,7 +51,7 @@ func TestMachineDecodesOldShapeJSON(t *testing.T) {
 
 // TestMachineToleratesUnknownFutureFields proves the opposite direction: a
 // Machine JSON blob carrying fields this binary doesn't know about yet
-// (the shape a *newer* Kairon version, or a real kairon.zyvor.dev/v1beta1
+// (the shape a *newer* Kairon version, or a real kairon.zyvor.dev/v1
 // conversion, might one day write) still decodes without error and without
 // losing any field this binary *does* know about -- Go's encoding/json
 // silently ignores unrecognized object keys by default, but this pins that
@@ -62,7 +62,7 @@ func TestMachineDecodesOldShapeJSON(t *testing.T) {
 // already names for a not-yet-installed CRD.
 func TestMachineToleratesUnknownFutureFields(t *testing.T) {
 	const futureShape = `{
-		"apiVersion": "kairon.zyvor.dev/v1alpha1",
+		"apiVersion": "kairon.zyvor.dev/v1",
 		"kind": "Machine",
 		"metadata": {"name": "db", "namespace": "prod", "futureMetadataField": "ignored"},
 		"spec": {

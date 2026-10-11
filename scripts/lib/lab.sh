@@ -12,7 +12,7 @@
 LAB_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 KAIRONCTL="${KAIRONCTL:-$LAB_REPO_ROOT/bin/kaironctl}"
 [[ -x "$KAIRONCTL" ]] || KAIRONCTL="kaironctl"
-LAB_API="apis/kairon.zyvor.dev/v1alpha1"
+LAB_API="apis/kairon.zyvor.dev/v1"
 
 lab_log() { echo "[$(date -u +%H:%M:%S)] $*" >&2; }
 

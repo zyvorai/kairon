@@ -22,7 +22,7 @@ itself -- it activates whenever the target Machine has
 ([`machine-guest-agent.md`](machine-guest-agent.md)):
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: db}
 spec:
@@ -30,7 +30,7 @@ spec:
   volumes: [{name: root, claimName: db-root-pvc}]
   # ...
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSnapshot
 metadata: {name: db-snap-1}
 spec:

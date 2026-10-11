@@ -122,19 +122,19 @@ func (c *fakeCluster) handler() http.Handler {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{c.machine}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			_ = json.NewEncoder(w).Encode(c.machine)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: c.nodes})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{c.migration}})
-		case r.Method == http.MethodGet && (r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots" ||
-			r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups" ||
-			r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies"):
+		case r.Method == http.MethodGet && (r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots" ||
+			r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups" ||
+			r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies"):
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db/status":
 			if err := applyMergePatch(r, &struct {
 				Status *model.MachineStatus `json:"status"`
 			}{&c.machine.Status}); err != nil {
@@ -142,13 +142,13 @@ func (c *fakeCluster) handler() http.Handler {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			if err := applyMergePatch(r, &c.machine); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			if err := applyMergePatch(r, &struct {
 				Status *model.MachineMigrationStatus `json:"status"`
 			}{&c.migration.Status}); err != nil {
@@ -156,7 +156,7 @@ func (c *fakeCluster) handler() http.Handler {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db":
 			if err := applyMergePatch(r, &c.migration); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return

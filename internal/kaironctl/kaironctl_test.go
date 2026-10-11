@@ -78,13 +78,13 @@ type evacuateTestServer struct {
 func (s *evacuateTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: s.migrations})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinedisruptionbudgets":
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: s.budgets})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations":
 			var m model.MachineMigration
 			_ = json.NewDecoder(r.Body).Decode(&m)
 			s.created = append(s.created, m)
@@ -342,7 +342,7 @@ func TestCmdCreateMachineSetPostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateMachineSet(context.Background(), kc, []string{"web", "--image", "/img.qcow2", "--replicas", "3", "--cpu", "4", "--label", "tier=web"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -369,7 +369,7 @@ func TestCmdCreateInstanceTypePostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateInstanceType(context.Background(), kc, []string{"small", "--cpu", "2", "--memory", "4Gi", "--hugepages"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machineinstancetypes" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -383,7 +383,7 @@ func TestCmdCreateMigrationPolicyPostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateMigrationPolicy(context.Background(), kc, []string{"fast-tier", "--selector", "tier=fast", "--bandwidth-mbps", "500", "--max-concurrent", "2"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -407,29 +407,29 @@ func TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup(t *testing.T) {
 	ctx := context.Background()
 
 	cmdGet(ctx, kc, []string{"networkpolicies"})
-	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies" {
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies" {
 		t.Fatalf("get networkpolicies: method=%s path=%s", s.method, s.path)
 	}
 	cmdGet(ctx, kc, []string{"securitygroups"})
-	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups" {
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups" {
 		t.Fatalf("get securitygroups: method=%s path=%s", s.method, s.path)
 	}
 
 	cmdDescribe(ctx, kc, []string{"networkpolicy", "web-edge"})
-	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 		t.Fatalf("describe networkpolicy: method=%s path=%s", s.method, s.path)
 	}
 	cmdDescribe(ctx, kc, []string{"securitygroup", "frontend"})
-	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+	if s.method != http.MethodGet || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/frontend" {
 		t.Fatalf("describe securitygroup: method=%s path=%s", s.method, s.path)
 	}
 
 	cmdDelete(ctx, kc, []string{"networkpolicy", "web-edge"})
-	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 		t.Fatalf("delete networkpolicy: method=%s path=%s", s.method, s.path)
 	}
 	cmdDelete(ctx, kc, []string{"securitygroup", "frontend"})
-	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+	if s.method != http.MethodDelete || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/frontend" {
 		t.Fatalf("delete securitygroup: method=%s path=%s", s.method, s.path)
 	}
 }
@@ -442,7 +442,7 @@ func TestCmdGetDescribeDeleteNetworkPolicyAndSecurityGroup(t *testing.T) {
 // CRD above, deleting a real cluster Node is squarely kubectl's job, not
 // kaironctl's). Node is cluster-scoped, so unlike every other kind these
 // two paths carry no /namespaces/default/ segment at all, and no
-// apis/kairon.zyvor.dev/v1alpha1 group prefix either -- they hit the
+// apis/kairon.zyvor.dev/v1 group prefix either -- they hit the
 // built-in core/v1 "/api/v1/nodes" path real kube-scheduler itself reads.
 func TestCmdGetDescribeNode(t *testing.T) {
 	s := &recordingServer{}
@@ -521,9 +521,9 @@ type cancelMigrationTestServer struct {
 func (s *cancelMigrationTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/move-db":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/move-db":
 			_ = json.NewEncoder(w).Encode(s.migration)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/move-db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/move-db":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			s.patchBody = body
@@ -576,7 +576,7 @@ func TestCmdScalePatchesReplicas(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdScale(context.Background(), kc, []string{"machineset", "web", "--replicas", "5"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/web" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/web" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -589,7 +589,7 @@ func TestCmdEditMigrationPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"migrationpolicy", "fast-tier", "--max-concurrent", "3"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/fast-tier" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies/fast-tier" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -605,7 +605,7 @@ func TestCmdCreateSnapshotSchedulePostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateSnapshotSchedule(context.Background(), kc, []string{"nightly", "--selector", "tier=web", "--interval-seconds", "3600", "--volume-snapshot-class", "csi-hostpath-snapclass", "--keep-last", "3"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -686,7 +686,7 @@ func TestCmdEditSnapshotScheduleOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"snapshotschedule", "nightly", "--suspend", "true"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/nightly" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/nightly" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -718,7 +718,7 @@ func TestCmdCreateQuotaPostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateQuota(context.Background(), kc, []string{"team-payments", "--max-machines", "20", "--max-total-cpu", "40", "--max-total-memory", "160Gi"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinequotas" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -750,7 +750,7 @@ func TestCmdEditQuotaOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"quota", "team-payments", "--max-machines", "30"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas/team-payments" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinequotas/team-payments" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -766,7 +766,7 @@ func TestCmdCreateBudgetMinAvailablePostsExpectedSpec(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreateBudget(context.Background(), kc, []string{"web-tier", "--selector", "tier=web", "--min-available", "2"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinedisruptionbudgets" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -799,7 +799,7 @@ func TestCmdEditBudgetOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"budget", "web-tier", "--min-available", "3"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets/web-tier" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinedisruptionbudgets/web-tier" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -837,7 +837,7 @@ func TestCmdCreateNetworkPolicyPostsExpectedSpec(t *testing.T) {
 		"--allow-cidr", "10.0.0.0/8", "--allow-port", "tcp/443",
 		"--policy-group", "frontend", "--max-egress-mbps", "250", "--audit-mode",
 	})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -868,7 +868,7 @@ func TestCmdCreateSecurityGroupPostsExpectedSpec(t *testing.T) {
 		"frontend", "--group-label", "tier=frontend", "--priority", "100",
 		"--description", "HTTPS egress", "--allow-cidr", "10.0.0.0/8", "--allow-icmp",
 	})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -894,7 +894,7 @@ func TestCmdEditNetworkPolicyOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"networkpolicy", "web-edge", "--audit-mode"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -920,7 +920,7 @@ func TestCmdEditSecurityGroupOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"securitygroup", "frontend", "--priority", "50"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/frontend" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/frontend" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -943,7 +943,7 @@ func TestCmdCreateStillCreatesAPlainMachine(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreate(context.Background(), kc, []string{"my-vm", "--image", "/img.qcow2", "--cpu", "4", "--memory", "8Gi"})
-	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines" {
+	if s.method != http.MethodPost || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machines" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -1002,7 +1002,7 @@ func TestCmdEditMachinePriority(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"machine", "urgent-vm", "--priority", "20"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/urgent-vm" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/urgent-vm" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -1021,7 +1021,7 @@ func TestCmdEditMachineSetOnlyPatchesFlagsActuallySet(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdEdit(context.Background(), kc, []string{"machineset", "web", "--strategy", "Recreate"})
-	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/web" {
+	if s.method != http.MethodPatch || s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/web" {
 		t.Fatalf("method=%s path=%s", s.method, s.path)
 	}
 	spec, _ := s.body["spec"].(map[string]any)
@@ -1058,7 +1058,7 @@ func TestCmdCreateDispatchesToMachineSetByKeyword(t *testing.T) {
 	s := &recordingServer{}
 	kc := testClient(t, s)
 	cmdCreate(context.Background(), kc, []string{"machineset", "web", "--image", "/img.qcow2"})
-	if s.path != "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets" {
+	if s.path != "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets" {
 		t.Fatalf("path=%s, want a machinesets POST (create dispatched to cmdCreateMachineSet)", s.path)
 	}
 }
@@ -1126,9 +1126,9 @@ type describeScheduleTestServer struct {
 func (s *describeScheduleTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"+s.schedule.Metadata.Name:
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/"+s.schedule.Metadata.Name:
 			_ = json.NewEncoder(w).Encode(s.schedule)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1271,14 +1271,14 @@ type describeMigrationPolicyTestServer struct {
 func (s *describeMigrationPolicyTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: s.migrations})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies":
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: s.policies})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies/")
 			for _, p := range s.policies {
 				if p.Metadata.Name == name {
 					_ = json.NewEncoder(w).Encode(p)
@@ -1395,9 +1395,9 @@ type describeQuotaTestServer struct {
 func (s *describeQuotaTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas/"+s.quota.Metadata.Name:
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinequotas/"+s.quota.Metadata.Name:
 			_ = json.NewEncoder(w).Encode(s.quota)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1516,11 +1516,11 @@ type describeBudgetTestServer struct {
 func (s *describeBudgetTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets/"+s.budget.Metadata.Name:
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinedisruptionbudgets/"+s.budget.Metadata.Name:
 			_ = json.NewEncoder(w).Encode(s.budget)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: s.migrations})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1637,15 +1637,15 @@ type deleteSelectorTestServer struct {
 func (s *deleteSelectorTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets":
 			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: s.machineSets})
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/")
 			s.deleted = append(s.deleted, "machine:"+name)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/")
 			s.deleted = append(s.deleted, "machineset:"+name)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1760,7 +1760,7 @@ func TestCmdDeleteSelectorWorksAcrossKinds(t *testing.T) {
 func TestCmdDeleteSelectorRespectsNamespaceFlag(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machines" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/staging/machines" {
 			called = true
 			_ = json.NewEncoder(w).Encode(model.MachineList{})
 			return
@@ -1803,10 +1803,10 @@ type scaleSelectorTestServer struct {
 func (s *scaleSelectorTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets":
 			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: s.machineSets})
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/")
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			spec, _ := body["spec"].(map[string]any)
@@ -1905,7 +1905,7 @@ func TestCmdScaleSelectorNoMatchesScalesNothing(t *testing.T) {
 func TestCmdScaleSelectorRespectsNamespaceFlag(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machinesets" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/staging/machinesets" {
 			called = true
 			_ = json.NewEncoder(w).Encode(model.MachineSetList{})
 			return
@@ -2027,7 +2027,7 @@ func TestCmdGetSelectorWorksAcrossKinds(t *testing.T) {
 func TestCmdGetSelectorRespectsNamespaceFlag(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/staging/machines" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/staging/machines" {
 			called = true
 			_ = json.NewEncoder(w).Encode(model.MachineList{})
 			return
@@ -2059,9 +2059,9 @@ type topTestServer struct {
 func (s *topTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: s.machines})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -2269,7 +2269,7 @@ type describeMachineTestServer struct {
 func (s *describeMachineTestServer) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+s.machine.Metadata.Namespace+"/machines/"+s.machine.Metadata.Name:
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/"+s.machine.Metadata.Namespace+"/machines/"+s.machine.Metadata.Name:
 			_ = json.NewEncoder(w).Encode(s.machine)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

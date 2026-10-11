@@ -157,12 +157,12 @@ func TestBudgetStateStatusReportsRealNumbers(t *testing.T) {
 func TestReconcileDisruptionBudgetsStatusPatchesRealStatus(t *testing.T) {
 	var patchedBody map[string]model.MachineDisruptionBudgetStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
 			_ = json.NewDecoder(r.Body).Decode(&patchedBody)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinedisruptionbudgets" {
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: []model.MachineDisruptionBudget{webBudget("web-pdb", "1")}})
 			return
 		}
@@ -198,11 +198,11 @@ func TestReconcileDisruptionBudgetsStatusPatchesRealStatus(t *testing.T) {
 // Mirrors TestReconcileObservesQuotaMetrics in controller_test.go.
 func TestReconcileDisruptionBudgetsStatusObservesMetrics(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinedisruptionbudgets/web-pdb/status" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinedisruptionbudgets" {
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: []model.MachineDisruptionBudget{webBudget("web-pdb", "1")}})
 			return
 		}

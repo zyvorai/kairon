@@ -4,7 +4,7 @@
 # The referenced ResourceClaim must already exist in this namespace and have
 # status.allocation populated by a DRA driver. The node must separately allow
 # the resolved BDF through KAIRON_VFIO_ALLOWLIST.
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: gpu-worker

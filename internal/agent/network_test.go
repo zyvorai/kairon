@@ -212,15 +212,15 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 	var effectiveSynced bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: []model.MachineNetworkPolicy{policy}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge/status":
 			var p struct {
 				Status model.MachineNetworkPolicyStatus `json:"status"`
 			}
@@ -228,7 +228,7 @@ func TestReconcileMachineNetworkPolicy(t *testing.T) {
 			statusPhase = p.Status.Phase
 			effectiveSynced = p.Status.EffectiveSynced
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -291,15 +291,15 @@ func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
 	var effectiveSyncedSet bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: []model.MachineNetworkPolicy{policy}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge/status":
 			var p struct {
 				Status model.MachineNetworkPolicyStatus `json:"status"`
 			}
@@ -307,7 +307,7 @@ func TestReconcileMachineNetworkPolicyDoesNotConfirmOnMismatch(t *testing.T) {
 			effectiveSynced = p.Status.EffectiveSynced
 			effectiveSyncedSet = true
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -450,7 +450,7 @@ func TestReconcileMachineNetworkPolicyResetsMachineDroppedFromSelector(t *testin
 
 	var appliedMachines []string
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge/status" {
 			var p struct {
 				Status model.MachineNetworkPolicyStatus `json:"status"`
 			}
@@ -520,7 +520,7 @@ func TestReconcileMachineNetworkPolicyLeavesMachineStillClaimedByAnotherPolicy(t
 
 	var patched bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/a/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/a/status" {
 			patched = true
 			w.WriteHeader(http.StatusOK)
 			return
@@ -571,7 +571,7 @@ func TestReconcileMachineNetworkPolicyPruneFailsClosed(t *testing.T) {
 
 	var statusPatched bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge/status" {
 			statusPatched = true
 		}
 		w.WriteHeader(http.StatusOK)
@@ -831,7 +831,7 @@ func TestCleanupDeregistersServiceFabricBeforeRemovingFinalizer(t *testing.T) {
 
 	var finalizerCleared bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web" {
 			var body struct {
 				Metadata model.ObjectMeta `json:"metadata"`
 			}
@@ -887,7 +887,7 @@ func TestCleanupFailsClosedWhenServiceFabricDeregistrationFails(t *testing.T) {
 
 	var finalizerPatchSeen bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web" {
 			finalizerPatchSeen = true
 		}
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -940,7 +940,7 @@ func TestEnsureStoppedDeregistersServiceFabricBackend(t *testing.T) {
 
 	var statusPhase string
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web/status" {
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
@@ -998,7 +998,7 @@ func TestEnsureStoppedFailsClosedWhenServiceFabricDeregistrationFails(t *testing
 
 	var statusPatchSeen bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web/status" {
 			statusPatchSeen = true
 		}
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1050,7 +1050,7 @@ func TestEnsureHaltedDeregistersServiceFabricBackend(t *testing.T) {
 
 	var statusPhase string
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web/status" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web/status" {
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
@@ -1100,7 +1100,7 @@ func deletingSecurityGroup() model.NetworkSecurityGroup {
 func TestReconcileSecurityGroupDeletionKeepsFinalizerOnDeleteError(t *testing.T) {
 	var finalizerPatchSeen bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/web-edge" {
 			finalizerPatchSeen = true
 		}
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1133,7 +1133,7 @@ func TestReconcileSecurityGroupDeletionRemovesFinalizerOnSuccess(t *testing.T) {
 	var patchedFinalizers []string
 	var sawFinalizerPatch bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/web-edge" {
 			sawFinalizerPatch = true
 			var body struct {
 				Metadata struct {
@@ -1185,7 +1185,7 @@ func TestReconcileSecurityGroupDeletionRemovesFinalizerOnSuccess(t *testing.T) {
 func TestReconcileSecurityGroupDeletionToleratesAlreadyDeleted(t *testing.T) {
 	var sawFinalizerPatch bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups/web-edge" {
 			sawFinalizerPatch = true
 			w.WriteHeader(http.StatusOK)
 			return
@@ -1240,7 +1240,7 @@ func deletingMachineNetworkPolicyAndMachine() (model.MachineNetworkPolicy, model
 func TestReconcileMachineNetworkPolicyDeletionKeepsFinalizerOnResetError(t *testing.T) {
 	var finalizerPatchSeen bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 			finalizerPatchSeen = true
 		}
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1274,7 +1274,7 @@ func TestReconcileMachineNetworkPolicyDeletionRemovesFinalizerOnSuccess(t *testi
 	var patchedFinalizers []string
 	var sawFinalizerPatch bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 			sawFinalizerPatch = true
 			var body struct {
 				Metadata struct {
@@ -1325,7 +1325,7 @@ func TestReconcileMachineNetworkPolicyDeletionRemovesFinalizerOnSuccess(t *testi
 func TestReconcileMachineNetworkPolicyDeletionToleratesAlreadyGoneVM(t *testing.T) {
 	var sawFinalizerPatch bool
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies/web-edge" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies/web-edge" {
 			sawFinalizerPatch = true
 			w.WriteHeader(http.StatusOK)
 			return
@@ -1504,11 +1504,11 @@ func TestReconcileNetworkResourcesSkipsDefaultDenyWhenDisabled(t *testing.T) {
 	defer fs.Close()
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -1550,11 +1550,11 @@ func TestReconcileNetworkResourcesAppliesDefaultDenyWhenEnabled(t *testing.T) {
 	defer fs.Close()
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

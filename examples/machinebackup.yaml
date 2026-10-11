@@ -3,7 +3,7 @@
 
 # Back up an image-booted Machine's disks on its node, freezing guest
 # filesystems through the guest agent when it answers.
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineBackup
 metadata:
   name: web-nightly
@@ -14,7 +14,7 @@ spec:
 ---
 # Restore it in place; the disk copy starts once web has
 # spec.powerState: Halted.
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineBackupRestore
 metadata:
   name: web-nightly-restore

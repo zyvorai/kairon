@@ -27,7 +27,7 @@ func TestReconcileSchedulesMachineWithCPUPinningAtomically(t *testing.T) {
 	var patchCount int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
 				Metadata: model.ObjectMeta{Name: "pinned", Namespace: "prod"},
 				Spec:     model.MachineSpec{PowerState: "Running", Resources: model.ResourceSpec{CPU: "2", CPUPinning: true}},
@@ -38,7 +38,7 @@ func TestReconcileSchedulesMachineWithCPUPinningAtomically(t *testing.T) {
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true", model.PinnableCPUsLabel: "2-9"}
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pinned":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/pinned":
 			patchCount++
 			_ = json.NewDecoder(r.Body).Decode(&patchBody)
 			w.WriteHeader(http.StatusOK)
@@ -80,7 +80,7 @@ func TestReconcileLeavesCPUPinningMachinePendingWhenNoNodeHasEnoughCores(t *test
 	var gotStatus model.MachineStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
 				Metadata: model.ObjectMeta{Name: "pinned", Namespace: "prod"},
 				Spec:     model.MachineSpec{PowerState: "Running", Resources: model.ResourceSpec{CPU: "8", CPUPinning: true}},
@@ -91,14 +91,14 @@ func TestReconcileLeavesCPUPinningMachinePendingWhenNoNodeHasEnoughCores(t *test
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"} // no PinnableCPUsLabel at all
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pinned/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/pinned/status":
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			gotStatus = p.Status
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pinned":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/pinned":
 			t.Fatal("expected no spec patch when no node has enough pinnable capacity")
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

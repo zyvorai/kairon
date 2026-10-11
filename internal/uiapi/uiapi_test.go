@@ -76,33 +76,33 @@ func (f *fakeKube) handler() http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			items := make([]model.Machine, 0, len(f.machines))
 			for _, m := range f.machines {
 				items = append(items, m)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			items := make([]model.Machine, 0, len(f.machines))
 			for _, m := range f.machines {
 				items = append(items, m)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: items})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/")
 			m, ok := f.machines[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines":
 			var m model.Machine
 			_ = json.NewDecoder(r.Body).Decode(&m)
 			f.machines[m.Metadata.Name] = m
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/")
 			m, ok := f.machines[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -123,8 +123,8 @@ func (f *fakeKube) handler() http.Handler {
 			}
 			f.machines[name] = m
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/")
 			if _, ok := f.machines[name]; !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -132,33 +132,33 @@ func (f *fakeKube) handler() http.Handler {
 			delete(f.machines, name)
 			w.WriteHeader(http.StatusOK)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			items := make([]model.MachineMigration, 0, len(f.migrations))
 			for _, m := range f.migrations {
 				items = append(items, m)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations":
 			items := make([]model.MachineMigration, 0, len(f.migrations))
 			for _, m := range f.migrations {
 				items = append(items, m)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: items})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/")
 			m, ok := f.migrations[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations":
 			var m model.MachineMigration
 			_ = json.NewDecoder(r.Body).Decode(&m)
 			f.migrations[m.Metadata.Name] = m
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinemigrations/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinemigrations/")
 			m, ok := f.migrations[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -178,31 +178,31 @@ func (f *fakeKube) handler() http.Handler {
 			f.migrations[name] = m
 			w.WriteHeader(http.StatusOK)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshots":
 			items := make([]model.MachineSnapshot, 0, len(f.snapshots))
 			for _, s := range f.snapshots {
 				items = append(items, s)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: items})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			f.snapshots[s.Metadata.Name] = s
 			_ = json.NewEncoder(w).Encode(s)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotrestores":
 			items := make([]model.MachineSnapshotRestore, 0, len(f.restores))
 			for _, res := range f.restores {
 				items = append(items, res)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotRestoreList{Items: items})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotrestores":
 			var res model.MachineSnapshotRestore
 			_ = json.NewDecoder(r.Body).Decode(&res)
 			f.restores[res.Metadata.Name] = res
 			_ = json.NewEncoder(w).Encode(res)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotrestores/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotrestores/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotrestores/")
 			if _, ok := f.restores[name]; !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
@@ -210,34 +210,34 @@ func (f *fakeKube) handler() http.Handler {
 			delete(f.restores, name)
 			w.WriteHeader(http.StatusOK)
 
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinequotas":
 			items := make([]model.MachineQuota, 0, len(f.quotas))
 			for _, q := range f.quotas {
 				items = append(items, q)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinedisruptionbudgets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinedisruptionbudgets":
 			items := make([]model.MachineDisruptionBudget, 0, len(f.budgets))
 			for _, b := range f.budgets {
 				items = append(items, b)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets":
 			items := make([]model.MachineSet, 0, len(f.machineSets))
 			for _, ms := range f.machineSets {
 				items = append(items, ms)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineSetList{Items: items})
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/")
 			if _, ok := f.machineSets[name]; !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			delete(f.machineSets, name)
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/")
 			ms, ok := f.machineSets[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -252,34 +252,34 @@ func (f *fakeKube) handler() http.Handler {
 			ms.Spec.Replicas = patch.Spec.Replicas
 			f.machineSets[name] = ms
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesets/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesets/")
 			ms, ok := f.machineSets[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(ms)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineinstancetypes":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machineinstancetypes":
 			items := make([]model.MachineInstanceType, 0, len(f.instanceTypes))
 			for _, it := range f.instanceTypes {
 				items = append(items, it)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineInstanceTypeList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/migrationpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/migrationpolicies":
 			items := make([]model.MigrationPolicy, 0, len(f.migrationPolicies))
 			for _, p := range f.migrationPolicies {
 				items = append(items, p)
 			}
 			_ = json.NewEncoder(w).Encode(model.MigrationPolicyList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules":
 			items := make([]model.MachineSnapshotSchedule, 0, len(f.snapshotSchedules))
 			for _, s := range f.snapshotSchedules {
 				items = append(items, s)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: items})
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/")
 			s, ok := f.snapshotSchedules[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -294,20 +294,20 @@ func (f *fakeKube) handler() http.Handler {
 			s.Spec.Suspend = patch.Spec.Suspend
 			f.snapshotSchedules[name] = s
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinenetworkpolicies":
 			items := make([]model.MachineNetworkPolicy, 0, len(f.networkPolicies))
 			for _, p := range f.networkPolicies {
 				items = append(items, p)
 			}
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{Items: items})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/networksecuritygroups":
 			items := make([]model.NetworkSecurityGroup, 0, len(f.securityGroups))
 			for _, g := range f.securityGroups {
 				items = append(items, g)
 			}
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{Items: items})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshotschedules/")
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshotschedules/")
 			s, ok := f.snapshotSchedules[name]
 			if !ok {
 				http.Error(w, "not found", http.StatusNotFound)

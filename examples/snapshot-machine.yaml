@@ -1,7 +1,7 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: database
@@ -19,7 +19,7 @@ spec:
     - name: data
       claimName: database-data
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSnapshot
 metadata:
   name: database-before-upgrade

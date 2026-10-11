@@ -3,7 +3,7 @@
 
 # Four booted agent sandboxes kept warm. A MachineClaim takes one over in a
 # single reconcile tick; the pool boots a replacement behind it.
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachinePool
 metadata:
   name: agents
@@ -23,7 +23,7 @@ spec:
         backend: qemu
       powerState: Running
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineClaim
 metadata:
   name: job-42

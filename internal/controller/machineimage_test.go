@@ -33,7 +33,7 @@ func newImageTestController(t *testing.T, images []model.MachineImage) (*Control
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machineimages":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machineimages":
 			_ = json.NewEncoder(w).Encode(model.MachineImageList{Items: images})
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/status"):
 			var p struct {

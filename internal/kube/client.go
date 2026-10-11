@@ -159,7 +159,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, o
 }
 
 func namespacePath(ns, resource string) string {
-	return fmt.Sprintf("/apis/kairon.zyvor.dev/v1alpha1/namespaces/%s/%s", url.PathEscape(ns), resource)
+	return fmt.Sprintf("/apis/kairon.zyvor.dev/v1/namespaces/%s/%s", url.PathEscape(ns), resource)
 }
 
 func namespacedObjectPath(ns, resource, name string) string {
@@ -174,7 +174,7 @@ func (c *Client) ListMachines(ctx context.Context) ([]model.Machine, error) {
 // by a Kubernetes labelSelector (e.g. kairon.zyvor.dev/assigned-node=worker-1).
 func (c *Client) ListMachinesWithSelector(ctx context.Context, labelSelector string) ([]model.Machine, error) {
 	var list model.MachineList
-	path := "/apis/kairon.zyvor.dev/v1alpha1/machines"
+	path := "/apis/kairon.zyvor.dev/v1/machines"
 	if labelSelector != "" {
 		path += "?labelSelector=" + url.QueryEscape(labelSelector)
 	}
@@ -220,7 +220,7 @@ func (c *Client) ListMachineMigrations(ctx context.Context) ([]model.MachineMigr
 // optionally filtered by labelSelector.
 func (c *Client) ListMachineMigrationsWithSelector(ctx context.Context, labelSelector string) ([]model.MachineMigration, error) {
 	var list model.MachineMigrationList
-	path := "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations"
+	path := "/apis/kairon.zyvor.dev/v1/machinemigrations"
 	if labelSelector != "" {
 		path += "?labelSelector=" + url.QueryEscape(labelSelector)
 	}
@@ -260,7 +260,7 @@ func (c *Client) DeleteMachineMigration(ctx context.Context, ns, name string) er
 
 func (c *Client) ListMachineSnapshots(ctx context.Context) ([]model.MachineSnapshot, error) {
 	var list model.MachineSnapshotList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinesnapshots", nil, &list, "")
 	return list.Items, err
 }
 
@@ -296,7 +296,7 @@ func (c *Client) DeleteMachineSnapshot(ctx context.Context, ns, name string) err
 
 func (c *Client) ListMachineSnapshotRestores(ctx context.Context) ([]model.MachineSnapshotRestore, error) {
 	var list model.MachineSnapshotRestoreList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotrestores", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinesnapshotrestores", nil, &list, "")
 	return list.Items, err
 }
 
@@ -328,7 +328,7 @@ func (c *Client) DeleteMachineSnapshotRestore(ctx context.Context, ns, name stri
 
 func (c *Client) ListMachineNetworkPolicies(ctx context.Context) ([]model.MachineNetworkPolicy, error) {
 	var list model.MachineNetworkPolicyList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies", nil, &list, "")
 	return list.Items, err
 }
 
@@ -378,7 +378,7 @@ func (c *Client) PatchMachineNetworkPolicyStatus(ctx context.Context, ns, name s
 
 func (c *Client) ListNetworkSecurityGroups(ctx context.Context) ([]model.NetworkSecurityGroup, error) {
 	var list model.NetworkSecurityGroupList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/networksecuritygroups", nil, &list, "")
 	return list.Items, err
 }
 
@@ -460,7 +460,7 @@ func (c *Client) CreateVolumeSnapshot(ctx context.Context, ns string, snap model
 
 func (c *Client) ListMachineQuotas(ctx context.Context) ([]model.MachineQuota, error) {
 	var list model.MachineQuotaList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinequotas", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinequotas", nil, &list, "")
 	return list.Items, err
 }
 
@@ -496,7 +496,7 @@ func (c *Client) PatchMachineQuota(ctx context.Context, ns, name string, patch m
 
 func (c *Client) ListMachineSets(ctx context.Context) ([]model.MachineSet, error) {
 	var list model.MachineSetList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesets", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinesets", nil, &list, "")
 	return list.Items, err
 }
 
@@ -532,7 +532,7 @@ func (c *Client) PatchMachineSet(ctx context.Context, ns, name string, patch map
 
 func (c *Client) ListMachinePools(ctx context.Context) ([]model.MachinePool, error) {
 	var list model.MachinePoolList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinepools", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinepools", nil, &list, "")
 	return list.Items, err
 }
 
@@ -568,7 +568,7 @@ func (c *Client) PatchMachinePoolStatus(ctx context.Context, ns, name string, st
 
 func (c *Client) ListMachineClaims(ctx context.Context) ([]model.MachineClaim, error) {
 	var list model.MachineClaimList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineclaims", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machineclaims", nil, &list, "")
 	return list.Items, err
 }
 
@@ -604,7 +604,7 @@ func (c *Client) PatchMachineClaimStatus(ctx context.Context, ns, name string, s
 
 func (c *Client) ListMachineBackups(ctx context.Context) ([]model.MachineBackup, error) {
 	var list model.MachineBackupList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinebackups", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinebackups", nil, &list, "")
 	return list.Items, err
 }
 
@@ -642,7 +642,7 @@ func (c *Client) PatchMachineBackupStatus(ctx context.Context, ns, name string, 
 
 func (c *Client) ListMachineBackupRestores(ctx context.Context) ([]model.MachineBackupRestore, error) {
 	var list model.MachineBackupRestoreList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinebackuprestores", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinebackuprestores", nil, &list, "")
 	return list.Items, err
 }
 
@@ -676,13 +676,13 @@ func (c *Client) PatchMachineBackupRestoreStatus(ctx context.Context, ns, name s
 // ListMachineImages lists the cluster-scoped MachineImage catalog.
 func (c *Client) ListMachineImages(ctx context.Context) ([]model.MachineImage, error) {
 	var list model.MachineImageList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineimages", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machineimages", nil, &list, "")
 	return list.Items, err
 }
 
 func (c *Client) ListMachineInstanceTypes(ctx context.Context) ([]model.MachineInstanceType, error) {
 	var list model.MachineInstanceTypeList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machineinstancetypes", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machineinstancetypes", nil, &list, "")
 	return list.Items, err
 }
 
@@ -710,7 +710,7 @@ func (c *Client) CreateMachineInstanceType(ctx context.Context, ns string, it mo
 
 func (c *Client) ListMigrationPolicies(ctx context.Context) ([]model.MigrationPolicy, error) {
 	var list model.MigrationPolicyList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/migrationpolicies", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/migrationpolicies", nil, &list, "")
 	return list.Items, err
 }
 
@@ -746,7 +746,7 @@ func (c *Client) PatchMigrationPolicy(ctx context.Context, ns, name string, patc
 
 func (c *Client) ListMachineSnapshotSchedules(ctx context.Context) ([]model.MachineSnapshotSchedule, error) {
 	var list model.MachineSnapshotScheduleList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules", nil, &list, "")
 	return list.Items, err
 }
 
@@ -787,7 +787,7 @@ func (c *Client) SetMachineSnapshotScheduleError(ctx context.Context, ns, name, 
 
 func (c *Client) ListMachineDisruptionBudgets(ctx context.Context) ([]model.MachineDisruptionBudget, error) {
 	var list model.MachineDisruptionBudgetList
-	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets", nil, &list, "")
+	err := c.request(ctx, http.MethodGet, "/apis/kairon.zyvor.dev/v1/machinedisruptionbudgets", nil, &list, "")
 	return list.Items, err
 }
 

@@ -7,7 +7,7 @@ enabled, a Machine asks for a disk by size and policy instead of naming a
 PersistentVolumeClaim someone created by hand.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: web, namespace: default}
 spec:

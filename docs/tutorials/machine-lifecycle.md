@@ -58,7 +58,7 @@ A `Pending` claim fails a Machine's reconcile with a clear error rather than ret
 
 ```yaml
 # database-machine.yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: database

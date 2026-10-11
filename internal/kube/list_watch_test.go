@@ -17,7 +17,7 @@ import (
 func TestListMachinesWithSelector(t *testing.T) {
 	var gotSelector string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/apis/kairon.zyvor.dev/v1alpha1/machines" {
+		if r.Method != http.MethodGet || r.URL.Path != "/apis/kairon.zyvor.dev/v1/machines" {
 			http.Error(w, "unexpected", http.StatusNotFound)
 			return
 		}

@@ -1,7 +1,7 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web
@@ -36,7 +36,7 @@ spec:
         weight: 1
   powerState: Running
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: NetworkSecurityGroup
 metadata:
   name: frontend
@@ -56,7 +56,7 @@ spec:
       - udp/53
     allowIcmp: true
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineNetworkPolicy
 metadata:
   name: web-edge

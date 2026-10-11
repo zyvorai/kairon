@@ -15,7 +15,7 @@ spec:
     shortNames:
     - mclaim
   versions:
-  - name: v1beta1
+  - name: v1
     served: true
     storage: true
     subresources: &subresources
@@ -92,9 +92,19 @@ spec:
                 type: string
               message:
                 type: string
+  - name: v1beta1
+    served: true
+    storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1beta1 is deprecated; use kairon.zyvor.dev/v1
+    subresources: *subresources
+    additionalPrinterColumns: *columns
+    schema: *schema
   - name: v1alpha1
     served: true
     storage: false
+    deprecated: true
+    deprecationWarning: kairon.zyvor.dev/v1alpha1 is deprecated; use kairon.zyvor.dev/v1
     subresources: *subresources
     additionalPrinterColumns: *columns
     schema: *schema

@@ -24,7 +24,7 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 	var patchedNode string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
 				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
 				Spec:     model.MachineSpec{PowerState: "Running"},
@@ -35,7 +35,7 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			var p map[string]map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			patchedNode = p["spec"]["nodeName"]
@@ -62,7 +62,7 @@ func TestReconcileSchedulesMachine(t *testing.T) {
 func TestRunRecordsReconcileMetrics(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
@@ -96,20 +96,20 @@ func TestRunRecordsReconcileMetrics(t *testing.T) {
 func TestReconcileObservesQuotaMetrics(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{{
 				Metadata: model.ObjectMeta{Name: "db", Namespace: "prod"},
 				Spec:     model.MachineSpec{NodeName: "worker-1", PowerState: "Running", Resources: model.ResourceSpec{CPU: "2", Memory: "2Gi"}},
 			}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinequotas":
 			max := 5
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{{
 				Metadata: model.ObjectMeta{Name: "team-a", Namespace: "prod"},
 				Spec:     model.MachineQuotaSpec{MaxMachines: &max, MaxTotalCPU: "10"},
 			}}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/team-a/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas/team-a/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -156,7 +156,7 @@ func TestReconcileRespectsAntiAffinityAcrossRealMachines(t *testing.T) {
 	var patchedNode string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{primary, replica}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			var w1, w2 model.Node
@@ -167,7 +167,7 @@ func TestReconcileRespectsAntiAffinityAcrossRealMachines(t *testing.T) {
 			w2.Metadata.Labels = map[string]string{model.CapableLabel: "true", "kubernetes.io/hostname": "worker-2"}
 			w2.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{w1, w2}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/replica":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/replica":
 			var p map[string]map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			patchedNode = p["spec"]["nodeName"]
@@ -205,7 +205,7 @@ func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
 	var quotaStatusPatched bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{existing, pending}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			var n model.Node
@@ -213,16 +213,16 @@ func TestReconcileBlocksSchedulingOnceMachineQuotaExceeded(t *testing.T) {
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinequotas":
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pending/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/pending/status":
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			pendingStatus = p.Status
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas/prod-quota/status":
 			quotaStatusPatched = true
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
@@ -268,7 +268,7 @@ func TestReconcileBlockedQuotaRecordsEvent(t *testing.T) {
 	var events []model.Event
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{existing, pending}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			var n model.Node
@@ -276,16 +276,16 @@ func TestReconcileBlockedQuotaRecordsEvent(t *testing.T) {
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinequotas":
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/pending/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/pending/status":
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			pendingStatus = p.Status
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas/prod-quota/status":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
 			var ev model.Event
@@ -346,7 +346,7 @@ func TestReconcileAdmitsHigherPriorityMachineFirst(t *testing.T) {
 	blockedMachines := map[string]string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{low, important}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			var n model.Node
@@ -354,23 +354,23 @@ func TestReconcileAdmitsHigherPriorityMachineFirst(t *testing.T) {
 			n.Metadata.Labels = map[string]string{model.CapableLabel: "true"}
 			n.Status.Conditions = []model.NodeCondition{{Type: "Ready", Status: "True"}}
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{n}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinequotas":
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: []model.MachineQuota{quota}})
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/") && strings.HasSuffix(r.URL.Path, "/status"):
-			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/"), "/status")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/") && strings.HasSuffix(r.URL.Path, "/status"):
+			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/"), "/status")
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			blockedMachines[name] = p.Status.Message
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/"):
-			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/")
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/"):
+			name := strings.TrimPrefix(r.URL.Path, "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/")
 			var p map[string]map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			scheduledMachines[name] = p["spec"]["nodeName"]
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas/prod-quota/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas/prod-quota/status":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/namespaces/prod/events":
 			w.WriteHeader(http.StatusCreated)
@@ -403,15 +403,15 @@ func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 	phase := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			var p map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			spec, _ := p["spec"].(map[string]any)
@@ -419,7 +419,7 @@ func TestLiveCutoverSetsAdoptOnlyGuard(t *testing.T) {
 			annotations, _ := meta["annotations"].(map[string]any)
 			guarded = spec["nodeName"] == "worker-2" && annotations[model.AnnotationAdoptOnly] == "true"
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -449,13 +449,13 @@ func TestSnapshotCreatesStandardCSIVolumeSnapshot(t *testing.T) {
 	statusReady := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			http.NotFound(w, r)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{snapshot}})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/snapshot.storage.k8s.io/v1/namespaces/prod/volumesnapshots/before-upgrade-data":
 			http.NotFound(w, r)
@@ -468,7 +468,7 @@ func TestSnapshotCreatesStandardCSIVolumeSnapshot(t *testing.T) {
 			ready := true
 			vs.Status.ReadyToUse = &ready
 			_ = json.NewEncoder(w).Encode(vs)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/before-upgrade/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/before-upgrade/status":
 			var p struct {
 				Status model.MachineSnapshotStatus `json:"status"`
 			}
@@ -505,20 +505,20 @@ func TestColdMigrationStopsSource(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyNode("worker-1"), readyNode("worker-2")}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			var p map[string]map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			stopped = p["spec"]["powerState"] == "Stopped"
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/cold-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/cold-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -548,20 +548,20 @@ func TestColdMigrationReassignsAfterSourceStopped(t *testing.T) {
 	phase := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			var p map[string]map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			reassigned = p["spec"]["nodeName"] == "worker-2" && p["spec"]["powerState"] == "Running"
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/cold-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/cold-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -598,15 +598,15 @@ func TestLiveMigrationEntersStarting(t *testing.T) {
 	phase, strategy := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1"), readyCapableNode("worker-2")}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -637,15 +637,15 @@ func TestLiveMigrationAdoptingCompletesToSucceeded(t *testing.T) {
 	clearedAnnotations := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db":
 			var p map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			meta, _ := p["metadata"].(map[string]any)
@@ -654,7 +654,7 @@ func TestLiveMigrationAdoptingCompletesToSucceeded(t *testing.T) {
 			_, hasRef := annotations[model.AnnotationMigrationRef]
 			clearedAnnotations = hasAdoptOnly && annotations[model.AnnotationAdoptOnly] == nil && hasRef && annotations[model.AnnotationMigrationRef] == nil
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -683,15 +683,15 @@ func TestColdMigrationRestartingCompletesToSucceeded(t *testing.T) {
 	phase := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/cold-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/cold-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -727,13 +727,13 @@ func TestReconcileMigrationSkipsTerminalPhases(t *testing.T) {
 			patched := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 					_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 					_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1")}})
-				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 					_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+				case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 					http.NotFound(w, r)
 				case r.Method == http.MethodPatch:
 					patched = true
@@ -762,22 +762,22 @@ func TestMigrationBlockedWhenMachineUnscheduled(t *testing.T) {
 	phase, message := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			phase, message = p.Status.Phase, p.Status.Message
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -803,13 +803,13 @@ func reconcileMigrationBlockedCheck(t *testing.T, machine model.Machine, nodes [
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: nodes})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/machinemigrations/"+migration.Metadata.Name+"/status"):
 			var p struct {
@@ -867,15 +867,15 @@ func TestReconcileFailedWrapperPatchesFailedStatus(t *testing.T) {
 	phase, message := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -904,15 +904,15 @@ func TestReconcileMigrationUnknownPhaseErrors(t *testing.T) {
 	phase, message := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{migration}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
@@ -972,15 +972,15 @@ func TestSnapshotFailsOnMissingVolumeFields(t *testing.T) {
 	phase, message := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			http.NotFound(w, r)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{snapshot}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/before-upgrade/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/before-upgrade/status":
 			var p struct {
 				Status model.MachineSnapshotStatus `json:"status"`
 			}
@@ -1009,13 +1009,13 @@ func TestSnapshotFailsOnVolumeSnapshotError(t *testing.T) {
 	phase, message := "", ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			http.NotFound(w, r)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{snapshot}})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/snapshot.storage.k8s.io/v1/namespaces/prod/volumesnapshots/before-upgrade-data":
 			http.NotFound(w, r)
@@ -1025,7 +1025,7 @@ func TestSnapshotFailsOnVolumeSnapshotError(t *testing.T) {
 			msg := "backend quota exceeded"
 			vs.Status.Error = &model.VolumeSnapshotError{Message: &msg}
 			_ = json.NewEncoder(w).Encode(vs)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/before-upgrade/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/before-upgrade/status":
 			var p struct {
 				Status model.MachineSnapshotStatus `json:"status"`
 			}
@@ -1055,13 +1055,13 @@ func TestSnapshotPendingWhenNotYetReady(t *testing.T) {
 	var readyToUse *bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			http.NotFound(w, r)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{snapshot}})
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/snapshot.storage.k8s.io/v1/namespaces/prod/volumesnapshots/before-upgrade-data":
 			http.NotFound(w, r)
@@ -1070,7 +1070,7 @@ func TestSnapshotPendingWhenNotYetReady(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&vs)
 			// vs.Status.ReadyToUse left nil -- not yet ready.
 			_ = json.NewEncoder(w).Encode(vs)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/before-upgrade/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/before-upgrade/status":
 			var p struct {
 				Status model.MachineSnapshotStatus `json:"status"`
 			}
@@ -1105,22 +1105,22 @@ func runConcurrencyQuotaCheck(t *testing.T, maxPerNode, maxCluster int, activeSo
 	pending := model.MachineMigration{Metadata: model.ObjectMeta{Name: "move-db", Namespace: "prod"}, Spec: model.MachineMigrationSpec{MachineName: "db", Strategy: "live"}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/nodes":
 			_ = json.NewEncoder(w).Encode(model.NodeList{Items: []model.Node{readyCapableNode("worker-1"), readyCapableNode("worker-2")}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: []model.MachineMigration{active, pending}})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshots":
 			http.NotFound(w, r)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/move-db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/move-db/status":
 			var p struct {
 				Status model.MachineMigrationStatus `json:"status"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&p)
 			phase, message = p.Status.Phase, p.Status.Message
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations/active-mig/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations/active-mig/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

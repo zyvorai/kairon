@@ -63,7 +63,7 @@ for _ in $(seq 1 20); do [[ "$(kubectl get node "$NODE" -o jsonpath='{.status.co
 
 ssh-keygen -q -t ed25519 -N "" -f "$T/key"; PUB="$(cat "$T/key.pub")"
 kubectl apply -f - >/dev/null <<EOM
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: mac-e2e, namespace: default}
 spec:

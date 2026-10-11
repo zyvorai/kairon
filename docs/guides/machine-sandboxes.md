@@ -8,7 +8,7 @@ API-only first cut, no dashboard yet.
 ## What this is
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: agent-run}
 spec:

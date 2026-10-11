@@ -18,7 +18,7 @@ import (
 	"github.com/zyvorai/kairon/internal/model"
 )
 
-const poolAPI = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/"
+const poolAPI = "/apis/kairon.zyvor.dev/v1/namespaces/prod/"
 
 type poolFake struct {
 	mu           sync.Mutex

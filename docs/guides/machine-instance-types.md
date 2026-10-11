@@ -7,7 +7,7 @@ type or KubeVirt's `VirtualMachineInstancetype`.
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineInstanceType
 metadata:
   name: standard-2x4
@@ -19,7 +19,7 @@ spec:
 ```
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web-1

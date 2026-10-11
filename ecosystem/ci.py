@@ -24,7 +24,7 @@ def temporary_manifest(manifest: dict, namespace: str, ttl: int, *, now: datetim
         raise ValueError("CI TTL must be at least 60 seconds")
     # Use a fresh object; never delete/overwrite a user's pre-existing VM.
     obj = json.loads(json.dumps(manifest))
-    if obj.get("kind") != "Machine" or obj.get("apiVersion") != "kairon.zyvor.dev/v1alpha1":
+    if obj.get("kind") != "Machine" or obj.get("apiVersion") != "kairon.zyvor.dev/v1":
         raise ValueError("CI requires a Kairon Machine manifest")
     meta = obj.setdefault("metadata", {})
     if any(key in meta for key in ("uid", "resourceVersion", "ownerReferences", "finalizers", "deletionTimestamp")) or "status" in obj:
