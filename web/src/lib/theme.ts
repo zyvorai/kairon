@@ -11,7 +11,7 @@ export function storedTheme(): Theme {
   } catch {
     /* private mode */
   }
-  return 'dark';
+  return 'light';
 }
 
 export function resolveTheme(t: Theme, prefersDark: boolean): 'dark' | 'light' {

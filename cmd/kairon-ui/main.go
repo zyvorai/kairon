@@ -183,6 +183,7 @@ func run() int {
 		WebDir:        *webDir,
 		Users:         users,
 		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		LoginHint:     loginHint(),
 		// UsersSecretName empty (the default) means POST
 		// /api/v1/auth/password and POST /api/v1/users/{username}/password
 		// are refused -- set only when the Helm chart owns the
@@ -410,4 +411,17 @@ func hashPassword(args []string) int {
 	}
 	fmt.Println(string(hash))
 	return 0
+}
+
+// loginHint is the text shown under the dashboard sign-in form. An explicit
+// KAIRON_UI_LOGIN_HINT wins; otherwise the well-known lab default is
+// advertised only while the admin password is still that exact value.
+func loginHint() string {
+	if h := strings.TrimSpace(os.Getenv("KAIRON_UI_LOGIN_HINT")); h != "" {
+		return h
+	}
+	if os.Getenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD") == "Admin@321" {
+		return "Lab default login: admin / Admin@321 \u2014 change it before exposing this dashboard."
+	}
+	return ""
 }

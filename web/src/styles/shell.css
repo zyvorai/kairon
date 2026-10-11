@@ -214,7 +214,16 @@
   background:
     radial-gradient(600px 220px at 20% 0%, var(--hero-glow-a), transparent 70%),
     radial-gradient(520px 200px at 80% 10%, var(--hero-glow-b), transparent 70%);
+  animation: heroDrift 22s ease-in-out infinite alternate;
 }
+.page-hero[data-tone].glow::before {
+  background:
+    radial-gradient(600px 220px at 20% 0%, var(--tone-glow), transparent 70%),
+    radial-gradient(520px 200px at 80% 10%, var(--hero-glow-b), transparent 70%);
+}
+.page-hero .eyebrow { color: var(--tone-color, var(--blue)); }
+@keyframes heroDrift { to { transform: translate3d(3vw, 10px, 0) scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .page-hero.glow::before { animation: none; } }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .kpi {
   position: relative; overflow: hidden;

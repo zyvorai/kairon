@@ -3,6 +3,7 @@
 
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { badgeClass } from '../lib/phase';
+import { countUpValue } from '../lib/countUp';
 
 // Phase/condition pill. badgeClass() already maps every phase string the
 // controllers emit to ok/progress/warn/error/idle.
@@ -47,11 +48,39 @@ export function useSeries(value: number | undefined, n = 24): number[] {
   return s;
 }
 
+// useCountUp animates an integer toward `target`; honors reduced motion.
+function useCountUp(target: number, durationMs = 600): number {
+  const [v, setV] = useState(target);
+  const prev = useRef(target);
+  useEffect(() => {
+    const from = prev.current;
+    prev.current = target;
+    const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (from === target || reduced || typeof requestAnimationFrame === 'undefined') {
+      setV(target);
+      return;
+    }
+    let raf = 0;
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      setV(countUpValue(from, target, now - t0, durationMs));
+      if (now - t0 < durationMs) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return v;
+}
+
+function CountValue({ value }: { value: number }) {
+  return <>{useCountUp(value)}</>;
+}
+
 export function Kpi({ label, value, sub, bad, series }: { label: string; value: ReactNode; sub?: ReactNode; bad?: boolean; series?: number[] }) {
   return (
     <div className={'kpi' + (bad ? ' bad' : '')}>
       <div className="label">{label}</div>
-      <div className="value">{value}</div>
+      <div className="value">{typeof value === 'number' ? <CountValue value={value} /> : value}</div>
       {sub && <div className="sub">{sub}</div>}
       {series && series.length > 1 && <Spark points={series} />}
     </div>

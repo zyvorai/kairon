@@ -484,6 +484,9 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 		"tokenEnabled": s.Token != "",
 		"ssoEnabled":   s.OIDC != nil,
 	}
+	if s.LoginHint != "" && s.userCount() > 0 {
+		resp["loginHint"] = s.LoginHint
+	}
 	if s.OIDC != nil {
 		resp["ssoLoginURL"] = "/api/v1/auth/oidc/login"
 	}

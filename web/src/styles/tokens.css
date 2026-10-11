@@ -20,13 +20,13 @@
   --radius-xs: 6px;
   --radius-sm: 10px;
   --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-lg: 18px;
   --radius-xl: 22px;
   --radius-pill: 980px;
 
   --gutter: clamp(16px, 3vw, 48px);
   --page-max: 1600px;
-  --nav-h: 48px;
+  --nav-h: 44px;
   --hit-min: 40px;
 
   --ease: cubic-bezier(0.28, 0.11, 0.32, 1);
@@ -45,11 +45,19 @@
   --tone-graphite: #8e8e93;
 }
 
+/* Zorvia-style accent tones: [data-tone] feeds heroes, chips and kickers. */
+[data-tone="sky"] { --tone-color: #0071e3; --tone-wash: rgba(0, 113, 227, 0.1); --tone-glow: rgba(0, 113, 227, 0.22); }
+[data-tone="violet"] { --tone-color: #7c3aed; --tone-wash: rgba(124, 58, 237, 0.1); --tone-glow: rgba(124, 58, 237, 0.2); }
+[data-tone="emerald"] { --tone-color: #248a3d; --tone-wash: rgba(36, 138, 61, 0.1); --tone-glow: rgba(36, 138, 61, 0.2); }
+[data-tone="amber"] { --tone-color: #bf7a00; --tone-wash: rgba(191, 122, 0, 0.1); --tone-glow: rgba(191, 122, 0, 0.2); }
+[data-tone="rose"] { --tone-color: #d70015; --tone-wash: rgba(215, 0, 21, 0.08); --tone-glow: rgba(215, 0, 21, 0.18); }
+[data-tone="orange"] { --tone-color: #ff5a15; --tone-wash: rgba(255, 90, 21, 0.1); --tone-glow: rgba(255, 90, 21, 0.2); }
+
 :root,
 :root[data-theme="light"],
 .force-light {
   color-scheme: light;
-  --bg-page: #ffffff;
+  --bg-page: #f5f5f7;
   --bg-sub: #f5f5f7;
   --bg-elevated: #ffffff;
   --bg-elevated-2: #f5f5f7;

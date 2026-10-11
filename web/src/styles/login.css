@@ -87,3 +87,52 @@ button.wide { width: 100%; min-height: 40px; }
   .loginsplit-left { min-height: 0; padding: 8px 8px 0; }
   .login-title br { display: none; }
 }
+
+/* Single-form sign-in: username and password visible together. */
+.siw.stacked .siw-field + .siw-field { margin-top: -1px; }
+.siw.stacked .siw-field:first-child input { border-radius: 12px 12px 0 0; }
+.siw.stacked .siw-field:last-child input { border-radius: 0 0 12px 12px; }
+.loginhint {
+  margin: 14px 0 0; text-align: center; font-size: 12px; color: var(--text-3);
+}
+
+/* ── zorvia-style two-chapter sign-in ───────────────────────────────── */
+.loginwrap { display: block; padding: 0; background: var(--bg-sub); }
+.login-scroll { height: 100vh; overflow-y: auto; scroll-snap-type: y proximity; scroll-behavior: smooth; }
+.login-chapter { min-height: 100vh; display: grid; place-items: center; padding: 48px 24px; scroll-snap-align: start; position: relative; }
+.login-chapter-inner { width: min(560px, 100%); text-align: center; position: relative; }
+.login-hero { background: #fff; }
+.login-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(700px 420px at 50% 28%, var(--tone-glow, rgba(0, 113, 227, 0.2)), transparent 70%);
+  animation: heroDrift 22s ease-in-out infinite alternate;
+}
+.login-signin { background: #f5f5f7; }
+.login-lockup { display: inline-flex; align-items: center; gap: 10px; font-size: 18px; color: var(--text-2); }
+.login-lockup b { color: var(--text); font-weight: 700; }
+.login-chips { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 18px; }
+.login-chips .chip { font-size: 12px; padding: 4px 10px; border-radius: 980px; background: var(--fill); color: var(--text-2); font-family: var(--font-mono); }
+.login-hero .login-title { font-size: clamp(2.6rem, 8vw, 4.6rem); font-weight: 600; letter-spacing: -0.045em; line-height: 1.04; text-wrap: balance; margin-top: 28px; }
+.login-hero .loginbrand-tagline { margin: 16px auto 0; font-size: 18px; max-width: 460px; }
+.login-pills { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 24px; }
+.login-pills span { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 980px; color: var(--tone-color); background: var(--tone-wash); }
+.login-ctas { display: flex; gap: 12px; justify-content: center; margin-top: 32px; align-items: center; }
+.login-ctas .primary { min-height: 44px; padding: 0 28px; border-radius: 980px; }
+.login-cta-secondary { min-height: 44px; display: inline-flex; align-items: center; padding: 0 24px; border-radius: 980px; border: 1px solid var(--blue); color: var(--blue); text-decoration: none; }
+.login-form-heading { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; letter-spacing: -0.03em; margin-bottom: 20px; }
+.login-signin .logincard { margin: 0 auto; text-align: left; border-radius: 20px; box-shadow: var(--shadow-2); }
+.login-signin .loginhint { margin: 18px auto 0; max-width: 380px; }
+.login-identity { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; margin-bottom: 14px; border-radius: 980px; background: var(--fill); font-size: 13px; color: var(--text); }
+.siw-eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; color: var(--text-3); background: transparent; display: grid; place-items: center; }
+.login-remember { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.shake { animation: loginShake 0.4s var(--ease); }
+@keyframes loginShake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+.login-signin .loginhost { margin-top: 24px; }
+.loginwrap > .loginhost { text-align: center; padding: 10px 0 16px; background: #f5f5f7; margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .login-scroll { scroll-behavior: auto; scroll-snap-type: none; }
+  .login-hero::before, .shake { animation: none; }
+}
+.loginwrap { width: 100%; }
+.login-scroll { width: 100%; max-width: none; margin: 0; padding: 0; }
+.login-chapter { width: 100%; box-sizing: border-box; }

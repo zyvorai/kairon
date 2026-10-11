@@ -1,36 +1,79 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { AuthConfig, getAuthConfig, login, setToken } from '../api';
 
 type Step = 'username' | 'password';
+const SAVED_USER = 'kairon_saved_user';
 
-function Avatar({ user }: { user: string }) {
-  return <div className="loginavatar">{user.charAt(0).toUpperCase() || '?'}</div>;
+function savedUser(): string {
+  try {
+    return localStorage.getItem(SAVED_USER) || '';
+  } catch {
+    return '';
+  }
 }
 
-function LoginChrome({ children }: { children: React.ReactNode }) {
+function remember(user: string | null) {
+  try {
+    if (user) localStorage.setItem(SAVED_USER, user);
+    else localStorage.removeItem(SAVED_USER);
+  } catch {
+    /* private mode */
+  }
+}
+
+// Two chapters like zorvia's sign-in: a hero, then the credentials card.
+function LoginChrome({ children, hint }: { children: React.ReactNode; hint?: string }) {
+  const card = useRef<HTMLElement>(null);
   return (
     <div className="loginwrap force-light">
-      <div className="loginsplit">
-        <div className="loginsplit-left">
-          <div className="loginorb" aria-hidden />
-          <div className="loginbrand">
-            <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={40} height={40} />
-            <p className="login-kicker">Kairon &middot; Zyvor</p>
+      <main className="login-scroll">
+        <section className="login-chapter login-hero" data-tone="sky">
+          <div className="login-chapter-inner">
+            <div className="login-lockup">
+              <img src="/zyvor-favicon.svg" alt="Zyvor" width={34} height={34} />
+              <span><b>Zyvor</b> Kairon</span>
+            </div>
+            <div className="login-chips">
+              <span className="chip">{window.location.hostname}</span>
+              <span className="chip">Kubernetes</span>
+              <span className="chip">FluxVM</span>
+            </div>
             <h1 className="login-title">Real VMs.<br />One console.</h1>
             <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+            <div className="login-pills">
+              <span data-tone="sky">Machines</span>
+              <span data-tone="violet">Migrations</span>
+              <span data-tone="emerald">Snapshots</span>
+              <span data-tone="orange">Fleet</span>
+            </div>
+            <div className="login-ctas">
+              <button type="button" className="primary" onClick={() => {
+                  card.current?.scrollIntoView({ behavior: 'smooth' });
+                  card.current?.querySelector('input')?.focus({ preventScroll: true });
+                }}>
+                Sign in
+              </button>
+              <a className="login-cta-secondary" href="https://zyvor.dev" target="_blank" rel="noopener noreferrer">
+                Learn more
+              </a>
+            </div>
           </div>
-        </div>
-        <div className="loginsplit-right">
-          <div className="logincard">{children}</div>
-          <p className="loginhost">
-            Connecting to <code>{window.location.host}</code>
-          </p>
-        </div>
-      </div>
+        </section>
+        <section ref={card} id="login-sign-in" className="login-chapter login-signin" aria-label="Credentials">
+          <div className="login-chapter-inner">
+            <p className="login-form-heading">Sign in to Kairon</p>
+            <div className="logincard">{children}</div>
+            {hint && <p className="loginhint">{hint}</p>}
+          </div>
+        </section>
+      </main>
+      <p className="loginhost">
+        &copy; 2026 Zyvor &middot; <a href="https://zyvor.dev" target="_blank" rel="noopener noreferrer">zyvor.dev</a>
+      </p>
     </div>
   );
 }
@@ -42,6 +85,7 @@ function Field({
   type = 'text',
   autoFocus,
   autoComplete,
+  right,
 }: {
   label: string;
   value: string;
@@ -49,6 +93,7 @@ function Field({
   type?: string;
   autoFocus?: boolean;
   autoComplete?: string;
+  right?: React.ReactNode;
 }) {
   return (
     <label className={'siw-field' + (value ? ' filled' : '')}>
@@ -62,33 +107,30 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
       />
       <span>{label}</span>
+      {right}
     </label>
   );
 }
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [step, setStep] = useState<Step>('username');
-  const [user, setUser] = useState('');
+  const [user, setUser] = useState(savedUser());
+  const [step, setStep] = useState<Step>(user ? 'password' : 'username');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [rememberMe, setRememberMe] = useState(!!user);
   const [rawToken, setRawToken] = useState('');
   const [useTokenForm, setUseTokenForm] = useState(false);
   const [msg, setMsg] = useState('');
+  const [shake, setShake] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getAuthConfig()
       .then(setConfig)
-      // A server old enough to not have /api/v1/auth/config yet, or one
-      // that's unreachable, both fall back to the legacy raw-token box.
+      // An old or unreachable server falls back to the raw-token box.
       .catch(() => setConfig({ loginEnabled: false, tokenEnabled: true }));
   }, []);
-
-  function continueToPassword(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg('');
-    setStep('password');
-  }
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -96,10 +138,12 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     setMsg('');
     try {
       await login(user, password);
+      remember(rememberMe ? user : null);
       onSignedIn();
     } catch (err) {
       setPassword('');
       setMsg(String(err));
+      setShake((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -119,10 +163,6 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     );
   }
 
-  // SSO is offered alongside whichever other method(s) are configured
-  // below, not instead of them -- a deployment can run ui.auth.users and
-  // OIDC/SSO at once (see internal/uiapi/oidc.go), e.g. while migrating
-  // operators from named accounts to a real identity provider.
   const sso = config.ssoEnabled && config.ssoLoginURL && (
     <div className="loginstep">
       <button type="button" className="primary wide" onClick={() => (window.location.href = config.ssoLoginURL!)}>
@@ -138,7 +178,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
         <Field label="API token" type="password" autoFocus value={rawToken} onChange={setRawToken} autoComplete="off" />
       </div>
       <div className="formactions">
-        <button className="primary wide" type="submit" disabled={!rawToken && !config.tokenEnabled}>
+        <button className="primary wide" type="submit" disabled={!rawToken}>
           Continue
         </button>
       </div>
@@ -146,25 +186,18 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   );
 
   if (!config.loginEnabled) {
-    if (!config.tokenEnabled) {
-      return (
-        <LoginChrome>
-          {sso}
-          {!sso && <p className="logincopy">No login method is configured on this server.</p>}
-        </LoginChrome>
-      );
-    }
     return (
       <LoginChrome>
         {sso}
-        {sso && <p className="loginor">or</p>}
-        {tokenForm}
+        {!config.tokenEnabled && !sso && <p className="logincopy">No login method is configured on this server.</p>}
+        {config.tokenEnabled && sso && <p className="loginor">or</p>}
+        {config.tokenEnabled && tokenForm}
       </LoginChrome>
     );
   }
 
   return (
-    <LoginChrome>
+    <LoginChrome hint={config.loginHint}>
       {sso}
       {sso && <p className="loginor">or</p>}
       {useTokenForm ? (
@@ -178,12 +211,20 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
         </>
       ) : step === 'username' ? (
         <div key="username" className="loginstep">
-          <form onSubmit={continueToPassword}>
-            <h3>Sign in to Kairon.</h3>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setMsg('');
+              setStep('password');
+            }}
+          >
+            <h3>Sign in with your account.</h3>
             <div className="siw">
-              <Field label="Username" autoFocus autoComplete="username" value={user} onChange={setUser} />
-              <button className="siw-go" type="submit" disabled={!user} aria-label="Continue">
-                <ArrowRight size={16} />
+              <Field label="Username" autoComplete="username" value={user} onChange={setUser} />
+            </div>
+            <div className="formactions">
+              <button className="primary wide" type="submit" disabled={!user}>
+                Continue
               </button>
             </div>
           </form>
@@ -197,28 +238,40 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
         </div>
       ) : (
         <div key="password" className="loginstep">
-          <form onSubmit={signIn}>
-            <h3 className="loginwho">
-              <Avatar user={user} />
-              <span>
-                Hi, {user}.{' '}
-                <button type="button" className="linklike" onClick={() => setStep('username')}>
-                  Not you?
-                </button>
-              </span>
-            </h3>
+          <form onSubmit={signIn} key={shake} className={shake ? 'shake' : undefined}>
+            <button type="button" className="login-identity" onClick={() => setStep('username')} aria-label="Change account">
+              <ArrowLeft size={14} /> {user}
+            </button>
+            <h3>Enter your password.</h3>
             <div className="siw">
-              <Field label="Password" type="password" autoFocus autoComplete="current-password" value={password} onChange={setPassword} />
-              <button className="siw-go" type="submit" disabled={busy || !password} aria-label="Sign in">
-                {busy ? <Loader2 size={16} className="spin" /> : <ArrowRight size={16} />}
-              </button>
+              <Field
+                label="Password"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={setPassword}
+                right={
+                  <button type="button" className="siw-eye" aria-label={showPw ? 'Hide password' : 'Show password'} onClick={() => setShowPw((v) => !v)}>
+                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                }
+              />
             </div>
+            <label className="login-remember">
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+              <span>Remember me on this device</span>
+            </label>
             {msg && (
               <div className="loginerror" role="alert">
                 <AlertCircle size={16} />
                 <span>{msg}</span>
               </div>
             )}
+            <div className="formactions">
+              <button className="primary wide" type="submit" disabled={busy || !password}>
+                {busy ? <Loader2 size={16} className="spin" /> : 'Sign in'}
+              </button>
+            </div>
           </form>
         </div>
       )}

@@ -55,6 +55,10 @@ type Server struct {
 	// SessionSecret signs/verifies session tokens issued by
 	// POST /api/v1/auth/login. Required whenever Users is non-empty.
 	SessionSecret []byte
+
+	// LoginHint is optional free text shown under the sign-in form (lab
+	// installs use it to advertise the well-known default login).
+	LoginHint string
 	// UsersSecretNamespace/UsersSecretName/UsersSecretKey tell
 	// persistUsers (auth.go) which Kubernetes Secret to write an updated
 	// Users list back into after a password change, so it survives a pod
