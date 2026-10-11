@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	chartpkg "helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/release"
@@ -411,5 +412,142 @@ func TestConnectivityProbes(t *testing.T) {
 	out, err = runRoot(t, "connectivity", "test")
 	if err == nil || !strings.Contains(out, "kairon-node-2") || !strings.Contains(out, "/readyz") {
 		t.Fatalf("a failing probe must fail the test: %v\n%s", err, out)
+	}
+}
+
+// lifecycleCluster is a fake API where a created Machine walks through
+// phases and honours deletion.
+type lifecycleCluster struct {
+	phases    []string // phase returned on successive GETs (last one sticks)
+	createErr bool
+	created   *model_machine
+	gets      int
+	deleted   bool
+	delGone   int // GETs that still succeed after DELETE before 404
+}
+
+type model_machine struct {
+	Metadata struct {
+		Name      string            `json:"name"`
+		Namespace string            `json:"namespace"`
+		Labels    map[string]string `json:"labels"`
+	} `json:"metadata"`
+	Spec struct {
+		Image struct {
+			Path string `json:"path"`
+		} `json:"image"`
+		TTLSeconds int64 `json:"ttlSeconds"`
+	} `json:"spec"`
+}
+
+func (c *lifecycleCluster) start(t *testing.T) {
+	t.Helper()
+	machinePollInterval = time.Millisecond
+	t.Cleanup(func() { machinePollInterval = 2 * time.Second })
+	base := "/apis/kairon.zyvor.dev/v1/namespaces/default/machines"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodPost && p == base:
+			if c.createErr {
+				http.Error(w, `{"message":"quota exceeded"}`, http.StatusForbidden)
+				return
+			}
+			var m model_machine
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			c.created = &m
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"metadata":{"name":"`+m.Metadata.Name+`"}}`)
+		case r.Method == http.MethodGet && c.created != nil && p == base+"/"+c.created.Metadata.Name:
+			if c.deleted {
+				if c.delGone <= 0 {
+					http.NotFound(w, r)
+					return
+				}
+				c.delGone--
+			}
+			i := c.gets
+			if i >= len(c.phases) {
+				i = len(c.phases) - 1
+			}
+			c.gets++
+			_, _ = io.WriteString(w, `{"metadata":{"name":"`+c.created.Metadata.Name+`"},"status":{"phase":"`+c.phases[i]+`","nodeName":"n1","guestIP":"10.0.0.9"}}`)
+		case r.Method == http.MethodDelete && c.created != nil && p == base+"/"+c.created.Metadata.Name:
+			c.deleted = true
+			_, _ = io.WriteString(w, `{}`)
+		case p == "/apis/kairon.zyvor.dev/v1/machines":
+			_, _ = io.WriteString(w, `{"items":[]}`)
+		default:
+			// Control-plane probes: report no pods so only the lifecycle check runs.
+			if p == "/api/v1/namespaces/kairon-system/pods" {
+				_, _ = io.WriteString(w, `{"items":[]}`)
+				return
+			}
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	clearKubeEnv(t)
+	t.Setenv("KAIRON_KUBE_URL", srv.URL)
+}
+
+func TestConnectivityMachineLifecycle(t *testing.T) {
+	c := &lifecycleCluster{phases: []string{"Pending", "Pending", "Running"}, delGone: 2}
+	c.start(t)
+	out, err := runRoot(t, "connectivity", "test", "--machine", "--image", "/images/test.qcow2", "--machine-timeout", "10s")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"Machine create", "Machine running", "Running after", "node n1", "guest IP 10.0.0.9", "Machine cleanup", "deleted"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if c.created == nil || !strings.HasPrefix(c.created.Metadata.Name, "kairon-connectivity-") ||
+		c.created.Metadata.Labels[connectivityLabel] != "true" || c.created.Spec.Image.Path != "/images/test.qcow2" || c.created.Spec.TTLSeconds <= 0 {
+		t.Fatalf("created machine: %+v", c.created)
+	}
+	if !c.deleted {
+		t.Fatal("test Machine was not deleted")
+	}
+}
+
+func TestConnectivityMachineFailureStillCleansUp(t *testing.T) {
+	c := &lifecycleCluster{phases: []string{"Pending", "Failed"}}
+	c.start(t)
+	out, err := runRoot(t, "connectivity", "test", "--machine", "--image", "/i", "--machine-timeout", "10s")
+	if err == nil || !strings.Contains(out, "phase Failed") {
+		t.Fatalf("failed Machine must fail the test: %v\n%s", err, out)
+	}
+	if !c.deleted || !strings.Contains(out, "deleted") {
+		t.Fatalf("failed Machine must still be deleted:\n%s", out)
+	}
+}
+
+func TestConnectivityMachineTimeout(t *testing.T) {
+	c := &lifecycleCluster{phases: []string{"Pending"}}
+	c.start(t)
+	out, err := runRoot(t, "connectivity", "test", "--machine", "--image", "/i", "--machine-timeout", "50ms")
+	if err == nil || !strings.Contains(out, "not Running after") || !c.deleted {
+		t.Fatalf("timeout: %v deleted=%v\n%s", err, c.deleted, out)
+	}
+}
+
+func TestConnectivityMachineCreateRejectedAndKeep(t *testing.T) {
+	c := &lifecycleCluster{phases: []string{"Running"}, createErr: true}
+	c.start(t)
+	out, err := runRoot(t, "connectivity", "test", "--machine", "--image", "/i")
+	if err == nil || !strings.Contains(out, "Machine create") || !strings.Contains(out, "quota") {
+		t.Fatalf("rejected create: %v\n%s", err, out)
+	}
+
+	k := &lifecycleCluster{phases: []string{"Running"}}
+	k.start(t)
+	out, err = runRoot(t, "connectivity", "test", "--machine", "--image", "/i", "--keep")
+	if err != nil || k.deleted || !strings.Contains(out, "--keep") {
+		t.Fatalf("--keep: %v deleted=%v\n%s", err, k.deleted, out)
+	}
+	if _, err := runRoot(t, "connectivity", "test", "--machine"); err == nil || !strings.Contains(err.Error(), "--image") {
+		t.Fatalf("--machine without --image must be rejected, got %v", err)
 	}
 }
