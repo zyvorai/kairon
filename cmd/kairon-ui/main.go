@@ -49,7 +49,10 @@ func run() int {
 	if len(os.Args) >= 2 && os.Args[1] == "-hash-password" {
 		return hashPassword(os.Args[2:])
 	}
-	listenAddr := flag.String("listen", env("KAIRON_UI_LISTEN", ":8082"), "HTTP listen address (serves both /api/v1/... and the built web UI)")
+	atlasURL := flag.String("atlas-url", os.Getenv("KAIRON_UI_ATLAS_URL"), "Zyvor Atlas storage gateway base URL (e.g. http://atlas.atlas-system:5110); enables the read-only Storage views. Empty disables them")
+	atlasTokenFile := flag.String("atlas-token-file", os.Getenv("KAIRON_UI_ATLAS_TOKEN_FILE"), "file holding the Atlas bearer token (falls back to KAIRON_UI_ATLAS_TOKEN)")
+	atlasConsoleURL := flag.String("atlas-console-url", os.Getenv("KAIRON_UI_ATLAS_CONSOLE_URL"), "optional browser URL of the Atlas console, shown as an \"Open in Atlas\" link")
+	listenAddr := flag.String("listen", env("KAIRON_UI_LISTEN", ":18082"), "HTTP listen address (serves both /api/v1/... and the built web UI)")
 	webDir := flag.String("web-dir", env("KAIRON_UI_WEB_DIR", ""), "directory containing the built web/dist SPA; empty serves API-only")
 	token := flag.String("token", os.Getenv("KAIRON_UI_TOKEN"), "static bearer token required on every /api/v1/... request (default: $KAIRON_UI_TOKEN)")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", env("KAIRON_UI_ALLOW_UNAUTHENTICATED", "false") == "true", "start without a token -- local development only, refused by default")
@@ -59,7 +62,7 @@ func run() int {
 	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", env("KAIRON_UI_TRUSTED_PROXY_CIDRS", ""), "comma-separated CIDRs (e.g. your Ingress/load-balancer's pod or node network) that -trusted-proxy-header is ever trusted from; required alongside it, otherwise any direct client could spoof that header")
 	namespaceScopingEnabled := flag.Bool("namespace-scoping-enabled", env("KAIRON_UI_NAMESPACE_SCOPING_ENABLED", "false") == "true", "restrict each non-admin session-token operator to the namespaces listed in their own ui.auth.users[].namespaces entry or reachable via ui.oidc.namespaceGroups; false (the default) is today's unchanged behavior -- every authenticated operator sees and acts on every namespace")
 	imageStoreDir := flag.String("image-store-dir", env("KAIRON_UI_IMAGE_STORE_DIR", ""), "directory for images uploaded with kaironctl image upload; empty disables the image store")
-	imageStorePublicURL := flag.String("image-store-public-url", env("KAIRON_UI_IMAGE_STORE_PUBLIC_URL", ""), "base URL kairon-node downloads uploaded images from (e.g. http://kairon-ui.kairon-system.svc:8082); empty uses the upload request's host")
+	imageStorePublicURL := flag.String("image-store-public-url", env("KAIRON_UI_IMAGE_STORE_PUBLIC_URL", ""), "base URL kairon-node downloads uploaded images from (e.g. http://kairon-ui.kairon-system.svc:18082); empty uses the upload request's host")
 	imageStoreMaxBytes := flag.Int64("image-store-max-bytes", envInt64("KAIRON_UI_IMAGE_STORE_MAX_BYTES", 64<<30), "largest accepted upload in bytes (0 = unlimited)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
@@ -69,6 +72,15 @@ func run() int {
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	atlasToken := os.Getenv("KAIRON_UI_ATLAS_TOKEN")
+	if *atlasTokenFile != "" {
+		b, err := os.ReadFile(*atlasTokenFile)
+		if err != nil {
+			log.Error("read -atlas-token-file", "error", err)
+			os.Exit(1)
+		}
+		atlasToken = strings.TrimSpace(string(b))
+	}
 
 	users, err := loadUsers(os.Getenv("KAIRON_UI_USERS_JSON"), os.Getenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD"))
 	if err != nil {
@@ -177,12 +189,17 @@ func run() int {
 	}
 
 	srv := &uiapi.Server{
-		Kube:          kc,
-		Log:           log,
-		Token:         *token,
-		WebDir:        *webDir,
-		Users:         users,
-		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		Kube:            kc,
+		Log:             log,
+		Token:           *token,
+		WebDir:          *webDir,
+		Users:           users,
+		SessionSecret:   []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		LoginHint:       loginHint(),
+		AtlasURL:        *atlasURL,
+		AtlasToken:      atlasToken,
+		AtlasConsoleURL: *atlasConsoleURL,
+		Version:         version,
 		// UsersSecretName empty (the default) means POST
 		// /api/v1/auth/password and POST /api/v1/users/{username}/password
 		// are refused -- set only when the Helm chart owns the
@@ -410,4 +427,17 @@ func hashPassword(args []string) int {
 	}
 	fmt.Println(string(hash))
 	return 0
+}
+
+// loginHint is the text shown under the dashboard sign-in form. An explicit
+// KAIRON_UI_LOGIN_HINT wins; otherwise the well-known lab default is
+// advertised only while the admin password is still that exact value.
+func loginHint() string {
+	if h := strings.TrimSpace(os.Getenv("KAIRON_UI_LOGIN_HINT")); h != "" {
+		return h
+	}
+	if os.Getenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD") == "Admin@321" {
+		return "Lab default login: admin / Admin@321 \u2014 change it before exposing this dashboard."
+	}
+	return ""
 }

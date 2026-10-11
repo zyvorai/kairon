@@ -802,6 +802,13 @@ func (c *Client) deleteIdempotent(ctx context.Context, path, route, resourceID s
 		return nil
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	// Some FluxVM builds answer DELETE of an already-removed VM with
+	// HTTP 400 {"error":"VM not found"} instead of 404. Deletion is
+	// idempotent, so treat that as success; otherwise the Machine
+	// finalizer is never released.
+	if resp.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(string(data)), "not found") {
+		return nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("fluxvm DELETE %s/%s: HTTP %d: %s", route, resourceID, resp.StatusCode, strings.TrimSpace(string(data)))
 	}

@@ -163,7 +163,7 @@ Then reference it from a Machine exactly as any other PVC-backed boot
 disk:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: db}
 spec:

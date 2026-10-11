@@ -37,12 +37,12 @@ spec:
         - name: ui
           image: ghcr.io/zyvorai/kairon-ui:latest
           imagePullPolicy: IfNotPresent
-          args: ["-listen=:8082"]
+          args: ["-listen=:18082"]
           env:
             - name: KAIRON_UI_TOKEN
               valueFrom: {secretKeyRef: {name: kairon-ui-token, key: token}}
           ports:
-            - {name: http, containerPort: 8082}
+            - {name: http, containerPort: 18082}
           readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5}
           livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10}
           securityContext:
@@ -63,4 +63,4 @@ spec:
   type: ClusterIP
   selector: {app.kubernetes.io/name: kairon-ui}
   ports:
-    - {name: http, port: 8082, targetPort: http}
+    - {name: http, port: 18082, targetPort: http}

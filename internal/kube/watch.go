@@ -24,12 +24,12 @@ type WatchEvent struct {
 // by labelSelector. It streams events until ctx is cancelled or the server
 // closes the connection. resourceVersion may be empty (start from now).
 func (c *Client) WatchMachines(ctx context.Context, labelSelector, resourceVersion string, out chan<- WatchEvent) error {
-	return c.watch(ctx, "/apis/kairon.zyvor.dev/v1alpha1/machines", labelSelector, resourceVersion, out)
+	return c.watch(ctx, "/apis/kairon.zyvor.dev/v1/machines", labelSelector, resourceVersion, out)
 }
 
 // WatchMachineMigrations opens a cluster-scoped MachineMigrations watch.
 func (c *Client) WatchMachineMigrations(ctx context.Context, labelSelector, resourceVersion string, out chan<- WatchEvent) error {
-	return c.watch(ctx, "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations", labelSelector, resourceVersion, out)
+	return c.watch(ctx, "/apis/kairon.zyvor.dev/v1/machinemigrations", labelSelector, resourceVersion, out)
 }
 
 func (c *Client) watch(ctx context.Context, basePath, labelSelector, resourceVersion string, out chan<- WatchEvent) error {

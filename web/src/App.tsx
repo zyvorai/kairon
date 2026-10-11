@@ -1,8 +1,13 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react';
-import Nav, { Page } from './components/Nav';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import GlobalNav from './components/GlobalNav';
+import CommandPalette, { pageEntries, PaletteEntry } from './components/CommandPalette';
+import { ToastProvider } from './components/Toast';
+import { formatHash, parseHash } from './lib/route';
+import { Page } from './lib/nav';
+import { applyTheme, storedTheme } from './lib/theme';
 import Overview from './pages/Overview';
 import Fleet from './pages/Fleet';
 import Machines from './pages/Machines';
@@ -22,13 +27,24 @@ import Account from './pages/Account';
 import Assistant from './pages/Assistant';
 import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
-import { logout, token, UNAUTHORIZED_EVENT, username } from './api';
+import { api, logout, token, UNAUTHORIZED_EVENT, username } from './api';
+import { Machine } from './types';
+import Storage from './pages/Storage';
+import Pools from './pages/Pools';
+import Images from './pages/Images';
+import Backups from './pages/Backups';
+import { PageHero } from './components/ui';
+import { groupOf, NAV, NavItem } from './lib/nav';
 
 export default function App() {
-  const [page, setPage] = useState<Page>('overview');
+  const initial = parseHash(window.location.hash);
+  const [page, setPageState] = useState<Page>(initial.page);
   const [signedIn, setSignedIn] = useState(!!token());
   const [prefillMachine, setPrefillMachine] = useState('');
   const [prefillSnapshot, setPrefillSnapshot] = useState('');
+  const [palette, setPalette] = useState(false);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [health, setHealth] = useState<'ok' | 'bad' | 'unknown'>('unknown');
   // No client-side router elsewhere in this app -- this one path is the
   // sole exception, since the OIDC callback (see internal/uiapi/oidc.go)
   // has to land somewhere real rather than at whatever page the operator
@@ -41,6 +57,22 @@ export default function App() {
   // forever until a manual reload.
   const [onOIDCCallback, setOnOIDCCallback] = useState(() => window.location.pathname === '/oidc/callback');
 
+  useEffect(() => applyTheme(storedTheme()), []);
+
+  // Hash routing: keep `page` and location.hash in sync both ways so the
+  // back button and shared links work.
+  const setPage = useCallback((p: Page) => {
+    setPageState(p);
+    const h = formatHash({ page: p });
+    if (window.location.hash !== h) window.location.hash = h;
+    window.scrollTo({ top: 0 });
+  }, []);
+  useEffect(() => {
+    const onHash = () => setPageState(parseHash(window.location.hash).page);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   useEffect(() => {
     // Fired by api.ts on any 401, from anywhere in the app -- a stale or
     // revoked session bounces straight back to the login screen instead of
@@ -49,6 +81,68 @@ export default function App() {
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
+
+  // Control-plane heartbeat (nav dot) + machine list for the palette.
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    const tick = () => {
+      api('/api/v1/overview')
+        .then(() => !cancelled && setHealth('ok'))
+        .catch(() => !cancelled && setHealth('bad'));
+      api<Machine[]>('/api/v1/machines')
+        .then((m) => !cancelled && setMachines(m))
+        .catch(() => {});
+    };
+    tick();
+    const t = setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [signedIn]);
+
+  // Global shortcuts: ⌘/Ctrl+K or "/" palette, ⌘/Ctrl+J assistant, Esc closes.
+  useEffect(() => {
+    if (!signedIn) return;
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName) || (e.target as HTMLElement)?.isContentEditable;
+      if (mod && e.key.toLowerCase() === 'k') (e.preventDefault(), setPalette((p) => !p));
+      else if (mod && e.key.toLowerCase() === 'j') (e.preventDefault(), setPage('assistant'));
+      else if (e.key === '/' && !typing && !mod) (e.preventDefault(), setPalette(true));
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [signedIn, setPage]);
+
+  const entries = useMemo<PaletteEntry[]>(() => {
+    const pages = pageEntries(setPage);
+    const ms = machines.map<PaletteEntry>((m) => ({
+      key: 'machine:' + m.metadata.namespace + '/' + m.metadata.name,
+      group: 'Machines',
+      label: m.metadata.name,
+      hint: m.status?.phase ?? 'Unknown',
+      tone: 'violet',
+      run: () => {
+        window.location.hash = formatHash({ page: 'machines', target: `${m.metadata.namespace}/${m.metadata.name}` });
+      },
+    }));
+    const actions: PaletteEntry[] = [
+      {
+        key: 'action:new-machine',
+        group: 'Actions',
+        label: 'New machine',
+        hint: 'Create a VM',
+        tone: 'violet',
+        run: () => {
+          setPage('machines');
+          setTimeout(() => window.dispatchEvent(new Event('kairon:new-machine')), 60);
+        },
+      },
+    ];
+    return [...actions, ...pages, ...ms];
+  }, [machines, setPage]);
 
   function goMigrate(machine: string) {
     setPrefillMachine(machine);
@@ -100,23 +194,34 @@ export default function App() {
     'network-policies': <NetworkPolicies />,
     'security-groups': <SecurityGroups />,
     nodes: <Nodes />,
+    storage: <Storage />,
+    pools: <Pools />,
+    images: <Images />,
+    backups: <Backups />,
     assistant: <Assistant />,
     account: <Account />,
   }[page];
 
+  const group = groupOf(page);
+  const item = group && (group.items as readonly NavItem[]).find((i) => i.id === page);
+  const title = page === 'account' ? 'Account' : item?.label ?? 'Kairon';
+  const lede = page === 'account' ? 'Your session, password and sign-out.' : item?.blurb;
+  void NAV;
+
   return (
-    <>
-      <Nav page={page} setPage={setPage} username={username()} onSignOut={signOut} />
-      <main>
-        <header className="hero">
-          <div>
-            <p className="eyebrow">VM ORCHESTRATION · NO KUBEVIRT · NO LIBVIRT</p>
-            <h1>Run, migrate, and snapshot VMs on FluxVM.</h1>
-            <p>Kairon orchestrates FluxVM hosts as Kubernetes-native Machines, with secure peer live migration and operator-attested recovery.</p>
-          </div>
-        </header>
+    <ToastProvider>
+      <GlobalNav page={page} go={setPage} username={username()} health={health} onSearch={() => setPalette(true)} onSignOut={signOut} />
+      <main className="stage">
+        <PageHero
+          kicker={page === 'overview' ? 'VM orchestration · no KubeVirt · no libvirt' : group?.group ?? 'Account'}
+          title={page === 'overview' ? 'Run, migrate, and snapshot VMs on FluxVM.' : title}
+          lede={page === 'overview' ? 'Kairon orchestrates FluxVM hosts as Kubernetes-native Machines, with secure peer live migration and operator-attested recovery.' : lede}
+          glow={page === 'overview'}
+          tone={group?.tone}
+        />
         {body}
       </main>
-    </>
+      {palette && <CommandPalette entries={entries} onClose={() => setPalette(false)} />}
+    </ToastProvider>
   );
 }

@@ -220,3 +220,19 @@ func TestConsoleTLSConfigRejectsMissingOrInvalidFile(t *testing.T) {
 		t.Fatal("expected an error for a CA file with no real certificates")
 	}
 }
+
+func TestLoginHint(t *testing.T) {
+	t.Setenv("KAIRON_UI_LOGIN_HINT", "")
+	t.Setenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD", "something-else-123")
+	if got := loginHint(); got != "" {
+		t.Fatalf("custom password must not be advertised, got %q", got)
+	}
+	t.Setenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD", "Admin@321")
+	if got := loginHint(); !strings.Contains(got, "admin / Admin@321") {
+		t.Fatalf("default password should be advertised, got %q", got)
+	}
+	t.Setenv("KAIRON_UI_LOGIN_HINT", "Ask ops")
+	if got := loginHint(); got != "Ask ops" {
+		t.Fatalf("explicit hint wins, got %q", got)
+	}
+}

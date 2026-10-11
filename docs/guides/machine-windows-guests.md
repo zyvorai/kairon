@@ -29,7 +29,7 @@ image needs two things baked in *before* it ever reaches Kairon:
    exists or is needed specifically for Windows here.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: win-app-1

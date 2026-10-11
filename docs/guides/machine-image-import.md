@@ -19,7 +19,7 @@ set it still takes priority, exactly as it already does over
 `spec.image.path` -- see [`machine-storage.md`](machine-storage.md).
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web-1
@@ -176,7 +176,7 @@ kaironctl image upload ./noble-server-cloudimg-amd64.qcow2 --name ubuntu-24.04
 ```yaml
 image:
   source:
-    httpURL: http://kairon-ui.kairon-system.svc:8082/images/sha256/8f43...
+    httpURL: http://kairon-ui.kairon-system.svc:18082/images/sha256/8f43...
     format: qcow2
   digest: sha256:8f43...
 ```

@@ -1,7 +1,7 @@
 # Copyright 2026 Zyvor · https://zyvor.dev
 # SPDX-License-Identifier: Apache-2.0
 
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineInstanceType
 metadata:
   name: standard-2x4
@@ -11,7 +11,7 @@ spec:
     cpu: "2"
     memory: 4Gi
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web-1

@@ -140,7 +140,7 @@ def ssh_banner(ip, port):
 def kairon_manifest(ns, name, a):
     idx = int(name.rsplit("-", 1)[1])
     return {
-        "apiVersion": "kairon.zyvor.dev/v1alpha1", "kind": "Machine",
+        "apiVersion": "kairon.zyvor.dev/v1", "kind": "Machine",
         "metadata": {"name": name, "namespace": ns, "labels": {"bench": "kairon"}},
         "spec": {
             "image": {"path": a.image},
@@ -277,7 +277,7 @@ def migrate(a, name):
         # KubeVirt reports migration start/end, not guest downtime.
         return {"note": "KubeVirt does not report guest downtime"}
     mm = {
-        "apiVersion": "kairon.zyvor.dev/v1alpha1", "kind": "MachineMigration",
+        "apiVersion": "kairon.zyvor.dev/v1", "kind": "MachineMigration",
         "metadata": {"name": f"{name}-mig", "namespace": a.namespace},
         "spec": {"machineName": name, "targetNode": a.migrate_target, "strategy": "live"},
     }

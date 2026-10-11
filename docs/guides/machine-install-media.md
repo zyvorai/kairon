@@ -4,7 +4,7 @@ Boot a Machine from installer media onto an empty disk: Windows Setup, a
 Linux installer, or any appliance ISO. No KubeVirt, no CDI, no PVC upload.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: win-builder, namespace: images}
 spec:

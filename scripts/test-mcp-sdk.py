@@ -18,8 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-MACHINES = "/apis/kairon.zyvor.dev/v1alpha1/machines"
-WEB = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web"
+MACHINES = "/apis/kairon.zyvor.dev/v1/machines"
+WEB = "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web"
 PATCHES = []
 
 # Tools the calls below depend on; read-only mode may expose more, all marked readOnlyHint.

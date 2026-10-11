@@ -41,15 +41,15 @@ func TestReconcileSkipsStatusPatchWhenUnchanged(t *testing.T) {
 	var statusPatches int
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			mu.Lock()
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 			mu.Unlock()
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinenetworkpolicies":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinenetworkpolicies":
 			_ = json.NewEncoder(w).Encode(model.MachineNetworkPolicyList{})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/networksecuritygroups":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/networksecuritygroups":
 			_ = json.NewEncoder(w).Encode(model.NetworkSecurityGroupList{})
 		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/status"):
 			var p struct {

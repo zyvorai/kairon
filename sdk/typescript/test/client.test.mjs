@@ -47,7 +47,7 @@ test('creates with caller RBAC and never mutates input', async () => {
   const before = structuredClone(manifest);
   const created = await client.machines.create(manifest);
   assert.deepEqual(manifest, before);
-  assert.equal(calls[0].path, '/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines');
+  assert.equal(calls[0].path, '/apis/kairon.zyvor.dev/v1/namespaces/default/machines');
   assert.equal(calls[0].headers.authorization, 'Bearer kube-secret');
   assert.equal(created.metadata.uid, 'uid-a');
 });

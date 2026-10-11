@@ -20,7 +20,7 @@ kaironctl get machines
 `spec.image.digest` and reads vCPUs and memory from the OVF. It creates:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web01

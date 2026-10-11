@@ -9,7 +9,7 @@ VERSION ?= $(shell cat VERSION)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 COVERAGE_THRESHOLD ?= 50
 
-.PHONY: all fmt fmt-check vet lint test test-race cover cover-check build clean validate rbac-coverage helm-check docker-build smoke krew-package stdlib-boundary license-headers
+.PHONY: rbac-bundle all fmt fmt-check vet lint test test-race cover cover-check build clean validate rbac-coverage helm-check docker-build smoke krew-package stdlib-boundary license-headers
 all: fmt-check vet lint test-race cover-check build validate rbac-coverage helm-check smoke stdlib-boundary
 
 stdlib-boundary:
@@ -81,7 +81,11 @@ crds:
 rbac-coverage:
 	python3 scripts/check_rbac_coverage.py
 
+rbac-bundle:
+	python3 scripts/gen-rbac-bundle.py
+
 helm-check:
+	python3 scripts/gen-rbac-bundle.py --check
 	helm lint charts/kairon
 	helm lint charts/kairon -f charts/kairon/values-production.yaml
 	helm template kairon charts/kairon --namespace kairon-system \

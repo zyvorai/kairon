@@ -165,7 +165,7 @@ func TestReconcileCreatesFluxVMFromPVCBackedVolume(t *testing.T) {
 
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/prod/persistentvolumeclaims/root-pvc":
 			_ = json.NewEncoder(w).Encode(pvc)

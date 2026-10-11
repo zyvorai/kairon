@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 CATALOG = Path(__file__).parent / "catalog"
-API = "kairon.zyvor.dev/v1alpha1"
+API = "kairon.zyvor.dev/v1"
 FLEET = "fleet.kairon.zyvor.dev/v1alpha1"
 
 

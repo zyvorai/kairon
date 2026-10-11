@@ -8,7 +8,7 @@ grows what the guest sees, one-way only).
 ## What this is
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: noisy-neighbor

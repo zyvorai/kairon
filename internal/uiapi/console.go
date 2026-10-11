@@ -255,9 +255,14 @@ func (s *Server) rbacAllowsConsole(ctx context.Context, m model.Machine, usernam
 // show a Machine's "Console" button at all, rather than showing it
 // unconditionally and only failing after a click.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{
+	resp := map[string]any{
 		"consoleEnabled": s.ConsoleToken != "" && s.ConsolePort != "",
-	})
+		"atlasEnabled":   s.atlasEnabled(),
+	}
+	if s.AtlasConsoleURL != "" {
+		resp["atlasConsoleURL"] = s.AtlasConsoleURL
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleConsole relays a browser WebSocket to the target Machine's console:

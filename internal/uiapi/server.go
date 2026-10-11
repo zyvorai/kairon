@@ -55,6 +55,23 @@ type Server struct {
 	// SessionSecret signs/verifies session tokens issued by
 	// POST /api/v1/auth/login. Required whenever Users is non-empty.
 	SessionSecret []byte
+
+	// AtlasURL/AtlasToken enable the read-only Zyvor Atlas storage views
+	// (see atlas.go). AtlasConsoleURL is an optional "Open in Atlas" link.
+	AtlasURL        string
+	AtlasToken      string
+	AtlasConsoleURL string
+
+	// Version is the build version shown (unauthenticated) on the sign-in
+	// page's stat band.
+	Version string
+
+	// apiRoutes is the number of /api/v1 routes registered by Handler.
+	apiRoutes int
+
+	// LoginHint is optional free text shown under the sign-in form (lab
+	// installs use it to advertise the well-known default login).
+	LoginHint string
 	// UsersSecretNamespace/UsersSecretName/UsersSecretKey tell
 	// persistUsers (auth.go) which Kubernetes Secret to write an updated
 	// Users list back into after a password change, so it survives a pod
@@ -206,7 +223,7 @@ func (s *Server) Handler() http.Handler {
 		top.Handle("GET /metrics", s.Metrics.Handler())
 	}
 
-	api := http.NewServeMux()
+	api := &routeMux{ServeMux: http.NewServeMux(), n: &s.apiRoutes}
 	// Overview filters every namespaced object using the caller's current grants.
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
 	api.HandleFunc("GET /api/v1/namespaces", s.handleNamespaces)
@@ -253,6 +270,10 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("DELETE /api/v1/restores/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteRestore))
 
 	api.HandleFunc("GET /api/v1/quotas", s.requireNamespace(namespaceParam, s.handleListQuotas))
+	api.HandleFunc("GET /api/v1/machinepools", s.requireNamespace(namespaceParam, s.handleListMachinePools))
+	api.HandleFunc("GET /api/v1/machineclaims", s.requireNamespace(namespaceParam, s.handleListMachineClaims))
+	api.HandleFunc("GET /api/v1/machinebackups", s.requireNamespace(namespaceParam, s.handleListMachineBackups))
+	api.HandleFunc("GET /api/v1/machinebackuprestores", s.requireNamespace(namespaceParam, s.handleListMachineBackupRestores))
 	api.HandleFunc("GET /api/v1/disruption-budgets", s.requireNamespace(namespaceParam, s.handleListBudgets))
 	api.HandleFunc("GET /api/v1/machinesets", s.requireNamespace(namespaceParam, s.handleListMachineSets))
 	api.HandleFunc("DELETE /api/v1/machinesets/{namespace}/{name}", s.requireNamespace(namespaceFromPath, s.handleDeleteMachineSet))
@@ -308,6 +329,7 @@ func (s *Server) Handler() http.Handler {
 	// GET /api/v1/config reports server-wide feature flags (e.g.
 	// consoleEnabled), not per-namespace state -- not namespace-scoped.
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
+	api.HandleFunc("GET /api/v1/atlas/{path...}", s.handleAtlas)
 
 	// Neither of these two is namespace-scoped: {username} is not
 	// {namespace}, and a password is a per-account credential, not a
@@ -474,13 +496,13 @@ func (s *Server) clientIP(r *http.Request) string {
 // top/api are passed through only to resolve the request's route label
 // (see routePattern) -- next is the already-composed rate-limit/mux
 // chain those two build, still what actually serves the request.
-func (s *Server) withMetrics(top, api *http.ServeMux, next http.Handler) http.Handler {
+func (s *Server) withMetrics(top *http.ServeMux, api *routeMux, next http.Handler) http.Handler {
 	if s.Metrics == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		route := routePattern(top, api, r)
+		route := routePattern(top, api.ServeMux, r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		s.Metrics.ObserveHTTPRequest(r.Method, route, rec.status, time.Since(start))
@@ -762,4 +784,16 @@ func resourceName(s string) string {
 		s = strings.TrimRight(s[:63], "-")
 	}
 	return s
+}
+
+// routeMux counts registrations so the sign-in page can honestly brag about
+// the API surface (see handleAuthConfig's stats) without a hand-kept number.
+type routeMux struct {
+	*http.ServeMux
+	n *int
+}
+
+func (m *routeMux) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	*m.n++
+	m.ServeMux.HandleFunc(pattern, h)
 }

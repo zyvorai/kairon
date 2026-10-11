@@ -26,7 +26,7 @@ func forkTestAgent(t *testing.T, parentNode string, existingChild bool) (*Agent,
 		Status:   model.MachineStatus{RuntimeID: "parent-id"},
 	}
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/agents/machines/base" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/agents/machines/base" {
 			_ = json.NewEncoder(w).Encode(parent)
 			return
 		}

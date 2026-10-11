@@ -6,7 +6,7 @@
 # file you serve. kairon-controller copies source and digest into any Machine
 # that references the image by `spec.image.imageRef`, once, before scheduling.
 # See docs/guides/machine-images.md.
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineImage
 metadata:
   name: ubuntu-24-04-v1
@@ -28,7 +28,7 @@ spec:
 # Install media: kind iso must be a raw httpURL (no oci, no conversion).
 # Attach it with `spec.cdroms: [{name: install, imageRef: ubuntu-24-04-server-iso}]`
 # on a Machine with `spec.image.blank: true`. See docs/guides/machine-install-media.md.
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineImage
 metadata:
   name: ubuntu-24-04-server-iso

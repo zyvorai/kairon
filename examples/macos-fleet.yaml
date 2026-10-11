@@ -7,7 +7,7 @@
 #   studio-1  Mac Studio, also serves models (kairon-node --mlx-url ...): gets a gateway VM next to the models
 #   mini-1    Mac mini: gets a small CI runner
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: inference-gateway
@@ -36,7 +36,7 @@ spec:
         operator: Exists
         effect: NoSchedule
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: ci-runner

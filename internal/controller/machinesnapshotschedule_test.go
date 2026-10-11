@@ -29,11 +29,11 @@ func TestReconcileMachineSnapshotSchedulesNotDueCreatesNothing(t *testing.T) {
 	var createCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
 				snapshotSchedule("hourly", time.Now(), 3600),
 			}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			createCalled = true
 			w.WriteHeader(http.StatusCreated)
 		default:
@@ -63,16 +63,16 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesOnePerMatch(t *testing.T) {
 	var patchedName string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
 				snapshotSchedule("hourly", time.Time{}, 3600), // never run -- immediately due
 			}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			created = append(created, s.Spec.MachineName)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			patchedName = "hourly"
 			var body map[string]model.MachineSnapshotScheduleStatus
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -138,11 +138,11 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesUniqueNamesPerMachine(t *tes
 	var createdNames []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
 				snapshotSchedule("hourly", time.Time{}, 3600), // never run -- immediately due
 			}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			if created[s.Metadata.Name] {
@@ -154,7 +154,7 @@ func TestReconcileMachineSnapshotSchedulesDueCreatesUniqueNamesPerMachine(t *tes
 			created[s.Metadata.Name] = true
 			createdNames = append(createdNames, s.Metadata.Name)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -196,14 +196,14 @@ func TestReconcileMachineSnapshotSchedulesSkipsWhenStartingDeadlineExceeded(t *t
 	var patched bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			sched := snapshotSchedule("hourly", time.Now().Add(-24*time.Hour), 60)
 			sched.Spec.StartingDeadlineSeconds = 300
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			createCalled = true
 			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			patched = true
 			var body map[string]model.MachineSnapshotScheduleStatus
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -254,17 +254,17 @@ func TestReconcileMachineSnapshotSchedulesFiresWithinStartingDeadline(t *testing
 	var created []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			// Due 30s ago (interval 60s, lastRun 90s ago), deadline 300s -- well within it.
 			sched := snapshotSchedule("hourly", time.Now().Add(-90*time.Second), 60)
 			sched.Spec.StartingDeadlineSeconds = 300
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			created = append(created, s.Spec.MachineName)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -292,11 +292,11 @@ func TestReconcileMachineSnapshotSchedulesZeroMatchesStillPatchesLastRunTime(t *
 	var status model.MachineSnapshotScheduleStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
 				snapshotSchedule("hourly", time.Time{}, 3600),
 			}})
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			patched = true
 			var body map[string]model.MachineSnapshotScheduleStatus
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -332,7 +332,7 @@ func TestReconcileMachineSnapshotSchedulesZeroMatchesStillPatchesLastRunTime(t *
 
 func TestReconcileMachineSnapshotSchedulesTolerantWhenCRDNotInstalled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules" {
+		if r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -355,13 +355,13 @@ func TestReconcileMachineSnapshotSchedulesCreateFailureIsLoggedNotFatal(t *testi
 	var patchedStatus model.MachineSnapshotScheduleStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{
 				snapshotSchedule("hourly", time.Time{}, 3600),
 			}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			http.Error(w, "boom", http.StatusInternalServerError)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			var body map[string]model.MachineSnapshotScheduleStatus
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			patchedStatus = body["status"]
@@ -429,20 +429,20 @@ func TestReconcileMachineSnapshotSchedulesPruningDeletesOnlyOldestReadyOwnSnapsh
 	var deleted []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			sched := snapshotSchedule("hourly", time.Time{}, 3600) // never run -- immediately due
 			sched.Spec.KeepLast = 1
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: existing})
-		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/hourly-1":
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/hourly-1":
 			deleted = append(deleted, "hourly-1")
 			w.WriteHeader(http.StatusOK)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -476,17 +476,17 @@ func TestReconcileMachineSnapshotSchedulesManualTriggerFiresRegardlessOfSuspend(
 	var patchedStatus model.MachineSnapshotScheduleStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			sched := snapshotSchedule("hourly", time.Now(), 3600) // just ran -- would NOT be due on its own
 			sched.Spec.Suspend = true                             // AND suspended -- would never be due at all
 			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			created = append(created, s.Spec.MachineName)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			var body map[string]model.MachineSnapshotScheduleStatus
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			patchedStatus = body["status"]
@@ -528,12 +528,12 @@ func TestReconcileMachineSnapshotSchedulesManualTriggerAlreadyHandledDoesNothing
 	var createCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			sched := snapshotSchedule("hourly", time.Now(), 3600) // not otherwise due
 			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
 			sched.Status.LastHandledTriggerTime = "2026-01-01T12:00:00Z" // this exact request was already handled
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			createCalled = true
 			w.WriteHeader(http.StatusCreated)
 		default:
@@ -565,17 +565,17 @@ func TestReconcileMachineSnapshotSchedulesManualTriggerBypassesStartingDeadline(
 	var created []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinesnapshotschedules":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinesnapshotschedules":
 			sched := snapshotSchedule("hourly", time.Now().Add(-24*time.Hour), 60) // very overdue
 			sched.Spec.StartingDeadlineSeconds = 300
 			sched.Metadata.Annotations = map[string]string{model.AnnotationSnapshotScheduleTriggerNow: "2026-01-01T12:00:00Z"}
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotScheduleList{Items: []model.MachineSnapshotSchedule{sched}})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			var s model.MachineSnapshot
 			_ = json.NewDecoder(r.Body).Decode(&s)
 			created = append(created, s.Spec.MachineName)
 			_ = json.NewEncoder(w).Encode(s)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotschedules/hourly/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotschedules/hourly/status":
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -602,7 +602,7 @@ func TestPruneScheduledSnapshotsNoOpBelowKeepLast(t *testing.T) {
 	var deleteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots":
 			_ = json.NewEncoder(w).Encode(model.MachineSnapshotList{Items: []model.MachineSnapshot{
 				{
 					Metadata: model.ObjectMeta{Name: "hourly-1", Namespace: "prod", Labels: map[string]string{model.SnapshotScheduleLabel: "hourly"}},

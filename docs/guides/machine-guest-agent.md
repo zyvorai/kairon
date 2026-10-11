@@ -14,7 +14,7 @@ though the guest genuinely has a real, working IP address.
 ## How to enable it
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web

@@ -168,7 +168,7 @@ kaironctl network capture demo --seconds 15 --output demo.pcap
 |---|---|---|
 | `kairon-controller` | `:32301` health, `:8443` webhook | Placement, migration state machine, fencing, snapshots, quotas and budgets |
 | `kairon-node` | `:32302` health, `:9443` mTLS peer, `:8090` console | Per-host agent: FluxVM lifecycle, eBPF policy, live-migration peer, edge Warning events, confidential-capability label |
-| `kairon-ui` | `:8082` | Optional dashboard: Machines, migrations, snapshots, Network panel, VNC console |
+| `kairon-ui` | `:18082` | Optional dashboard: Machines, migrations, snapshots, Network panel, VNC console |
 | `kaironctl` | — | CLI and `kubectl kairon` plugin, embedded Helm installer, MCP server |
 | FluxVM | `127.0.0.1:7788` | The VMM layer on each host: QEMU, Cloud Hypervisor, Firecracker, FluxVM |
 
@@ -249,7 +249,7 @@ kaironctl mcp serve                  # add --allow-write for power, snapshot, ca
 kaironctl agent diagnose machine/demo   # ranked causes; adds a model summary when KAIRON_LLM_URL is set
 
 # Dashboard
-kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
+kubectl -n kairon-system port-forward svc/kairon-ui 18082:18082
 ```
 
 ---

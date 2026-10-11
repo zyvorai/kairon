@@ -96,7 +96,7 @@ func buildClaim(a claimArgs, nsDefault string) (model.MachineClaim, error) {
 		ann[agentplane.AnnSnapshotOnRelease] = "true"
 	}
 	return model.MachineClaim{
-		TypeMeta: model.TypeMeta{APIVersion: "kairon.zyvor.dev/v1alpha1", Kind: "MachineClaim"},
+		TypeMeta: model.TypeMeta{APIVersion: "kairon.zyvor.dev/v1", Kind: "MachineClaim"},
 		Metadata: model.ObjectMeta{Name: a.Name, Namespace: ns, Labels: map[string]string{labelTenant: a.Tenant}, Annotations: ann},
 		Spec: model.MachineClaimSpec{
 			PoolName:      a.Pool,
@@ -266,7 +266,7 @@ func agentPlaneKubeTools(nsDefault string, withKube func(context.Context, time.D
 				if err != nil {
 					return "", err
 				}
-				pol.TypeMeta = model.TypeMeta{APIVersion: "kairon.zyvor.dev/v1alpha1", Kind: "MachineNetworkPolicy"}
+				pol.TypeMeta = model.TypeMeta{APIVersion: "kairon.zyvor.dev/v1", Kind: "MachineNetworkPolicy"}
 				return withKube(ctx, mcpCallTimeout, func(ctx context.Context, kc *kube.Client) (string, error) {
 					existing, err := kc.GetMachineNetworkPolicy(ctx, pol.Namespace(), pol.Metadata.Name)
 					switch {

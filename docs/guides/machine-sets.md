@@ -8,7 +8,7 @@ hand-creating each one and hand-tracking template drift yourself.
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSet
 metadata:
   name: web

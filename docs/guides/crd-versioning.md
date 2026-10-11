@@ -1,46 +1,49 @@
 # User guide: CRD versioning and the conversion webhook scaffold
 
-Every `kairon.zyvor.dev` CRD serves two versions with an identical schema:
+Every `kairon.zyvor.dev` CRD serves three versions with an identical schema:
 
-| Version | served | storage |
-| --- | --- | --- |
-| `v1beta1` | yes | **yes** |
-| `v1alpha1` | yes | no |
+| Version | served | storage | status |
+| --- | --- | --- | --- |
+| `v1` | yes | **yes** | current; all Kairon binaries, examples and charts use it |
+| `v1beta1` | yes | no | deprecated (API server prints a warning) |
+| `v1alpha1` | yes | no | deprecated (API server prints a warning) |
 
 Because the schemas are the same (one YAML anchor in each
 `charts/kairon/crds/*.yaml`, checked by `scripts/validate.py`), the API
 server converts between them with the default `None` strategy: it only
-rewrites `apiVersion`. Existing `v1alpha1` manifests, GitOps repos and
-Kairon's own binaries (which still call `v1alpha1`) keep working; new
-objects are stored as `v1beta1`.
+rewrites `apiVersion`. Existing `v1alpha1`/`v1beta1` manifests and GitOps
+repos keep working; new and rewritten objects are stored as `v1`. The
+`fleet.kairon.zyvor.dev` group is still `v1alpha1`.
 
 ## Upgrading an existing cluster
 
-Helm installs `crds/` only on first install and never upgrades them, so
-apply the CRDs yourself before upgrading the chart:
+**Apply the CRDs before the new binaries**: Kairon's clients now call
+`/apis/kairon.zyvor.dev/v1/...`, which a cluster that has not yet seen the
+`v1` CRDs does not serve. Helm installs `crds/` only on first install and
+never upgrades them, so apply them yourself (or let the host deploy script do
+it):
 
 ```sh
 kubectl apply --server-side -f deploy/crd.yaml
+# or: ./scripts/deploy-remote.sh HOST USER . --apply-crds --apply-rbac ...
 ```
 
-Objects written before this stay stored as `v1alpha1` until something
-writes them again; that is harmless while both versions are served. To
-rewrite them all now (needed only before a future release stops serving
-`v1alpha1`), re-store each one and then drop `v1alpha1` from
-`status.storedVersions`:
+Objects written before this stay stored as `v1alpha1`/`v1beta1` until
+something writes them again; that is harmless while those versions are
+served. To rewrite them all now (needed only before a future release stops
+serving the old versions), re-store each one and then drop the old versions
+from `status.storedVersions`:
 
 ```sh
 for r in $(kubectl api-resources --api-group=kairon.zyvor.dev -o name); do
   kubectl get "$r" -A -o json | kubectl replace -f -
   kubectl patch crd "$r" --subresource=status --type=merge \
-    -p '{"status":{"storedVersions":["v1beta1"]}}'
+    -p '{"status":{"storedVersions":["v1"]}}'
 done
 ```
 
-A later release moves Kairon's clients and examples to `v1beta1` and marks
-`v1alpha1` deprecated; removing it comes after that. A version with a
-*different* schema (say `v1`) needs the conversion webhook described
-below.
+The conversion webhook scaffold below is a worked example for a *future*
+version with a different schema; it is not wired into any CRD today.
 
 ## Why this needed real work ahead of time
 

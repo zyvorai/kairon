@@ -554,6 +554,35 @@ func TestDeleteNotFoundIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDeleteBadRequestVMNotFoundIsIdempotent(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"VM not found"}`))
+			return
+		}
+		http.Error(w, "bad", http.StatusBadRequest)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if err := c.Delete(context.Background(), "gone"); err != nil {
+		t.Fatalf("HTTP 400 VM not found should count as deleted: %v", err)
+	}
+}
+
+func TestDeleteOtherBadRequestStillFails(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"VM is busy"}`, http.StatusBadRequest)
+	}))
+	defer s.Close()
+	c := New(s.URL, "")
+	c.HTTP = s.Client()
+	if err := c.Delete(context.Background(), "x"); err == nil {
+		t.Fatal("unrelated 400 must still be an error")
+	}
+}
+
 func TestCreateWiresQgaAndAgentIndependently(t *testing.T) {
 	cases := []struct {
 		name       string

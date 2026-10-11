@@ -468,6 +468,10 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
+// crdKinds is the number of CRDs deploy/crd.yaml ships (kairon.zyvor.dev and
+// fleet.kairon.zyvor.dev); TestCRDKindsMatchBundle keeps it honest.
+const crdKinds = 30
+
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -483,6 +487,17 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 		"loginEnabled": s.userCount() > 0,
 		"tokenEnabled": s.Token != "",
 		"ssoEnabled":   s.OIDC != nil,
+	}
+	// Non-sensitive product facts for the sign-in page's stat band: nothing
+	// tenant-scoped (no machine or node counts) on an unauthenticated route.
+	resp["stats"] = map[string]any{
+		"version":     s.Version,
+		"apiRoutes":   s.apiRoutes,
+		"crdKinds":    crdKinds,
+		"hypervisors": 4,
+	}
+	if s.LoginHint != "" && s.userCount() > 0 {
+		resp["loginHint"] = s.LoginHint
 	}
 	if s.OIDC != nil {
 		resp["ssoLoginURL"] = "/api/v1/auth/oidc/login"

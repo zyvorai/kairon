@@ -530,6 +530,13 @@ ui:
   # Content-addressed store for images uploaded with `kaironctl image
   # upload`; nodes download them by digest via spec.image.source.httpURL
   # (needs node.imageCacheDir). See docs/guides/machine-image-import.md.
+  # Read-only Zyvor Atlas storage views (Storage page: cluster health, pools,
+  # alerts, kairon-owned volumes, backups). The Atlas token never reaches the
+  # browser; kairon-ui proxies an allowlist of GETs. Empty url = disabled.
+  atlas:
+    url: ""            # e.g. http://atlas.atlas-system:5110
+    tokenSecret: ""    # Secret with key "token" (a viewer-role Atlas JWT)
+    consoleURL: ""     # browser URL of the Atlas console ("Open in Atlas" link)
   imageStore:
     enabled: false
     # Base URL kairon-node downloads from; default
@@ -587,6 +594,15 @@ ui:
     # (unlike a named ui.auth.users entry) can't change its own password
     # in place -- graduate to a named ui.auth.users entry for that.
     users: []
+    # defaultAdminPassword: choose the password of the seeded "admin"
+    # account (only used when the chart seeds one -- i.e. no ui.token,
+    # ui.existingSecret, ui.auth.users, ui.auth.existingSecret or
+    # ui.allowUnauthenticated is set). Empty (the default) keeps today's
+    # behavior: a random 24-character password generated once and kept in
+    # the kairon-ui-session Secret. Setting a well-known value such as
+    # "Admin@321" is convenient for labs and trivially guessable anywhere
+    # else -- pass it with --set from a secret store rather than committing it.
+    defaultAdminPassword: ""
     # existingSecret: a pre-created Secret with a users.json key (a JSON
     # array of {username, passwordHash, admin}) instead of ui.auth.users
     # above. When set, kairon-ui treats it as externally managed and never
@@ -713,10 +729,11 @@ ui:
     namespaceGroups: []
   service:
     type: ClusterIP
+    # Configurable (default 18082, deliberately not the commonly-used 8082).
     # Also the container's actual internal listen port (-listen=:port) --
     # one value drives both, since a dashboard-with-one-backend has no
     # real reason to decouple them.
-    port: 8082
+    port: 18082
   ingress:
     enabled: false
     className: ""

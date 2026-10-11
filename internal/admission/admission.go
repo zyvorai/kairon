@@ -16,7 +16,7 @@ import "encoding/json"
 const APIVersion = "admission.k8s.io/v1"
 
 // GroupVersionResource identifies the REST resource being admitted (e.g.
-// {Group: "kairon.zyvor.dev", Version: "v1alpha1", Resource: "machines"}).
+// {Group: "kairon.zyvor.dev", Version: "v1", Resource: "machines"}).
 type GroupVersionResource struct {
 	Group    string `json:"group"`
 	Version  string `json:"version"`

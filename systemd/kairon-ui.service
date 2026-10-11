@@ -9,7 +9,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/kairon-ui --listen=:8082 --web-dir=/etc/kairon/ui-web
+ExecStart=/usr/bin/kairon-ui --listen=:18082 --web-dir=/etc/kairon/ui-web
 Restart=on-failure
 RestartSec=5s
 EnvironmentFile=/etc/kairon/kairon-ui.env

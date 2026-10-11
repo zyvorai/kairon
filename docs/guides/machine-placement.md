@@ -42,7 +42,7 @@ blocker.
 ## Affinity and anti-affinity
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: cache
@@ -75,7 +75,7 @@ Kubernetes Pod affinity terms, so it's immediately familiar:
 ## Preferred (soft) affinity and topology spread
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: cache
@@ -149,7 +149,7 @@ if you meant to write a positive number, write one.
 ## Taints and tolerations
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: gpu-job
@@ -237,7 +237,7 @@ treated as `Equal` or `Exists`.
 ## Scheduling priority
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: urgent-vm

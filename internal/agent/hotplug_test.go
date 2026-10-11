@@ -144,9 +144,9 @@ func kubeServerWithQuotas(t *testing.T, quotas []model.MachineQuota, machines []
 	t.Helper()
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinequotas":
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: quotas})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: machines})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -295,11 +295,11 @@ func TestReconcileMachineEndToEndTracksAppliedResourcesAndHotplugs(t *testing.T)
 	var patchedStatus model.MachineStatus
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: []model.Machine{machine}})
 		case r.Method == http.MethodGet && (strings.Contains(r.URL.Path, "networksecuritygroups") || strings.Contains(r.URL.Path, "machinenetworkpolicies") || strings.Contains(r.URL.Path, "machinemigrations")):
 			w.WriteHeader(http.StatusNotFound)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/db/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/db/status":
 			var p struct {
 				Status model.MachineStatus `json:"status"`
 			}

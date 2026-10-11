@@ -7,7 +7,7 @@
 # newest ready snapshot of each Machine is always kept).
 # dailyAt and intervalSeconds are mutually exclusive; selector is required.
 # See docs/guides/machine-snapshot-schedules.md.
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSnapshotSchedule
 metadata:
   name: web-daily

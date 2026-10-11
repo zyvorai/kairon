@@ -7,7 +7,7 @@ name instead of repeating a URL and a digest. It replaces KubeVirt's CDI
 bytes once by digest and gives each Machine its own overlay.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineImage
 metadata:
   name: windows-server-2022-v3
@@ -25,7 +25,7 @@ spec:
 A complete example with a disk image and an install ISO is in [`examples/machineimage.yaml`](https://github.com/zyvorai/zyvor-kairon/blob/main/examples/machineimage.yaml); its URLs and digests are placeholders.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1beta1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: win01, namespace: prod}
 spec:

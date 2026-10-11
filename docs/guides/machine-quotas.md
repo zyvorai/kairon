@@ -7,7 +7,7 @@ scheduled at once -- Kairon's namespace-scoped equivalent of a Kubernetes
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineQuota
 metadata:
   name: team-payments
@@ -90,7 +90,7 @@ separate field by eye:
 ```console
 $ kaironctl describe quota team-payments
 {
-  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "apiVersion": "kairon.zyvor.dev/v1",
   "kind": "MachineQuota",
   ...
 }

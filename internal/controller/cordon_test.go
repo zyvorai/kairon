@@ -37,14 +37,14 @@ func newCordonTestController(t *testing.T, budgets []model.MachineDisruptionBudg
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machinedisruptionbudgets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machinedisruptionbudgets":
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: fake.budgets})
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinemigrations":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinemigrations":
 			var m model.MachineMigration
 			_ = json.NewDecoder(r.Body).Decode(&m)
 			fake.createdMigration = &m
 			_ = json.NewEncoder(w).Encode(m)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/vm-1":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/vm-1":
 			var p struct {
 				Metadata struct {
 					Annotations map[string]string `json:"annotations"`

@@ -14,7 +14,7 @@ import (
 )
 
 func TestAgentPlaneKubeTools(t *testing.T) {
-	const api = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/"
+	const api = "/apis/kairon.zyvor.dev/v1/namespaces/default/"
 	var mu sync.Mutex
 	var created, deleted, policies []string
 	bound := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)

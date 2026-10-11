@@ -29,7 +29,7 @@ kaironctl restore my-snapshot --target-claim db-restored-pvc
 or as a CRD:
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineSnapshotRestore
 metadata:
   name: db-restore-1
@@ -68,7 +68,7 @@ completed `Job` takes toward what the `Job` produced).
 disk feature -- see [docs/guides/machine-storage.md](machine-storage.md)):
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db-restored

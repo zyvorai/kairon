@@ -54,9 +54,9 @@ func TestReconcileSnapshotRestoreParksPendingOnANotYetReadySnapshot(t *testing.T
 	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			_ = json.NewEncoder(w).Encode(snapshot)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/r1/status":
 			var p struct {
 				Status model.MachineSnapshotRestoreStatus `json:"status"`
 			}
@@ -92,9 +92,9 @@ func TestReconcileSnapshotRestoreParksPendingWhenSnapshotDoesNotExistYet(t *test
 	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			http.Error(w, "not found", http.StatusNotFound)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/r1/status":
 			var p struct {
 				Status model.MachineSnapshotRestoreStatus `json:"status"`
 			}
@@ -129,7 +129,7 @@ func TestReconcileSnapshotRestoreParksPendingWhenSnapshotDoesNotExistYet(t *test
 func TestReconcileSnapshotRestoreFailsWhenSnapshotNeverAppears(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			http.Error(w, "not found", http.StatusNotFound)
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
@@ -163,9 +163,9 @@ func TestReconcileSnapshotRestoreParksPendingOnANotYetReadyVolumeSnapshot(t *tes
 	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			_ = json.NewEncoder(w).Encode(snapshot)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/r1/status":
 			var p struct {
 				Status model.MachineSnapshotRestoreStatus `json:"status"`
 			}
@@ -208,7 +208,7 @@ func TestReconcileSnapshotRestoreCreatesPVCFromRestoreSize(t *testing.T) {
 	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			_ = json.NewEncoder(w).Encode(snapshot)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/prod/persistentvolumeclaims/restored-pvc":
 			http.Error(w, "not found", http.StatusNotFound)
@@ -218,7 +218,7 @@ func TestReconcileSnapshotRestoreCreatesPVCFromRestoreSize(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&createdPVC)
 			createdPVC.Status.Phase = "Pending" // WaitForFirstConsumer, not yet bound
 			_ = json.NewEncoder(w).Encode(createdPVC)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/r1/status":
 			var p struct {
 				Status model.MachineSnapshotRestoreStatus `json:"status"`
 			}
@@ -266,11 +266,11 @@ func TestReconcileSnapshotRestoreSucceedsOncePVCIsBound(t *testing.T) {
 	var restoreStatus model.MachineSnapshotRestoreStatus
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshots/snap":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshots/snap":
 			_ = json.NewEncoder(w).Encode(snapshot)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/prod/persistentvolumeclaims/restored-pvc":
 			_ = json.NewEncoder(w).Encode(existingPVC)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machinesnapshotrestores/r1/status":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machinesnapshotrestores/r1/status":
 			var p struct {
 				Status model.MachineSnapshotRestoreStatus `json:"status"`
 			}

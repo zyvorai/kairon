@@ -55,6 +55,8 @@ export interface AuthConfig {
   tokenEnabled: boolean;
   ssoEnabled?: boolean;
   ssoLoginURL?: string;
+  loginHint?: string;
+  stats?: { version: string; apiRoutes: number; crdKinds: number; hypervisors: number };
 }
 
 // getAuthConfig is unauthenticated by design (see internal/uiapi/auth.go),
@@ -130,6 +132,8 @@ export function resetUserPassword(targetUsername: string, newPassword: string): 
 
 export interface Config {
   consoleEnabled: boolean;
+  atlasEnabled?: boolean;
+  atlasConsoleURL?: string;
 }
 
 // getConfig reports small feature toggles (currently just consoleEnabled)
@@ -230,4 +234,30 @@ export function fromBase64(b64: string): string {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new TextDecoder().decode(bytes);
+}
+
+// downloadFile fetches an authenticated path (the bearer token cannot ride on
+// a plain <a href>) and saves the response with the given filename.
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const r = await fetch(path, { headers: authHeaders() });
+  if (r.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// apiErrorText unwraps the {"error": "..."} body every uiapi route returns.
+export function apiErrorText(e: unknown): string {
+  const s = String(e instanceof Error ? e.message : e);
+  try {
+    return JSON.parse(s).error || s;
+  } catch {
+    return s;
+  }
 }

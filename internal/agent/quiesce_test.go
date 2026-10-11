@@ -22,7 +22,7 @@ func newQuiesceTestAgent(t *testing.T) (*Agent, *map[string]any, *[]string) {
 	t.Helper()
 	var patchedAnnos map[string]any
 	ks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/prod/machines/vm-1" {
+		if r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/prod/machines/vm-1" {
 			var patch struct {
 				Metadata struct {
 					Annotations map[string]any `json:"annotations"`

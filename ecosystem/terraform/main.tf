@@ -14,7 +14,7 @@ variable "manifest" {
   description = "Machine object rendered by ecosystem/catalog.py; namespace must already exist."
   type        = any
   validation {
-    condition     = try(var.manifest.kind == "Machine" && var.manifest.apiVersion == "kairon.zyvor.dev/v1alpha1", false)
+    condition     = try(var.manifest.kind == "Machine" && var.manifest.apiVersion == "kairon.zyvor.dev/v1", false)
     error_message = "Supply a Kairon Machine manifest."
   }
 }

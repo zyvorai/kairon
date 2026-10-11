@@ -7,7 +7,7 @@ enabled, a Machine asks for a disk by size and policy instead of naming a
 PersistentVolumeClaim someone created by hand.
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata: {name: web, namespace: default}
 spec:
@@ -137,3 +137,27 @@ The Atlas Go client (`github.com/zyvorai/atlas/clients/go`) is Go
 standard library only, so the controller keeps its stdlib-only dependency
 boundary ([DEPENDENCIES.md](../DEPENDENCIES.md)). The client is
 contract-tested against a live Atlas gateway in Atlas's own CI.
+
+## Dashboard: Storage page
+
+`kairon-ui` can show a read-only **Storage** page (Compute → Storage) backed by
+the same Atlas gateway the controller provisions volumes through.
+
+| Setting | systemd env (`/etc/kairon/kairon-ui.env`) | Helm value |
+| --- | --- | --- |
+| Gateway URL | `KAIRON_UI_ATLAS_URL=http://atlas:5110` | `ui.atlas.url` |
+| Bearer token | `KAIRON_UI_ATLAS_TOKEN` or `KAIRON_UI_ATLAS_TOKEN_FILE` | `ui.atlas.tokenSecret` (key `token`) |
+| "Open in Atlas" link | `KAIRON_UI_ATLAS_CONSOLE_URL` | `ui.atlas.consoleURL` |
+
+- The browser never sees the Atlas token: `kairon-ui` proxies an allowlist of
+  `GET` resources under `/api/v1/atlas/...` (metrics summary, pools, OSDs,
+  alerts, volumes, snapshots, backups, schedules, jobs, events, DR mirror
+  status).
+- Volumes are filtered to owner prefix `kairon/` (the owner Kairon stamps as
+  `kairon/machine/<ns>/<name>`), so a shared gateway's other products' volumes
+  are not shown.
+- Use a viewer-role Atlas token; the proxy is read-only either way.
+- With `--namespace-scoping` on, only administrators can open the page (same
+  rule as the node routes), because Atlas data spans tenants.
+- Without `KAIRON_UI_ATLAS_URL` the routes answer `501` and the page explains
+  how to enable it.

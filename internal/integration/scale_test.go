@@ -46,7 +46,7 @@ func (c *genericCluster) machineList() []model.Machine {
 }
 
 func (c *genericCluster) handler() http.Handler {
-	const base = "/apis/kairon.zyvor.dev/v1alpha1/"
+	const base = "/apis/kairon.zyvor.dev/v1/"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -171,7 +171,7 @@ func (c *genericCluster) handler() http.Handler {
 // shape ".../namespaces/{ns}/{resource}/{name}", the exact shape
 // internal/kube.namespacedObjectPath produces.
 func splitNamespacedObjectPath(path, resource string) (ns, name string, ok bool) {
-	parts := strings.Split(strings.TrimPrefix(path, "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"), "/")
+	parts := strings.Split(strings.TrimPrefix(path, "/apis/kairon.zyvor.dev/v1/namespaces/"), "/")
 	if len(parts) != 3 || parts[1] != resource {
 		return "", "", false
 	}

@@ -28,11 +28,11 @@ type fakeKairon struct {
 func (f *fakeKairon) handler(t *testing.T) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines":
 			_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"web","namespace":"default"},"spec":{"powerState":"Running","resources":{"cpu":"1","memory":"1Gi"}},"status":{"phase":"Running","nodeName":"n1","guestIP":"10.0.0.5"}}]}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"web","namespace":"default"},"spec":{"resources":{"cpu":"1","memory":"1Gi"}},"status":{"phase":"Running"}}`)
-		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web":
+		case r.Method == http.MethodPatch && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web":
 			b, _ := io.ReadAll(r.Body)
 			f.mu.Lock()
 			f.patches = append(f.patches, string(b))
@@ -160,16 +160,16 @@ func TestMCPVolumeTools(t *testing.T) {
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/db":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/db":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"db","namespace":"default","annotations":{"kairon.zyvor.dev/atlas-volumes":"{\"root\":{\"volumeID\":\"vol-1\",\"nativeID\":\"rbd:vms/db-root\",\"mode\":\"rbd\",\"phase\":\"Ready\"}}"}},
 				"spec":{"volumes":[{"name":"root","atlas":{"size":"20Gi","mode":"rbd","pool":"vms"}},{"name":"data","claimName":"db-data"}]}}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshots":
 			b, _ := io.ReadAll(r.Body)
 			mu.Lock()
 			created = append(created, string(b))
 			mu.Unlock()
 			_, _ = w.Write(b)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinesnapshots/s1":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinesnapshots/s1":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"s1","namespace":"default"},"spec":{"machineName":"db"},"status":{"phase":"Succeeded","readyToUse":true,"volumeSnapshots":[{"volumeName":"root","volumeSnapshotName":"x","atlasSnapshotID":"snap-9"}]}}`)
 		default:
 			t.Logf("unexpected %s %s", r.Method, r.URL.Path)
@@ -212,22 +212,22 @@ func TestMCPPoolTools(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machinepools":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machinepools":
 			_, _ = io.WriteString(w, `{"items":[{"metadata":{"name":"agents"},"spec":{"replicas":4},"status":{"readyReplicas":3,"claimed":2}}]}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims":
+		case r.Method == http.MethodPost && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machineclaims":
 			b, _ := io.ReadAll(r.Body)
 			claimed = append(claimed, string(b))
 			_, _ = w.Write(b)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims/job-1":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machineclaims/job-1":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"job-1"},"spec":{"poolName":"agents"},"status":{"phase":"Bound","machineName":"agents-ab12","bindMillis":180}}`)
-		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machineclaims/job-1":
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machineclaims/job-1":
 			deleted = append(deleted, "claim/job-1")
 			_, _ = io.WriteString(w, `{}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/web-x":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/web-x":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"web-x","labels":{"kairon.zyvor.dev/machineset":"web"}}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/solo":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/solo":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"solo"}}`)
-		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/solo":
+		case r.Method == http.MethodDelete && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/solo":
 			deleted = append(deleted, "machine/solo")
 			_, _ = io.WriteString(w, `{}`)
 		default:
@@ -288,7 +288,7 @@ func TestMCPHotplugTools(t *testing.T) {
 	var patches []string
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		const path = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines/fw"
+		const path = "/apis/kairon.zyvor.dev/v1/namespaces/default/machines/fw"
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == path:
 			_, _ = io.WriteString(w, `{"metadata":{"name":"fw","namespace":"default","uid":"u1","resourceVersion":"7"},
@@ -331,7 +331,7 @@ func TestMCPBackupTools(t *testing.T) {
 	var created []string
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		const base = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/"
+		const base = "/apis/kairon.zyvor.dev/v1/namespaces/default/"
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
@@ -379,7 +379,7 @@ func TestMCPForkMachine(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		const base = "/apis/kairon.zyvor.dev/v1alpha1/namespaces/default/machines"
+		const base = "/apis/kairon.zyvor.dev/v1/namespaces/default/machines"
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == base+"/base":
 			_, _ = io.WriteString(w, `{"metadata":{"name":"base","labels":{"kairon.zyvor.dev/machineset":"web"}},"spec":{"nodeName":"n1","image":{"path":"/i.qcow2"},"resources":{"cpu":"1","memory":"512Mi"},"runtime":{"backend":"flux-vm"}},"status":{"phase":"Running"}}`)

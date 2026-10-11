@@ -270,7 +270,7 @@ func TestReconcilePrunesEdgeDropsOnlyAfterSuccessfulList(t *testing.T) {
 	for _, failList := range []bool{false, true} {
 		t.Run(fmt.Sprintf("failList=%v", failList), func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/machines" {
+				if r.URL.Path == "/apis/kairon.zyvor.dev/v1/machines" {
 					if failList {
 						http.Error(w, "unavailable", http.StatusServiceUnavailable)
 						return

@@ -51,7 +51,7 @@ mint one for you.
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineDisruptionBudget
 metadata:
   name: web-tier
@@ -127,7 +127,7 @@ any of them isn't currently healthy:
 ```console
 $ kaironctl describe budget web-tier
 {
-  "apiVersion": "kairon.zyvor.dev/v1alpha1",
+  "apiVersion": "kairon.zyvor.dev/v1",
   "kind": "MachineDisruptionBudget",
   ...
 }

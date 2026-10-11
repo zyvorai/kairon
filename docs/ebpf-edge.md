@@ -49,7 +49,7 @@ FluxVM's side (routes, wire format, BPF maps, host requirements) is in
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: web
@@ -71,7 +71,7 @@ spec:
       egressMbps: 50
       egressPps: 2000
 ---
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: MachineNetworkPolicy
 metadata:
   name: web-egress

@@ -1,65 +1,162 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { AuthConfig, getAuthConfig, login, setToken } from '../api';
+import { BENCHMARKS, BENCHMARK_NOTE } from '../lib/brag';
+import { CountValue } from '../components/ui';
 
 type Step = 'username' | 'password';
+const SAVED_USER = 'kairon_saved_user';
 
-function Avatar({ user }: { user: string }) {
-  return <div className="loginavatar">{user.charAt(0).toUpperCase() || '?'}</div>;
+function savedUser(): string {
+  try {
+    return localStorage.getItem(SAVED_USER) || '';
+  } catch {
+    return '';
+  }
 }
 
-function LoginChrome({ children }: { children: React.ReactNode }) {
+function remember(user: string | null) {
+  try {
+    if (user) localStorage.setItem(SAVED_USER, user);
+    else localStorage.removeItem(SAVED_USER);
+  } catch {
+    /* private mode */
+  }
+}
+
+// Two chapters like zorvia's sign-in: a hero, then the credentials card.
+function LoginChrome({ children, hint, stats }: { children: React.ReactNode; hint?: string; stats?: AuthConfig['stats'] }) {
+  const card = useRef<HTMLElement>(null);
   return (
-    <div className="loginwrap">
-      <div className="loginsplit">
-        <div className="loginsplit-left">
-          <div className="loginorb" aria-hidden />
-          <div className="loginbrand">
-            <img className="dot" src="/zyvor-favicon.svg" alt="Zyvor" width={28} height={28} />
-            <div>
-              <div className="loginbrand-name">
-                KAIRON <small>by Zyvor</small>
-              </div>
-              <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+    <div className="loginwrap force-light">
+      <main className="login-scroll">
+        <section className="login-chapter login-hero" data-tone="sky">
+          <div className="login-chapter-inner">
+            <div className="login-lockup">
+              <img src="/zyvor-favicon.svg" alt="Zyvor" width={34} height={34} />
+              <span><b>Zyvor</b> Kairon</span>
             </div>
+            <div className="login-chips">
+              <span className="chip">{window.location.hostname}</span>
+              <span className="chip">Kubernetes</span>
+              <span className="chip">FluxVM</span>
+            </div>
+            <h1 className="login-title">Real VMs.<br />One console.</h1>
+            <p className="loginbrand-tagline">VM orchestration on FluxVM &mdash; no KubeVirt, no libvirt.</p>
+            <div className="login-pills">
+              <span data-tone="sky">Machines</span>
+              <span data-tone="violet">Migrations</span>
+              <span data-tone="emerald">Snapshots</span>
+              <span data-tone="orange">Fleet</span>
+            </div>
+            <div className="login-ctas">
+              <button type="button" className="primary" onClick={() => {
+                  card.current?.scrollIntoView({ behavior: 'smooth' });
+                  card.current?.querySelector('input')?.focus({ preventScroll: true });
+                }}>
+                Sign in
+              </button>
+              <a className="login-cta-secondary" href="https://zyvor.dev" target="_blank" rel="noopener noreferrer">
+                Learn more
+              </a>
+            </div>
+            <div className="login-stats" aria-label="Why Kairon">
+              {BENCHMARKS.map((b) => (
+                <div key={b.label} className="login-stat">
+                  <b>{b.big}</b>
+                  <span>{b.label}</span>
+                  <small>{b.detail}</small>
+                </div>
+              ))}
+              {stats && (
+                <>
+                  <div className="login-stat live">
+                    <b><CountValue value={stats.crdKinds} /></b>
+                    <span>CRD kinds</span>
+                    <small>one API, {stats.hypervisors} hypervisors</small>
+                  </div>
+                  <div className="login-stat live">
+                    <b><CountValue value={stats.apiRoutes} /></b>
+                    <span>API routes</span>
+                    <small>{stats.version ? 'build ' + stats.version : 'built in'}</small>
+                  </div>
+                </>
+              )}
+            </div>
+            <p className="login-stats-note">{BENCHMARK_NOTE}</p>
           </div>
-        </div>
-        <div className="loginsplit-right">
-          <div className="card logincard">{children}</div>
-          <p className="loginhost">
-            Connecting to <code>{window.location.host}</code>
-          </p>
-        </div>
-      </div>
+        </section>
+        <section ref={card} id="login-sign-in" className="login-chapter login-signin" aria-label="Credentials">
+          <div className="login-chapter-inner">
+            <p className="login-form-heading">Sign in to Kairon</p>
+            <div className="logincard">{children}</div>
+            {hint && <p className="loginhint">{hint}</p>}
+          </div>
+        </section>
+      </main>
+      <p className="loginhost">
+        &copy; 2026 Zyvor &middot; <a href="https://zyvor.dev" target="_blank" rel="noopener noreferrer">zyvor.dev</a>
+      </p>
     </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  autoFocus,
+  autoComplete,
+  right,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  autoFocus?: boolean;
+  autoComplete?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <label className={'siw-field' + (value ? ' filled' : '')}>
+      <input
+        required
+        type={type}
+        autoFocus={autoFocus}
+        autoComplete={autoComplete}
+        value={value}
+        placeholder=" "
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span>{label}</span>
+      {right}
+    </label>
   );
 }
 
 export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
-  const [step, setStep] = useState<Step>('username');
-  const [user, setUser] = useState('');
+  const [user, setUser] = useState(savedUser());
+  const [step, setStep] = useState<Step>(user ? 'password' : 'username');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [rememberMe, setRememberMe] = useState(!!user);
   const [rawToken, setRawToken] = useState('');
+  const [useTokenForm, setUseTokenForm] = useState(false);
   const [msg, setMsg] = useState('');
+  const [shake, setShake] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getAuthConfig()
       .then(setConfig)
-      // A server old enough to not have /api/v1/auth/config yet, or one
-      // that's unreachable, both fall back to the legacy raw-token box.
+      // An old or unreachable server falls back to the raw-token box.
       .catch(() => setConfig({ loginEnabled: false, tokenEnabled: true }));
   }, []);
-
-  function continueToPassword(e: React.FormEvent) {
-    e.preventDefault();
-    setMsg('');
-    setStep('password');
-  }
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
@@ -67,16 +164,18 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     setMsg('');
     try {
       await login(user, password);
+      remember(rememberMe ? user : null);
       onSignedIn();
     } catch (err) {
       setPassword('');
       setMsg(String(err));
+      setShake((n) => n + 1);
     } finally {
       setBusy(false);
     }
   }
 
-  function useToken(e: React.FormEvent) {
+  function submitToken(e: React.FormEvent) {
     e.preventDefault();
     setToken(rawToken);
     onSignedIn();
@@ -90,109 +189,115 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
     );
   }
 
-  // SSO is offered alongside whichever other method(s) are configured
-  // below, not instead of them -- a deployment can run ui.auth.users and
-  // OIDC/SSO at once (see internal/uiapi/oidc.go), e.g. while migrating
-  // operators from named accounts to a real identity provider.
   const sso = config.ssoEnabled && config.ssoLoginURL && (
     <div className="loginstep">
-      <button type="button" className="primary" onClick={() => (window.location.href = config.ssoLoginURL!)}>
+      <button type="button" className="primary wide" onClick={() => (window.location.href = config.ssoLoginURL!)}>
         Sign in with SSO
       </button>
     </div>
   );
 
+  const tokenForm = (
+    <form onSubmit={submitToken} className="loginstep">
+      <h3>Sign in with an API token.</h3>
+      <div className="siw">
+        <Field label="API token" type="password" autoFocus value={rawToken} onChange={setRawToken} autoComplete="off" />
+      </div>
+      <div className="formactions">
+        <button className="primary wide" type="submit" disabled={!rawToken}>
+          Continue
+        </button>
+      </div>
+    </form>
+  );
+
   if (!config.loginEnabled) {
-    if (!config.tokenEnabled) {
-      return (
-        <LoginChrome>
-          <span className="eyebrow">SIGN IN</span>
-          {sso}
-          {!sso && <p>No login method is configured on this server.</p>}
-        </LoginChrome>
-      );
-    }
     return (
-      <LoginChrome>
-        <span className="eyebrow">SIGN IN</span>
+      <LoginChrome stats={config.stats}>
         {sso}
-        {sso && <p className="loginor">or</p>}
-        <h3>API token</h3>
-        <form onSubmit={useToken}>
-          <div className="formgrid">
-            <label>
-              Token
-              <input
-                type="password"
-                autoFocus
-                value={rawToken}
-                placeholder="required unless the server allows unauthenticated access"
-                onChange={(e) => setRawToken(e.target.value)}
-              />
-            </label>
-          </div>
-          <div className="formactions">
-            <button className="primary" type="submit">
-              Continue
-            </button>
-          </div>
-        </form>
+        {!config.tokenEnabled && !sso && <p className="logincopy">No login method is configured on this server.</p>}
+        {config.tokenEnabled && sso && <p className="loginor">or</p>}
+        {config.tokenEnabled && tokenForm}
       </LoginChrome>
     );
   }
 
   return (
-    <LoginChrome>
-      <span className="eyebrow">SIGN IN</span>
+    <LoginChrome hint={config.loginHint} stats={config.stats}>
       {sso}
       {sso && <p className="loginor">or</p>}
-      {step === 'username' ? (
+      {useTokenForm ? (
+        <>
+          {tokenForm}
+          <p className="loginfoot">
+            <button type="button" className="linklike" onClick={() => setUseTokenForm(false)}>
+              Use username and password
+            </button>
+          </p>
+        </>
+      ) : step === 'username' ? (
         <div key="username" className="loginstep">
-          <form onSubmit={continueToPassword}>
-            <h3>Sign in to Kairon</h3>
-            <div className="formgrid">
-              <label>
-                Username
-                <input required autoFocus value={user} onChange={(e) => setUser(e.target.value)} />
-              </label>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setMsg('');
+              setStep('password');
+            }}
+          >
+            <h3>Sign in with your account.</h3>
+            <div className="siw">
+              <Field label="Username" autoComplete="username" value={user} onChange={setUser} />
             </div>
             <div className="formactions">
-              <button className="primary" type="submit" disabled={!user}>
+              <button className="primary wide" type="submit" disabled={!user}>
                 Continue
               </button>
             </div>
           </form>
+          {config.tokenEnabled && (
+            <p className="loginfoot">
+              <button type="button" className="linklike" onClick={() => setUseTokenForm(true)}>
+                Use an API token instead
+              </button>
+            </p>
+          )}
         </div>
       ) : (
         <div key="password" className="loginstep">
-          <form onSubmit={signIn}>
-            <h3 className="loginwho">
-              <Avatar user={user} />
-              <span>
-                Hi, {user}.{' '}
-                <button type="button" className="linklike" onClick={() => setStep('username')}>
-                  Not you?
-                </button>
-              </span>
-            </h3>
-            <div className="formgrid">
-              <label>
-                Password
-                <input required autoFocus type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              </label>
+          <form onSubmit={signIn} key={shake} className={shake ? 'shake' : undefined}>
+            <button type="button" className="login-identity" onClick={() => setStep('username')} aria-label="Change account">
+              <ArrowLeft size={14} /> {user}
+            </button>
+            <h3>Enter your password.</h3>
+            <div className="siw">
+              <Field
+                label="Password"
+                type={showPw ? 'text' : 'password'}
+                autoComplete="current-password"
+                value={password}
+                onChange={setPassword}
+                right={
+                  <button type="button" className="siw-eye" aria-label={showPw ? 'Hide password' : 'Show password'} onClick={() => setShowPw((v) => !v)}>
+                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                }
+              />
             </div>
-            <div className="formactions">
-              <button className="primary" type="submit" disabled={busy || !password}>
-                {busy && <Loader2 size={15} className="spin" />}
-                {busy ? 'Signing in...' : 'Sign In'}
-              </button>
-            </div>
+            <label className="login-remember">
+              <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+              <span>Remember me on this device</span>
+            </label>
             {msg && (
-              <div className="loginerror">
+              <div className="loginerror" role="alert">
                 <AlertCircle size={16} />
                 <span>{msg}</span>
               </div>
             )}
+            <div className="formactions">
+              <button className="primary wide" type="submit" disabled={busy || !password}>
+                {busy ? <Loader2 size={16} className="spin" /> : 'Sign in'}
+              </button>
+            </div>
           </form>
         </div>
       )}

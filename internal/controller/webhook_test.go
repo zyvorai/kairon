@@ -30,13 +30,13 @@ func newWebhookTestController(t *testing.T, ns string, quotas []model.MachineQuo
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+ns+"/machinequotas":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/"+ns+"/machinequotas":
 			_ = json.NewEncoder(w).Encode(model.MachineQuotaList{Items: quotas})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+ns+"/machines":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/"+ns+"/machines":
 			_ = json.NewEncoder(w).Encode(model.MachineList{Items: machines})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+ns+"/machinedisruptionbudgets":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/"+ns+"/machinedisruptionbudgets":
 			_ = json.NewEncoder(w).Encode(model.MachineDisruptionBudgetList{Items: budgets})
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1alpha1/namespaces/"+ns+"/machinemigrations":
+		case r.Method == http.MethodGet && r.URL.Path == "/apis/kairon.zyvor.dev/v1/namespaces/"+ns+"/machinemigrations":
 			_ = json.NewEncoder(w).Encode(model.MachineMigrationList{Items: migrations})
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)

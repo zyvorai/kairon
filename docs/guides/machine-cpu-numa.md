@@ -7,7 +7,7 @@ Kairon invents or emulates itself.
 ## Example
 
 ```yaml
-apiVersion: kairon.zyvor.dev/v1alpha1
+apiVersion: kairon.zyvor.dev/v1
 kind: Machine
 metadata:
   name: db-latency-sensitive
