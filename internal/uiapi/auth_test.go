@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -330,5 +331,37 @@ func TestAuditLogAttributesSessionAuthenticatedRequests(t *testing.T) {
 	logged := logBuf.String()
 	if !strings.Contains(logged, "user=alice") {
 		t.Fatalf("expected audit log to attribute the request to alice, got: %s", logged)
+	}
+}
+
+func TestCRDKindsMatchBundle(t *testing.T) {
+	data, err := os.ReadFile("../../deploy/crd.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Count(string(data), "\nkind: CustomResourceDefinition")
+	if got != crdKinds {
+		t.Fatalf("crdKinds = %d but deploy/crd.yaml ships %d CRDs; update the constant", crdKinds, got)
+	}
+}
+
+func TestAuthConfigIncludesStats(t *testing.T) {
+	s := &Server{Token: "t", Version: "v-test"}
+	h := s.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", nil))
+	var out struct {
+		Stats struct {
+			Version     string `json:"version"`
+			APIRoutes   int    `json:"apiRoutes"`
+			CRDKinds    int    `json:"crdKinds"`
+			Hypervisors int    `json:"hypervisors"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Stats.Version != "v-test" || out.Stats.APIRoutes < 50 || out.Stats.CRDKinds != crdKinds || out.Stats.Hypervisors != 4 {
+		t.Fatalf("unexpected stats: %+v", out.Stats)
 	}
 }

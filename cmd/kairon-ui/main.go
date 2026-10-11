@@ -184,6 +184,7 @@ func run() int {
 		Users:         users,
 		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
 		LoginHint:     loginHint(),
+		Version:       version,
 		// UsersSecretName empty (the default) means POST
 		// /api/v1/auth/password and POST /api/v1/users/{username}/password
 		// are refused -- set only when the Helm chart owns the

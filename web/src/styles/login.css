@@ -136,3 +136,14 @@ button.wide { width: 100%; min-height: 40px; }
 .loginwrap { width: 100%; }
 .login-scroll { width: 100%; max-width: none; margin: 0; padding: 0; }
 .login-chapter { width: 100%; box-sizing: border-box; }
+
+/* README benchmark + live-count band on the hero */
+.login-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 36px; text-align: left; }
+.login-stat { background: rgba(255, 255, 255, 0.7); border: 1px solid var(--hairline); border-radius: 16px; padding: 12px 14px; backdrop-filter: blur(8px); }
+.login-stat b { display: block; font-size: 26px; letter-spacing: -0.04em; font-weight: 650; color: var(--text); }
+.login-stat span { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.login-stat small { display: block; font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.login-stat.live b { color: var(--blue); }
+.login-stats-note { margin-top: 12px; font-size: 11px; color: var(--text-3); max-width: 520px; margin-left: auto; margin-right: auto; }
+.login-chapter-inner { width: min(760px, 100%); }
+.login-signin .login-chapter-inner { width: min(560px, 100%); }

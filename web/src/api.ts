@@ -56,6 +56,7 @@ export interface AuthConfig {
   ssoEnabled?: boolean;
   ssoLoginURL?: string;
   loginHint?: string;
+  stats?: { version: string; apiRoutes: number; crdKinds: number; hypervisors: number };
 }
 
 // getAuthConfig is unauthenticated by design (see internal/uiapi/auth.go),

@@ -56,6 +56,13 @@ type Server struct {
 	// POST /api/v1/auth/login. Required whenever Users is non-empty.
 	SessionSecret []byte
 
+	// Version is the build version shown (unauthenticated) on the sign-in
+	// page's stat band.
+	Version string
+
+	// apiRoutes is the number of /api/v1 routes registered by Handler.
+	apiRoutes int
+
 	// LoginHint is optional free text shown under the sign-in form (lab
 	// installs use it to advertise the well-known default login).
 	LoginHint string
@@ -210,7 +217,7 @@ func (s *Server) Handler() http.Handler {
 		top.Handle("GET /metrics", s.Metrics.Handler())
 	}
 
-	api := http.NewServeMux()
+	api := &routeMux{ServeMux: http.NewServeMux(), n: &s.apiRoutes}
 	// Overview filters every namespaced object using the caller's current grants.
 	api.HandleFunc("GET /api/v1/overview", s.handleOverview)
 	api.HandleFunc("GET /api/v1/namespaces", s.handleNamespaces)
@@ -478,13 +485,13 @@ func (s *Server) clientIP(r *http.Request) string {
 // top/api are passed through only to resolve the request's route label
 // (see routePattern) -- next is the already-composed rate-limit/mux
 // chain those two build, still what actually serves the request.
-func (s *Server) withMetrics(top, api *http.ServeMux, next http.Handler) http.Handler {
+func (s *Server) withMetrics(top *http.ServeMux, api *routeMux, next http.Handler) http.Handler {
 	if s.Metrics == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		route := routePattern(top, api, r)
+		route := routePattern(top, api.ServeMux, r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		s.Metrics.ObserveHTTPRequest(r.Method, route, rec.status, time.Since(start))
@@ -766,4 +773,16 @@ func resourceName(s string) string {
 		s = strings.TrimRight(s[:63], "-")
 	}
 	return s
+}
+
+// routeMux counts registrations so the sign-in page can honestly brag about
+// the API surface (see handleAuthConfig's stats) without a hand-kept number.
+type routeMux struct {
+	*http.ServeMux
+	n *int
+}
+
+func (m *routeMux) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
+	*m.n++
+	m.ServeMux.HandleFunc(pattern, h)
 }

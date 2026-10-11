@@ -4,6 +4,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { AuthConfig, getAuthConfig, login, setToken } from '../api';
+import { BENCHMARKS, BENCHMARK_NOTE } from '../lib/brag';
+import { CountValue } from '../components/ui';
 
 type Step = 'username' | 'password';
 const SAVED_USER = 'kairon_saved_user';
@@ -26,7 +28,7 @@ function remember(user: string | null) {
 }
 
 // Two chapters like zorvia's sign-in: a hero, then the credentials card.
-function LoginChrome({ children, hint }: { children: React.ReactNode; hint?: string }) {
+function LoginChrome({ children, hint, stats }: { children: React.ReactNode; hint?: string; stats?: AuthConfig['stats'] }) {
   const card = useRef<HTMLElement>(null);
   return (
     <div className="loginwrap force-light">
@@ -61,6 +63,30 @@ function LoginChrome({ children, hint }: { children: React.ReactNode; hint?: str
                 Learn more
               </a>
             </div>
+            <div className="login-stats" aria-label="Why Kairon">
+              {BENCHMARKS.map((b) => (
+                <div key={b.label} className="login-stat">
+                  <b>{b.big}</b>
+                  <span>{b.label}</span>
+                  <small>{b.detail}</small>
+                </div>
+              ))}
+              {stats && (
+                <>
+                  <div className="login-stat live">
+                    <b><CountValue value={stats.crdKinds} /></b>
+                    <span>CRD kinds</span>
+                    <small>one API, {stats.hypervisors} hypervisors</small>
+                  </div>
+                  <div className="login-stat live">
+                    <b><CountValue value={stats.apiRoutes} /></b>
+                    <span>API routes</span>
+                    <small>{stats.version ? 'build ' + stats.version : 'built in'}</small>
+                  </div>
+                </>
+              )}
+            </div>
+            <p className="login-stats-note">{BENCHMARK_NOTE}</p>
           </div>
         </section>
         <section ref={card} id="login-sign-in" className="login-chapter login-signin" aria-label="Credentials">
@@ -187,7 +213,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
 
   if (!config.loginEnabled) {
     return (
-      <LoginChrome>
+      <LoginChrome stats={config.stats}>
         {sso}
         {!config.tokenEnabled && !sso && <p className="logincopy">No login method is configured on this server.</p>}
         {config.tokenEnabled && sso && <p className="loginor">or</p>}
@@ -197,7 +223,7 @@ export default function Login({ onSignedIn }: { onSignedIn: () => void }) {
   }
 
   return (
-    <LoginChrome hint={config.loginHint}>
+    <LoginChrome hint={config.loginHint} stats={config.stats}>
       {sso}
       {sso && <p className="loginor">or</p>}
       {useTokenForm ? (

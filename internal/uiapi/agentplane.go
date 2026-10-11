@@ -16,7 +16,7 @@ import (
 
 // mountAgentPlane registers the read-only agent routes. They do not
 // read a namespace query param; the body is a proposal, not a write.
-func (s *Server) mountAgentPlane(api *http.ServeMux) {
+func (s *Server) mountAgentPlane(api *routeMux) {
 	api.HandleFunc("POST /api/v1/agent/compile-policy", s.handleAgentCompile)
 	api.HandleFunc("POST /api/v1/agent/explain-drops", s.handleAgentDrops)
 	api.HandleFunc("POST /api/v1/agent/anomalies", s.handleAgentAnomalies)
