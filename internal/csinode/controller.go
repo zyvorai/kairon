@@ -62,12 +62,10 @@ var volumeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // Real, current limits (see docs/guides/machine-storage-csi.md): CHAP is
 // supported (a provisioner Secret's username/password configure real LIO
 // auth instead of demo mode -- see chapCredentialsFromSecrets) and so is
-// ControllerExpandVolume -- neither is a gap. What's still genuinely
-// missing: no CreateSnapshot/DeleteSnapshot through this path
-// (MachineSnapshot's own CSI VolumeSnapshot flow is unrelated and
-// unaffected -- that snapshots the PV a StorageClass/CSI driver already
-// provisioned, this driver just has no CreateSnapshot of its own to call),
-// and one backing file per volume on whichever single node runs
+// ControllerExpandVolume -- neither is a gap. CreateSnapshot and
+// DeleteSnapshot are implemented too (a copy of the volume's backing file
+// under snapshotSubdir). What's still genuinely missing: snapshot export
+// off the node, and one backing file per volume on whichever single node runs
 // kairon-csi-controller (no topology-aware placement across multiple
 // storage nodes -- this first cut assumes one).
 type ControllerServer struct {

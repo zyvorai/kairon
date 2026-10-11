@@ -740,7 +740,7 @@ func TestWebhookHandlerRecordsDecisionMetrics(t *testing.T) {
 // WebhookHandler's /convert/machinequotas route -- confirms the route is
 // actually wired to conversion.ConvertMachineQuota, not just that the
 // converter works in isolation (internal/conversion's own tests already
-// cover that). No live CRD calls this route yet (see
+// cover that). No live CRD calls this route (see
 // docs/guides/crd-versioning.md); this is what would call it if one did.
 func TestWebhookHandlerConvertMachineQuotaEndToEnd(t *testing.T) {
 	ctl := newWebhookTestController(t, "prod", nil, nil, nil, nil)

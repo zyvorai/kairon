@@ -466,10 +466,10 @@ spec:
                           enum: ["NoSchedule", "PreferNoSchedule", "NoExecute"]
               security:
                 type: object
-                description: secureBoot/tpm are refused at creation time
-                  (not silently ignored) -- no FluxVM backend implements
-                  UEFI/OVMF firmware or a vTPM device today, see
-                  docs/guides/machine-windows-guests.md.
+                description: secureBoot needs the qemu backend; tpm needs
+                  the qemu or cloud-hypervisor backend. On any other backend
+                  the Machine is refused at creation time (not silently
+                  ignored), see docs/guides/machine-windows-guests.md.
                 properties:
                   secureBoot:
                     type: boolean
