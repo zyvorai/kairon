@@ -95,6 +95,7 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		newEventsCmd(),
 		newSysdumpCmd(opts),
 		newConnectivityCmd(),
+		newUICmd(),
 		newHistoryCmd(),
 		newRollbackCmd(),
 		newNetworkCmd(opts),
@@ -175,6 +176,7 @@ func legacyCmd(opts *Options, use, short, example string, fn func(context.Contex
 		Short:              short,
 		Example:            example,
 		DisableFlagParsing: true,
+		ValidArgsFunction:  legacyCompletion(opts, use),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -196,6 +198,7 @@ func powerCmd(opts *Options, use, state string) *cobra.Command {
 		Use:                use + " MACHINE",
 		Short:              "Set Machine powerState to " + state,
 		DisableFlagParsing: true,
+		ValidArgsFunction:  completeMachineNames(&opts.Namespace),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -302,3 +305,29 @@ const backupExamples = `  $ kaironctl backup create web --name nightly
   $ kaironctl backup list
   $ kaironctl halt web && kaironctl backup restore nightly
   $ kaironctl backup delete nightly`
+
+// legacyCompletion picks the completion behaviour of a legacy verb by name.
+func legacyCompletion(opts *Options, use string) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	switch strings.Fields(use)[0] {
+	case "get", "describe", "delete", "edit":
+		return completeKindsThenNames(&opts.Namespace)
+	case "top":
+		return func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			if len(positional(args)) == 0 {
+				return filterPrefix([]string{"machines", "nodes"}, toComplete), cobra.ShellCompDirectiveNoFileComp
+			}
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+	case "volumes", "fork", "snapshot":
+		return completeMachineNames(&opts.Namespace)
+	case "claim":
+		return func(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			ns, words := completionNamespace(args, &opts.Namespace)
+			if len(positional(words)) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return completeNames("machinepools", ns, toComplete), cobra.ShellCompDirectiveNoFileComp
+		}
+	}
+	return nil
+}

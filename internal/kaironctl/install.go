@@ -87,6 +87,7 @@ Pass --chart PATH to use a checkout, or --helm-cli to shell out to helm on PATH.
 }
 
 func newUpgradeCmd(opts *Options) *cobra.Command {
+	var check bool
 	h := &helmInstallOpts{
 		ReleaseName: "kairon",
 		Namespace:   "kairon-system",
@@ -101,10 +102,18 @@ func newUpgradeCmd(opts *Options) *cobra.Command {
   $ kaironctl upgrade --chart ./charts/kairon`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if check {
+				ctx := cmd.Context()
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				return runUpgradeCheck(ctx, h, cmd.OutOrStdout())
+			}
 			return runHelmInstall(cmd.Context(), h, true)
 		},
 	}
 	bindHelmFlags(cmd, h, false)
+	cmd.Flags().BoolVar(&check, "check", false, "compare the installed chart with this kaironctl's chart and the latest release; change nothing")
 	return cmd
 }
 

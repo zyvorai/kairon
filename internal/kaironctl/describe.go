@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -29,8 +30,18 @@ func resourceKindAndName(verb string, args []string) (kind, name string) {
 }
 
 func cmdDescribe(ctx context.Context, kc *kube.Client, args []string) {
+	format, args, ferr := extractOutput(args)
+	if ferr != nil {
+		fatal(ferr)
+	}
 	ns, args := nsFlag(args)
 	kind, name := resourceKindAndName("describe", args)
+	if format != "" {
+		if err := describeStructured(ctx, kc, os.Stdout, kind, ns, name, format); err != nil {
+			fatal(err)
+		}
+		return
+	}
 	switch kind {
 	case "snapshotschedule", "snapshotschedules", "machinesnapshotschedules":
 		// One of four kinds describe doesn't just raw-JSON-dump -- see

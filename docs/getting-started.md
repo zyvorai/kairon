@@ -114,7 +114,7 @@ from the `helm install` output (or any time later) with:
 kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
 ```
 
-Open `http://127.0.0.1:18082` and sign in as `admin` with that password.
+Open `http://127.0.0.1:18082` and sign in as `admin` with that password. Or skip the port-forward: `kaironctl ui` opens the dashboard through the API server.
 
 | Page | What it shows |
 |---|---|

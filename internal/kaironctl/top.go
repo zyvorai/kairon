@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,13 @@ import (
 )
 
 func cmdTop(ctx context.Context, kc *kube.Client, args []string) {
+	format, args, ferr := extractOutput(args)
+	if ferr != nil {
+		fatal(ferr)
+	}
+	if format == "name" {
+		fatal(fmt.Errorf("top supports -o json or -o yaml"))
+	}
 	ns, args := nsFlag(args)
 	resource := "machines"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -39,6 +47,29 @@ func cmdTop(ctx context.Context, kc *kube.Client, args []string) {
 		}
 		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
 		sort.Slice(items, func(i, j int) bool { return items[i].Metadata.Name < items[j].Metadata.Name })
+		if format != "" {
+			type row struct {
+				Name           string   `json:"name"`
+				Node           string   `json:"node,omitempty"`
+				CPUPercent     *float64 `json:"cpuPercent,omitempty"`
+				MemoryBytes    *uint64  `json:"memoryBytes,omitempty"`
+				DiskReadBytes  *uint64  `json:"diskReadBytes,omitempty"`
+				DiskWriteBytes *uint64  `json:"diskWriteBytes,omitempty"`
+			}
+			rows := make([]row, 0, len(items))
+			for _, m := range items {
+				r := row{Name: m.Metadata.Name, Node: m.Spec.NodeName}
+				if u := m.Status.ResourceUsage; u != nil {
+					cpu, mem, rd, wr := u.CPUPercent, u.MemoryBytes, u.DiskReadBytes, u.DiskWriteBytes
+					r.CPUPercent, r.MemoryBytes, r.DiskReadBytes, r.DiskWriteBytes = &cpu, &mem, &rd, &wr
+				}
+				rows = append(rows, r)
+			}
+			if err := writeStructured(os.Stdout, rows, format); err != nil {
+				fatal(err)
+			}
+			return
+		}
 		fmt.Printf("NAME\tNODE\tCPU%%\tMEMORY\tDISK-READ\tDISK-WRITE\n")
 		for _, m := range items {
 			u := m.Status.ResourceUsage
@@ -56,6 +87,12 @@ func cmdTop(ctx context.Context, kc *kube.Client, args []string) {
 			fatal(err)
 		}
 		items = selectorFilter(items, selector, func(m model.Machine) map[string]string { return m.Metadata.Labels })
+		if format != "" {
+			if err := writeStructured(os.Stdout, model.AggregateUsageByNode(items), format); err != nil {
+				fatal(err)
+			}
+			return
+		}
 		fmt.Printf("NODE\tMACHINES\tCPU%%\tMEMORY\n")
 		for _, agg := range model.AggregateUsageByNode(items) {
 			fmt.Printf("%s\t%d\t%s\t%s\n", agg.Node, agg.Machines, formatCPUPercent(agg.CPUPercent), formatBytes(agg.MemoryBytes))
