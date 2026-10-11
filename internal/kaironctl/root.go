@@ -87,6 +87,9 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		newUninstallCmd(opts),
 		newUpgradeCmd(opts),
 		newStatusCmd(opts),
+		newConfigCmd(opts),
+		newHistoryCmd(),
+		newRollbackCmd(),
 		newNetworkCmd(opts),
 		newImageCmd(opts),
 		newMCPCmd(opts),
@@ -122,17 +125,6 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		legacyCmd(opts, "nic", "Hot-add or remove an extra NIC on a Machine", nicExamples, cmdNIC),
 	)
 	return root
-}
-
-func newVersionCmd(opts *Options) *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print kaironctl version",
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(opts.Version)
-		},
-	}
 }
 
 func newCompletionCmd(root *cobra.Command) *cobra.Command {

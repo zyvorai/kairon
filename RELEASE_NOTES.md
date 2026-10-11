@@ -1,3 +1,16 @@
+# Unreleased
+
+## Upgrade notes
+
+- **`kaironctl upgrade` now keeps the previous release's values.** Before, an upgrade that did not restate `--set`/`-f` silently reset every override to chart defaults. It now applies Helm's reset-then-reuse (new chart defaults, then your previous overrides, then this call's flags). Pass `--reset-values` for the old behaviour.
+- **`kaironctl status` exits non-zero while the control plane is not ready.** Scripts that relied on a zero exit should add `--wait` or ignore the code.
+
+## Added
+
+- `kaironctl config view|get|set|unset`, `history` and `rollback` for the installed Helm release.
+- `kaironctl version --server` (release, chart, controller/node/UI images) and `kaironctl status -o json|yaml` with a release row.
+- `kaironctl install|upgrade --profile production` and `--chart oci://ghcr.io/zyvorai/charts/kairon --version X`.
+
 # Kairon v0.8.0
 
 Released 2026-10-11.

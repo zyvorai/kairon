@@ -16,6 +16,7 @@ import (
 	"helm.sh/helm/v3/pkg/cli/values"
 	"helm.sh/helm/v3/pkg/engine"
 	"helm.sh/helm/v3/pkg/getter"
+	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/release"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
@@ -32,6 +33,10 @@ const embeddedChartSentinel = "embedded"
 
 // helmDriver is overridden in tests (secrets | configmap | memory).
 var helmDriver = "secret"
+
+// newActionConfigFn builds the Helm action configuration; tests replace it
+// with an in-memory release store and a fake kube client.
+var newActionConfigFn = newActionConfig
 
 type restClientGetter struct {
 	namespace string
@@ -100,6 +105,53 @@ func newActionConfig(namespace string) (*action.Configuration, *cli.EnvSettings,
 // extracts the chart baked into the binary; otherwise uses the given path
 // (or KAIRON_CHART). Caller must remove tmpDir when non-empty.
 func resolveChartPath(chart string) (path string, tmpDir string, err error) {
+	return resolveChartPathVersion(chart, "")
+}
+
+// pullOCIChartFn downloads an oci:// chart reference into a temp directory and
+// returns the unpacked chart path; replaced in tests (it needs a registry).
+var pullOCIChartFn = pullOCIChart
+
+func pullOCIChart(ref, version string) (path string, tmpDir string, err error) {
+	rc, err := registry.NewClient()
+	if err != nil {
+		return "", "", fmt.Errorf("registry client: %w", err)
+	}
+	cfg := new(action.Configuration)
+	cfg.RegistryClient = rc
+	tmpDir, err = os.MkdirTemp("", "kairon-chart-oci-*")
+	if err != nil {
+		return "", "", err
+	}
+	p := action.NewPullWithOpts(action.WithConfig(cfg))
+	p.Settings = cli.New()
+	p.Version = version
+	p.Untar = true
+	p.UntarDir = tmpDir
+	p.DestDir = tmpDir
+	if _, err := p.Run(ref); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", "", fmt.Errorf("pull %s: %w", ref, err)
+	}
+	// The chart unpacks into <tmp>/<chart name>.
+	name := ref[strings.LastIndex(ref, "/")+1:]
+	if i := strings.IndexAny(name, ":@"); i >= 0 {
+		name = name[:i]
+	}
+	path = filepath.Join(tmpDir, name)
+	if _, err := os.Stat(filepath.Join(path, "Chart.yaml")); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", "", fmt.Errorf("pull %s: unpacked chart not found at %s", ref, path)
+	}
+	return path, tmpDir, nil
+}
+
+// resolveChartPathVersion is resolveChartPath with the chart version used when
+// chart is an oci:// reference (for example oci://ghcr.io/zyvorai/charts/kairon).
+func resolveChartPathVersion(chart, version string) (path string, tmpDir string, err error) {
+	if strings.HasPrefix(chart, "oci://") {
+		return pullOCIChartFn(chart, version)
+	}
 	if chart == "" || chart == embeddedChartSentinel {
 		tmpDir, err = os.MkdirTemp("", "kairon-chart-*")
 		if err != nil {
@@ -128,12 +180,16 @@ func mergeValues(sets, files []string, settings *cli.EnvSettings) (map[string]an
 }
 
 func sdkInstall(h *helmInstallOpts, upgradeOnly bool) (*release.Release, error) {
-	chartPath, tmp, err := resolveChartPath(h.Chart)
+	chartPath, tmp, err := resolveChartPathVersion(h.Chart, h.Version)
 	if err != nil {
 		return nil, err
 	}
 	if tmp != "" {
 		defer func() { _ = os.RemoveAll(tmp) }()
+	}
+	h, err = withProfile(h, chartPath)
+	if err != nil {
+		return nil, err
 	}
 
 	if h.DryRun {
@@ -144,7 +200,7 @@ func sdkInstall(h *helmInstallOpts, upgradeOnly bool) (*release.Release, error) 
 		return &release.Release{Name: h.ReleaseName, Namespace: h.Namespace, Manifest: manifest}, nil
 	}
 
-	actionConfig, settings, err := newActionConfig(h.Namespace)
+	actionConfig, settings, err := newActionConfigFn(h.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +222,7 @@ func sdkInstall(h *helmInstallOpts, upgradeOnly bool) (*release.Release, error) 
 		if h.Version != "" {
 			u.Version = h.Version
 		}
+		applyValueReuse(u, h, true)
 		return u.Run(h.ReleaseName, ch, vals)
 	}
 
@@ -181,6 +238,7 @@ func sdkInstall(h *helmInstallOpts, upgradeOnly bool) (*release.Release, error) 
 		if h.Version != "" {
 			u.Version = h.Version
 		}
+		applyValueReuse(u, h, false)
 		return u.Run(h.ReleaseName, ch, vals)
 	}
 
@@ -194,6 +252,48 @@ func sdkInstall(h *helmInstallOpts, upgradeOnly bool) (*release.Release, error) 
 		inst.Version = h.Version
 	}
 	return inst.Run(ch, vals)
+}
+
+// valueReuse reports which Helm value-reuse mode an upgrade should use.
+//
+// `kaironctl upgrade` keeps the values the release was last installed with
+// (Helm's reset-then-reuse: chart defaults of the new chart, then the
+// previous user-supplied values, then this call's --set/-f), so an upgrade
+// without flags no longer silently resets overrides. --reset-values restores
+// the old behaviour and --reuse-values reuses the previous computed values
+// verbatim. `install` re-runs keep Helm's reset semantics.
+func valueReuse(h *helmInstallOpts, upgradeOnly bool) (reuse, resetThenReuse bool) {
+	switch {
+	case h.ResetValues:
+		return false, false
+	case h.ReuseValues:
+		return true, false
+	case upgradeOnly:
+		return false, true
+	}
+	return false, false
+}
+
+func applyValueReuse(u *action.Upgrade, h *helmInstallOpts, upgradeOnly bool) {
+	u.ReuseValues, u.ResetThenReuseValues = valueReuse(h, upgradeOnly)
+}
+
+// withProfile prepends the chart's values-<profile>.yaml (for example
+// values-production.yaml) to the values files so that -f and --set override it.
+func withProfile(h *helmInstallOpts, chartPath string) (*helmInstallOpts, error) {
+	if h.Profile == "" || h.Profile == "evaluation" || h.Profile == "default" {
+		return h, nil
+	}
+	if strings.ContainsAny(h.Profile, "/\\.") {
+		return nil, fmt.Errorf("invalid --profile %q", h.Profile)
+	}
+	f := filepath.Join(chartPath, "values-"+h.Profile+".yaml")
+	if _, err := os.Stat(f); err != nil {
+		return nil, fmt.Errorf("--profile %q: %s not found in chart (profiles: evaluation, production)", h.Profile, filepath.Base(f))
+	}
+	cp := *h
+	cp.ValuesFiles = append([]string{f}, h.ValuesFiles...)
+	return &cp, nil
 }
 
 func renderChartDryRun(chartPath string, h *helmInstallOpts) (string, error) {

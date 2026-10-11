@@ -40,13 +40,28 @@ Manifest: [`deploy/krew/kairon.yaml`](../deploy/krew/kairon.yaml). Packaging scr
 No separate `helm` binary or `./charts/kairon` checkout required by default — the chart is baked into the binary. Pass `--helm-cli` to shell out to Helm 3 on `$PATH`, or `--chart PATH` / `$KAIRON_CHART` for a filesystem chart.
 
 ```text
-kaironctl install [--chart embedded|PATH] [--namespace kairon-system] [--set k=v] [-f values.yaml]
+kaironctl install [--chart embedded|PATH|oci://REF] [--version V] [--profile evaluation|production]
+                 [--namespace kairon-system] [--set k=v] [-f values.yaml]
                  [--wait] [--timeout 5m] [--dry-run] [--helm-cli]
                  [--helm-release-name kairon] [--create-namespace]
-kaironctl upgrade  [same chart/set/values/wait flags as install]
+kaironctl upgrade  [same chart/profile/set/values/wait flags as install]
+                 [--reset-values | --reuse-values]
+kaironctl config view [--all] [-o yaml|json]
+kaironctl config get KEY
+kaironctl config set KEY=VALUE [KEY=VALUE...] [--wait] [--dry-run]
+kaironctl config unset KEY [KEY...]
+kaironctl history [-o table|json|yaml]
+kaironctl rollback [REVISION] [--wait]
 kaironctl uninstall [--namespace kairon-system] [--force] [--wait] [--timeout 5m] [--dry-run] [--helm-cli]
-kaironctl status [--namespace kairon-system] [--wait] [--timeout 5m] [--interactive]
+kaironctl status [--namespace kairon-system] [--wait] [--timeout 5m] [--interactive] [-o json|yaml]
+kaironctl version [--server] [-o text|json|yaml]
 ```
+
+- **`upgrade` keeps your settings.** It reuses the values the release was last installed with (Helm's reset-then-reuse: the new chart's defaults, then your previous overrides, then this call's `--set`/`-f`). `--reset-values` restores the old reset-to-defaults behaviour; `--reuse-values` reuses the previous computed values verbatim. `install` re-runs keep Helm's reset semantics. `--dry-run` renders offline, so it cannot show previously stored values.
+- **`config set`/`unset`** change single values through an in-place upgrade. They refuse when the chart this binary would apply is not the chart version the release runs; run `kaironctl upgrade` first.
+- **`--profile production`** layers the chart's `values-production.yaml` under your `-f` and `--set`. Rollback restores the chart and values of a revision; it does not downgrade CRDs already applied.
+- **`--chart oci://ghcr.io/zyvorai/charts/kairon --version 0.8.0`** installs the published chart. Apply CRDs from the same tag first when upgrading ([CRD versioning](guides/crd-versioning.md#upgrading-an-existing-cluster)).
+- **`status`** shows the release and exits non-zero while the control plane is not ready (with `--wait`, until it is or the timeout expires). **`version`** prints only the client version; `--server` adds the Helm release and the controller, node and UI images.
 
 `uninstall` refuses while any Machine objects still exist unless `--force` is set. `--dry-run` on install renders manifests offline (no cluster needed).
 
@@ -226,7 +241,7 @@ rest (`migration-claim`, `cpu-label`, `gateway`). The MCP server also offers the
 ## Meta
 
 ```text
-kaironctl version
+kaironctl version [--server]
 kaironctl completion bash|zsh|fish|powershell
 ```
 

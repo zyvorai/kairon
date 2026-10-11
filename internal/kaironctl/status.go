@@ -25,6 +25,11 @@ type statusOpts struct {
 	Wait        bool
 	Timeout     time.Duration
 	Interactive bool
+	Output      string // "" (table) | json | yaml
+	ReleaseName string
+	// release is a one-line description of the installed Helm release,
+	// filled best-effort before polling starts.
+	release string
 }
 
 func newStatusCmd(opts *Options) *cobra.Command {
@@ -51,6 +56,10 @@ With --wait, refresh until the control plane looks ready or --timeout elapses.`,
 			if ctx == nil {
 				ctx = context.Background()
 			}
+			if s.Output != "" && s.Output != "json" && s.Output != "yaml" {
+				return fmt.Errorf("unknown output %q (want json or yaml)", s.Output)
+			}
+			s.release = describeRelease(&releaseRef{Name: s.ReleaseName, Namespace: s.Namespace})
 			return runStatus(ctx, kc, s)
 		},
 	}
@@ -58,24 +67,46 @@ With --wait, refresh until the control plane looks ready or --timeout elapses.`,
 	cmd.Flags().BoolVar(&s.Wait, "wait", false, "wait until control plane is ready")
 	cmd.Flags().DurationVar(&s.Timeout, "timeout", s.Timeout, "maximum wait duration")
 	cmd.Flags().BoolVar(&s.Interactive, "interactive", true, "rewrite status in place while waiting")
+	cmd.Flags().StringVarP(&s.Output, "output", "o", "", "output format: json|yaml (default: table)")
+	cmd.Flags().StringVar(&s.ReleaseName, "helm-release-name", "kairon", "Helm release name shown in the status header")
 	return cmd
 }
 
 type workloadStatus struct {
-	Kind    string
-	Name    string
-	Desired int
-	Ready   int
-	Err     string
+	Kind    string `json:"kind"`
+	Name    string `json:"name"`
+	Desired int    `json:"desired"`
+	Ready   int    `json:"ready"`
+	Err     string `json:"error,omitempty"`
 }
 
 type clusterStatus struct {
-	Controller workloadStatus
-	Node       workloadStatus
-	CRDsOK     bool
-	CRDErr     string
-	Phases     map[string]int
-	MachineN   int
+	Release    string         `json:"release,omitempty"`
+	Ready      bool           `json:"ready"`
+	Controller workloadStatus `json:"controller"`
+	Node       workloadStatus `json:"node"`
+	CRDsOK     bool           `json:"crdsOK"`
+	CRDErr     string         `json:"crdError,omitempty"`
+	Phases     map[string]int `json:"machinePhases"`
+	MachineN   int            `json:"machines"`
+}
+
+// describeRelease returns "chart-1.2.3 (app 1.2.3), revision 4, deployed", or
+// "" when the release cannot be read (status then simply omits the row).
+func describeRelease(ref *releaseRef) string {
+	rel, err := getReleaseFn(ref)
+	if err != nil || rel == nil {
+		return ""
+	}
+	out := ref.Name
+	if rel.Chart != nil && rel.Chart.Metadata != nil {
+		out = fmt.Sprintf("%s-%s (app %s)", rel.Chart.Metadata.Name, rel.Chart.Metadata.Version, rel.Chart.Metadata.AppVersion)
+	}
+	out += fmt.Sprintf(", revision %d", rel.Version)
+	if rel.Info != nil {
+		out += ", " + string(rel.Info.Status)
+	}
+	return out
 }
 
 func runStatus(ctx context.Context, kc *kube.Client, s *statusOpts) error {
@@ -86,19 +117,34 @@ func runStatus(ctx context.Context, kc *kube.Client, s *statusOpts) error {
 		if err != nil {
 			return err
 		}
-		var buf strings.Builder
-		writeStatus(&buf, st)
-		out := buf.String()
-		if s.Wait && s.Interactive && lastLines > 0 && style.Enabled(os.Stdout) {
-			style.ClearLines(os.Stdout, lastLines)
+		st.Release = s.release
+		st.Ready = statusReady(st)
+		structured := s.Output != ""
+		done := !s.Wait || st.Ready || time.Now().After(deadline)
+		if structured && done {
+			if err := writeStructured(os.Stdout, st, s.Output); err != nil {
+				return err
+			}
+		} else if !structured {
+			var buf strings.Builder
+			writeStatus(&buf, st)
+			out := buf.String()
+			if s.Wait && s.Interactive && lastLines > 0 && style.Enabled(os.Stdout) {
+				style.ClearLines(os.Stdout, lastLines)
+			}
+			_, _ = fmt.Fprint(os.Stdout, out)
+			lastLines = strings.Count(out, "\n")
 		}
-		_, _ = fmt.Fprint(os.Stdout, out)
-		lastLines = strings.Count(out, "\n")
 		if !s.Wait {
+			if !st.Ready {
+				return fmt.Errorf("kairon control plane is not ready")
+			}
 			return nil
 		}
-		if statusReady(st) {
-			style.Log(style.EmojiOK, "Kairon control plane is ready")
+		if st.Ready {
+			if !structured {
+				style.Log(style.EmojiOK, "Kairon control plane is ready")
+			}
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -133,6 +179,9 @@ func writeStatus(w io.Writer, st clusterStatus) {
 	_, _ = fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "%s\t%s\n", "Component", "Status")
+	if st.Release != "" {
+		_, _ = fmt.Fprintf(tw, "Release\t%s\n", st.Release)
+	}
 	writeWorkload(tw, w, "Controller", st.Controller)
 	writeWorkload(tw, w, "Node agent", st.Node)
 	crd := style.Wrap(w, style.Green, "OK")
