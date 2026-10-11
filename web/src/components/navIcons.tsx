@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, Layers, Network, RotateCcw, Route, Server,
+  Activity, ArrowLeftRight, Box, Calendar, Camera, Cpu, Gauge, HardDrive, Layers, Network, RotateCcw, Route, Server,
   Shield, ShieldCheck, Sparkles, UserCog,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -13,6 +13,7 @@ const ICONS: Record<string, ReactNode> = {
   machinesets: <Layers size={18} />,
   instancetypes: <Cpu size={18} />,
   nodes: <Server size={18} />,
+  storage: <HardDrive size={18} />,
   migrations: <ArrowLeftRight size={18} />,
   'migration-policies': <Route size={18} />,
   snapshots: <Camera size={18} />,

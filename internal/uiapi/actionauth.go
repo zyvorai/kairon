@@ -18,7 +18,7 @@ func (s *Server) withActionAuthorization(next http.Handler) http.Handler {
 			return
 		}
 		// Nodes and runtime/node proxy routes expose data across namespaces.
-		if s.NamespaceScopingEnabled && !admin && strings.HasPrefix(r.URL.Path, "/api/v1/nodes") {
+		if s.NamespaceScopingEnabled && !admin && (strings.HasPrefix(r.URL.Path, "/api/v1/nodes") || strings.HasPrefix(r.URL.Path, "/api/v1/atlas")) {
 			writeError(w, http.StatusForbidden, "node operations require administrator access")
 			return
 		}

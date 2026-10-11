@@ -132,6 +132,8 @@ export function resetUserPassword(targetUsername: string, newPassword: string): 
 
 export interface Config {
   consoleEnabled: boolean;
+  atlasEnabled?: boolean;
+  atlasConsoleURL?: string;
 }
 
 // getConfig reports small feature toggles (currently just consoleEnabled)

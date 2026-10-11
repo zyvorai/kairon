@@ -530,6 +530,13 @@ ui:
   # Content-addressed store for images uploaded with `kaironctl image
   # upload`; nodes download them by digest via spec.image.source.httpURL
   # (needs node.imageCacheDir). See docs/guides/machine-image-import.md.
+  # Read-only Zyvor Atlas storage views (Storage page: cluster health, pools,
+  # alerts, kairon-owned volumes, backups). The Atlas token never reaches the
+  # browser; kairon-ui proxies an allowlist of GETs. Empty url = disabled.
+  atlas:
+    url: ""            # e.g. http://atlas.atlas-system:5110
+    tokenSecret: ""    # Secret with key "token" (a viewer-role Atlas JWT)
+    consoleURL: ""     # browser URL of the Atlas console ("Open in Atlas" link)
   imageStore:
     enabled: false
     # Base URL kairon-node downloads from; default

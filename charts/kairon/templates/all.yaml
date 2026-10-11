@@ -1303,6 +1303,18 @@ spec:
             - name: KAIRON_UI_TRUSTED_PROXY_CIDRS
               value: {{ .Values.ui.rateLimit.trustedProxyCidrs | join "," | quote }}
 {{ end }}
+{{ if .Values.ui.atlas.url }}
+            - name: KAIRON_UI_ATLAS_URL
+              value: {{ .Values.ui.atlas.url | quote }}
+{{ if .Values.ui.atlas.tokenSecret }}
+            - name: KAIRON_UI_ATLAS_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ .Values.ui.atlas.tokenSecret | quote }}, key: token}}
+{{ end }}
+{{ if .Values.ui.atlas.consoleURL }}
+            - name: KAIRON_UI_ATLAS_CONSOLE_URL
+              value: {{ .Values.ui.atlas.consoleURL | quote }}
+{{ end }}
+{{ end }}
 {{ if .Values.ui.imageStore.enabled }}
             - name: KAIRON_UI_IMAGE_STORE_DIR
               value: /var/lib/kairon-ui/images

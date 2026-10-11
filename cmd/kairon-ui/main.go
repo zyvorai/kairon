@@ -49,6 +49,9 @@ func run() int {
 	if len(os.Args) >= 2 && os.Args[1] == "-hash-password" {
 		return hashPassword(os.Args[2:])
 	}
+	atlasURL := flag.String("atlas-url", os.Getenv("KAIRON_UI_ATLAS_URL"), "Zyvor Atlas storage gateway base URL (e.g. http://atlas.atlas-system:5110); enables the read-only Storage views. Empty disables them")
+	atlasTokenFile := flag.String("atlas-token-file", os.Getenv("KAIRON_UI_ATLAS_TOKEN_FILE"), "file holding the Atlas bearer token (falls back to KAIRON_UI_ATLAS_TOKEN)")
+	atlasConsoleURL := flag.String("atlas-console-url", os.Getenv("KAIRON_UI_ATLAS_CONSOLE_URL"), "optional browser URL of the Atlas console, shown as an \"Open in Atlas\" link")
 	listenAddr := flag.String("listen", env("KAIRON_UI_LISTEN", ":18082"), "HTTP listen address (serves both /api/v1/... and the built web UI)")
 	webDir := flag.String("web-dir", env("KAIRON_UI_WEB_DIR", ""), "directory containing the built web/dist SPA; empty serves API-only")
 	token := flag.String("token", os.Getenv("KAIRON_UI_TOKEN"), "static bearer token required on every /api/v1/... request (default: $KAIRON_UI_TOKEN)")
@@ -69,6 +72,15 @@ func run() int {
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	atlasToken := os.Getenv("KAIRON_UI_ATLAS_TOKEN")
+	if *atlasTokenFile != "" {
+		b, err := os.ReadFile(*atlasTokenFile)
+		if err != nil {
+			log.Error("read -atlas-token-file", "error", err)
+			os.Exit(1)
+		}
+		atlasToken = strings.TrimSpace(string(b))
+	}
 
 	users, err := loadUsers(os.Getenv("KAIRON_UI_USERS_JSON"), os.Getenv("KAIRON_UI_DEFAULT_ADMIN_PASSWORD"))
 	if err != nil {
@@ -177,14 +189,17 @@ func run() int {
 	}
 
 	srv := &uiapi.Server{
-		Kube:          kc,
-		Log:           log,
-		Token:         *token,
-		WebDir:        *webDir,
-		Users:         users,
-		SessionSecret: []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
-		LoginHint:     loginHint(),
-		Version:       version,
+		Kube:            kc,
+		Log:             log,
+		Token:           *token,
+		WebDir:          *webDir,
+		Users:           users,
+		SessionSecret:   []byte(os.Getenv("KAIRON_UI_SESSION_SECRET")),
+		LoginHint:       loginHint(),
+		AtlasURL:        *atlasURL,
+		AtlasToken:      atlasToken,
+		AtlasConsoleURL: *atlasConsoleURL,
+		Version:         version,
 		// UsersSecretName empty (the default) means POST
 		// /api/v1/auth/password and POST /api/v1/users/{username}/password
 		// are refused -- set only when the Helm chart owns the

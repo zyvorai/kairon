@@ -56,6 +56,12 @@ type Server struct {
 	// POST /api/v1/auth/login. Required whenever Users is non-empty.
 	SessionSecret []byte
 
+	// AtlasURL/AtlasToken enable the read-only Zyvor Atlas storage views
+	// (see atlas.go). AtlasConsoleURL is an optional "Open in Atlas" link.
+	AtlasURL        string
+	AtlasToken      string
+	AtlasConsoleURL string
+
 	// Version is the build version shown (unauthenticated) on the sign-in
 	// page's stat band.
 	Version string
@@ -319,6 +325,7 @@ func (s *Server) Handler() http.Handler {
 	// GET /api/v1/config reports server-wide feature flags (e.g.
 	// consoleEnabled), not per-namespace state -- not namespace-scoped.
 	api.HandleFunc("GET /api/v1/config", s.handleConfig)
+	api.HandleFunc("GET /api/v1/atlas/{path...}", s.handleAtlas)
 
 	// Neither of these two is namespace-scoped: {username} is not
 	// {namespace}, and a password is a per-account credential, not a

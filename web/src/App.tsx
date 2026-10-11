@@ -29,6 +29,7 @@ import Login from './pages/Login';
 import OIDCCallback from './pages/OIDCCallback';
 import { api, logout, token, UNAUTHORIZED_EVENT, username } from './api';
 import { Machine } from './types';
+import Storage from './pages/Storage';
 import { PageHero } from './components/ui';
 import { groupOf, NAV, NavItem } from './lib/nav';
 
@@ -190,6 +191,7 @@ export default function App() {
     'network-policies': <NetworkPolicies />,
     'security-groups': <SecurityGroups />,
     nodes: <Nodes />,
+    storage: <Storage />,
     assistant: <Assistant />,
     account: <Account />,
   }[page];
