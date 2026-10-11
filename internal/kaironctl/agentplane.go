@@ -548,7 +548,7 @@ summary on top; it never changes the ranked causes and nothing is applied.`,
   kaironctl agent diagnose migration/web-0-move --no-ai`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}

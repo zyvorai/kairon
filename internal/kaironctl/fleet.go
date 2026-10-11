@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zyvorai/kairon/internal/fleet"
-	"github.com/zyvorai/kairon/internal/kube"
 	"github.com/zyvorai/kairon/internal/model"
 )
 
@@ -28,7 +27,7 @@ func newFleetCmd(opts *Options) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return err
 		}
@@ -59,7 +58,7 @@ func newFleetCmd(opts *Options) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return err
 		}
@@ -74,7 +73,7 @@ func newFleetCmd(opts *Options) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return err
 		}
@@ -89,7 +88,7 @@ func newFleetCmd(opts *Options) *cobra.Command {
 		if err := json.Unmarshal(b, &spec); err != nil {
 			return err
 		}
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return err
 		}
@@ -113,7 +112,7 @@ func newFleetCmd(opts *Options) *cobra.Command {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "release-address NETWORK CLAIM-UID", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return err
 		}

@@ -107,7 +107,7 @@ rejected.`,
 }
 
 func uiRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
-	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
+	base := uiBaseURL()
 	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func uiRequest(ctx context.Context, method, path string, body io.Reader) (*http.
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if token := os.Getenv("KAIRON_UI_TOKEN"); token != "" {
+	if token := uiToken(false); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	return http.DefaultClient.Do(req)

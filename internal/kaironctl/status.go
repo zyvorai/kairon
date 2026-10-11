@@ -48,7 +48,7 @@ With --wait, refresh until the control plane looks ready or --timeout elapses.`,
   $ kaironctl status --wait --timeout 2m`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}

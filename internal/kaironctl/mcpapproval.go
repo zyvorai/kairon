@@ -203,7 +203,7 @@ the local user name.`,
 			if ttl <= 0 {
 				return fmt.Errorf("--ttl must be positive")
 			}
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}

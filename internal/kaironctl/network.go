@@ -66,7 +66,7 @@ func newNetworkPoliciesCmd(opts *Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ func newNetworkStatusCmd(opts *Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func newNetworkObservabilityCmd(opts *Options, use, kind, short string) *cobra.C
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kc, err := kube.FromEnvironment()
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}
@@ -300,14 +300,11 @@ func printObservability(ctx context.Context, m model.Machine, kind string, limit
 // fetchObservability GETs a Machine's uiapi pass-through route and
 // returns the body.
 func fetchObservability(ctx context.Context, namespace, name, kind string, limit int) ([]byte, error) {
-	base := strings.TrimRight(os.Getenv("KAIRON_UI_URL"), "/")
+	base := uiBaseURL()
 	if base == "" {
 		return nil, fmt.Errorf("set KAIRON_UI_URL to reach uiapi %s pass-through", kind)
 	}
-	token := os.Getenv("KAIRON_UI_TOKEN")
-	if token == "" {
-		token = os.Getenv("KAIRON_CONSOLE_TOKEN")
-	}
+	token := uiToken(true)
 	path := fmt.Sprintf("%s/api/v1/machines/%s/%s/%s", base, url.PathEscape(namespace), url.PathEscape(name), kind)
 	if limit > 0 {
 		path += fmt.Sprintf("?limit=%d", limit)

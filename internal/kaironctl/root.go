@@ -77,6 +77,8 @@ migrations, snapshots, and more. Same command tree as kubectl-kairon.`,
 		},
 	}
 	root.PersistentFlags().StringVarP(&opts.Namespace, "namespace", "n", "default", "Kubernetes namespace for namespaced resources (install defaults to kairon-system)")
+	root.PersistentFlags().StringVar(&kubeFlags.Kubeconfig, "kubeconfig", "", "path to the kubeconfig file (default: $KUBECONFIG or ~/.kube/config)")
+	root.PersistentFlags().StringVar(&kubeFlags.Context, "context", "", "kubeconfig context to use")
 	root.PersistentFlags().StringVar(&opts.Color, "color", "auto", "colorize output: auto|always|never (also respects NO_COLOR)")
 
 	root.AddCommand(
@@ -171,7 +173,8 @@ func legacyCmd(opts *Options, use, short, example string, fn func(context.Contex
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kc, err := kube.FromEnvironment()
+			args = extractConnFlags(args)
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}
@@ -191,7 +194,8 @@ func powerCmd(opts *Options, use, state string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kc, err := kube.FromEnvironment()
+			args = extractConnFlags(args)
+			kc, err := newKubeClient()
 			if err != nil {
 				return err
 			}

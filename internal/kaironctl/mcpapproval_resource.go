@@ -20,7 +20,7 @@ func mcpResourceApproveHook(nsDefault string) func(context.Context, string, json
 		if err != nil || !needed {
 			return "", err
 		}
-		client, err := kube.FromEnvironment()
+		client, err := newKubeClient()
 		if err != nil {
 			return "", err
 		}

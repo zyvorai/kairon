@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zyvorai/kairon/internal/kaironctl/style"
-	"github.com/zyvorai/kairon/internal/kube"
 )
 
 // helmRunner is the CLI fallback, overridden in tests.
@@ -288,7 +287,7 @@ func cloneHelmOpts(h *helmInstallOpts) *helmInstallOpts {
 func runHelmUninstall(ctx context.Context, h *helmInstallOpts) error {
 	style.SetQuiet(h.DryRun)
 	if !h.Force && !h.DryRun {
-		kc, err := kube.FromEnvironment()
+		kc, err := newKubeClient()
 		if err != nil {
 			return fmt.Errorf("connect to cluster to check for Machines (or pass --force): %w", err)
 		}
