@@ -75,6 +75,12 @@ Flags:
                           KAIRON_UI_SESSION_SECRET. CHANGE IT for anything
                           reachable beyond a lab network. No whitespace,
                           quotes, '$' or backslash (systemd EnvironmentFile).
+  --apply-crds            Also `kubectl apply --server-side` deploy/crd.yaml and
+                          deploy/fleet-crds.yaml on the host (CRDs are never
+                          installed by this script otherwise).
+  --apply-rbac            Also apply deploy/rbac.yaml (generated from the Helm
+                          chart: `make rbac-bundle`) so the node/controller/UI
+                          service accounts carry the chart's current grants.
   --reseed-ui-auth        Also (re)apply the admin password and, if missing, a
                           session secret to an EXISTING kairon-ui.env, then
                           restart is picked up by the normal service start.
@@ -198,6 +204,8 @@ UI_TOKEN=""
 UI_ALLOW_UNAUTHENTICATED=0
 UI_ADMIN_PASSWORD="Admin@321"
 RESEED_UI_AUTH=0
+APPLY_CRDS=0
+APPLY_RBAC=0
 RESOLVED_UI_SESSION_SECRET=""
 UI_PORT="8082"
 UI_PORT_EXPLICIT=0
@@ -278,6 +286,8 @@ while [[ $# -gt 0 ]]; do
       [[ ${#UI_ADMIN_PASSWORD} -ge 8 ]] || die "--ui-admin-password must be at least 8 characters"
       ;;
     --reseed-ui-auth) RESEED_UI_AUTH=1 ;;
+    --apply-crds) APPLY_CRDS=1 ;;
+    --apply-rbac) APPLY_RBAC=1 ;;
     --ui-port=*) UI_PORT="${1#*=}"; UI_PORT_EXPLICIT=1 ;;
     --with-console) WITH_CONSOLE=1 ;;
     --console-port=*) CONSOLE_PORT="${1#*=}"; CONSOLE_PORT_EXPLICIT=1 ;;
@@ -766,6 +776,8 @@ run_deploy() {
     printf 'UI_ADMIN_PASSWORD=%q\n' "$UI_ADMIN_PASSWORD"
     printf 'UI_SESSION_SECRET=%q\n' "$RESOLVED_UI_SESSION_SECRET"
     printf 'RESEED_UI_AUTH=%q\n' "$RESEED_UI_AUTH"
+    printf 'APPLY_CRDS=%q\n' "$APPLY_CRDS"
+    printf 'APPLY_RBAC=%q\n' "$APPLY_RBAC"
     printf 'UI_PORT=%q\n' "$UI_PORT"
     printf 'UI_PORT_EXPLICIT=%q\n' "$UI_PORT_EXPLICIT"
     printf 'WITH_CONSOLE=%q\n' "$WITH_CONSOLE"
@@ -858,6 +870,29 @@ fi
 install -m 0755 -o root -g root ./kairon-node /usr/bin/kairon-node
 install -m 0755 -o root -g root ./kaironctl /usr/bin/kaironctl
 ok "installed kairon-node, kaironctl to /usr/bin"
+
+# CRDs and RBAC come from the repo's generated bundles (RBAC is rendered from
+# the Helm chart, so the chart stays the single source of truth).
+kube_apply() {
+  local kc=""
+  if command -v kubectl >/dev/null 2>&1; then kc="kubectl"
+  elif command -v k3s >/dev/null 2>&1; then kc="k3s kubectl"
+  fi
+  if [[ -z "$kc" ]]; then
+    warn "no kubectl/k3s on this host; apply $* from a machine with cluster access: kubectl apply --server-side --force-conflicts -f <file>"
+    return 0
+  fi
+  local f
+  for f in "$@"; do
+    if $kc apply --server-side --force-conflicts -f "$f"; then
+      ok "applied $(basename "$f")"
+    else
+      warn "kubectl apply of $(basename "$f") failed; apply it manually (see output above)"
+    fi
+  done
+}
+if [[ "$APPLY_CRDS" == "1" ]]; then kube_apply ./crd.yaml ./fleet-crds.yaml; fi
+if [[ "$APPLY_RBAC" == "1" ]]; then kube_apply ./rbac.yaml; fi
 
 if [[ "$WITH_CONTROLLER" == "1" ]]; then
   install -m 0755 -o root -g root ./kairon-controller /usr/bin/kairon-controller
@@ -1158,6 +1193,12 @@ INSTALL_EOF
     scp_files+=("$build_dir/kairon-ui" "$REPO_ROOT/systemd/kairon-ui.service")
     tar -C "$REPO_ROOT/web/dist" -czf "$local_stage/kairon-ui-web.tar.gz" .
     scp_files+=("$local_stage/kairon-ui-web.tar.gz")
+  fi
+  if [[ "$APPLY_CRDS" == "1" ]]; then
+    scp_files+=("$REPO_ROOT/deploy/crd.yaml" "$REPO_ROOT/deploy/fleet-crds.yaml")
+  fi
+  if [[ "$APPLY_RBAC" == "1" ]]; then
+    scp_files+=("$REPO_ROOT/deploy/rbac.yaml")
   fi
   scp_files+=("$local_stage/params.env" "$local_stage/install.sh")
 
