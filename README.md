@@ -31,10 +31,11 @@
 
 ## What's new
 
-New since v0.6.0 (current: v0.7.2):
+New since v0.6.0 (current: v0.8.0):
 
 | | |
 |---|---|
+| **`v1` API and new dashboard** | `kairon.zyvor.dev/v1` is the storage version (`v1beta1`/`v1alpha1` served, deprecated). The dashboard is redesigned and gains Storage (Atlas), Pools & claims, Images and Backups pages; `kairon-ui` now listens on `:18082`. [Guide →](docs/guides/kairon-ui-dashboard.md) |
 | **Native macOS node** | `kairon-node` registers an Apple silicon Mac as a Node and runs `backend: vz` Machines through FluxVM. Verified on an M4; multi-Mac clusters not yet. [Guide →](docs/macos.md) · [Mac cluster →](docs/macos-cluster.md) |
 | **Developer ecosystem kit** | Python and TypeScript SDKs, digest-pinned recipes, disposable-VM GitHub Actions, Terraform composition. [Kit →](ecosystem/README.md) |
 | **Fleet automation (experimental)** | Opt-in Redfish fencing, balancing, autoscaling, backup and recovery plans, template claims, usage CSV and a Fleet dashboard. [Guide →](docs/guides/enterprise-fleet.md) |
@@ -184,10 +185,10 @@ On a Kubernetes cluster whose VM hosts run [FluxVM](https://github.com/zyvorai/z
 kubectl label node worker-1 kairon.zyvor.dev/capable=true
 
 helm upgrade --install kairon oci://ghcr.io/zyvorai/charts/kairon \
-  --version 0.7.2 -n kairon-system --create-namespace \
-  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.7.2/charts/kairon/values-production.yaml
+  --version 0.8.0 -n kairon-system --create-namespace \
+  -f https://raw.githubusercontent.com/zyvorai/kairon/v0.8.0/charts/kairon/values-production.yaml
 
-curl -fsSL -o kaironctl https://github.com/zyvorai/kairon/releases/download/v0.7.2/kaironctl-linux-amd64
+curl -fsSL -o kaironctl https://github.com/zyvorai/kairon/releases/download/v0.8.0/kaironctl-linux-amd64
 chmod +x kaironctl && sudo mv kaironctl /usr/local/bin/      # or: kubectl krew install kairon
 
 kaironctl create demo --image /var/lib/fluxvm/images/ubuntu.qcow2 --cpu 2 --memory 2Gi
@@ -268,7 +269,7 @@ kubectl -n kairon-system port-forward svc/kairon-ui 18082:18082
 | MCP server for AI agents | Preview, CI end-to-end with the official SDK |
 | CPU/memory hotplug | Grow-only (QEMU) |
 
-**v0.7.2** is the latest release. Real two-host live migration is still Preview: the multi-host lab matrix is not yet green, so it is not claimed as Stable. Honest gaps live in [docs/STATUS.md](docs/STATUS.md); what comes next is in [ROADMAP.md](ROADMAP.md).
+**v0.8.0** is the latest release. Real two-host live migration is still Preview: the multi-host lab matrix is not yet green, so it is not claimed as Stable. Honest gaps live in [docs/STATUS.md](docs/STATUS.md); what comes next is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
