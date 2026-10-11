@@ -107,6 +107,9 @@ Open `http://127.0.0.1:18082` and sign in as `admin` with that password.
 | **Migrations** | List with phase badges, a "New Migration" form, an "Evacuate Node" action, `status.dataPlaneEncrypted` badge, a "Cancel migration" action while `Starting`/`Running`, and the recovery workflow |
 | **Snapshots** | List + create form |
 | **Nodes** | Real Kubernetes `Node` list — `Ready`, `spec.unschedulable`, taints, addresses, plus per-node Machines/CPU/Memory usage rollup; read-only |
+| **Storage** | Read-only Atlas volumes, pools, backups and health; needs `ui.atlas.*` ([Atlas storage](guides/machine-storage-atlas.md#dashboard-storage-page)) |
+| **Pools & claims**, **Backups**, **Images** | Warm [MachinePools](guides/machine-pools.md) and claims, [machine backups](guides/machine-backup.md) and restores, uploaded images |
+| **Machine sets**, **Restores**, **Snapshot schedules**, **Quotas**, **Policies** and more | The remaining resource pages; the full list is in the [dashboard guide](guides/kairon-ui-dashboard.md) |
 | **Account** | Change your own password; an admin account can reset another operator's |
 
 For real, named per-operator accounts instead of the single generated admin,
