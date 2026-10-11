@@ -87,7 +87,7 @@ kaironctl get snapshots
 
 ```bash
 helm upgrade --install kairon ./charts/kairon -n kairon-system --set ui.enabled=true
-kubectl -n kairon-system port-forward svc/kairon-ui 8082:8082
+kubectl -n kairon-system port-forward svc/kairon-ui 18082:18082
 ```
 
 No `ui.*` auth values needed: with nothing else configured, the chart seeds a
@@ -98,7 +98,7 @@ from the `helm install` output (or any time later) with:
 kubectl -n kairon-system get secret kairon-ui-session -o jsonpath='{.data.defaultAdminPassword}' | base64 -d; echo
 ```
 
-Open `http://127.0.0.1:8082` and sign in as `admin` with that password.
+Open `http://127.0.0.1:18082` and sign in as `admin` with that password.
 
 | Page | What it shows |
 |---|---|
@@ -170,7 +170,7 @@ Installs `kairon-ui` as a systemd service alongside `kairon-node`/`kairon-contro
 **Redeploy caveats (confirmed on `80.79.5.173`):**
 
 - Existing `/etc/kairon/kairon-node.env` and `kairon-ui.env` are **left untouched**. `--with-console` / `--ui-token` / `--kube-*` do not rewrite them — add matching `KAIRON_NODE_CONSOLE_TOKEN` (and `KAIRON_NODE_CONSOLE_PORT=8090` on the UI side) by hand, then `systemctl restart kairon-node kairon-ui`. Without that shared token, dashboard **Network** / diagnostics / VNC return `501 diagnostics are not enabled`.
-- Health ports default to controller `:32301`, node `:32302`, UI `:8082`. Do not use `:8080` for kairon; it belongs to `krytond` on this host. If a default is busy, the script picks a random free port, or you can pin `--controller-port=N` / `--node-port=N`.
+- Health ports default to controller `:32301`, node `:32302`, UI `:18082` (change with `--ui-port=N`, `KAIRON_UI_LISTEN`, or the chart's `ui.service.port`). Do not use `:8080` for kairon; it belongs to `krytond` on this host. If a default is busy, the script picks a random free port, or you can pin `--controller-port=N` / `--node-port=N`.
 - A port held by the kairon service being redeployed counts as free, so a redeploy keeps the same ports without stopping the services first.
 - `--reserved-cpus=LIST` (implies `--cpu-pinning`) turns on `pinnable-cpus` discovery: it sets `KAIRON_RESERVED_CPUS` in the node env file and installs `kairon-cpustate.path`, which copies kubelet's root-only `cpu_manager_state` to where kairon-node can read it. `--no-cpu-pinning` undoes both. See [CPU pinning](guides/machine-cpu-pinning.md#turning-on-discovery).
 - Opt-in controller features read env keys from `/etc/kairon/kairon-controller.env`, for example `KAIRON_STALE_EVACUATION=true` and `KAIRON_NODE_LIVENESS_LEASE_NAMESPACE=kairon-system` for [stale evacuation](guides/machine-fencing.md#automatic-still-attested---stale-evacuation); restart `kairon-controller` after editing.

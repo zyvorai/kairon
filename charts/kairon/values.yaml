@@ -722,10 +722,11 @@ ui:
     namespaceGroups: []
   service:
     type: ClusterIP
+    # Configurable (default 18082, deliberately not the commonly-used 8082).
     # Also the container's actual internal listen port (-listen=:port) --
     # one value drives both, since a dashboard-with-one-backend has no
     # real reason to decouple them.
-    port: 8082
+    port: 18082
   ingress:
     enabled: false
     className: ""

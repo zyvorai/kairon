@@ -87,7 +87,7 @@ Flags:
   --ui-allow-unauthenticated  Start kairon-ui without a token (local
                           development only -- every dashboard route is then
                           open to anyone who can reach the port).
-  --ui-port=N             kairon-ui listen port (default 8082), same
+  --ui-port=N             kairon-ui listen port (default 18082), same
                           auto-fallback-if-busy behavior as --node-port.
   --with-console          Also enable the graphical VNC console relay
                           (kairon-ui's "Console" button per Machine).
@@ -207,7 +207,7 @@ RESEED_UI_AUTH=0
 APPLY_CRDS=0
 APPLY_RBAC=0
 RESOLVED_UI_SESSION_SECRET=""
-UI_PORT="8082"
+UI_PORT="18082"
 UI_PORT_EXPLICIT=0
 RESOLVED_UI_TOKEN=""
 RESOLVED_UI_TOKEN_SOURCE="none"
@@ -1262,19 +1262,19 @@ INSTALL_EOF
 
   if [[ "$WITH_UI" == "1" ]]; then
     local ui_port
-    ui_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--listen=:[0-9]+' /etc/systemd/system/kairon-ui.service | cut -d: -f2" || echo 8082)"
+    ui_port="$(ssh_cmd "$REMOTE" "grep -oE -- '--listen=:[0-9]+' /etc/systemd/system/kairon-ui.service | cut -d: -f2" || echo 18082)"
     # kairon-ui's /readyz is an unconditional 200 with no actual Kubernetes
     # reachability check (unlike node/controller), so only healthz is a
     # meaningful signal here -- verify_remote's readyz line is discarded.
     local ui_report ui_active ui_healthz
-    ui_report="$(verify_remote kairon-ui.service "${ui_port:-8082}")"
+    ui_report="$(verify_remote kairon-ui.service "${ui_port:-18082}")"
     ui_active="$(sed -n '1p' <<< "$ui_report")"
     ui_healthz="$(sed -n '2p' <<< "$ui_report")"
     [[ "$ui_active" == "active" ]] && ok "kairon-ui.service is active" || err "kairon-ui.service is '$ui_active' (expected active)"
     [[ "$ui_healthz" == "200" ]] && ok "ui healthz: $ui_healthz" || warn "ui healthz: $ui_healthz"
 
     echo
-    ok "dashboard: http://${HOST_ARG}:${ui_port:-8082}"
+    ok "dashboard: http://${HOST_ARG}:${ui_port:-18082}"
     if [[ -n "$RESOLVED_UI_SESSION_SECRET" ]]; then
       if ssh_exec_privileged "$REMOTE" "${SUDO} grep -q '^KAIRON_UI_DEFAULT_ADMIN_PASSWORD=' /etc/kairon/kairon-ui.env" >/dev/null 2>&1; then
         ok "dashboard login: username 'admin' (password from --ui-admin-password; default Admin@321 -- change it)"

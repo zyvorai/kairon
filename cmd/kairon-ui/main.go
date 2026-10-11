@@ -49,7 +49,7 @@ func run() int {
 	if len(os.Args) >= 2 && os.Args[1] == "-hash-password" {
 		return hashPassword(os.Args[2:])
 	}
-	listenAddr := flag.String("listen", env("KAIRON_UI_LISTEN", ":8082"), "HTTP listen address (serves both /api/v1/... and the built web UI)")
+	listenAddr := flag.String("listen", env("KAIRON_UI_LISTEN", ":18082"), "HTTP listen address (serves both /api/v1/... and the built web UI)")
 	webDir := flag.String("web-dir", env("KAIRON_UI_WEB_DIR", ""), "directory containing the built web/dist SPA; empty serves API-only")
 	token := flag.String("token", os.Getenv("KAIRON_UI_TOKEN"), "static bearer token required on every /api/v1/... request (default: $KAIRON_UI_TOKEN)")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", env("KAIRON_UI_ALLOW_UNAUTHENTICATED", "false") == "true", "start without a token -- local development only, refused by default")
@@ -59,7 +59,7 @@ func run() int {
 	trustedProxyCIDRs := flag.String("trusted-proxy-cidrs", env("KAIRON_UI_TRUSTED_PROXY_CIDRS", ""), "comma-separated CIDRs (e.g. your Ingress/load-balancer's pod or node network) that -trusted-proxy-header is ever trusted from; required alongside it, otherwise any direct client could spoof that header")
 	namespaceScopingEnabled := flag.Bool("namespace-scoping-enabled", env("KAIRON_UI_NAMESPACE_SCOPING_ENABLED", "false") == "true", "restrict each non-admin session-token operator to the namespaces listed in their own ui.auth.users[].namespaces entry or reachable via ui.oidc.namespaceGroups; false (the default) is today's unchanged behavior -- every authenticated operator sees and acts on every namespace")
 	imageStoreDir := flag.String("image-store-dir", env("KAIRON_UI_IMAGE_STORE_DIR", ""), "directory for images uploaded with kaironctl image upload; empty disables the image store")
-	imageStorePublicURL := flag.String("image-store-public-url", env("KAIRON_UI_IMAGE_STORE_PUBLIC_URL", ""), "base URL kairon-node downloads uploaded images from (e.g. http://kairon-ui.kairon-system.svc:8082); empty uses the upload request's host")
+	imageStorePublicURL := flag.String("image-store-public-url", env("KAIRON_UI_IMAGE_STORE_PUBLIC_URL", ""), "base URL kairon-node downloads uploaded images from (e.g. http://kairon-ui.kairon-system.svc:18082); empty uses the upload request's host")
 	imageStoreMaxBytes := flag.Int64("image-store-max-bytes", envInt64("KAIRON_UI_IMAGE_STORE_MAX_BYTES", 64<<30), "largest accepted upload in bytes (0 = unlimited)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
