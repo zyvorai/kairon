@@ -85,7 +85,7 @@ The root [README](https://github.com/zyvorai/zyvor-kairon/blob/main/README.md) i
 | [`guides/machine-sandboxes.md`](guides/machine-sandboxes.md) | `spec.sandbox`: FluxVM's lightweight agent-sandbox track, templates, the HTTP proxy relay, warm pools, and the egress check |
 | [`guides/machine-image-catalog.md`](guides/machine-image-catalog.md) | `spec.image.catalogName`: FluxVM's node-local, checksummed image catalog and its admin API |
 | [`guides/machine-diagnostics.md`](guides/machine-diagnostics.md) | Runtime capabilities, PSI pressure, effective CPU set, and cgroup-level freeze/thaw |
-| [`guides/crd-versioning.md`](guides/crd-versioning.md) | What a real CRD version bump (`v1beta1`) still requires; the conversion webhook scaffold that exists today |
+| [`guides/crd-versioning.md`](guides/crd-versioning.md) | What the next CRD version bump after `v1` still requires; the conversion webhook scaffold that exists today |
 | [`runbook-multi-host-migration-test.md`](runbook-multi-host-migration-test.md) · [`runbook-recovery-drill.md`](runbook-recovery-drill.md) | Real two-host live-migration testing; deliberately drilling a `NeedsRecovery` recovery |
 | [`runbook-backup-restore.md`](runbook-backup-restore.md) | Backing up/restoring Kairon's CRD state (`scripts/backup-crds.sh`/`restore-crds.sh`), and what it doesn't cover (VM disk content, FluxVM host state) |
 | [`runbook-velero-backup.md`](runbook-velero-backup.md) | Using generic Velero (no Kairon-specific plugin) instead — what works out of the box, and the one real gap (no disk-content snapshot without a real CSI storage backend) |
