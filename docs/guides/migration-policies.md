@@ -77,7 +77,7 @@ concurrency caps are already checked):
 
 `describe` for every other kind in this project uniformly prints the raw
 object as JSON and nothing else. `kaironctl describe migrationpolicy` is one
-of only four deliberate exceptions (the others are
+of only five deliberate exceptions (the others are `kaironctl describe machine`,
 [`kaironctl describe snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe),
 [`kaironctl describe quota`](machine-quotas.md#previewing-usage-right-now-kaironctl-describe),
 and [`kaironctl describe

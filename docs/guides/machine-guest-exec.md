@@ -80,8 +80,9 @@ have no dedicated dashboard button yet -- reachable via the REST API only:
   opt-in also backs [guest file access](machine-guest-agent-files.md) --
   reading or writing a file inside the guest directly, rather than via
   `--command "cat ..."`/shell redirection through exec.
-- **60-second default timeout** (FluxVM's own), overridable per call up to
-  whatever your deployment is comfortable with -- a command that runs
+- **60-second default timeout** (FluxVM's own), overridable per call with
+  `timeoutSeconds` (kairon-node's relay itself gives up after 5 minutes, so
+  anything longer fails regardless) -- a command that runs
   longer than its timeout returns an error, with no way to reconnect to it
   or see partial output afterward.
 - **No finer-grained permission than "admin."** There's no way today to

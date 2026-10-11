@@ -314,7 +314,8 @@ a `NEXTRUN` column, `kubectl get machinesnapshotschedules` has its own
 has a **Next run** column too.
 
 `nextRunTime` is set once, every time a schedule actually fires, to
-`lastRunTime + intervalSeconds` -- a simple as-of-last-fire projection, not
+`lastRunTime + intervalSeconds` (the next fixed slot instead, for a
+`dailyAt` or `jitterSeconds` schedule) -- a simple as-of-last-fire projection, not
 a live countdown recomputed on every reconcile tick. This is a deliberate
 choice, not an oversight: `MachineSnapshotSchedule`'s own status is only
 ever patched when a schedule is `Due` (see "How it's enforced" below) --
@@ -369,7 +370,7 @@ Each reconcile tick:
    `startingDeadlineSeconds` doesn't apply to it.)
 4. Otherwise, for each due schedule, every `Machine` in the same namespace
    matching `spec.selector` gets a new `MachineSnapshot`, named
-   `<schedule-name>-<unix-timestamp>` and labeled
+   `<schedule-name>-<machine-name>-<unix-timestamp>` and labeled
    `kairon.zyvor.dev/snapshot-schedule: <schedule-name>`.
 5. If `spec.keepLast` is set, right after each successful create the
    schedule's own ready-to-use `MachineSnapshot`s for that same Machine
@@ -380,7 +381,7 @@ Each reconcile tick:
    matching zero Machines still gets `lastRunTime`/`nextRunTime` patched,
    so it doesn't re-fire every tick forever waiting for a Machine that may
    never appear. `nextRunTime` is set to this tick's `lastRunTime +
-   intervalSeconds` -- see "When will it run next?" above for exactly what
+   intervalSeconds` (the next fixed slot for `dailyAt`/`jitterSeconds`) -- see "When will it run next?" above for exactly what
    it does and doesn't promise. A failure creating one Machine's snapshot
    is logged and counted
    (`kairon_reconcile_item_errors_total{kind="snapshotschedule"}`) but

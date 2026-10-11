@@ -341,7 +341,7 @@ create or edit either CRD.
 
 ## Troubleshooting: why is traffic being allowed/blocked?
 
-Four read-only, any-authenticated-operator API endpoints (also on the
+Five read-only, any-authenticated-operator API endpoints (also on the
 dashboard **Network** panel and `kaironctl network
 flows|drop-reasons|stats|effective`) answer "what is actually happening,"
 as opposed to "what was configured":
@@ -370,7 +370,7 @@ FluxVM's eBPF dataplane on the Machine (`mode: tap`, `netns: true`,
 `network-effective`, but the other three typically 502 from the node
 relay.
 
-All four are raw JSON passthroughs of FluxVM's own response (no fixed
+All five are raw JSON passthroughs of FluxVM's own response (no fixed
 Kairon-side schema) -- FluxVM's own handlers return dynamic, evolving
 shapes here rather than a versioned struct.
 
@@ -387,7 +387,7 @@ integration uses internally, not something an operator calls directly, or
 a substantial standalone observability product in its own right (Hubble's
 full flow-observability UI) that would need its own dedicated design pass
 rather than a quick wrap alongside four smaller diagnostics. Not
-implementing these for now; the four endpoints above already cover the
+implementing these for now; the endpoints above already cover the
 concrete "why isn't my policy working" question this section exists to
 answer.
 

@@ -224,7 +224,7 @@ explanatory error rather than proceeding:
 migration preflight failed: storage domain mismatch: source node "worker-1"
 has kairon.zyvor.dev/storage-domain="rack-a", target node "worker-3" has
 kairon.zyvor.dev/storage-domain="rack-b" -- these nodes are not asserted to
-share storage/network, see docs/guides/machine-placement.md
+share storage/network, see docs/guides/machine-fencing.md
 ```
 
 **This can only catch a *confirmed* mismatch.** If either node doesn't have

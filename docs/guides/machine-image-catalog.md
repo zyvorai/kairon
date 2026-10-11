@@ -2,7 +2,7 @@
 
 Reference a named, checksummed (and optionally signed) image alias
 instead of a raw disk path -- FluxVM's own image catalog, node-scoped
-admin API, API-only first cut.
+admin API, first cut.
 
 ## What this is
 
@@ -54,8 +54,10 @@ like sandbox templates, are **per-node** state; registering one on
 
 ## Real limits today (first cut)
 
-- **No dashboard yet.** Every capability here is API-only; `kaironctl`
-  has no dedicated verbs either.
+- **`kaironctl` has no dedicated verbs.** The only dashboard surface is the
+  "Image catalog" tab in the Nodes page's node tools (register, rename,
+  clone, export, read-only toggle, delete, clean); everything else goes
+  through the API.
 - **No signature generation from Kairon.** FluxVM's own `fluxvm catalog
   sign` CLI (out of band, on the node itself) is how a signed entry gets
   its signature -- Kairon only ever relays what FluxVM already reports,

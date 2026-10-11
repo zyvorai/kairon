@@ -132,10 +132,12 @@ so neither has an equivalent per-tick tally to report here. See
 
 - **`kairon-migrations`** (unchanged) -- the original four alerts, all
   pointing at `docs/runbook-migration-failures.md`.
-- **`kairon-health`** (new) -- three cross-component alerts with no
+- **`kairon-health`** (new) -- four cross-component alerts with no
   runbook of their own (check the named component's own logs):
   - `KaironReconcileErrorRateHigh` -- more than 5 failed reconcile ticks
     in 15 minutes, on `kairon-controller` or `kairon-node`.
+  - `KaironReconcileItemErrorRateHigh` -- more than 5 per-item reconcile
+    failures (`kairon_reconcile_item_errors_total`) in 15 minutes.
   - `KaironAPIServerErrorRateHigh` -- more than 10 failed apiserver calls
     in 15 minutes, from any component.
   - `KaironWebhookDenyRateHigh` -- more than 20 admission-webhook denials

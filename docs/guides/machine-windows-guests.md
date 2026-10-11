@@ -6,16 +6,16 @@ that it can run *any* Windows edition.
 
 ## What works today: legacy-BIOS Windows with a pre-built image
 
-Kairon never runs an interactive OS installer for any guest OS, Windows
-included -- exactly like a Linux Machine, you boot a **pre-built qcow2/raw
-image**, not an installer ISO (see [`machine-storage.md`](machine-storage.md)/
-[`machine-image-import.md`](machine-image-import.md)). For Windows, that
-image needs two things baked in *before* it ever reaches Kairon:
+The fast path, exactly like a Linux Machine, is to boot a **pre-built
+qcow2/raw image** (see [`machine-storage.md`](machine-storage.md)/
+[`machine-image-import.md`](machine-image-import.md)); an interactive
+install from an ISO is also possible via `spec.cdroms` (see "Real limits
+today" below). For a pre-built Windows image, it needs two things baked in
+*before* it ever reaches Kairon:
 
 1. **VirtIO drivers already installed** (disk and network) -- Windows has
-   no built-in virtio support, and Kairon has no interactive-setup flow to
-   inject them via a second attached driver ISO mid-install. The
-   standard, well-supported way to get this is to install Windows once
+   no built-in virtio support, and a pre-built image has no install step
+   left to inject them in. The standard, well-supported way to get this is to install Windows once
    (on any hypervisor, or using the official
    [`virtio-win`](https://github.com/virtio-win/virtio-win-pkg-scripts)
    driver ISO during that one-time setup), then export the resulting disk

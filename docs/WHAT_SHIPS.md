@@ -21,7 +21,7 @@ Full feature inventory. The root [README](https://github.com/zyvorai/kairon/blob
 - **Third-party CSI client** (`node.thirdPartyCSIDrivers`, first cut) — `kairon-node` acts as its own generic CSI client against an operator-allowlisted third-party driver's socket (validated conceptually against Ceph-CSI/RBD), including `attachRequired` drivers via `VolumeAttachment` and node-stage/publish secrets from one allowlisted namespace — [guide](guides/machine-storage-thirdparty-csi.md)
 - **Atlas-provisioned volumes** (`atlas.enabled`, first cut) — `spec.volumes[].atlas` asks the Atlas storage control plane for a disk by size and policy; the controller creates it, waits on its job, writes the PVC into `claimName`, schedules only once Ready, and deletes it after node runtime cleanup. `atlas.mode: rbd` boots the Atlas image in place through FluxVM `ceph-rbd-in-place` (node pool allowlist, image name bound to the Machine) — [guide](guides/machine-storage-atlas.md)
 - **Image import** (`spec.image.source`, opt-in via `node.imageCacheDir`) — `kairon-node` downloads a remote qcow2/raw image URL into its own digest-keyed cache instead of requiring a hand-placed file, shared across every Machine naming the same digest — [guide](guides/machine-image-import.md)
-- **Image catalog** (`spec.image.catalogName`, admin-only for mutations, API-only) — reference a named, checksummed (optionally signed) FluxVM image-catalog alias instead of a raw path; node-scoped register/rename/clone/export/read-only API — [guide](guides/machine-image-catalog.md)
+- **Image catalog** (`spec.image.catalogName`, admin-only for mutations; dashboard Nodes → Image catalog tab or API) — reference a named, checksummed (optionally signed) FluxVM image-catalog alias instead of a raw path; node-scoped register/rename/clone/export/read-only API — [guide](guides/machine-image-catalog.md)
 - **Egress check** (admin-only, API-only) — ask a node whether a sandbox's outbound request to a host would be allowed under its static egress allowlist, with any matched credential-vault secret reported only as a boolean — [guide](guides/machine-sandboxes.md#checking-egress-policy)
 - **Warm pools** (admin-only, API-only) — create a FluxVM pool of pre-booted, `Paused` VMs for instant claiming instead of a cold create; node-scoped create/list/get/delete/claim API; `createMachine: true` turns a claim into a Machine built from the pool's template — [guide](guides/machine-sandboxes.md#warm-pools)
 - **Runtime diagnostics** (freeze/thaw admin-only, rest any-operator, API-only) — a node's real FluxVM capability manifest, a Machine's cgroup-derived PSI pressure stats and effective host CPU set, and a kernel-level cgroup freeze/thaw distinct from `spec.powerState: Paused` — [guide](guides/machine-diagnostics.md)
@@ -104,6 +104,6 @@ spec:
     - name: gpu-claim   # administrator allowlist on the node -- empty allowlist denies all
 ```
 
-More worked examples: [`examples/`](https://github.com/zyvorai/kairon/blob/main/tree/main/examples).
+More worked examples: [`examples/`](https://github.com/zyvorai/kairon/tree/main/examples).
 
 ---

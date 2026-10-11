@@ -283,7 +283,7 @@ Fleet automation is experimental and opt-in (`fleet.enabled`, `--fleet-enabled`)
 
 ## Operational visibility
 
-`kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane; each links to [`runbook-migration-failures.md`](runbook-migration-failures.md).
+`kairon-controller` computes Prometheus metrics (`internal/metrics`) from the same migration list it already fetches every reconcile tick -- one call site, not scattered instrumentation -- and serves them on its existing health port. `charts/kairon/alerts.yaml` ships example alert rules for a stuck `NeedsRecovery`, a high migration failure rate, a migration stuck in flight, and an unencrypted data-plane (plus reconcile-error, API-server-error, webhook-deny, quota, disruption-budget and MachineSet-rollout rules); the migration alerts link to [`runbook-migration-failures.md`](runbook-migration-failures.md).
 
 A migration concurrency quota (`migration.maxConcurrentPerNode`/`maxConcurrentCluster`, both `0` = unlimited) is enforced in the same admission path as target-eligibility checks, rejecting into the existing `Blocked` phase -- not a new state, not a new mechanism.
 

@@ -57,7 +57,7 @@ Sources of truth: the CRD schema in `charts/kairon/crds/fleet.yaml` (byte-identi
 | `maxRestarts` | integer, min 1 | yes | Per-Machine restart attempts, counted in the Machine annotation `fleet.kairon.zyvor.dev/restart-count`. |
 | `failureGraceSeconds` | integer, min 30 | yes | How long the Machine's NodeUnreachable condition must have been true. |
 
-Schema versus controller: the CRD marks only `endpoint` and `systemID` required for a node target, but the controller validator also requires a valid `secretName`. The endpoint must be a bare `https://host[:port]` origin (no userinfo, path, query or fragment) and must exactly match an entry of the administrator allowlist (`KAIRON_FLEET_REDFISH_ORIGINS` / `fleet.redfishOrigins`). The map key (node name) must be a DNS label.
+Schema versus controller: the CRD marks `endpoint`, `systemID` and `secretName` required for a node target; the controller validator additionally requires DNS-label forms for `systemID` and `secretName`. The endpoint must be a bare `https://host[:port]` origin (no userinfo, path, query or fragment) and must exactly match an entry of the administrator allowlist (`KAIRON_FLEET_REDFISH_ORIGINS` / `fleet.redfishOrigins`). The map key (node name) must be a DNS label.
 
 **Status.** `phase` (`Ready`, `Invalid`, `Blocked`), `message`, `lastActionTime` (last time a Machine was released), `observedGeneration`.
 

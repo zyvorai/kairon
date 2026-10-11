@@ -61,10 +61,13 @@ naming so a future design pass doesn't have to rediscover them:
   `Machine.spec.cloudInit` already forwards operator-supplied
   customization verbatim into FluxVM's own cloud-init NoCloud seed image
   (`internal/model.CloudInitSpec`, see
-  [`machine-network.md`](guides/machine-network.md)). A `KaironMachine`
-  controller could plausibly just read that Secret's contents and pass
-  it straight through as `spec.cloudInit`'s raw payload -- little new
-  plumbing needed on the FluxVM/cloud-init side specifically.
+  [`machine-network.md`](guides/machine-network.md)). `spec.cloudInit`
+  is a structured spec (`hostname`, `user`, `sshAuthorizedKeys`,
+  `packages`, `runCmd`, `writeFiles`), not a raw user-data field, so a
+  `KaironMachine` controller would have to either translate the Secret's
+  cloud-config onto those fields or add a raw-payload field first --
+  little new plumbing needed on the FluxVM/cloud-init side specifically,
+  but not zero.
 - **`MachineSet`'s replica-reconciliation shape is close to what CAPI's
   own `MachineDeployment`/`MachineSet` already expect from an infra
   template** -- `internal/controller/machineset.go`'s "create/delete to
