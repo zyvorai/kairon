@@ -6,6 +6,7 @@ import { api, apiJSON } from '../api';
 import { MachineSnapshotRestore } from '../types';
 import ResourceTable from '../components/ResourceTable';
 import { badgeClass } from '../lib/phase';
+import { currentNamespace } from '../lib/namespace';
 
 // Restores is the dashboard counterpart of Snapshots.tsx: create form plus
 // a live table, following that page's shape (not ResourceTable's read-only
@@ -64,7 +65,7 @@ export default function Restores({ prefillSnapshot }: { prefillSnapshot: string 
   const remove = async (name: string) => {
     if (!confirm(`Delete MachineSnapshotRestore "${name}"? The PersistentVolumeClaim it already restored is left in place, not deleted.`)) return;
     try {
-      await api(`/api/v1/restores/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await api(`/api/v1/restores/${currentNamespace()}/${encodeURIComponent(name)}`, { method: 'DELETE' });
       refresh();
     } catch (e) {
       setMsg(String(e));

@@ -27,6 +27,10 @@ same page; see [OIDC](kairon-ui-oidc.md).
 - Signed-in operators change their own password from **Account**
   (`POST /api/v1/auth/password`).
 
+## Namespaces
+
+The dashboard works in one namespace at a time, **`default`** unless you change it. Pick another from the **Namespace** selector in the account menu (top right); the list is the namespaces you may use (`GET /api/v1/namespaces`, which honours namespace scoping). The choice is remembered in the browser and applies to every namespaced page, action, console, log and usage-CSV download. Before this selector existed the dashboard only ever showed `default`, because it never sent the `namespace` parameter the API scopes lists by.
+
 ## Navigation
 
 Navigation is grouped into a frosted top bar with a mega-menu (a sheet on small

@@ -1,6 +1,7 @@
 // Copyright 2026 Zyvor · https://zyvor.dev
 // SPDX-License-Identifier: Apache-2.0
 
+import { currentNamespace } from '../lib/namespace';
 import { useEffect, useState } from 'react';
 import { api, apiJSON, isAdmin } from '../api';
 
@@ -15,7 +16,7 @@ const RESOURCES = [
 interface FleetObject { kind: string; metadata: { name: string; namespace: string }; spec: unknown; status?: { phase?: string; message?: string; totals?: Record<string, number> } }
 
 export default function Fleet() {
-  const [namespace, setNamespace] = useState('default');
+  const [namespace, setNamespace] = useState(currentNamespace());
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [resource, setResource] = useState('machineautoscalers');
   const [items, setItems] = useState<FleetObject[]>([]);

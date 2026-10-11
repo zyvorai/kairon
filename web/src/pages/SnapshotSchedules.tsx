@@ -6,6 +6,7 @@ import { api, apiJSON } from '../api';
 import { MachineSnapshotSchedule } from '../types';
 import ResourceTable from '../components/ResourceTable';
 import { badgeClass } from '../lib/phase';
+import { currentNamespace } from '../lib/namespace';
 
 function formatSelector(selector: Record<string, string>): string {
   const entries = Object.entries(selector || {});
@@ -39,7 +40,7 @@ export default function SnapshotSchedules() {
 
   const toggleSuspend = async (s: MachineSnapshotSchedule) => {
     try {
-      await apiJSON(`/api/v1/snapshot-schedules/default/${encodeURIComponent(s.metadata.name)}/suspend`, 'PATCH', {
+      await apiJSON(`/api/v1/snapshot-schedules/${currentNamespace()}/${encodeURIComponent(s.metadata.name)}/suspend`, 'PATCH', {
         suspend: !s.spec.suspend,
       });
       refresh();

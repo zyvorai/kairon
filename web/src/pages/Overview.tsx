@@ -6,6 +6,7 @@ import { api, downloadFile, apiErrorText } from '../api';
 import { NodeUsage, Overview as OverviewData } from '../types';
 import { formatBytes } from '../lib/phase';
 import { Kpi, KpiStrip, Meter, Reveal, useSeries } from '../components/ui';
+import { currentNamespace } from '../lib/namespace';
 
 function phaseTone(phase: string): string {
   if (phase === 'Running' || phase === 'Succeeded') return 'ok';
@@ -55,7 +56,7 @@ export default function Overview() {
       <div className="rowactions" style={{ justifyContent: 'flex-end', marginBottom: 8 }}>
         <button
           className="sm"
-          onClick={() => downloadFile('/api/v1/usage.csv?namespace=default', 'kairon-usage.csv').catch((e) => alert(apiErrorText(e)))}
+          onClick={() => downloadFile(`/api/v1/usage.csv?namespace=${encodeURIComponent(currentNamespace())}`, 'kairon-usage.csv').catch((e) => alert(apiErrorText(e)))}
         >
           Download usage CSV
         </button>

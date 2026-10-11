@@ -6,6 +6,7 @@ import { api, apiJSON } from '../api';
 import { MachineSet } from '../types';
 import ResourceTable from '../components/ResourceTable';
 import { badgeClass } from '../lib/phase';
+import { currentNamespace } from '../lib/namespace';
 
 export default function MachineSets() {
   const [items, setItems] = useState<MachineSet[]>([]);
@@ -27,7 +28,7 @@ export default function MachineSets() {
   const remove = async (name: string) => {
     if (!confirm(`Delete MachineSet "${name}"? This also deletes every Machine it created.`)) return;
     try {
-      await api(`/api/v1/machinesets/default/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      await api(`/api/v1/machinesets/${currentNamespace()}/${encodeURIComponent(name)}`, { method: 'DELETE' });
       refresh();
     } catch (e) {
       setMsg(String(e));
@@ -44,7 +45,7 @@ export default function MachineSets() {
       return;
     }
     try {
-      await apiJSON(`/api/v1/machinesets/default/${encodeURIComponent(s.metadata.name)}/scale`, 'PATCH', { replicas });
+      await apiJSON(`/api/v1/machinesets/${currentNamespace()}/${encodeURIComponent(s.metadata.name)}/scale`, 'PATCH', { replicas });
       setDrafts((d) => {
         const next = { ...d };
         delete next[s.metadata.name];
