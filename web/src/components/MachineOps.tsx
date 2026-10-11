@@ -22,6 +22,7 @@ export default function MachineOps({ namespace, name }: { namespace: string; nam
   const [busy, setBusy] = useState('');
   const [tag, setTag] = useState('');
   const [fw, setFw] = useState({ name: '', port: '', protocol: 'tcp' });
+  const [cmd, setCmd] = useState('');
   const [cap, setCap] = useState({ seconds: '30', filter: '' });
   const [captures, setCaptures] = useState<Capture[]>([]);
 
@@ -75,6 +76,16 @@ export default function MachineOps({ namespace, name }: { namespace: string; nam
               onClick={() => confirm(`Restore "${tag}"? This stops and restarts the VM in place.`) && post('vm-restore-snapshot', 'vm-restore-snapshot', { tag })}
             >
               Restore
+            </button>
+          </div>
+
+          <h4>Guest agent command</h4>
+          <div className="opform">
+            <Field label="Command (via the fluxvm guest agent, no SSH)">
+              <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="uname -a" />
+            </Field>
+            <button disabled={!!busy || !cmd} onClick={() => post('agent-exec', 'agent-exec', { command: cmd, timeoutSeconds: 30 })}>
+              Run
             </button>
           </div>
 
