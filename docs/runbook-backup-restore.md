@@ -27,8 +27,9 @@ Three genuinely different things can be lost, independently of each other:
    something Kairon does -- the same boundary already documented for iSCSI
    itself in [`docs/guides/machine-storage-csi.md`](guides/machine-storage-csi.md)
    ("iSCSI's own operational requirements aren't Kairon's to solve").
-   Kairon's own CSI node plugin has no Controller service at
-   all, so it has no snapshot/export capability of its own to begin with.
+   Kairon's own CSI driver can create in-cluster snapshots for
+   dynamically-provisioned volumes (`csiController.snapshotter.enabled`), but
+   it has no export capability of its own.
 3. **FluxVM's own runtime state on each host** -- the actual running QEMU/
    Cloud Hypervisor/Firecracker process, its VNC socket, etc. This is
    FluxVM's concern, not Kairon's, and this runbook doesn't touch it.
@@ -50,7 +51,7 @@ containing one YAML file per Kairon CRD kind, cluster-wide (every
 namespace), plus a `manifest.txt` with an object count per kind. Run it
 from anywhere with a working `kubectl` context pointed at the cluster --
 it needs the same read access `kaironctl`/`kairon-ui` already have (`get`/
-`list` on the eight `kairon.zyvor.dev` CRDs), nothing new.
+`list` on the `kairon.zyvor.dev` CRDs), nothing new.
 
 Chart-managed Secrets (`kairon-ui-users`, `kairon-ui-session`,
 `kairon-ui-token`, `kairon-ui-oidc`, `kairon-console-token`) are **not**
@@ -140,7 +141,7 @@ signing key: every operator gets signed out.
   when).
 - No scheduling, retention, or off-cluster upload -- deliberately out of
   scope, see "Backing up" above.
-- No point-in-time consistency across the eight CRD kinds -- each is
+- No point-in-time consistency across the CRD kinds -- each is
   listed independently, one `kubectl get -A` at a time, not a single
   atomic snapshot. A Machine created between two of those calls could be
   in one CRD's backup and absent from a related one it referenced (rare,

@@ -83,7 +83,7 @@ this project to an actual API version bump nobody's asked for yet.
   than an opaque transport error.
 - **`ConvertMachineQuota`** (`internal/conversion/machinequota.go`): the
   worked example. It converts a `MachineQuota` between a hypothetical
-  `kairon.zyvor.dev/v1` and today's `v1alpha1`, renaming
+  renamed-field `v1` schema and the current one, renaming
   `spec.maxTotalCpu`/`maxTotalMemory` to `spec.maxCpu`/`maxMemory` and the
   matching `status` fields -- dropping the redundant "Total" qualifier, a
   plausible real API cleanup. `spec.maxMachines`/`status.usedMachines`
@@ -114,10 +114,10 @@ this project to an actual API version bump nobody's asked for yet.
 
 ## What doesn't exist yet, on purpose
 
-No CRD declares a `spec.conversion` webhook: `v1alpha1` and `v1beta1` share a
-schema, so `None` is enough. `/convert/machinequotas` (which converts
-between a *hypothetical* renamed-field `v1` MachineQuota and
-`v1alpha1`) is live, tested code the API server never calls; it is the
+No CRD declares a `spec.conversion` webhook: `v1`, `v1beta1` and `v1alpha1`
+share a schema, so `None` is enough. `/convert/machinequotas` (which converts
+between a *hypothetical* renamed-field MachineQuota schema and the
+current one) is live, tested code the API server never calls; it is the
 template for the first version whose schema actually differs.
 
 ## What cutting a schema-changing version requires
@@ -160,7 +160,7 @@ When a version with a different schema is needed:
    how it gets away with templating `.Values.webhook.caBundle` at all.
    Cutting a real version means either moving that one CRD's management
    into `templates/` (gaining real `helm upgrade` semantics for it, at
-   the cost of diverging from how the other seven CRDs are managed) or
+   the cost of diverging from how the other sixteen `kairon.zyvor.dev` CRDs are managed) or
    applying `spec.conversion` via a separate, explicitly-documented step
    (a small patch script, following the same "we don't auto-mint your
    TLS material" posture this project already takes for
@@ -178,8 +178,8 @@ When a version with a different schema is needed:
 
 ## Real limits today
 
-- **The conversion webhook is not live.** `v1alpha1` ↔ `v1beta1` uses the
-  API server's `None` conversion; the webhook is infrastructure for a
+- **The conversion webhook is not live.** `v1`, `v1beta1` and `v1alpha1`
+  convert through the API server's `None` strategy; the webhook is infrastructure for a
   future schema change.
 - **Only `MachineQuota` has a worked converter.** The other CRDs
   have no `Converter` implementation yet -- `ConvertMachineQuota` is the

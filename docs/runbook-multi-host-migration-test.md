@@ -58,7 +58,7 @@ Verify both hosts came up:
 ```
 ssh root@10.0.1.11 systemctl status kairon-node kairon-controller kairon-migration-adapter-fluxvm
 ssh root@10.0.1.12 systemctl status kairon-node kairon-migration-adapter-fluxvm
-kaironctl get machines   # both Nodes should be visible to the controller
+kaironctl get nodes      # both Nodes should be visible to the controller
 ```
 
 ## 3. Create a test Machine
@@ -83,9 +83,8 @@ Polls `machinemigration`'s phase every 3s and exits non-zero (pointing at
 None of these are automated -- confirm each by hand:
 
 - [ ] **RAM transfer cross-check**: the migration's `status.ramTransferred`/
-      `ramTotal` (from `kaironctl get migrations -o` -- currently no `-o
-      yaml` for migrations via `kaironctl describe`, so use `kubectl get
-      machinemigration NAME -o yaml`) roughly matches what FluxVM's own
+      `ramTotal` (`kaironctl get`/`describe` do not print them, so use
+      `kubectl get machinemigration NAME -o yaml`) roughly matches what FluxVM's own
       status API reports for the runtime independently -- Kairon's own
       numbers aren't the only source of truth.
 - [ ] **Guest IP/MAC survives cutover**: `ssh` (or console) into the guest

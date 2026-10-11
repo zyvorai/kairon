@@ -263,7 +263,7 @@ waiting for new connections to be allowed again.
 ## Capture
 
 ```bash
-export KAIRON_UI_URL=http://kairon-ui:22000 KAIRON_UI_TOKEN=...
+export KAIRON_UI_URL=http://kairon-ui:18082 KAIRON_UI_TOKEN=...
 kaironctl network capture web --seconds 10 --filter "udp port 53" --output dns.pcap
 kaironctl network captures web
 tcpdump -nr dns.pcap

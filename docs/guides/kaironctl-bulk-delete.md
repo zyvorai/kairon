@@ -36,31 +36,33 @@ machine/loadtest-1 deleted
 machine/loadtest-2 deleted
 machine/loadtest-3 deleted
 
-$ kaironctl delete snapshotschedule --selector team=payments,tier=nightly
+$ kaironctl delete snapshotschedule --selector team=payments --selector tier=nightly
 no resources matched selector; nothing to delete
 ```
 
 Every kind `kaironctl delete NAME` already supports gets this for free:
-`machine`, `migration`, `snapshot`, `restore`, `quota`, `budget`,
-`machineset`, `instancetype`, `migrationpolicy`, `snapshotschedule`,
-`networkpolicy`, and `securitygroup` (same aliases as always, e.g. `vm`/`vms`
-for `machine`, `securitygroups`/`networksecuritygroups` for
-`securitygroup`) — one dispatch (`matchingNames`/`deleteByKindName` in
-`internal/kaironctl/kaironctl.go`), not a special case bolted onto one
+`machine`, `migration`, `snapshot`, `restore`, `backup`, `backuprestore`,
+`quota`, `budget`, `machineset`, `machinepool`, `machineclaim`,
+`instancetype`, `migrationpolicy`, `snapshotschedule`, `networkpolicy`, and
+`securitygroup` (same aliases as always, e.g. `vm`/`vms` for `machine`,
+`securitygroups`/`networksecuritygroups` for `securitygroup`) — one
+dispatch (`matchingNames`/`deleteByKindName` in
+`internal/kaironctl/delete.go`), not a special case bolted onto one
 kind.
 
 ## Why an empty selector refuses to run, on purpose
 
 ```
-$ kaironctl delete machine
-error: usage: kaironctl delete RESOURCE --selector k=v [--selector k2=v2] [--dry-run]
+$ kaironctl delete machine --selector ""
+Error: invalid key=value "": want key=value
 
 $ kaironctl delete machine --selector
-error: invalid key=value "": want key=value
+flag needs an argument: -selector
 ```
 
-`--selector` is required and must resolve to a genuinely non-empty
-key=value map. This isn't just argument-count pickiness: `model.LabelsMatch`
+Once `--selector` is present it must resolve to a genuinely non-empty
+key=value map (without it, `kaironctl delete machine` is the single-object
+form, deleting a Machine literally named `machine`). This isn't just argument-count pickiness: `model.LabelsMatch`
 already treats an *empty* selector as matching **nothing**, not
 everything — the same fail-closed rule `MachineNetworkPolicy`/
 `NetworkSecurityGroup` selectors rely on so a policy object with a blank

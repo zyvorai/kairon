@@ -32,8 +32,8 @@ check), not as a currently-load-bearing part of Kairon's own decisions.
 
 **`GET /api/v1/machines/{ns}/{name}/pressure`** returns a Machine's real,
 cgroup-derived [PSI](https://docs.kernel.org/accounting/psi.html)
-(Pressure Stall Information) -- `cpuSome`, `memorySome`/`memoryFull`,
-`ioSome`/`ioFull`, each an `{avg10, avg60, avg300, total}` reading
+(Pressure Stall Information) -- `cpu_some`, `memory_some`/`memory_full`,
+`io_some`/`io_full`, each an `{avg10, avg60, avg300, total}` reading
 straight from the kernel. Complements `status.resourceUsage`
 ([`machine-resource-limits.md`](machine-resource-limits.md)'s own
 "Watching live usage" section, raw CPU%/memory/disk-I/O usage): pressure

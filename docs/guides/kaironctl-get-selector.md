@@ -49,18 +49,19 @@ a special-cased "nothing matched" message of its own -- an empty list
 reads the same way here regardless of *why* it's empty.
 
 Every kind `kaironctl get` already lists gets this for free: `machine`,
-`migration`, `snapshot`, `restore`, `quota`, `budget`, `machineset`,
-`instancetype`, `migrationpolicy`, `snapshotschedule`, `networkpolicy`, and
-`securitygroup` (same aliases as always) -- one generic helper
-(`selectorFilter` in `internal/kaironctl/kaironctl.go`), applied once per
+`migration`, `snapshot`, `restore`, `backup`, `backuprestore`, `quota`,
+`budget`, `machineset`, `machinepool`, `machineclaim`, `instancetype`,
+`migrationpolicy`, `snapshotschedule`, `networkpolicy`, `securitygroup`, and
+`node` (same aliases as always) -- one generic helper
+(`selectorFilter` in `internal/kaironctl/helpers.go`), applied once per
 kind's existing list-and-print case, not a special case bolted onto one
 kind.
 
 ## Why this is a generic helper, not one filter function per kind
 
-`kaironctl get`'s dozen kinds each already have their own `List*Namespace`
+`kaironctl get`'s kinds each already have their own `List*Namespace`
 call and their own per-kind print loop (see the file's own long `switch` in
-`cmdGet`); the only thing all twelve share is that every item's labels live
+`cmdGet`); the only thing they all share is that every item's labels live
 at `.Metadata.Labels`. Go's generics can't express "any struct with a
 `Metadata` field" structurally without reflection, so `selectorFilter[T
 any](items []T, selector map[string]string, labels func(T)
@@ -68,7 +69,7 @@ map[string]string) []T` takes a small accessor closure instead -- one line
 added per case (`items = selectorFilter(items, selector, func(m
 model.Machine) map[string]string { return m.Metadata.Labels })`), reusing
 the exact same `model.LabelsMatch` bulk delete's `matchingNames` already
-calls, rather than either thirteen near-identical filter functions or a
+calls, rather than either one near-identical filter function per kind or a
 reflection-based one.
 
 ## Real limits today (first cut)

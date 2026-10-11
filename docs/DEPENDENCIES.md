@@ -40,12 +40,12 @@ Checked against `go.mod` and `go list -deps` for `cmd/kairon-controller` and `cm
 |--------|---------|-----|
 | `github.com/google/go-sev-guest`, `github.com/google/go-tdx-guest` | `internal/attest`, linked into `kairon-controller` and `kairon-node` (`cmd/kairon-node` also imports them) | Confidential-guest SEV-SNP / TDX report parsing and verification. Not something to hand-roll |
 | `github.com/coder/websocket` | `internal/consoleproxy` (node console relay), `internal/uiapi` | VNC and text console WebSocket handling |
-| `github.com/prometheus/client_golang` | `internal/metrics`, `internal/agent` | `/metrics` for controller and node |
+| `github.com/prometheus/client_golang` | `internal/metrics` (and `internal/agent` tests) | `/metrics` for controller and node |
 | `github.com/zyvorai/atlas/clients/go` | `internal/controller` | Atlas storage client; itself stdlib-only (see above) |
 | `golang.org/x/sys` | `internal/csinode`, `internal/macnode` | Mounts and host introspection |
 | `google.golang.org/grpc`, `google.golang.org/protobuf`, `github.com/container-storage-interface/spec` | `internal/csinode`, `internal/agent`, `cmd/kairon-csi-*` (grpc and the CSI spec also appear in the `kairon-node` graph through `internal/agent`) | CSI client/server; the CSI exception above |
 | `golang.org/x/crypto` | `cmd/kairon-ui`, `internal/uiapi` (bcrypt), and the `kairon-controller` graph | Password hashing for kairon-ui |
-| `github.com/go-jose/go-jose/v4` | `internal/uiapi` | JOSE handling for OIDC sessions |
+| `github.com/go-jose/go-jose/v4` | `internal/uiapi` tests only | Signs test ID tokens for the OIDC tests (`go-oidc` also depends on it) |
 
 `scripts/check_stdlib_boundary.py` (run by `make all` through `make stdlib-boundary`, and by the `hygiene` job in `ci-extra.yml`) is a **deny list**, not an allow list. It fails if the `kairon-controller` or `kairon-node` import graph gains `helm.sh/`, `k8s.io/`, `sigs.k8s.io/`, `github.com/spf13/`, `github.com/coreos/go-oidc`, `golang.org/x/oauth2`, `github.com/containerd/` or `oras.land/`. Anything else, including the modules in the table above, is not blocked by the script and is governed by review and this document.
 

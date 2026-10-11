@@ -117,8 +117,10 @@ storage" — for local/directory-backed storage classes (e.g. Rancher's
 `local-path-provisioner`) directly, and for real network-block storage via
 Kairon's own first-cut iSCSI CSI driver — see
 [`docs/guides/machine-storage-csi.md`](machine-storage-csi.md). It does
-**not** yet provide: snapshot **restore** or clone-from-snapshot into a new
-Machine (`MachineSnapshot` is still create-only — see
-[architecture.md](../architecture.md)), CPU/memory hotplug via this path, or
-support for any network-block backend other than iSCSI (Ceph RBD/EBS/etc.
-would each need their own driver backend, not just config).
+**not** yet provide: clone-from-snapshot into a new running Machine
+(`MachineSnapshotRestore` restores a snapshot to a new PVC only — see
+[machine-snapshot-restore.md](machine-snapshot-restore.md)), CPU/memory
+hotplug via this path, or support for any network-block backend other than
+iSCSI through Kairon's own driver (Ceph RBD/EBS/etc. would each need their
+own driver backend, not just config; third-party drivers can be allowlisted,
+see [machine-storage-thirdparty-csi.md](machine-storage-thirdparty-csi.md)).

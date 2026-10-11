@@ -80,9 +80,9 @@ credential in this chart already has (`ui.existingSecret`,
 4. `ui.oidc.usernameClaim` (default `email`) becomes the session's
    username, and kairon-ui issues a normal session token -- the exact same
    `signSession` primitive `POST /api/v1/auth/login` already uses.
-   If `ui.oidc.adminGroups` is set, the ID token's own `ui.oidc.groupsClaim`
-   (default `groups`) is also recorded on the token, so admin-gated
-   routes (`uiapi.Server.isAdminIdentity`) can re-check it against
+   If `ui.oidc.adminGroups` (or `ui.oidc.namespaceGroups`) is set, the ID
+   token's own `ui.oidc.groupsClaim` (default `groups`) is also recorded on
+   the token, so admin-gated routes (`uiapi.Server.isAdminIdentity`) can re-check it against
    current config on every later request -- see "Identity and
    authorization model" below. From here on, an OIDC-authenticated
    session verifies through the exact same `withAuth` path a password

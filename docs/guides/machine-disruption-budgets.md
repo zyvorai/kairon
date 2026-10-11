@@ -110,13 +110,15 @@ web-tier   2             -               3         3        2        1
 
 ## Previewing who counts right now (`kaironctl describe`)
 
-`describe` for every other kind in this project uniformly prints the raw
+`describe` for almost every other kind in this project prints the raw
 object as JSON and nothing else. `kaironctl describe budget` is one of only
-four deliberate exceptions (the others are [`kaironctl describe
+five deliberate exceptions (the others are [`kaironctl describe
 snapshotschedule`](machine-snapshot-schedules.md#previewing-what-would-fire-right-now-kaironctl-describe),
 [`kaironctl describe migrationpolicy`](migration-policies.md#previewing-what-a-migration-would-get-right-now-kaironctl-describe),
-and `kaironctl describe quota`, see
-[machine-quotas.md](machine-quotas.md#previewing-usage-right-now-kaironctl-describe)).
+`kaironctl describe quota`, see
+[machine-quotas.md](machine-quotas.md#previewing-usage-right-now-kaironctl-describe),
+and `kaironctl describe machine`, which only appends a one-line
+`spec.tenant` note when that field is set).
 Unlike `MachineQuota`'s status, this object's `status.expectedMachines`/
 `currentHealthy`/`desiredHealthy`/`disruptionsAllowed` are already four
 clearly-labeled, already-resolved counts in the same unit (Machines) --
@@ -142,7 +144,7 @@ Matching machines (3):
 Each non-healthy Machine says whether it's because `status.phase` isn't
 `Running`, or because a non-terminal `MachineMigration` already has it in
 flight -- the same "don't just report a number, show the receipts"
-precedent the other three `describe` exceptions already established (the
+precedent the other `describe` exceptions already established (the
 `quota` preview's counted-Machines list, and the `snapshotschedule`/
 `migrationpolicy` previews' own matching-Machines lists).
 

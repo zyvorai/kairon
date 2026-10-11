@@ -34,13 +34,14 @@ machineset/api scaled to 0 replicas
 machineset/web scaled to 0 replicas
 machineset/worker scaled to 0 replicas
 
-$ kaironctl scale machineset --selector team=payments,tier=nightly --replicas 3
+$ kaironctl scale machineset --selector team=payments --selector tier=nightly --replicas 3
 no machinesets matched selector; nothing to scale
 ```
 
-Only `machineset` is supported, since it's the only kind `scale` supports at
-all -- there is no kind switch to generalize here the way `delete`'s
-`matchingNames`/`deleteByKindName` needs one.
+Only `machineset` is supported with `--selector` (`scale machinepool NAME
+--replicas N` exists but takes no selector) -- there is no kind switch to
+generalize here the way `delete`'s `matchingNames`/`deleteByKindName` needs
+one.
 
 ## Why `--selector` was added to `scale` but not to `edit`
 
@@ -60,8 +61,8 @@ originally for a hypothetical bulk `edit`. `--selector` was intentionally
 ## Why an empty selector refuses to run, on purpose
 
 ```
-$ kaironctl scale machineset --selector --replicas 0
-error: invalid key=value "": want key=value
+$ kaironctl scale machineset --selector "" --replicas 0
+Error: invalid key=value "": want key=value
 ```
 
 Same rule as bulk delete: `--selector` must resolve to a genuinely

@@ -32,10 +32,10 @@ manifest.
 
 **Forwards are only applied at Machine creation.** Editing `spec.network.forwards`
 on an already-running Machine has no effect -- `kairon-node` only reads it
-inside the one-time FluxVM create call, never on later reconcile ticks. The
-same is true of `spec.resources` (CPU/memory) after creation: change it and
-nothing happens, silently, no error and no status signal. Delete and recreate
-the Machine to apply either change.
+inside the one-time FluxVM create call, never on later reconcile ticks. Delete
+and recreate the Machine to apply a change. (Growing `spec.resources` on a
+running Machine is different -- it hotplugs; see
+[machine-hotplug.md](machine-hotplug.md).)
 
 ### TAP + netns (recommended for Network Fabric)
 
@@ -235,9 +235,10 @@ notice and retract one that's no longer current.
 
 ## Node readiness
 
-Set `KAIRON_DATAPLANE_REQUIRED=true` on `kairon-node` so the agent stays
-NotReady until FluxVM `/readyz` succeeds (FluxVM itself fail-closes when
-`sandbox.dataplane.required` is enabled).
+`kairon-node`'s readiness always tracks FluxVM `/readyz` (polled every 5s;
+FluxVM itself fail-closes when `sandbox.dataplane.required` is enabled), so
+the agent stays NotReady until it succeeds. There is no separate node-side
+env var for this; per-Machine strictness is `spec.network.dataplaneRequired`.
 
 ## Live migration and network state
 

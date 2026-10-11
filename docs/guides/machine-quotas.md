@@ -47,7 +47,7 @@ before it would otherwise assign a Machine to a node:
 1. Every reconcile tick, tally how much each `MachineQuota`'s namespace is
    already using: count and sum `spec.resources.cpu`/`.memory` across every
    Machine in that namespace that's already scheduled (`spec.nodeName` set)
-   and not desired-`Stopped` -- **not** yet-unscheduled Machines, since
+   and not desired-`Stopped`/`Halted` -- **not** yet-unscheduled Machines, since
    those aren't actually consuming anything yet.
 2. For each not-yet-scheduled Machine, first find whether it has an
    eligible node at all (placement/affinity/anti-affinity, unrelated to

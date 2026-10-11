@@ -44,9 +44,11 @@ what `kubectl get machine`'s IP column and every existing consumer already
 expect), but `status.guestIPs` (and `status.network.guestIPs`) now report
 every address the guest agent sees, across every non-loopback interface --
 IPv4 addresses first, then IPv6, in interface order. `status.guestIP` is
-always `status.guestIPs[0]`: the first IPv4 address found anywhere, falling
+`status.guestIPs[0]` -- the first IPv4 address found anywhere, falling
 back to the first IPv6 address only if the guest has no IPv4 address at
-all. If your guest has more than one NIC, `status.guestIP` alone still
+all -- except that the interface matching the Machine's own primary
+virtio-net MAC is preferred when it reports an address (so an SR-IOV
+passthrough NIC can't displace it). If your guest has more than one NIC, `status.guestIP` alone still
 can't tell you which one it picked -- read `status.guestIPs` (or
 `status.network.guestIPs`) for the full picture.
 
@@ -62,8 +64,8 @@ can't tell you which one it picked -- read `status.guestIPs` (or
 - A guest agent that isn't installed or hasn't started yet just means
   `status.guestIP`/`status.guestIPs` stay empty and resolution is retried
   on the next reconcile tick -- not a hard error.
-- This is unrelated to FluxVM's own bespoke `spec.agent` (a different,
-  vsock-based protocol requiring its own FluxVM-specific guest binary,
+- This is unrelated to FluxVM's own bespoke vsock-based agent protocol
+  (requiring its own FluxVM-specific guest binary,
   `fluxvm-guest-agent`) -- exposed as the separate, independent
   `spec.guestAgent.console` flag, powering an interactive text console
   ([guide](machine-text-console.md)). `spec.guestAgent.enabled` here is
